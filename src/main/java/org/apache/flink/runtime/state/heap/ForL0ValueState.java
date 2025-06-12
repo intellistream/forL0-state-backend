@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state;
+package org.apache.flink.runtime.heap;
 
 import org.apache.flink.api.common.state.State;
 import org.apache.flink.api.common.state.StateDescriptor;

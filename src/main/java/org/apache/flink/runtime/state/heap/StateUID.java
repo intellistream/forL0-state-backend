@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.runtime.state;
+package org.apache.flink.runtime.heap;
 
 import org.apache.flink.runtime.state.metainfo.StateMetaInfoSnapshot;
 
