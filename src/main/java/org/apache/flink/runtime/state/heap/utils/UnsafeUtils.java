@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap.space;
+package org.apache.flink.runtime.state.heap.utils;
 
 import sun.misc.Unsafe;
 
@@ -20,7 +20,7 @@ final public class UnsafeUtils {
 
     private UnsafeUtils() {}
 
-    static Unsafe unsafe() {
+    public static Unsafe unsafe() {
         return UNSAFE;
     }
 }

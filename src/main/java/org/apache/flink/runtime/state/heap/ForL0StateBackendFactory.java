@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.heap;
+package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.configuration.ReadableConfig;

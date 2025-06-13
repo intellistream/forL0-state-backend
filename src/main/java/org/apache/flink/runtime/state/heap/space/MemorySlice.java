@@ -1,5 +1,7 @@
-package org.apache.flink.runtime.heap.space;
+package org.apache.flink.runtime.state.heap.space;
 
+
+import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 
 /**
  *  A slice of continuous native memory

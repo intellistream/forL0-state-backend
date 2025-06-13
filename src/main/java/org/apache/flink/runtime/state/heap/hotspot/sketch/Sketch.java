@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.hotspot.sketch;
+package org.apache.flink.runtime.state.heap.hotspot.sketch;
 
 /**
  * Sketch 抽象基类，定义所有 Sketch 算法应实现的基本接口和通用操作。

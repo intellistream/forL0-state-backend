@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.hotspot.hash;
+package org.apache.flink.runtime.state.heap.hotspot.hash;
 
 /**
  * Jenkins BobHash 32 位 Java 移植版，对应 C++ BOBHash32.run(const char*, uint len)

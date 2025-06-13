@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.heap.space;
+package org.apache.flink.runtime.state.heap.space;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,7 +20,6 @@ class SimpleUnsafeMemoryAllocatorTest {
 
     @AfterEach
     void tearDown() {
-        // 确认 close() 后无内存泄漏
         alloc.close();
         assertEquals(0L, alloc.outstandingBytes(),
                 "All native memory should be released after close()");

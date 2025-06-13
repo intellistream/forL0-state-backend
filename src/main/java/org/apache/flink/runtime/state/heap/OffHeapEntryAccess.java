@@ -6,7 +6,7 @@ import sun.misc.Unsafe;
 /**
  * A util class for convenient off-heap state map entry access
  */
-final class StateMapEntryAccess {
+final class OffHeapEntryAccess {
     private static final Unsafe UNSAFE = UnsafeUtils.unsafe();
 
     // Offsets k=key n=namespace v=value

@@ -1,7 +1,7 @@
-package org.apache.flink.runtime.state.hotspot.sketch.ElasticSketch;
+package org.apache.flink.runtime.state.heap.hotspot.sketch.ElasticSketch;
 
-import org.apache.flink.runtime.state.hotspot.hash.Hash;
-import org.apache.flink.runtime.state.hotspot.utils.Config;
+import org.apache.flink.runtime.state.heap.hotspot.hash.Hash;
+import org.apache.flink.runtime.state.heap.hotspot.utils.Config;
 
 import java.util.Arrays;
 import java.util.List;

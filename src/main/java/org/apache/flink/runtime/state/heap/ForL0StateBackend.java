@@ -1,11 +1,9 @@
-package org.apache.flink.runtime.heap;
+package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.core.execution.SavepointFormatType;
 import org.apache.flink.runtime.state.*;
-import org.apache.flink.runtime.state.heap.HeapKeyedStateBackendBuilder;
-import org.apache.flink.runtime.state.heap.HeapPriorityQueueSetFactory;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,8 +1,8 @@
-package org.apache.flink.runtime.state.hotspot.simulator;
+package org.apache.flink.runtime.state.heap.hotspot.simulator;
 
-import org.apache.flink.runtime.state.hotspot.sketch.ElasticSketch.ElasticSketch;
-import org.apache.flink.runtime.state.hotspot.sketch.ElasticSketch.ElasticSketch.Pair;
-import org.apache.flink.runtime.state.hotspot.utils.Config;
+import org.apache.flink.runtime.state.heap.hotspot.sketch.ElasticSketch.ElasticSketch;
+import org.apache.flink.runtime.state.heap.hotspot.sketch.ElasticSketch.ElasticSketch.Pair;
+import org.apache.flink.runtime.state.heap.hotspot.utils.Config;
 
 import java.io.File;
 import java.io.FileInputStream;

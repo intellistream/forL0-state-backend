@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.hotspot.utils;
+package org.apache.flink.runtime.state.heap.hotspot.utils;
 
 public class Config {
     public static final Config INSTANCE = new Config();
