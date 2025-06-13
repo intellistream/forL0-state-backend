@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.heap.space;
+package org.apache.flink.runtime.state.heap.space;
 
 import sun.misc.Unsafe;
 
