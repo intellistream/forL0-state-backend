@@ -1,5 +1,8 @@
 package org.apache.flink.runtime.state.heap.hotspot.hash;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
 /**
  * Jenkins BobHash 32 位 Java 移植版，对应 C++ BOBHash32.run(const char*, uint len)
  */
