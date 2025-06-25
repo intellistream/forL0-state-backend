@@ -57,7 +57,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
 
         LatencyTrackingStateConfig latencyTrackingStateConfig =
                 latencyTrackingConfigBuilder.setMetricGroup(parameters.getMetricGroup()).build();
-        return new HeapKeyedStateBackendBuilder<>(
+        return new ForL0KeyedStateBackendBuilder<>(
                         parameters.getKvStateRegistry(),
                         parameters.getKeySerializer(),
                         parameters.getEnv().getUserCodeClassLoader().asClassLoader(),

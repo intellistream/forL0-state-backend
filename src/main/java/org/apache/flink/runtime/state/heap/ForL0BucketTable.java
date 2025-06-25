@@ -5,11 +5,13 @@ import org.apache.flink.runtime.state.heap.space.SimpleUnsafeMemoryAllocator;
 import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import sun.misc.Unsafe;
 
-public class OffHeapBucketTable {
+public class ForL0BucketTable {
 
-    private final MemorySlice slab; // 64B * bucketCap
+    private  MemorySlice slab; // 64B * bucketCap
     private final int bucketCapMask; // 2^n - 1
     private final SimpleUnsafeMemoryAllocator alloc;
+    private final int rootBucketCount;
+    private int totalBuckets;
 
     /** 64B Bucket */
     private static final int SLOT_TAG_OFF = 0;
@@ -20,14 +22,18 @@ public class OffHeapBucketTable {
 
     private int nextFree = 0;
 
-    OffHeapBucketTable(int initCapPow2, SimpleUnsafeMemoryAllocator alloc) {
+    ForL0BucketTable(int initCapPow2, SimpleUnsafeMemoryAllocator alloc) {
         this.alloc = alloc;
         int cap = 1 << initCapPow2;
         this.slab = alloc.allocate(cap * 64);
         this.bucketCapMask = cap - 1;
+        this.rootBucketCount = cap;
+        this.totalBuckets = rootBucketCount - 1;
     }
 
     private long bucketAddr(int idx) {
+        assert idx < totalBuckets
+                : "bucket index out of slab range: " + idx + " >= " + totalBuckets;
         return slab.address() + ((long) idx << 6); // *64
     }
 
@@ -56,7 +62,7 @@ public class OffHeapBucketTable {
             long ptr = UNSAFE.getLong(bucket + off + SLOT_PTR_OFF);
             if (ptr == 0)
                 return 0;
-            if(tg == tag && OffHeapEntryAccess.equalKN(ptr, key, ns))
+            if(tg == tag && ForL0EntryAccess.equalKN(ptr, key, ns))
                 return ptr;
         }
         return 0;
@@ -92,12 +98,31 @@ public class OffHeapBucketTable {
     }
 
     private int allocateNewBucket() {
-        int idx = 64 + (nextFree++);
-        long p = bucketAddr(idx);
+        // 若需要的索引超出现有 slab, 先扩容 (×2)
+        if (rootBucketCount + nextFree >= totalBuckets) {
+            growSlab();
+        }
+        int idx = rootBucketCount + (nextFree++);
+        long p  = bucketAddr(idx);
         UNSAFE.setMemory(p, 64, (byte) 0);
         return idx;
     }
 
+    /** slab 翻倍并拷贝原内容 */
+    private void growSlab() {
+        int newBuckets = totalBuckets << 1;
+        MemorySlice bigger = alloc.allocate(newBuckets * 64);
+
+        // 拷贝旧 slab 全部内容
+        UNSAFE.copyMemory(
+                null, slab.address(),
+                null, bigger.address(),
+                (long) totalBuckets * 64);
+
+        slab.release();          // 归还旧 slab
+        slab = bigger;
+        totalBuckets = newBuckets;
+    }
 }
 
 

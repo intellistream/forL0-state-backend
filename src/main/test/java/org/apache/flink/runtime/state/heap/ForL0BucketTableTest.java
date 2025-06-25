@@ -10,23 +10,23 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
-public class OffHeapBucketTableTest {
+public class ForL0BucketTableTest {
     private SimpleUnsafeMemoryAllocator allocator;
-    private OffHeapBucketTable table;
+    private ForL0BucketTable table;
 
     /* ========== 辅助工具 ========== */
 
     /** 创建一条最小合法条目，写入 key/ns 字节和 header，返回原生地址 */
     private long createEntry(byte[] key, byte[] ns) {
-        int len = OffHeapEntryAccess.HEADER + key.length + ns.length;
+        int len = ForL0EntryAccess.HEADER + key.length + ns.length;
         MemorySlice slice = allocator.allocate(len);
         long addr = slice.address();
-        OffHeapEntryAccess.hash(addr, 0);                       // 测试里统一用 hash=0
-        UnsafeUtils.unsafe().putInt(addr + OffHeapEntryAccess.KL, key.length);
-        UnsafeUtils.unsafe().putInt(addr + OffHeapEntryAccess.NL, ns.length);
-        UnsafeUtils.unsafe().putInt(addr + OffHeapEntryAccess.VL, 0); // 无 value
-        OffHeapEntryAccess.next(addr, 0);
-        long p = addr + OffHeapEntryAccess.HEADER;
+        ForL0EntryAccess.hash(addr, 0);                       // 测试里统一用 hash=0
+        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.KL, key.length);
+        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.NL, ns.length);
+        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.VL, 0); // 无 value
+        ForL0EntryAccess.next(addr, 0);
+        long p = addr + ForL0EntryAccess.HEADER;
         long ba = sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
         UnsafeUtils.unsafe().copyMemory(key, ba, null, p, key.length);
         UnsafeUtils.unsafe().copyMemory(ns,  ba, null, p + key.length, ns.length);
@@ -49,7 +49,7 @@ public class OffHeapBucketTableTest {
          * 创建根 bucket 数量 = 2^2 = 4，可让所有 hash=0 的条目都落在根 bucket[0]，
          * 方便测试满载及子桶扩容。
          */
-        table = new OffHeapBucketTable(2, allocator);
+        table = new ForL0BucketTable(2, allocator);
     }
 
     @AfterEach
