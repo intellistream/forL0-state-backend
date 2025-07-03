@@ -89,7 +89,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 keyContext);
     }
 
-    // Below methods are copied from heap state, need to be modified
+    // Below methods are copied from heap state, may need to be modified
 
     private void restoreState(
             Map<String, StateTable<K, ?, ?>> registeredKVStates,

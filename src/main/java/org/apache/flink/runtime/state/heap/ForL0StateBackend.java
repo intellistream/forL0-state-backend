@@ -47,7 +47,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     public <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
             KeyedStateBackendParameters<K> parameters) throws IOException {
 
-        LOG.info("++++++++++++++ Creating KeyedStateBackend by ForL0StateBackend +++++++++++++++++++");
+        LOG.info("++++++++++++++ Creating ForL0KeyedStateBackend by ForL0StateBackend +++++++++++++++++++");
 
         TaskStateManager taskStateManager = parameters.getEnv().getTaskStateManager();
         LocalRecoveryConfig localRecoveryConfig = taskStateManager.createLocalRecoveryConfig();

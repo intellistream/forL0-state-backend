@@ -1,5 +1,6 @@
 package org.apache.flink.runtime.state.heap;
 
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapStateDescriptor;
@@ -33,15 +34,21 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     private static final Map<StateDescriptor.Type, StateCreateFactory> STATE_CREATE_FACTORIES =
             Stream.of(
-                        Tuple2.of(StateDescriptor.Type.VALUE, (StateCreateFactory) ForL0ValueState::create)
-                        // more types to be added
+                            Tuple2.of(StateDescriptor.Type.VALUE, (StateCreateFactory) ForL0ValueState::create),
+                            Tuple2.of(StateDescriptor.Type.LIST, (StateCreateFactory) ForL0ListState::create),
+                            Tuple2.of(StateDescriptor.Type.REDUCING, (StateCreateFactory) ForL0ReducingState::create),
+                            Tuple2.of(StateDescriptor.Type.AGGREGATING, (StateCreateFactory) ForL0AggregatingState::create),
+                            Tuple2.of(StateDescriptor.Type.MAP, (StateCreateFactory) ForL0MapState::create)
                         )
                     .collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
     private static final Map<StateDescriptor.Type, StateUpdateFactory> STATE_UPDATE_FACTORIES =
             Stream.of(
-                        Tuple2.of(StateDescriptor.Type.VALUE, (StateUpdateFactory) ForL0ValueState::update)
-                        // more types to be added
+                            Tuple2.of(StateDescriptor.Type.VALUE, (StateUpdateFactory) ForL0ValueState::update),
+                            Tuple2.of(StateDescriptor.Type.LIST, (StateUpdateFactory) ForL0ListState::update),
+                            Tuple2.of(StateDescriptor.Type.REDUCING, (StateUpdateFactory) ForL0ReducingState::update),
+                            Tuple2.of(StateDescriptor.Type.AGGREGATING, (StateUpdateFactory) ForL0AggregatingState::update),
+                            Tuple2.of(StateDescriptor.Type.MAP, (StateUpdateFactory) ForL0MapState::update)
                         )
                     .collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
@@ -210,7 +217,12 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     @Override
     public void notifyCheckpointComplete(long l) throws Exception {
+        // Nothing to do here
+    }
 
+    @Override
+    public void notifyCheckpointAborted(long l) throws Exception {
+        // Nothing to do here
     }
 
     @Nonnull
@@ -249,8 +261,16 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     }
 
     @Override
+    public String toString() { return "ForL0KeyedStateBackend"; }
+
+    @VisibleForTesting
+    @Override
     public int numKeyValueStateEntries() {
-        return 0;
+        int sum = 0;
+        for (StateSnapshotRestore state : registeredKVStates.values()) {
+            sum += ((StateTable<?, ?, ?>) state).size();
+        }
+        return sum;
     }
 
     @SuppressWarnings("unchecked")
