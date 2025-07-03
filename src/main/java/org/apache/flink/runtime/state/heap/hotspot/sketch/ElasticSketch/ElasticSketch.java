@@ -5,6 +5,9 @@ import org.apache.flink.runtime.state.heap.hotspot.utils.Config;
 
 import java.util.*;
 
+/**
+ * ElasticSketch：整合 HeavyPart & LightPart，动态合并逻辑。
+ */
 public class ElasticSketch implements Sketch {
     private final HeavyPart heavyPart;
     private final LightPart lightPart;
