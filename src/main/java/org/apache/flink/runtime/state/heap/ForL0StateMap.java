@@ -57,8 +57,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         int hash = jenkinsHash(kb, nb);
         short tag = (short) (murmur16(kb) & 0xFFFF);
         long entry = table.lookup(kb, nb, hash, tag);
-        LOG.info("Getting state for key {} namespace {}, entry: {}",
-                key, namespace, entry == 0 ? null : deserializeState(entry));
+//        LOG.info("Getting state for key {} namespace {}, entry: {}",
+//                key, namespace, entry == 0 ? null : deserializeState(entry));
         return entry == 0 ? null : deserializeState(entry);
     }
 
@@ -69,7 +69,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public void put(K key, N namespace, S state) {
-        LOG.info("Putting state for key {} namespace {}", key, namespace);
+//        LOG.info("Putting state for key {} namespace {}", key, namespace);
         byte[] kb = serialize(keySerializer, key);
         byte[] nb = serialize(namespaceSerializer, namespace);
         byte[] vb = serialize(stateSerializer, state);
