@@ -28,13 +28,17 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     // ---------------------------------------------------------------------
     /** Creates a Level‑Hash index with given power‑of‑two top capacity (e.g. 16 ⇒ 65536 buckets). */
     public OffHeapLevelHashIndex(MemoryManagerAllocator allocator,
-                                 int initialCapacityPow2) throws MemoryAllocationException {
+                                 int initialCapacityPow2) {
         if (initialCapacityPow2 < 4 || initialCapacityPow2 > 28) {
             throw new IllegalArgumentException("capacity pow2 out of range: " + initialCapacityPow2);
         }
         this.allocator = allocator;
         this.pageSize  = allocator.getPageSize();
-        allocateTables(1 << initialCapacityPow2);
+        try {
+            allocateTables(1 << initialCapacityPow2);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // ---------------------------------------------------------------------

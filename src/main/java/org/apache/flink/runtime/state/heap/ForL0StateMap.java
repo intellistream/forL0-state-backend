@@ -1,23 +1,17 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.core.memory.DataInputDeserializer;
-import org.apache.flink.core.memory.DataOutputSerializer;
-import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import sun.misc.Unsafe;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.List;
 import java.util.stream.Stream;
 
 public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoCloseable {
@@ -27,8 +21,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private final TypeSerializer<K> keySerializer;
     private final TypeSerializer<N> namespaceSerializer;
     private final TypeSerializer<S> stateSerializer;
+
     private final MemoryManagerAllocator allocator;
-    private final ForL0BucketTable table;
+    private final OffHeapLevelHashIndex index;
+    private final EntryArena arena;
+
     private int size = 0;
 
     public ForL0StateMap(int initPow2,
@@ -40,11 +37,14 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         this.namespaceSerializer = namespaceSerializer;
         this.stateSerializer = stateSerializer;
         this.allocator = allocator;
-        this.table = new ForL0BucketTable(initPow2, allocator);
+        this.index = new OffHeapLevelHashIndex(allocator, initPow2);
+        this.arena = new EntryArena(allocator);
     }
 
     @Override
     public void close() throws Exception {
+        arena.close();
+        index.close();
         allocator.close();
     }
 
@@ -57,12 +57,16 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     public S get(K key, N namespace) {
         byte[] kb = serialize(keySerializer, key);
         byte[] nb = serialize(namespaceSerializer, namespace);
-        int hash = jenkinsHash(kb, nb);
-        short tag = (short) (murmur16(kb) & 0xFFFF);
-        long entry = table.lookup(kb, nb, hash, tag);
+        int hash  = jenkinsHash(kb, nb);
+
+        long ptr = index.get(hash);
+        if (ptr == 0) {
+            return null;
+        }
+        byte[] vb = arena.getValue(ptr);
 //        LOG.info("Getting state for key {} namespace {}, entry: {}",
 //                key, namespace, entry == 0 ? null : deserializeState(entry));
-        return entry == 0 ? null : deserializeState(entry);
+        return deserializeValue(vb);
     }
 
     @Override
@@ -77,31 +81,52 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         byte[] nb = serialize(namespaceSerializer, namespace);
         byte[] vb = serialize(stateSerializer, state);
         int hash = jenkinsHash(kb, nb);
-        short tag = (short) (murmur16(kb) & 0xFFFF);
-        long entry = table.lookup(kb, nb, hash, tag);
-        if(entry != 0) {
-            overwriteState(entry, vb);
-            return;
+
+        long oldPtr = index.get(hash);
+        long newPtr;
+        try {
+            newPtr = arena.put(concat(kb, nb), vb);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException(e);
         }
-        long newPtr = createEntry(hash, kb, nb, vb);
-        table.insert(hash, tag, newPtr);
-        size++;
+        try {
+            index.put(hash, newPtr);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException(e);
+        }
+        if (oldPtr == 0) {
+            size++;
+        }
      }
 
     @Override
     public S putAndGetOld(K key, N namespace, S state) {
-        return null;
+        S old = get(key, namespace);
+        put(key, namespace, state);
+        return old;
     }
 
     @Override
     public void remove(K key, N namespace) {
+        byte[] kb = serialize(stateSerializer, key);
+        byte[] nb = serialize(namespaceSerializer, namespace);
+        int hash  = jenkinsHash(kb, nb);
 
+        long removed = index.remove(hash);
+        if (removed != 0) {
+            size--;
+        }
     }
 
     @Override
     public S removeAndGetOld(K key, N namespace) {
-        return null;
+        S old = get(key, namespace);
+        remove(key, namespace);
+        return old;
     }
+
+
+    // Not implemented methods
 
     @Override
     public <T> void transform(K key, N namespace, T value, StateTransformationFunction<S, T> transformation) throws Exception {
@@ -134,35 +159,26 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         return null;
     }
 
-    // Serialization
+    // ---------------------------------------------------------------------
+    //  Serialization helpers
+    // ---------------------------------------------------------------------
 
     @SuppressWarnings("unchecked")
-    private byte[] serialize(TypeSerializer<?> serializer, Object obj) {
-        if (obj == null) {
-            return new byte[0];
-        }
-        DataOutputSerializer out = new DataOutputSerializer(64);
+    private byte[] serialize(TypeSerializer<?> ser, Object obj) {
+        if (obj == null) { return new byte[0]; }
+        org.apache.flink.core.memory.DataOutputSerializer out =
+                new org.apache.flink.core.memory.DataOutputSerializer(64);
         try {
-            ((TypeSerializer)serializer).serialize(obj, out);
+            ((TypeSerializer) ser).serialize(obj, out);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
         return out.getCopyOfBuffer();
     }
 
-
-    private S deserializeState(long addr) {
-        int k = ForL0EntryAccess.kl(addr);
-        int n = ForL0EntryAccess.nl(addr);
-        int v = ForL0EntryAccess.vl(addr);
-        long p = addr + ForL0EntryAccess.HEADER + k + n;
-        byte[] buf = new byte[v];
-        Unsafe U = UnsafeUtils.unsafe();
-        long ba = Unsafe.ARRAY_BYTE_BASE_OFFSET;
-        for (int i = 0; i < v; i++) {
-            buf[i] = U.getByte(p + i);
-        }
-        DataInputDeserializer in = new DataInputDeserializer(buf);
+    private S deserializeValue(byte[] buf) {
+        org.apache.flink.core.memory.DataInputDeserializer in =
+                new org.apache.flink.core.memory.DataInputDeserializer(buf);
         try {
             return stateSerializer.deserialize(in);
         } catch (IOException e) {
@@ -170,51 +186,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         }
     }
 
-    // Create/Overwrite Entry
-
-    private long createEntry(int hash, byte[] k, byte[] n, byte[] v) {
-        int len = ForL0EntryAccess.HEADER + k.length + n.length + v.length;
-        List<MemorySegment> pages = null;
-        try {
-            pages = allocator.allocate(len);
-        } catch (MemoryAllocationException e) {
-            throw new RuntimeException(e);
-        }
-        assert pages.size() == 1 : "entry allocation expects a single contiguous MemorySegment; adjust segment-size if necessary";
-        MemorySegment seg = pages.get(0);
-        long addr = seg.getAddress();
-        ForL0EntryAccess.hash(addr, hash);
-        Unsafe U = UnsafeUtils.unsafe();
-
-        U.putInt(addr + ForL0EntryAccess.KL, k.length);
-        U.putInt(addr + ForL0EntryAccess.NL, n.length);
-        U.putInt(addr + ForL0EntryAccess.VL, v.length);
-        ForL0EntryAccess.next(addr, 0);
-
-        long p = addr + ForL0EntryAccess.HEADER;
-        long ba = Unsafe.ARRAY_BYTE_BASE_OFFSET;
-        U.copyMemory(k, ba, null, p, k.length);
-        p += k.length;
-        U.copyMemory(n, ba, null, p, n.length);
-        p += n.length;
-        U.copyMemory(v, ba, null, p, v.length);
-        return addr;
+    private static byte[] concat(byte[] a, byte[] b) {
+        byte[] r = new byte[a.length + b.length];
+        System.arraycopy(a, 0, r, 0, a.length);
+        System.arraycopy(b, 0, r, a.length, b.length);
+        return r;
     }
 
-    private void overwriteState(long addr, byte[] v) {
-        int oldLen = ForL0EntryAccess.vl(addr);
-        if (v.length <= oldLen) {
-            long p = addr + ForL0EntryAccess.HEADER + ForL0EntryAccess.kl(addr) + ForL0EntryAccess.nl(addr);
-            Unsafe U = UnsafeUtils.unsafe();
-            long ba = Unsafe.ARRAY_BYTE_BASE_OFFSET;
-            U.copyMemory(v, ba, null, p, v.length);
-            U.putInt(addr + ForL0EntryAccess.VL, v.length);
-        } else {
-            // To Be Implemented
-            LOG.info("Overwriting existing entry at {}, but not implemented when new is bigger than old", addr);
-            // System.out.println("Not Implemented");
-        }
-    }
 
     // Hash/Tag
 

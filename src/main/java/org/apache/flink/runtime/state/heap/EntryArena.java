@@ -10,7 +10,7 @@ import sun.misc.Unsafe;
 import java.util.ArrayList;
 import java.util.List;
 
-final class EntryArena<K, V> {
+final class EntryArena implements AutoCloseable {
     private static final Unsafe U = UnsafeUtils.unsafe();
     private static final int HEADER_SIZE = 12; // keyHash (4) + lenK (4) + lenV (4)
 
@@ -96,5 +96,11 @@ final class EntryArena<K, V> {
         for (int i = 0; i < dst.length; i++) {
             dst[i] = U.getByte(srcAddr + i);
         }
+    }
+
+    @Override
+    public void close() {
+        allocator.free(pages);
+        allocator.close();
     }
 }

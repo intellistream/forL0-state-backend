@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
 
+// TODO: outstandingBytes 有问题
 public final class MemoryManagerAllocator implements HybridMemoryAllocator {
 
     private final MemoryManager memoryManager;
