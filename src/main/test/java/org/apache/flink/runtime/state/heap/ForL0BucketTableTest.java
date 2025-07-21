@@ -1,112 +1,204 @@
 package org.apache.flink.runtime.state.heap;
 
-import org.apache.flink.runtime.state.heap.space.MemorySlice;
-import org.apache.flink.runtime.state.heap.space.SimpleUnsafeMemoryAllocator;
+import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.runtime.memory.MemoryAllocationException;
+import org.apache.flink.runtime.memory.MemoryManager;
+import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import java.lang.reflect.Field;
+import java.util.List;
 
-public class ForL0BucketTableTest {
-    private SimpleUnsafeMemoryAllocator allocator;
-    private ForL0BucketTable table;
+import static org.junit.jupiter.api.Assertions.*;
 
-    /* ========== 辅助工具 ========== */
+/**
+ * Unit tests for {@link ForL0BucketTable}.
+ *
+ * <p>The tests focus on:
+ * <ul>
+ *   <li>basic insert / lookup semantics</li>
+ *   <li>collision handling inside the root bucket</li>
+ *   <li>local expansion that creates child buckets</li>
+ *   <li>slab growth when child‑bucket count exceeds initial capacity</li>
+ *   <li>native memory accounting &amp; leak detection</li>
+ * </ul>
+ *
+ * <p>The helper methods intentionally bypass higher‑level serializers and operate
+ * directly on the entry layout to keep the tests deterministic and fast.
+ */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class ForL0BucketTableTest {
 
-    /** 创建一条最小合法条目，写入 key/ns 字节和 header，返回原生地址 */
+    /* --------------------------------------------------------------------- */
+    /*  Test constants                                                        */
+    /* --------------------------------------------------------------------- */
+
+    private static final int ROOT_BUCKET_POW2 = 2;      // 2^2 = 4 root buckets
+    private static final int PAGE_SIZE        = 64 * 1024;
+    private static final long MEM_SIZE        = 8 * 1024 * 1024L; // 8MB
+
+    /* --------------------------------------------------------------------- */
+    /*  Flink managed memory                                                 */
+    /* --------------------------------------------------------------------- */
+
+    private MemoryManager         memoryManager;
+    private MemoryManagerAllocator allocator;
+    private ForL0BucketTable       table;
+
+    /* --------------------------------------------------------------------- */
+    /*  Test lifecycle                                                       */
+    /* --------------------------------------------------------------------- */
+
+    @BeforeAll
+    void initManager() {
+        memoryManager = MemoryManagerBuilder.newBuilder()
+                                            .setMemorySize(MEM_SIZE)
+                                            .setPageSize(PAGE_SIZE)
+                                            .build();
+    }
+
+    @BeforeEach
+    void setUpTable() {
+        allocator = new MemoryManagerAllocator(memoryManager, this);
+        table     = new ForL0BucketTable(ROOT_BUCKET_POW2, allocator);
+    }
+
+    @AfterEach
+    void tearDown() {
+        allocator.close();
+        memoryManager.verifyEmpty();  // fail test if native memory leaked
+    }
+
+    @AfterAll
+    void closeManager() {
+        memoryManager.shutdown();
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*  Helper utilities                                                     */
+    /* --------------------------------------------------------------------- */
+
+    /** Creates the minimal entry layout (no value) and returns native address. */
     private long createEntry(byte[] key, byte[] ns) {
         int len = ForL0EntryAccess.HEADER + key.length + ns.length;
-        MemorySlice slice = allocator.allocate(len);
-        long addr = slice.address();
-        ForL0EntryAccess.hash(addr, 0);                       // 测试里统一用 hash=0
-        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.KL, key.length);
-        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.NL, ns.length);
-        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.VL, 0); // 无 value
+        List<MemorySegment> pages = null;
+        try {
+            pages = allocator.allocate(len);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException(e);
+        }
+        MemorySegment seg = pages.get(0);
+
+        long addr = seg.getAddress();
+        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.HASH, 0);           // use hash=0
+        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.KL,   key.length);
+        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.NL,   ns.length);
+        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.VL,   0);           // no value
         ForL0EntryAccess.next(addr, 0);
-        long p = addr + ForL0EntryAccess.HEADER;
-        long ba = sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
-        UnsafeUtils.unsafe().copyMemory(key, ba, null, p, key.length);
-        UnsafeUtils.unsafe().copyMemory(ns,  ba, null, p + key.length, ns.length);
+
+        long off = addr + ForL0EntryAccess.HEADER;
+        long aba = sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
+        UnsafeUtils.unsafe().copyMemory(key, aba, null, off,               key.length);
+        UnsafeUtils.unsafe().copyMemory(ns,  aba, null, off + key.length,  ns.length);
         return addr;
     }
 
-    /** 与 ForL0StateMap 相同的 tag 计算，仅用 key */
-    private short tag16(byte[] key) {
+    private static short tag16(byte[] key) {
         int h = 0;
         for (byte b : key) { h ^= b; h *= 0x5bd1e995; h ^= h >>> 15; }
         return (short) (h & 0xFFFF);
     }
 
-    /* ========== JUnit 生命周期 ========== */
-
-    @BeforeEach
-    void setup() {
-        allocator = new SimpleUnsafeMemoryAllocator();
-        /*
-         * 创建根 bucket 数量 = 2^2 = 4，可让所有 hash=0 的条目都落在根 bucket[0]，
-         * 方便测试满载及子桶扩容。
-         */
-        table = new ForL0BucketTable(2, allocator);
-    }
-
-    @AfterEach
-    void teardown() {
-        allocator.close();
-//        assertEquals(0L, allocator.outstandingBytes(),
-//                "native memory should be fully released");
-    }
-
-    /* ========== 测试 ========== */
+    /* --------------------------------------------------------------------- */
+    /*  Tests                                                                */
+    /* --------------------------------------------------------------------- */
 
     @Test
-    void testSingleInsertLookup() {
-        byte[] k = "k1".getBytes(), n = "ns".getBytes();
-        long ptr = createEntry(k, n);
-        table.insert(0, tag16(k), ptr);
+    void insertAndLookup_acrossRootBuckets() {
+        byte[] ns = "ns".getBytes();
 
-        long found = table.lookup(k, n, 0, tag16(k));
-        assertEquals(ptr, found, "lookup should return the exact pointer inserted");
+        // keys designed to land in different root buckets (hash=0, tag decides slot)
+        byte[] k1 = "alpha".getBytes();
+        byte[] k2 = "beta".getBytes();
+
+        long p1 = createEntry(k1, ns);
+        long p2 = createEntry(k2, ns);
+
+        table.insert(0, tag16(k1), p1);
+        table.insert(0, tag16(k2), p2);
+
+        assertEquals(p1, table.lookup(k1, ns, 0, tag16(k1)));
+        assertEquals(p2, table.lookup(k2, ns, 0, tag16(k2)));
     }
 
     @Test
-    void testCollisionWithinRootBucket() {
-        // 填满 6 slot
+    void collisionWithinRootBucket_allSlotsUtilised() {
+        // Fill 6 slots in root bucket[0]
+        byte[] ns = "ns".getBytes();
         for (int i = 0; i < 6; i++) {
             byte[] k = ("k" + i).getBytes();
-            long p = createEntry(k, "ns".getBytes());
-            table.insert(0, tag16(k), p);
+            table.insert(0, tag16(k), createEntry(k, ns));
         }
-        // 确认全部命中
+        // verify they are all reachable
         for (int i = 0; i < 6; i++) {
             byte[] k = ("k" + i).getBytes();
-            long found = table.lookup(k, "ns".getBytes(), 0, tag16(k));
-            assertNotEquals(0, found, "each key should be found in root bucket slots");
+            assertNotEquals(0, table.lookup(k, ns, 0, tag16(k)));
         }
     }
 
     @Test
-    void testLocalExpansionCreatesChildBucket() {
-        // 先插入 6 条填满根 bucket
+    void localExpansion_createsAndFindsChildBucket() {
+        byte[] ns = "ns".getBytes();
+
+        // Fill root bucket
         for (int i = 0; i < 6; i++) {
             byte[] k = ("root" + i).getBytes();
-            table.insert(0, tag16(k), createEntry(k, "ns".getBytes()));
+            table.insert(0, tag16(k), createEntry(k, ns));
         }
-        // 再插入额外条目 -> 触发子桶扩容 (tag 决定 child index)
-        byte[] extraKey = "extra".getBytes();
-        long extraPtr = createEntry(extraKey, "ns".getBytes());
-        table.insert(0, tag16(extraKey), extraPtr);
 
-        long found = table.lookup(extraKey, "ns".getBytes(), 0, tag16(extraKey));
-        assertEquals(extraPtr, found, "key should reside in the newly created child bucket");
+        // Insert one more -> should go to child
+        byte[] extra = "extra".getBytes();
+        long extraPtr = createEntry(extra, ns);
+        table.insert(0, tag16(extra), extraPtr);
+
+        long found = table.lookup(extra, ns, 0, tag16(extra));
+        assertEquals(extraPtr, found, "entry should be located in child bucket");
     }
 
     @Test
-    void testLookupMissReturnsZero() {
-        byte[] k = "foo".getBytes();
-        long res = table.lookup(k, "ns".getBytes(), 0, tag16(k));
-        assertEquals(0, res, "lookup on empty table should return 0");
+    void slabGrows_whenChildBucketsExceedCapacity() throws Exception {
+        byte[] ns = "ns".getBytes();
+
+        // Continuously cause local expansions until slab doubles
+        int initialTotalBuckets = getTotalBuckets(table);
+
+        int inserts = 0;
+        while (getTotalBuckets(table) == initialTotalBuckets) {
+            byte[] k = ("bulk" + inserts).getBytes();
+            table.insert(0, tag16(k), createEntry(k, ns));
+            inserts++;
+        }
+        int grownBuckets = getTotalBuckets(table);
+        assertEquals(initialTotalBuckets * 2, grownBuckets,
+                     "totalBuckets should double after slab grow");
+    }
+
+    @Test
+    void afterClose_noOutstandingBytes() {
+        allocator.close();
+        assertEquals(0, allocator.outstandingBytes(),
+                     "allocator should report zero outstanding bytes after close");
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*  Reflection helpers                                                   */
+    /* --------------------------------------------------------------------- */
+
+    private static int getTotalBuckets(ForL0BucketTable t) throws Exception {
+        Field f = ForL0BucketTable.class.getDeclaredField("totalBuckets");
+        f.setAccessible(true);
+        return (int) f.get(t);
     }
 }

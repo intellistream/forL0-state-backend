@@ -3,10 +3,11 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
+import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
-import org.apache.flink.runtime.state.heap.space.MemorySlice;
-import org.apache.flink.runtime.state.heap.space.SimpleUnsafeMemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.slf4j.Logger;
@@ -16,6 +17,7 @@ import sun.misc.Unsafe;
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.List;
 import java.util.stream.Stream;
 
 public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoCloseable {
@@ -25,18 +27,19 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private final TypeSerializer<K> keySerializer;
     private final TypeSerializer<N> namespaceSerializer;
     private final TypeSerializer<S> stateSerializer;
-    private final SimpleUnsafeMemoryAllocator allocator;
+    private final MemoryManagerAllocator allocator;
     private final ForL0BucketTable table;
     private int size = 0;
 
     public ForL0StateMap(int initPow2,
                          TypeSerializer<K> keySerializer,
                          TypeSerializer<N> namespaceSerializer,
-                         TypeSerializer<S> stateSerializer) {
+                         TypeSerializer<S> stateSerializer,
+                         MemoryManagerAllocator allocator) {
         this.keySerializer = keySerializer;
         this.namespaceSerializer = namespaceSerializer;
         this.stateSerializer = stateSerializer;
-        this.allocator = new SimpleUnsafeMemoryAllocator();
+        this.allocator = allocator;
         this.table = new ForL0BucketTable(initPow2, allocator);
     }
 
@@ -171,8 +174,15 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     private long createEntry(int hash, byte[] k, byte[] n, byte[] v) {
         int len = ForL0EntryAccess.HEADER + k.length + n.length + v.length;
-        MemorySlice slice = allocator.allocate(len);
-        long addr = slice.address();
+        List<MemorySegment> pages = null;
+        try {
+            pages = allocator.allocate(len);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException(e);
+        }
+        assert pages.size() == 1 : "entry allocation expects a single contiguous MemorySegment; adjust segment-size if necessary";
+        MemorySegment seg = pages.get(0);
+        long addr = seg.getAddress();
         ForL0EntryAccess.hash(addr, hash);
         Unsafe U = UnsafeUtils.unsafe();
 

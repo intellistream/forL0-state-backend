@@ -3,6 +3,7 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.core.execution.SavepointFormatType;
+import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.*;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.slf4j.Logger;
@@ -71,7 +72,8 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                         localRecoveryConfig,
                         priorityQueueSetFactory,
                         true,
-                        parameters.getCancelStreamRegistry())
+                        parameters.getCancelStreamRegistry(),
+                        parameters.getEnv().getMemoryManager()) // get MemoryManager for off-heap memory allocation
                 .build();
     }
 

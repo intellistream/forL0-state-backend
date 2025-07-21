@@ -11,6 +11,7 @@ import org.apache.flink.api.common.typeutils.TypeSerializerSchemaCompatibility;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
+import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.*;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
@@ -71,6 +72,9 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     /** Factory for state that is organized as priority queue. */
     private final HeapPriorityQueuesManager priorityQueuesManager;
 
+    //** Memory manager for allocating memory for the state backend. */
+    private final MemoryManager memoryManager;
+
     public ForL0KeyedStateBackend (
             TaskKvStateRegistry kvStateRegistry,
             TypeSerializer<K> keySerializer,
@@ -87,7 +91,8 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             HeapSnapshotStrategy<K> checkpointStrategy, // TODO: need to be modified
             SnapshotExecutionType snapshotExecutionType,
             StateTableFactory<K> stateTableFactory,
-            InternalKeyContext<K> keyContext) {
+            InternalKeyContext<K> keyContext,
+            MemoryManager memoryManager) {
         super(
                 kvStateRegistry,
                 keySerializer,
@@ -110,6 +115,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                         priorityQueueSetFactory,
                         keyContext.getKeyGroupRange(),
                         keyContext.getNumberOfKeyGroups());
+        this.memoryManager = memoryManager;
 
         LOG.info("++++++++++++++++++ Initializing ForL0KeyedStateBackend ++++++++++++++++++++");
     }

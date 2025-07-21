@@ -1,8 +1,10 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
+import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
@@ -10,10 +12,14 @@ import java.util.List;
 
 public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
+    private final MemoryManager memoryManager;
+
     ForL0StateTable(InternalKeyContext<K> keyContext,
                     RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
-                    TypeSerializer<K> keySerializer) {
+                    TypeSerializer<K> keySerializer,
+                    MemoryManager memoryManager) {
         super(keyContext, metaInfo, keySerializer);
+        this.memoryManager = memoryManager;
     }
 
     @Override
@@ -21,7 +27,8 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         return new ForL0StateMap<>(8,
                                     getKeySerializer(),
                                     getNamespaceSerializer(),
-                                    getStateSerializer());
+                                    getStateSerializer(),
+                                    new MemoryManagerAllocator(memoryManager, this));
     }
 
     @Override

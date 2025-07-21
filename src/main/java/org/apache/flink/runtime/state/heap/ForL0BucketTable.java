@@ -1,15 +1,20 @@
 package org.apache.flink.runtime.state.heap;
 
-import org.apache.flink.runtime.state.heap.space.MemorySlice;
-import org.apache.flink.runtime.state.heap.space.SimpleUnsafeMemoryAllocator;
+import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.runtime.memory.MemoryAllocationException;
+import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import java.util.List;
 import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import sun.misc.Unsafe;
 
-public class ForL0BucketTable {
+/**
+ * **Deprecated**
+ */
+public class ForL0BucketTable implements AutoCloseable {
 
-    private  MemorySlice slab; // 64B * bucketCap
+    private MemorySegment slab; // 64B * bucketCap
     private final int bucketCapMask; // 2^n - 1
-    private final SimpleUnsafeMemoryAllocator alloc;
+    private final MemoryManagerAllocator alloc;
     private final int rootBucketCount;
     private int totalBuckets;
 
@@ -22,19 +27,28 @@ public class ForL0BucketTable {
 
     private int nextFree = 0;
 
-    ForL0BucketTable(int initCapPow2, SimpleUnsafeMemoryAllocator alloc) {
+    ForL0BucketTable(int initCapPow2, MemoryManagerAllocator alloc) {
         this.alloc = alloc;
         int cap = 1 << initCapPow2;
-        this.slab = alloc.allocate(cap * 64);
+        List<MemorySegment> pages = null;
+        try {
+            pages = alloc.allocate(cap * 64);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException("Failed to allocate memory for ForL0BucketTable", e);
+        }
+        assert pages.size() == 1 : "ForL0BucketTable expects a contiguous slab; increase segment-size to accommodate";
+        this.slab = pages.get(0);
+        // zero‑fill the root buckets so that child‑index bytes start at 0
+        UNSAFE.setMemory(this.slab.getAddress(), cap * 64L, (byte) 0);
         this.bucketCapMask = cap - 1;
         this.rootBucketCount = cap;
-        this.totalBuckets = rootBucketCount - 1;
+        this.totalBuckets = rootBucketCount;
     }
 
     private long bucketAddr(int idx) {
         assert idx < totalBuckets
                 : "bucket index out of slab range: " + idx + " >= " + totalBuckets;
-        return slab.address() + ((long) idx << 6); // *64
+        return slab.getAddress() + ((long) idx << 6); // *64
     }
 
     /**
@@ -103,7 +117,7 @@ public class ForL0BucketTable {
             growSlab();
         }
         int idx = rootBucketCount + (nextFree++);
-        long p  = bucketAddr(idx);
+        long p = bucketAddr(idx);
         UNSAFE.setMemory(p, 64, (byte) 0);
         return idx;
     }
@@ -111,19 +125,32 @@ public class ForL0BucketTable {
     /** slab 翻倍并拷贝原内容 */
     private void growSlab() {
         int newBuckets = totalBuckets << 1;
-        MemorySlice bigger = alloc.allocate(newBuckets * 64);
+        int bytesNeeded = newBuckets * 64;
+        List<MemorySegment> pages = null;
+        try {
+            pages = alloc.allocate(bytesNeeded);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException("Failed to allocate memory for ForL0BucketTable", e);
+        }
+        assert pages.size() == 1 : "ForL0BucketTable requires a single contiguous MemorySegment; configure larger segment-size";
+        MemorySegment bigger = pages.get(0);
 
-        // 拷贝旧 slab 全部内容
-        UNSAFE.copyMemory(
-                null, slab.address(),
-                null, bigger.address(),
+        // copy old slab content
+        UnsafeUtils.unsafe().copyMemory(
+                null, slab.getAddress(),
+                null, bigger.getAddress(),
                 (long) totalBuckets * 64);
 
-        slab.release();          // 归还旧 slab
+        slab.free();            // return old slab to MemoryManager
         slab = bigger;
         totalBuckets = newBuckets;
     }
+
+    @Override
+    public void close() {
+        if (slab != null) {
+            slab.free();
+            slab = null;
+        }
+    }
 }
-
-
-

@@ -52,6 +52,13 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
         }
     }
 
+    public void free(MemorySegment segment) {
+        if (segment != null) {
+            segment.free(); // internally triggers MemoryManager#releaseMemory(...)
+            usedBytes.add(-pageSize);
+        }
+    }
+
     @Override
     public long outstandingBytes() {
         return usedBytes.sum();
@@ -74,5 +81,9 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
         if (closed) {
             throw new IllegalStateException("allocator has already been closed");
         }
+    }
+
+    public long getPageSize() {
+        return  pageSize;
     }
 }

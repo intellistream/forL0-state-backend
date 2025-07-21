@@ -3,6 +3,7 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.fs.CloseableRegistry;
+import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.*;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
@@ -23,6 +24,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     private final HeapPriorityQueueSetFactory priorityQueueSetFactory;
     /** Whether asynchronous snapshot is enabled. */
     private final boolean asynchronousSnapshots;
+    /** Memory manager for allocating memory for the state backend. */
+    private final MemoryManager memoryManager;
 
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
@@ -38,7 +41,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             LocalRecoveryConfig localRecoveryConfig,
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
             boolean asynchronousSnapshots,
-            CloseableRegistry cancelStreamRegistry) {
+            CloseableRegistry cancelStreamRegistry,
+            MemoryManager memoryManager) {
         super(
                 kvStateRegistry,
                 keySerializer,
@@ -54,6 +58,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.localRecoveryConfig = localRecoveryConfig;
         this.priorityQueueSetFactory = priorityQueueSetFactory;
         this.asynchronousSnapshots = asynchronousSnapshots;
+        this.memoryManager = memoryManager;
     }
 
     @Override
@@ -67,7 +72,15 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         InternalKeyContext<K> keyContext =
                 new InternalKeyContextImpl<>(keyGroupRange, numberOfKeyGroups);
 
-        final StateTableFactory<K> stateTableFactory = ForL0StateTable::new;
+        // capture the memoryManager so that each StateTable gets its own allocator
+        final StateTableFactory<K> stateTableFactory = new StateTableFactory<K>() {
+            @Override
+            public <N, V> StateTable<K, N, V> newStateTable(InternalKeyContext<K> keyContext,
+                                                            RegisteredKeyValueStateBackendMetaInfo<N, V> keyValueStateMetaInfo,
+                                                            TypeSerializer<K> keySerializer) {
+                return new ForL0StateTable<>(keyContext, keyValueStateMetaInfo, keySerializer, memoryManager);
+            }
+        };
 
         restoreState(registeredKVStates, registeredPQStates, keyContext, stateTableFactory);
         return new ForL0KeyedStateBackend<>(
@@ -86,7 +99,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 snapshotStrategy,
                 asynchronousSnapshots ? ASYNCHRONOUS : SYNCHRONOUS,
                 stateTableFactory,
-                keyContext);
+                keyContext,
+                memoryManager);
     }
 
     // Below methods are copied from heap state, may need to be modified

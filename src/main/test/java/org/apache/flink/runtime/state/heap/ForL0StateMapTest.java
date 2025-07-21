@@ -2,6 +2,9 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
+import org.apache.flink.runtime.memory.MemoryManager;
+import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,12 +20,20 @@ public class ForL0StateMapTest {
 
     @BeforeEach
     void setUp() {
+        // 8MB for tests
+        // 64KB segment-size
+        MemoryManager memoryManager = MemoryManagerBuilder.newBuilder()
+                .setMemorySize(8 * 1024 * 1024L)    // 8MB for tests
+                .setPageSize(64 * 1024)             // 64KB segment-size
+                .build();
+        MemoryManagerAllocator allocator = new MemoryManagerAllocator(memoryManager, this);
         // 2^8 = 256 根 bucket，足够覆盖批量测试
         map = new ForL0StateMap<>(
                 8,                                 // initPow2
                 StringSerializer.INSTANCE,         // key serializer
                 StringSerializer.INSTANCE,         // namespace serializer
-                IntSerializer.INSTANCE);           // state serializer
+                IntSerializer.INSTANCE,
+                allocator);           // state serializer
     }
 
     @AfterEach
