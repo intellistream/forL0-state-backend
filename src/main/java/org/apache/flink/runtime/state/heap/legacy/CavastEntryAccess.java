@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.legacy;
 
 import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import sun.misc.Unsafe;
@@ -6,7 +6,7 @@ import sun.misc.Unsafe;
 /**
  * **Deprecated** A util class for convenient off-heap state map entry access
  */
-final class ForL0EntryAccess {
+final class CavastEntryAccess {
     private static final Unsafe UNSAFE = UnsafeUtils.unsafe();
 
     // Offsets k=key n=namespace v=value

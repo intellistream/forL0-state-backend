@@ -5,6 +5,9 @@ import org.apache.flink.runtime.memory.MemoryAllocationException;
 
 import java.util.List;
 
+/**
+ * This is for Flink MemoryManager-based allocators that can allocate and free memory segments.
+ */
 public interface HybridMemoryAllocator extends AutoCloseable {
     /** Allocates at least {@code bytes} bytes and returns the backing segments. */
     List<MemorySegment> allocate(int bytes) throws MemoryAllocationException;

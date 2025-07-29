@@ -1,10 +1,10 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.levelhash;
 
 /**
  * 64‑byte bucket layout utilities – offsets, masks and helpers.
  */
-final class BucketLayout {
-    private BucketLayout() {}
+final class LevelHashBucketLayout {
+    private LevelHashBucketLayout() {}
 
     /** Number of logical slots in a bucket (tag + ptr). */
     public static final int SLOT_COUNT = 4;

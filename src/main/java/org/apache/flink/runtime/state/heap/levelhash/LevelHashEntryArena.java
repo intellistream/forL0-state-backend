@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.levelhash;
 
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
@@ -10,7 +10,7 @@ import sun.misc.Unsafe;
 import java.util.ArrayList;
 import java.util.List;
 
-final class EntryArena implements AutoCloseable {
+final class LevelHashEntryArena implements AutoCloseable {
     private static final Unsafe U = UnsafeUtils.unsafe();
     private static final int HEADER_SIZE = 12; // keyHash (4) + lenK (4) + lenV (4)
 
@@ -18,7 +18,7 @@ final class EntryArena implements AutoCloseable {
     private final List<MemorySegment> pages = new ArrayList<>();
     private long writeCursor = 0;            // absolute address for next alloc
 
-    EntryArena(MemoryManagerAllocator allocator) {
+    LevelHashEntryArena(MemoryManagerAllocator allocator) {
         this.allocator = allocator;
     }
 

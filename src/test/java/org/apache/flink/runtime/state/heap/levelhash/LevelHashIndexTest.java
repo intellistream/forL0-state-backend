@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.levelhash;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
@@ -19,13 +19,13 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * We store the integer key itself in the lower 32‑bits of the ptr to keep assertions simple.
  */
-class OffHeapLevelHashIndexTest {
+class LevelHashIndexTest {
 
     // ---------------------------------------------------------------------
 
     private static MemoryManager     mm;
     private MemoryManagerAllocator   allocator;
-    private OffHeapLevelHashIndex    index;
+    private LevelHashIndex index;
 
     private static long encode(int v) { return (v & 0xffff_ffffL); }
     private static int  decode(long p){ return (int) p; }
@@ -44,7 +44,7 @@ class OffHeapLevelHashIndexTest {
     void open() throws Exception {
         allocator = new MemoryManagerAllocator(mm, this);
         // initial 1k top buckets (must be power‑of‑two exponent)
-        index = new OffHeapLevelHashIndex(allocator, 10); // 2^10 = 1024
+        index = new LevelHashIndex(allocator, 10); // 2^10 = 1024
     }
 
     @AfterEach

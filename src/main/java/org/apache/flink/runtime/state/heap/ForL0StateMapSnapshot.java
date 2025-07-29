@@ -4,6 +4,7 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateSnapshotTransformer;
+import org.apache.flink.runtime.state.heap.levelhash.LevelHashStateMap;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;

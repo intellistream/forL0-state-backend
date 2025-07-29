@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.levelhash;
 
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
@@ -9,7 +9,7 @@ import sun.misc.Unsafe;
 
 import java.util.List;
 
-public final class OffHeapLevelHashIndex implements AutoCloseable {
+public final class LevelHashIndex implements AutoCloseable {
 
     private static final Unsafe U = UnsafeUtils.unsafe();
 
@@ -27,8 +27,8 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
 
     // ---------------------------------------------------------------------
     /** Creates a Level‑Hash index with given power‑of‑two top capacity (e.g. 16 ⇒ 65536 buckets). */
-    public OffHeapLevelHashIndex(MemoryManagerAllocator allocator,
-                                 int initialCapacityPow2) {
+    public LevelHashIndex(MemoryManagerAllocator allocator,
+                          int initialCapacityPow2) {
         if (initialCapacityPow2 < 4 || initialCapacityPow2 > 28) {
             throw new IllegalArgumentException("capacity pow2 out of range: " + initialCapacityPow2);
         }
@@ -58,9 +58,9 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
         int sb1  = (int) (h1 & ((topCapacity >> 1) - 1));
         int sb2  = (int) (h2 & ((topCapacity >> 1) - 1));
 
-        long old = deleteFromBucket(topBase + ((long) idx1 * BucketLayout.BUCKET_SIZE), fp);
+        long old = deleteFromBucket(topBase + ((long) idx1 * LevelHashBucketLayout.BUCKET_SIZE), fp);
         if (old != 0) { size--; return old; }
-        old = deleteFromBucket(topBase + ((long) idx2 * BucketLayout.BUCKET_SIZE), fp);
+        old = deleteFromBucket(topBase + ((long) idx2 * LevelHashBucketLayout.BUCKET_SIZE), fp);
         if (old != 0) { size--; return old; }
         old = deleteFromBottomChain(sb1, fp);
         if (old != 0) { size--; return old; }
@@ -128,9 +128,9 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
         int sb1  = (int) (h1 & ((topCapacity >> 1) - 1));
         int sb2  = (int) (h2 & ((topCapacity >> 1) - 1));
 
-        long p = searchBucket(topBase + ((long) idx1 * BucketLayout.BUCKET_SIZE), fp);
+        long p = searchBucket(topBase + ((long) idx1 * LevelHashBucketLayout.BUCKET_SIZE), fp);
         if (p != 0) { return p; }
-        p = searchBucket(topBase + ((long) idx2 * BucketLayout.BUCKET_SIZE), fp);
+        p = searchBucket(topBase + ((long) idx2 * LevelHashBucketLayout.BUCKET_SIZE), fp);
         if (p != 0) { return p; }
         p = searchBottomChain(sb1, fp);
         if (p != 0) { return p; }
@@ -149,15 +149,15 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     // ---------------------------------------------------------------------
 
     private long searchAndMaybeUpdate(int index, int fp, long newPtr) {
-        long bucketAddr = topBase + ((long) index * BucketLayout.BUCKET_SIZE);
-        byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
+        long bucketAddr = topBase + ((long) index * LevelHashBucketLayout.BUCKET_SIZE);
+        byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
         if (mask == 0) { return 0; }
-        for (int slot = 0; slot < BucketLayout.SLOT_COUNT; slot++) {
+        for (int slot = 0; slot < LevelHashBucketLayout.SLOT_COUNT; slot++) {
             if ((mask & (1 << slot)) == 0) { continue; }
-            int tag = U.getInt(bucketAddr + BucketLayout.tagOffset(slot));
+            int tag = U.getInt(bucketAddr + LevelHashBucketLayout.tagOffset(slot));
             if (tag == fp) {
-                long oldPtr = U.getLong(bucketAddr + BucketLayout.ptrOffset(slot));
-                U.putLong(bucketAddr + BucketLayout.ptrOffset(slot), newPtr);
+                long oldPtr = U.getLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot));
+                U.putLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot), newPtr);
                 return oldPtr;
             }
         }
@@ -166,35 +166,35 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
 
     private boolean tryInsertIntoTop(int idx1, int idx2, int fp, long ptr) {
         int target = bucketFreeSlots(idx1) >= bucketFreeSlots(idx2) ? idx1 : idx2;
-        return insertIntoBucket(topBase + ((long) target * BucketLayout.BUCKET_SIZE), fp, ptr);
+        return insertIntoBucket(topBase + ((long) target * LevelHashBucketLayout.BUCKET_SIZE), fp, ptr);
     }
 
     private boolean insertIntoBucket(long bucketAddr, int fp, long ptr) {
-        byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
-        if (Integer.bitCount(mask & 0x0F) == BucketLayout.SLOT_COUNT) { return false; }
+        byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
+        if (Integer.bitCount(mask & 0x0F) == LevelHashBucketLayout.SLOT_COUNT) { return false; }
         int slot = firstZero(mask);
-        U.putInt(bucketAddr + BucketLayout.tagOffset(slot), fp);
-        U.putLong(bucketAddr + BucketLayout.ptrOffset(slot), ptr);
-        U.putByte(bucketAddr + BucketLayout.MASK_OFFSET, (byte) (mask | (1 << slot)));
+        U.putInt(bucketAddr + LevelHashBucketLayout.tagOffset(slot), fp);
+        U.putLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot), ptr);
+        U.putByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET, (byte) (mask | (1 << slot)));
         return true;
     }
 
     private int bucketFreeSlots(int idx) {
-        byte mask = U.getByte(topBase + ((long) idx * BucketLayout.BUCKET_SIZE) + BucketLayout.MASK_OFFSET);
-        return BucketLayout.SLOT_COUNT - Integer.bitCount(mask & 0x0F);
+        byte mask = U.getByte(topBase + ((long) idx * LevelHashBucketLayout.BUCKET_SIZE) + LevelHashBucketLayout.MASK_OFFSET);
+        return LevelHashBucketLayout.SLOT_COUNT - Integer.bitCount(mask & 0x0F);
     }
 
     private boolean relocateOnce(int idx, int fpNew, long ptrNew) {
-        long bucketAddr = topBase + ((long) idx * BucketLayout.BUCKET_SIZE);
-        byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
-        for (int slot = 0; slot < BucketLayout.SLOT_COUNT; slot++) {
+        long bucketAddr = topBase + ((long) idx * LevelHashBucketLayout.BUCKET_SIZE);
+        byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
+        for (int slot = 0; slot < LevelHashBucketLayout.SLOT_COUNT; slot++) {
             if ((mask & (1 << slot)) == 0) { continue; }
-            int tag = U.getInt(bucketAddr + BucketLayout.tagOffset(slot));
+            int tag = U.getInt(bucketAddr + LevelHashBucketLayout.tagOffset(slot));
             int altIdx = alternativeIndex(tag, idx);
-            if (insertIntoBucket(topBase + ((long) altIdx * BucketLayout.BUCKET_SIZE), tag,
-                    U.getLong(bucketAddr + BucketLayout.ptrOffset(slot)))) {
+            if (insertIntoBucket(topBase + ((long) altIdx * LevelHashBucketLayout.BUCKET_SIZE), tag,
+                    U.getLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot)))) {
                 // free slot
-                U.putByte(bucketAddr + BucketLayout.MASK_OFFSET, (byte) (mask & ~(1 << slot)));
+                U.putByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET, (byte) (mask & ~(1 << slot)));
                 return insertIntoBucket(bucketAddr, fpNew, ptrNew);
             }
         }
@@ -208,26 +208,26 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     }
 
     private boolean tryInsertIntoBottom(int sbIdx, int fp, long ptr) {
-        long bucketAddr = bottomBase + ((long) sbIdx * BucketLayout.BUCKET_SIZE);
+        long bucketAddr = bottomBase + ((long) sbIdx * LevelHashBucketLayout.BUCKET_SIZE);
         while (true) {
             if (insertIntoBucket(bucketAddr, fp, ptr)) { return true; }
-            byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
+            byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
             boolean hasNext = (mask & (1 << 4)) != 0;
             if (!hasNext) {
                 // allocate new chain bucket
                 long newAddr = allocateExtraBucket();
-                U.putLong(bucketAddr + BucketLayout.PTR3_OFFSET + 8, newAddr); // store as nextPtr
-                U.putByte(bucketAddr + BucketLayout.MASK_OFFSET, (byte) (mask | (1 << 4)));
+                U.putLong(bucketAddr + LevelHashBucketLayout.PTR3_OFFSET + 8, newAddr); // store as nextPtr
+                U.putByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET, (byte) (mask | (1 << 4)));
                 bucketAddr = newAddr;
             } else {
-                bucketAddr = U.getLong(bucketAddr + BucketLayout.PTR3_OFFSET + 8);
+                bucketAddr = U.getLong(bucketAddr + LevelHashBucketLayout.PTR3_OFFSET + 8);
             }
         }
     }
 
     private long allocateExtraBucket() {
         try {
-            List<MemorySegment> seg = allocator.allocate(BucketLayout.BUCKET_SIZE);
+            List<MemorySegment> seg = allocator.allocate(LevelHashBucketLayout.BUCKET_SIZE);
             ownedSegs.addAll(seg);
             return seg.get(0).getAddress();
         } catch (MemoryAllocationException e) {
@@ -236,47 +236,47 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     }
 
     private long searchBucket(long bucketAddr, int fp) {
-        byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
+        byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
         if (mask == 0) { return 0; }
-        for (int slot = 0; slot < BucketLayout.SLOT_COUNT; slot++) {
+        for (int slot = 0; slot < LevelHashBucketLayout.SLOT_COUNT; slot++) {
             if ((mask & (1 << slot)) == 0) { continue; }
-            int tag = U.getInt(bucketAddr + BucketLayout.tagOffset(slot));
+            int tag = U.getInt(bucketAddr + LevelHashBucketLayout.tagOffset(slot));
             if (tag == fp) {
-                return U.getLong(bucketAddr + BucketLayout.ptrOffset(slot));
+                return U.getLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot));
             }
         }
         return 0;
     }
 
     private long searchBottomChain(int sbIdx, int fp) {
-        long bucketAddr = bottomBase + ((long) sbIdx * BucketLayout.BUCKET_SIZE);
+        long bucketAddr = bottomBase + ((long) sbIdx * LevelHashBucketLayout.BUCKET_SIZE);
         while (true) {
             long ptr = searchBucket(bucketAddr, fp);
             if (ptr != 0) { return ptr; }
-            byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
+            byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
             if ((mask & (1 << 4)) == 0) { return 0; }
-            bucketAddr = U.getLong(bucketAddr + BucketLayout.PTR3_OFFSET + 8);
+            bucketAddr = U.getLong(bucketAddr + LevelHashBucketLayout.PTR3_OFFSET + 8);
         }
     }
 
     private static int firstZero(byte mask) {
-        for (int i = 0; i < BucketLayout.SLOT_COUNT; i++) {
+        for (int i = 0; i < LevelHashBucketLayout.SLOT_COUNT; i++) {
             if ((mask & (1 << i)) == 0) { return i; }
         }
         return -1; // should not reach here
     }
 
     private long deleteFromBucket(long bucketAddr, int fp) {
-        byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
+        byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
         if (mask == 0) { return 0; }
-        for (int slot = 0; slot < BucketLayout.SLOT_COUNT; slot++) {
+        for (int slot = 0; slot < LevelHashBucketLayout.SLOT_COUNT; slot++) {
             if ((mask & (1 << slot)) == 0) { continue; }
-            int tag = U.getInt(bucketAddr + BucketLayout.tagOffset(slot));
+            int tag = U.getInt(bucketAddr + LevelHashBucketLayout.tagOffset(slot));
             if (tag == fp) {
-                long ptr = U.getLong(bucketAddr + BucketLayout.ptrOffset(slot));
+                long ptr = U.getLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot));
                 // clear bit and zero out ptr
-                U.putByte(bucketAddr + BucketLayout.MASK_OFFSET, (byte) (mask & ~(1 << slot)));
-                U.putLong(bucketAddr + BucketLayout.ptrOffset(slot), 0);
+                U.putByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET, (byte) (mask & ~(1 << slot)));
+                U.putLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot), 0);
                 return ptr;
             }
         }
@@ -284,13 +284,13 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     }
 
     private long deleteFromBottomChain(int sbIdx, int fp) {
-        long bucketAddr = bottomBase + ((long) sbIdx * BucketLayout.BUCKET_SIZE);
+        long bucketAddr = bottomBase + ((long) sbIdx * LevelHashBucketLayout.BUCKET_SIZE);
         while (true) {
             long ptr = deleteFromBucket(bucketAddr, fp);
             if (ptr != 0) { return ptr; }
-            byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
+            byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
             if ((mask & (1 << 4)) == 0) { return 0; }
-            bucketAddr = U.getLong(bucketAddr + BucketLayout.PTR3_OFFSET + 8);
+            bucketAddr = U.getLong(bucketAddr + LevelHashBucketLayout.PTR3_OFFSET + 8);
         }
     }
 
@@ -299,21 +299,21 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     // ---------------------------------------------------------------------
     private void resize() throws MemoryAllocationException {
         java.util.List<MemorySegment> oldSegs = new java.util.ArrayList<>(ownedSegs);
-        int newTopCap = ResizeHelper.calculateNewTopCapacity(topCapacity);
+        int newTopCap = LevelHashResizeHelper.calculateNewTopCapacity(topCapacity);
         long newTopBase = allocateBuckets(newTopCap);
         long newBottomBase = allocateBuckets(newTopCap >> 1);
 
         // migrate only bottom
-        ResizeHelper.migrateBottomToNewTop(this, bottomBase, topCapacity >> 1,
+        LevelHashResizeHelper.migrateBottomToNewTop(this, bottomBase, topCapacity >> 1,
                 newTopBase, newTopCap);
         // migrate interim (old top)
         for (int i = 0; i < topCapacity; i++) {
-            long bucketAddr = topBase + ((long) i * BucketLayout.BUCKET_SIZE);
-            byte mask = U.getByte(bucketAddr + BucketLayout.MASK_OFFSET);
-            for (int slot = 0; slot < BucketLayout.SLOT_COUNT; slot++) {
+            long bucketAddr = topBase + ((long) i * LevelHashBucketLayout.BUCKET_SIZE);
+            byte mask = U.getByte(bucketAddr + LevelHashBucketLayout.MASK_OFFSET);
+            for (int slot = 0; slot < LevelHashBucketLayout.SLOT_COUNT; slot++) {
                 if ((mask & (1 << slot)) == 0) { continue; }
-                int tag = U.getInt(bucketAddr + BucketLayout.tagOffset(slot));
-                long ptr = U.getLong(bucketAddr + BucketLayout.ptrOffset(slot));
+                int tag = U.getInt(bucketAddr + LevelHashBucketLayout.tagOffset(slot));
+                long ptr = U.getLong(bucketAddr + LevelHashBucketLayout.ptrOffset(slot));
                 rawInsertIntoNewTop(tag, ptr, newTopBase, newTopCap);
             }
         }
@@ -331,10 +331,10 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     // raw insert into newTop – assumes free slot exists (resize private)
     void rawInsertIntoNewTop(int tag, long ptr, long newTopBase, int newTopCap) {
         int idx = tag & (newTopCap - 1); // simple choice, linear probing if busy
-        long bucketAddr = newTopBase + ((long) idx * BucketLayout.BUCKET_SIZE);
+        long bucketAddr = newTopBase + ((long) idx * LevelHashBucketLayout.BUCKET_SIZE);
         while (!insertIntoBucket(bucketAddr, tag, ptr)) {
             idx = (idx + 1) & (newTopCap - 1);
-            bucketAddr = newTopBase + ((long) idx * BucketLayout.BUCKET_SIZE);
+            bucketAddr = newTopBase + ((long) idx * LevelHashBucketLayout.BUCKET_SIZE);
         }
     }
 
@@ -348,7 +348,7 @@ public final class OffHeapLevelHashIndex implements AutoCloseable {
     }
 
     private long allocateBuckets(int bucketCount) throws MemoryAllocationException {
-        int bytes = bucketCount * BucketLayout.BUCKET_SIZE;
+        int bytes = bucketCount * LevelHashBucketLayout.BUCKET_SIZE;
         List<MemorySegment> segs = allocator.allocate(bytes);
         ownedSegs.addAll(segs);
         return segs.get(0).getAddress();

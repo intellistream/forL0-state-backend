@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.levelhash;
 
 import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
@@ -10,20 +10,18 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.Random;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Basic contract tests for {@link ForL0StateMap}.
+ * Basic contract tests for {@link LevelHashStateMap}.
  *
  * <p>Key = Integer  Namespace = String  Value = Integer</p>
  */
-class ForL0StateMapTest {
+class LevelHashStateMapTest {
 
     private static MemoryManager mm;
     private MemoryManagerAllocator allocator;
-    private ForL0StateMap<Integer,String,Integer> map;
+    private LevelHashStateMap<Integer,String,Integer> map;
 
     // ---------------------------------------------------------------------
     @BeforeAll
@@ -38,7 +36,7 @@ class ForL0StateMapTest {
     @BeforeEach
     void open() throws Exception {
         allocator = new MemoryManagerAllocator(mm, this);
-        map = new ForL0StateMap<>(
+        map = new LevelHashStateMap<>(
                 10,                              // 2^10 = 1 k top buckets
                 IntSerializer.INSTANCE,
                 StringSerializer.INSTANCE,

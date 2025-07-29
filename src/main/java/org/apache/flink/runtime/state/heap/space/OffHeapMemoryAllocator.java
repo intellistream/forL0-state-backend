@@ -1,5 +1,8 @@
 package org.apache.flink.runtime.state.heap.space;
 
+/**
+ * This is for Unsafe-based allocators that can allocate and free memory slices.
+ */
 public interface OffHeapMemoryAllocator extends AutoCloseable {
 
     /**

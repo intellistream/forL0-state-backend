@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.legacy;
 
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
@@ -14,7 +14,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for {@link ForL0BucketTable}.
+ * Unit tests for {@link CavastBucketTable}.
  *
  * <p>The tests focus on:
  * <ul>
@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * directly on the entry layout to keep the tests deterministic and fast.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class ForL0BucketTableTest {
+class CavastBucketTableTest {
 
     /* --------------------------------------------------------------------- */
     /*  Test constants                                                        */
@@ -45,7 +45,7 @@ class ForL0BucketTableTest {
 
     private MemoryManager         memoryManager;
     private MemoryManagerAllocator allocator;
-    private ForL0BucketTable       table;
+    private CavastBucketTable table;
 
     /* --------------------------------------------------------------------- */
     /*  Test lifecycle                                                       */
@@ -62,7 +62,7 @@ class ForL0BucketTableTest {
     @BeforeEach
     void setUpTable() {
         allocator = new MemoryManagerAllocator(memoryManager, this);
-        table     = new ForL0BucketTable(ROOT_BUCKET_POW2, allocator);
+        table     = new CavastBucketTable(ROOT_BUCKET_POW2, allocator);
     }
 
     @AfterEach
@@ -82,7 +82,7 @@ class ForL0BucketTableTest {
 
     /** Creates the minimal entry layout (no value) and returns native address. */
     private long createEntry(byte[] key, byte[] ns) {
-        int len = ForL0EntryAccess.HEADER + key.length + ns.length;
+        int len = CavastEntryAccess.HEADER + key.length + ns.length;
         List<MemorySegment> pages = null;
         try {
             pages = allocator.allocate(len);
@@ -92,13 +92,13 @@ class ForL0BucketTableTest {
         MemorySegment seg = pages.get(0);
 
         long addr = seg.getAddress();
-        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.HASH, 0);           // use hash=0
-        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.KL,   key.length);
-        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.NL,   ns.length);
-        UnsafeUtils.unsafe().putInt(addr + ForL0EntryAccess.VL,   0);           // no value
-        ForL0EntryAccess.next(addr, 0);
+        UnsafeUtils.unsafe().putInt(addr + CavastEntryAccess.HASH, 0);           // use hash=0
+        UnsafeUtils.unsafe().putInt(addr + CavastEntryAccess.KL,   key.length);
+        UnsafeUtils.unsafe().putInt(addr + CavastEntryAccess.NL,   ns.length);
+        UnsafeUtils.unsafe().putInt(addr + CavastEntryAccess.VL,   0);           // no value
+        CavastEntryAccess.next(addr, 0);
 
-        long off = addr + ForL0EntryAccess.HEADER;
+        long off = addr + CavastEntryAccess.HEADER;
         long aba = sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
         UnsafeUtils.unsafe().copyMemory(key, aba, null, off,               key.length);
         UnsafeUtils.unsafe().copyMemory(ns,  aba, null, off + key.length,  ns.length);
@@ -196,8 +196,8 @@ class ForL0BucketTableTest {
     /*  Reflection helpers                                                   */
     /* --------------------------------------------------------------------- */
 
-    private static int getTotalBuckets(ForL0BucketTable t) throws Exception {
-        Field f = ForL0BucketTable.class.getDeclaredField("totalBuckets");
+    private static int getTotalBuckets(CavastBucketTable t) throws Exception {
+        Field f = CavastBucketTable.class.getDeclaredField("totalBuckets");
         f.setAccessible(true);
         return (int) f.get(t);
     }

@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.legacy;
 
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
@@ -10,7 +10,7 @@ import sun.misc.Unsafe;
 /**
  * **Deprecated**
  */
-public class ForL0BucketTable implements AutoCloseable {
+public class CavastBucketTable implements AutoCloseable {
 
     private MemorySegment slab; // 64B * bucketCap
     private final int bucketCapMask; // 2^n - 1
@@ -27,7 +27,7 @@ public class ForL0BucketTable implements AutoCloseable {
 
     private int nextFree = 0;
 
-    ForL0BucketTable(int initCapPow2, MemoryManagerAllocator alloc) {
+    CavastBucketTable(int initCapPow2, MemoryManagerAllocator alloc) {
         this.alloc = alloc;
         int cap = 1 << initCapPow2;
         List<MemorySegment> pages = null;
@@ -76,7 +76,7 @@ public class ForL0BucketTable implements AutoCloseable {
             long ptr = UNSAFE.getLong(bucket + off + SLOT_PTR_OFF);
             if (ptr == 0)
                 return 0;
-            if(tg == tag && ForL0EntryAccess.equalKN(ptr, key, ns))
+            if(tg == tag && CavastEntryAccess.equalKN(ptr, key, ns))
                 return ptr;
         }
         return 0;

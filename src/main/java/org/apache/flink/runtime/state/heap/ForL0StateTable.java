@@ -4,6 +4,7 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
+import org.apache.flink.runtime.state.heap.levelhash.LevelHashStateMap;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import javax.annotation.Nonnull;
@@ -23,8 +24,8 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
     }
 
     @Override
-    protected ForL0StateMap<K, N, S> createStateMap() {
-        return new ForL0StateMap<>(8,
+    protected LevelHashStateMap<K, N, S> createStateMap() {
+        return new LevelHashStateMap<>(8,
                                     getKeySerializer(),
                                     getNamespaceSerializer(),
                                     getStateSerializer(),
@@ -57,7 +58,7 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
     List<ForL0StateMapSnapshot<K, N, S>> getStateMapSnapshotList() {
         List<ForL0StateMapSnapshot<K, N, S>> snapshotList = new ArrayList<>(keyGroupedStateMaps.length);
         for (StateMap<K, N, S> keyGroupedStateMap : keyGroupedStateMaps) {
-            snapshotList.add(((ForL0StateMap<K, N, S>) keyGroupedStateMap).stateSnapshot());
+            snapshotList.add(((LevelHashStateMap<K, N, S>) keyGroupedStateMap).stateSnapshot());
         }
         return snapshotList;
     }

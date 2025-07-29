@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap;
+package org.apache.flink.runtime.state.heap.levelhash;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
@@ -11,24 +11,24 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for {@link EntryArena}.
+ * Unit tests for {@link LevelHashEntryArena}.
  *
  * <p>Verifies:
  * <ul>
  *     <li>Basic put / get round-trip</li>
  *     <li>Page rollover when many entries are appended</li>
- *     <li>All off-heap pages are released by {@link EntryArena#clear()}</li>
+ *     <li>All off-heap pages are released by {@link LevelHashEntryArena#clear()}</li>
  * </ul>
  * </p>
  */
-class EntryArenaTest {
+class LevelHashEntryArenaTest {
 
     private static final int PAGE_SIZE = 4 * 1024;          // Flink minimum
     private static final long TOTAL_MEM = PAGE_SIZE * 16L;  // 16 pages
 
     private static MemoryManager mm;
     private MemoryManagerAllocator allocator;
-    private EntryArena arena;
+    private LevelHashEntryArena arena;
 
     // ---------------------------------------------------------------------
     @BeforeAll
@@ -43,7 +43,7 @@ class EntryArenaTest {
     @BeforeEach
     void setUp() {
         allocator = new MemoryManagerAllocator(mm, this);
-        arena     = new EntryArena(allocator);
+        arena     = new LevelHashEntryArena(allocator);
     }
 
     @AfterEach
