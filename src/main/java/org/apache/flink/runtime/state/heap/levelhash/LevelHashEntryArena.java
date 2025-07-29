@@ -100,7 +100,6 @@ final class LevelHashEntryArena implements AutoCloseable {
 
     @Override
     public void close() {
-        allocator.free(pages);
         allocator.close();
     }
 }

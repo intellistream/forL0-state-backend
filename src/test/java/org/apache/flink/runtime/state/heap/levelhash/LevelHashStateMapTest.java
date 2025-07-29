@@ -47,7 +47,7 @@ class LevelHashStateMapTest {
     @AfterEach
     void close() throws Exception {
         map.close();
-        assertEquals(0L, allocator.outstandingBytes(), "all memory freed");
+        assertEquals(0L, allocator.getUsedBytes(), "all memory freed");
     }
 
     // ---------------------------------------------------------------------

@@ -51,8 +51,7 @@ class MemoryManagerAllocatorTest {
         @Test
         void testConstructorAndInitialization() {
             assertEquals(DEFAULT_PAGE_SIZE, allocator.getPageSize());
-            assertEquals(owner, allocator.getOwner());
-            assertEquals(0, allocator.outstandingBytes());
+            assertEquals(0, allocator.getUsedBytes());
             assertFalse(allocator.isClosed());
         }
 
@@ -64,7 +63,7 @@ class MemoryManagerAllocatorTest {
             assertNotNull(segments);
             assertFalse(segments.isEmpty());
             assertEquals(1, segments.size()); // Should allocate 1 page for 1KB request
-            assertEquals(DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
             // Verify segment properties
             MemorySegment segment = segments.get(0);
@@ -79,7 +78,7 @@ class MemoryManagerAllocatorTest {
 
             assertNotNull(segments);
             assertEquals(4, segments.size()); // Should allocate 4 pages
-            assertEquals(4L * DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(4L * DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
             // Verify all segments
             for (MemorySegment segment : segments) {
@@ -89,25 +88,16 @@ class MemoryManagerAllocatorTest {
         }
 
         @Test
-        void testFreeMemory() throws MemoryAllocationException {
+        void testReleaseMemory() throws MemoryAllocationException {
             List<MemorySegment> segments = allocator.allocate(DEFAULT_PAGE_SIZE);
-            assertEquals(DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
-            allocator.free(segments);
-            assertEquals(0, allocator.outstandingBytes());
+            allocator.release(segments);
+            assertEquals(0, allocator.getUsedBytes());
         }
 
         @Test
-        void testFreeSingleSegment() throws MemoryAllocationException {
-            List<MemorySegment> segments = allocator.allocate(DEFAULT_PAGE_SIZE);
-            MemorySegment segment = segments.get(0);
-
-            allocator.free(segment);
-            assertEquals(0, allocator.outstandingBytes());
-        }
-
-        @Test
-        void testMultipleAllocationsAndFrees() throws MemoryAllocationException {
+        void testMultipleAllocationsAndReleases() throws MemoryAllocationException {
             List<List<MemorySegment>> allocations = new ArrayList<>();
 
             // Allocate multiple chunks
@@ -116,20 +106,71 @@ class MemoryManagerAllocatorTest {
                 allocations.add(segments);
             }
 
-            assertEquals(5L * DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(5L * DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
-            // Free some chunks
-            allocator.free(allocations.get(0));
-            allocator.free(allocations.get(2));
-            allocator.free(allocations.get(4));
+            // Release some chunks
+            allocator.release(allocations.get(0));
+            allocator.release(allocations.get(2));
+            allocator.release(allocations.get(4));
 
-            assertEquals(2L * DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(2L * DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
-            // Free remaining chunks
-            allocator.free(allocations.get(1));
-            allocator.free(allocations.get(3));
+            // Release remaining chunks
+            allocator.release(allocations.get(1));
+            allocator.release(allocations.get(3));
 
-            assertEquals(0, allocator.outstandingBytes());
+            assertEquals(0, allocator.getUsedBytes());
+        }
+
+        @Test
+        void testAlignedMemoryAllocation() throws MemoryAllocationException {
+            long size = 1024;
+            int alignment = 64;
+
+            long alignedAddress = allocator.allocateAligned(size, alignment);
+
+            assertTrue(alignedAddress != 0);
+            assertEquals(0, alignedAddress % alignment, "Address should be aligned");
+            assertTrue(allocator.getUsedBytes() > 0);
+            assertEquals(1, allocator.getAllocatedAlignedBlocks());
+        }
+
+        @Test
+        void testAlignedMemoryDeallocation() throws MemoryAllocationException {
+            long size = 1024;
+            int alignment = 64;
+
+            long alignedAddress = allocator.allocateAligned(size, alignment);
+            long usedBytesAfterAllocation = allocator.getUsedBytes();
+
+            allocator.deallocate(alignedAddress, size);
+
+            assertEquals(0, allocator.getUsedBytes());
+            assertEquals(0, allocator.getAllocatedAlignedBlocks());
+        }
+
+        @Test
+        void testMultipleAlignedAllocations() throws MemoryAllocationException {
+            List<Long> addresses = new ArrayList<>();
+            long size = 512;
+            int alignment = 64;
+
+            // Allocate multiple aligned blocks
+            for (int i = 0; i < 5; i++) {
+                long address = allocator.allocateAligned(size, alignment);
+                addresses.add(address);
+                assertEquals(0, address % alignment, "Address should be aligned");
+            }
+
+            assertEquals(5, allocator.getAllocatedAlignedBlocks());
+
+            // Deallocate all blocks
+            for (long address : addresses) {
+                allocator.deallocate(address, size);
+            }
+
+            assertEquals(0, allocator.getAllocatedAlignedBlocks());
+            assertEquals(0, allocator.getUsedBytes());
         }
     }
 
@@ -151,17 +192,52 @@ class MemoryManagerAllocatorTest {
         }
 
         @Test
-        void testFreeNullSegments() {
-            assertDoesNotThrow(() -> {
-                allocator.free((List<MemorySegment>) null);
-                allocator.free((MemorySegment) null);
+        void testZeroSizeAlignedAllocation() {
+            assertThrows(IllegalArgumentException.class, () -> {
+                allocator.allocateAligned(0, 64);
             });
         }
 
         @Test
-        void testFreeEmptySegmentList() {
+        void testNegativeSizeAlignedAllocation() {
+            assertThrows(IllegalArgumentException.class, () -> {
+                allocator.allocateAligned(-100, 64);
+            });
+        }
+
+        @Test
+        void testInvalidAlignment() {
+            assertThrows(IllegalArgumentException.class, () -> {
+                allocator.allocateAligned(1024, 63); // Not power of 2
+            });
+        }
+
+        @Test
+        void testReleaseNullSegments() {
             assertDoesNotThrow(() -> {
-                allocator.free(new ArrayList<>());
+                allocator.release(null);
+            });
+        }
+
+        @Test
+        void testReleaseEmptySegmentList() {
+            assertDoesNotThrow(() -> {
+                allocator.release(new ArrayList<>());
+            });
+        }
+
+        @Test
+        void testDeallocateZeroAddress() {
+            assertDoesNotThrow(() -> {
+                allocator.deallocate(0, 1024);
+            });
+        }
+
+        @Test
+        void testDeallocateUnknownAddress() {
+            // This should log a warning but not throw
+            assertDoesNotThrow(() -> {
+                allocator.deallocate(0x12345678L, 1024);
             });
         }
 
@@ -181,7 +257,7 @@ class MemoryManagerAllocatorTest {
             List<MemorySegment> segments = allocator.allocate(DEFAULT_PAGE_SIZE);
 
             assertEquals(1, segments.size());
-            assertEquals(DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
         }
 
         @Test
@@ -189,7 +265,19 @@ class MemoryManagerAllocatorTest {
             List<MemorySegment> segments = allocator.allocate(DEFAULT_PAGE_SIZE + 1);
 
             assertEquals(2, segments.size()); // Should round up to 2 pages
-            assertEquals(2L * DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(2L * DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
+        }
+
+        @Test
+        void testLargeAlignmentValues() throws MemoryAllocationException {
+            long size = 1024;
+            int[] alignments = {64, 128, 256, 512, 1024, 2048, 4096};
+
+            for (int alignment : alignments) {
+                long address = allocator.allocateAligned(size, alignment);
+                assertEquals(0, address % alignment, "Address should be aligned to " + alignment);
+                allocator.deallocate(address, size);
+            }
         }
     }
 
@@ -198,18 +286,23 @@ class MemoryManagerAllocatorTest {
 
         @Test
         void testClose() throws MemoryAllocationException {
-            // Allocate some memory
+            // Allocate some regular memory
             List<MemorySegment> segments1 = allocator.allocate(DEFAULT_PAGE_SIZE);
             List<MemorySegment> segments2 = allocator.allocate(DEFAULT_PAGE_SIZE * 2);
 
-            assertTrue(allocator.outstandingBytes() > 0);
+            // Allocate some aligned memory
+            long alignedAddress = allocator.allocateAligned(1024, 64);
+
+            assertTrue(allocator.getUsedBytes() > 0);
             assertFalse(allocator.isClosed());
 
             // Close should release all memory
             allocator.close();
 
             assertTrue(allocator.isClosed());
-            assertEquals(0, allocator.outstandingBytes());
+            assertEquals(0, allocator.getUsedBytes());
+            assertEquals(0, allocator.getAllocatedSegmentLists());
+            assertEquals(0, allocator.getAllocatedAlignedBlocks());
         }
 
         @Test
@@ -231,15 +324,22 @@ class MemoryManagerAllocatorTest {
             assertThrows(IllegalStateException.class, () -> {
                 allocator.allocate(DEFAULT_PAGE_SIZE);
             });
+
+            assertThrows(IllegalStateException.class, () -> {
+                allocator.allocateAligned(1024, 64);
+            });
         }
 
         @Test
-        void testFreeAfterClose() throws MemoryAllocationException {
+        void testReleaseAfterClose() throws MemoryAllocationException {
             List<MemorySegment> segments = allocator.allocate(DEFAULT_PAGE_SIZE);
+            long alignedAddress = allocator.allocateAligned(1024, 64);
+
             allocator.close();
 
-            // Free after close should not throw
-            assertDoesNotThrow(() -> allocator.free(segments));
+            // Release after close should not throw
+            assertDoesNotThrow(() -> allocator.release(segments));
+            assertDoesNotThrow(() -> allocator.deallocate(alignedAddress, 1024));
         }
     }
 
@@ -286,7 +386,7 @@ class MemoryManagerAllocatorTest {
                 try {
                     List<List<MemorySegment>> allocations = future.get();
                     for (List<MemorySegment> segments : allocations) {
-                        allocator.free(segments);
+                        allocator.release(segments);
                     }
                 } catch (Exception e) {
                     // Ignore cleanup errors
@@ -297,7 +397,7 @@ class MemoryManagerAllocatorTest {
         }
 
         @Test
-        void testConcurrentAllocationAndFree() throws InterruptedException {
+        void testConcurrentAllocationAndRelease() throws InterruptedException {
             int numThreads = 2;
             ExecutorService executor = Executors.newFixedThreadPool(numThreads);
             CountDownLatch startLatch = new CountDownLatch(1);
@@ -326,14 +426,14 @@ class MemoryManagerAllocatorTest {
                 }
             });
 
-            // Free thread
+            // Release thread
             executor.submit(() -> {
                 try {
                     startLatch.await();
                     for (int i = 0; i < 20; i++) {
                         List<MemorySegment> segments = sharedSegments.poll();
                         if (segments != null) {
-                            allocator.free(segments);
+                            allocator.release(segments);
                         }
                         Thread.sleep(15);
                     }
@@ -350,7 +450,57 @@ class MemoryManagerAllocatorTest {
             // Clean up remaining segments
             List<MemorySegment> remaining;
             while ((remaining = sharedSegments.poll()) != null) {
-                allocator.free(remaining);
+                allocator.release(remaining);
+            }
+
+            executor.shutdown();
+        }
+
+        @Test
+        void testConcurrentAlignedAllocations() throws InterruptedException {
+            int numThreads = 4;
+            int allocationsPerThread = 5;
+            ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+            CountDownLatch startLatch = new CountDownLatch(1);
+            CountDownLatch doneLatch = new CountDownLatch(numThreads);
+            AtomicInteger successCount = new AtomicInteger(0);
+
+            List<Future<List<Long>>> futures = new ArrayList<>();
+
+            for (int i = 0; i < numThreads; i++) {
+                futures.add(executor.submit(() -> {
+                    List<Long> addresses = new ArrayList<>();
+                    try {
+                        startLatch.await();
+                        for (int j = 0; j < allocationsPerThread; j++) {
+                            long address = allocator.allocateAligned(1024, 64);
+                            addresses.add(address);
+                        }
+                        successCount.incrementAndGet();
+                    } catch (Exception e) {
+                        // Expected for some threads due to memory limit
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                    return addresses;
+                }));
+            }
+
+            startLatch.countDown();
+            doneLatch.await(10, TimeUnit.SECONDS);
+
+            assertTrue(successCount.get() > 0, "At least some allocations should succeed");
+
+            // Clean up
+            for (Future<List<Long>> future : futures) {
+                try {
+                    List<Long> addresses = future.get();
+                    for (Long address : addresses) {
+                        allocator.deallocate(address, 1024);
+                    }
+                } catch (Exception e) {
+                    // Ignore cleanup errors
+                }
             }
 
             executor.shutdown();
@@ -361,43 +511,69 @@ class MemoryManagerAllocatorTest {
     class MemoryTrackingTests {
 
         @Test
-        void testOutstandingBytesAccuracy() throws MemoryAllocationException {
-            assertEquals(0, allocator.outstandingBytes());
+        void testUsedBytesAccuracy() throws MemoryAllocationException {
+            assertEquals(0, allocator.getUsedBytes());
 
             List<MemorySegment> segments1 = allocator.allocate(1024);
-            assertEquals(DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
             List<MemorySegment> segments2 = allocator.allocate(DEFAULT_PAGE_SIZE * 2);
-            assertEquals(3L * DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            assertEquals(3L * DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
-            allocator.free(segments1);
-            assertEquals(2L * DEFAULT_PAGE_SIZE, allocator.outstandingBytes());
+            allocator.release(segments1);
+            assertEquals(2L * DEFAULT_PAGE_SIZE, allocator.getUsedBytes());
 
-            allocator.free(segments2);
-            assertEquals(0, allocator.outstandingBytes());
+            allocator.release(segments2);
+            assertEquals(0, allocator.getUsedBytes());
         }
 
         @Test
-        void testOutstandingBytesNeverNegative() throws MemoryAllocationException {
+        void testUsedBytesNeverNegative() throws MemoryAllocationException {
             List<MemorySegment> segments = allocator.allocate(DEFAULT_PAGE_SIZE);
 
-            // Free twice (second free should be ignored)
-            allocator.free(segments);
-            allocator.free(segments);
+            // Release twice (second release should be ignored)
+            allocator.release(segments);
+            allocator.release(segments);
 
-            assertTrue(allocator.outstandingBytes() >= 0);
+            assertTrue(allocator.getUsedBytes() >= 0);
         }
 
         @Test
         void testMemoryTrackingAfterClose() throws MemoryAllocationException {
             allocator.allocate(DEFAULT_PAGE_SIZE);
-            allocator.allocate(DEFAULT_PAGE_SIZE * 2);
+            allocator.allocateAligned(1024, 64);
 
-            assertTrue(allocator.outstandingBytes() > 0);
+            assertTrue(allocator.getUsedBytes() > 0);
 
             allocator.close();
 
-            assertEquals(0, allocator.outstandingBytes());
+            assertEquals(0, allocator.getUsedBytes());
+        }
+
+        @Test
+        void testAllocationCounters() throws MemoryAllocationException {
+            assertEquals(0, allocator.getAllocatedSegmentLists());
+            assertEquals(0, allocator.getAllocatedAlignedBlocks());
+
+            List<MemorySegment> segments1 = allocator.allocate(DEFAULT_PAGE_SIZE);
+            List<MemorySegment> segments2 = allocator.allocate(DEFAULT_PAGE_SIZE);
+            long address1 = allocator.allocateAligned(1024, 64);
+            long address2 = allocator.allocateAligned(2048, 128);
+
+            assertEquals(2, allocator.getAllocatedSegmentLists());
+            assertEquals(2, allocator.getAllocatedAlignedBlocks());
+
+            allocator.release(segments1);
+            allocator.deallocate(address1, 1024);
+
+            assertEquals(1, allocator.getAllocatedSegmentLists());
+            assertEquals(1, allocator.getAllocatedAlignedBlocks());
+
+            allocator.release(segments2);
+            allocator.deallocate(address2, 2048);
+
+            assertEquals(0, allocator.getAllocatedSegmentLists());
+            assertEquals(0, allocator.getAllocatedAlignedBlocks());
         }
     }
 
@@ -419,7 +595,7 @@ class MemoryManagerAllocatorTest {
 
                 List<MemorySegment> segments = smallPageAllocator.allocate(10 * 1024); // 10KB
                 assertEquals(3, segments.size()); // Should need 3 pages of 4KB each
-                assertEquals(3L * 4 * 1024, smallPageAllocator.outstandingBytes());
+                assertEquals(3L * 4 * 1024, smallPageAllocator.getUsedBytes());
 
             } catch (Exception e) {
                 fail("Test should not throw exception: " + e.getMessage());
@@ -439,17 +615,38 @@ class MemoryManagerAllocatorTest {
                 List<MemorySegment> segments1 = allocator1.allocate(DEFAULT_PAGE_SIZE);
                 List<MemorySegment> segments2 = allocator2.allocate(DEFAULT_PAGE_SIZE);
 
-                assertEquals(DEFAULT_PAGE_SIZE, allocator1.outstandingBytes());
-                assertEquals(DEFAULT_PAGE_SIZE, allocator2.outstandingBytes());
+                assertEquals(DEFAULT_PAGE_SIZE, allocator1.getUsedBytes());
+                assertEquals(DEFAULT_PAGE_SIZE, allocator2.getUsedBytes());
 
                 // Closing one allocator should not affect the other
                 allocator1.close();
-                assertEquals(0, allocator1.outstandingBytes());
-                assertEquals(DEFAULT_PAGE_SIZE, allocator2.outstandingBytes());
+                assertEquals(0, allocator1.getUsedBytes());
+                assertEquals(DEFAULT_PAGE_SIZE, allocator2.getUsedBytes());
 
             } catch (Exception e) {
                 fail("Test should not throw exception: " + e.getMessage());
             }
+        }
+
+        @Test
+        void testMixedAllocationTypes() throws MemoryAllocationException {
+            // Mix regular and aligned allocations
+            List<MemorySegment> segments = allocator.allocate(DEFAULT_PAGE_SIZE);
+            long alignedAddress1 = allocator.allocateAligned(1024, 64);
+            long alignedAddress2 = allocator.allocateAligned(2048, 128);
+
+            assertTrue(allocator.getUsedBytes() > 0);
+            assertEquals(1, allocator.getAllocatedSegmentLists());
+            assertEquals(2, allocator.getAllocatedAlignedBlocks());
+
+            // Release in mixed order
+            allocator.deallocate(alignedAddress1, 1024);
+            allocator.release(segments);
+            allocator.deallocate(alignedAddress2, 2048);
+
+            assertEquals(0, allocator.getUsedBytes());
+            assertEquals(0, allocator.getAllocatedSegmentLists());
+            assertEquals(0, allocator.getAllocatedAlignedBlocks());
         }
     }
 }

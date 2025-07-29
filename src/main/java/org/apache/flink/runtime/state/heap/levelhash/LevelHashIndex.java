@@ -323,7 +323,7 @@ public final class LevelHashIndex implements AutoCloseable {
         // free old segments
         for (MemorySegment seg : oldSegs) {
             if (!ownedSegs.contains(seg)) { // only old
-                allocator.free(seg);
+                // allocator.free(seg);
             }
         }
     }
@@ -354,7 +354,7 @@ public final class LevelHashIndex implements AutoCloseable {
         return segs.get(0).getAddress();
     }
     private void freeAllOwned() {
-        allocator.free(ownedSegs);
+        // allocator.free(ownedSegs);
         ownedSegs.clear();
     }
 

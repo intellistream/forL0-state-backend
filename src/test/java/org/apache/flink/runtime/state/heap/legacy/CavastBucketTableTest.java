@@ -188,7 +188,7 @@ class CavastBucketTableTest {
     @Test
     void afterClose_noOutstandingBytes() {
         allocator.close();
-        assertEquals(0, allocator.outstandingBytes(),
+        assertEquals(0, allocator.getUsedBytes(),
                      "allocator should report zero outstanding bytes after close");
     }
 

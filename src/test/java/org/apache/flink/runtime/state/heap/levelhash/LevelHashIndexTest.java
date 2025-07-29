@@ -49,9 +49,9 @@ class LevelHashIndexTest {
 
     @AfterEach
     void close() {
-        long before = allocator.outstandingBytes();
+        long before = allocator.getUsedBytes();
         index.close();
-        assertEquals(0L, allocator.outstandingBytes(), "all off‑heap pages returned");
+        assertEquals(0L, allocator.getUsedBytes(), "all off‑heap pages returned");
         assertTrue(before > 0, "index should allocate something");
     }
 

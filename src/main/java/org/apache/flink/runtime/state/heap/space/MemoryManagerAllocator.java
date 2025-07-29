@@ -7,15 +7,14 @@ import org.apache.flink.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.LongAdder;
+import java.util.Map;
 
 /**
  * A memory allocator that uses Flink's MemoryManager to allocate and manage off-heap memory segments.
- * This allocator is thread-safe and tracks memory usage for proper cleanup.
+ * This allocator is single-threaded as Flink Task state access is single-threaded.
+ * Supports both regular segment allocation and aligned memory allocation.
  */
 public final class MemoryManagerAllocator implements HybridMemoryAllocator {
 
@@ -24,8 +23,12 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
     private final MemoryManager memoryManager;
     private final int pageSize;
     private final Object owner;
-    private final LongAdder usedBytes = new LongAdder();
-    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private long usedBytes = 0;
+    private boolean closed = false;
+
+    // Track allocated segments and aligned memory blocks
+    private final Map<List<MemorySegment>, Long> allocatedSegments = new HashMap<>();
+    private final Map<Long, AlignedAllocation> alignedAllocations = new HashMap<>();
 
     /**
      * Creates a new MemoryManagerAllocator.
@@ -49,134 +52,218 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
             throw new IllegalArgumentException("Requested bytes must be positive, but was: " + bytes);
         }
 
-        final int numPages = MathUtils.divideRoundUp(bytes, pageSize);
+        // Calculate number of pages needed
+        int numPages = MathUtils.divideRoundUp(bytes, pageSize);
 
         try {
-            // Allocate pages from MemoryManager
-            final List<MemorySegment> segments = memoryManager.allocatePages(owner, numPages);
+            List<MemorySegment> segments = memoryManager.allocatePages(owner, numPages);
 
-            if (segments == null || segments.isEmpty()) {
-                throw new MemoryAllocationException("Failed to allocate " + numPages + " pages from MemoryManager");
+            if (segments.isEmpty()) {
+                throw new MemoryAllocationException("Failed to allocate " + numPages + " pages");
             }
 
-            final long allocatedBytes = numPages * (long) pageSize;
-            usedBytes.add(allocatedBytes);
+            // Track allocated segments with the actual allocated size
+            long allocatedBytes = (long) segments.size() * pageSize;
+            allocatedSegments.put(segments, allocatedBytes);
+            usedBytes += allocatedBytes;
 
-            LOG.debug("Allocated {} pages ({} bytes) for {} bytes request. Total outstanding: {} bytes",
-                    numPages, allocatedBytes, bytes, usedBytes.sum());
-
+            LOG.debug("Allocated {} pages ({} bytes) for owner {}", segments.size(), allocatedBytes, owner);
             return segments;
 
         } catch (Exception e) {
-            throw new MemoryAllocationException("Failed to allocate " + bytes + " bytes (" + numPages + " pages)", e);
+            throw new MemoryAllocationException("Failed to allocate memory", e);
         }
     }
 
     @Override
-    public void free(List<MemorySegment> segments) {
+    public long allocateAligned(long size, int alignment) throws MemoryAllocationException {
+        ensureOpen();
+
+        if (size <= 0) {
+            throw new IllegalArgumentException("Size must be positive");
+        }
+
+        if (!isPowerOfTwo(alignment)) {
+            throw new IllegalArgumentException("Alignment must be power of 2");
+        }
+
+        // Allocate extra space to ensure we can align the result
+        int extraSpace = alignment - 1;
+        int totalSize = (int) (size + extraSpace);
+
+        // Calculate number of pages needed
+        int numPages = MathUtils.divideRoundUp(totalSize, pageSize);
+
+        try {
+            List<MemorySegment> segments = memoryManager.allocatePages(owner, numPages);
+
+            if (segments.isEmpty()) {
+                throw new MemoryAllocationException("Failed to allocate memory segments for aligned allocation");
+            }
+
+            // For now, we'll use the first segment and assume it's off-heap
+            MemorySegment segment = segments.get(0);
+
+            if (segment.isOffHeap()) {
+                long baseAddress = segment.getAddress();
+                long alignedAddress = (baseAddress + alignment - 1) & ~((long) alignment - 1);
+
+                // Store allocation info for cleanup
+                long allocatedBytes = (long) segments.size() * pageSize;
+                AlignedAllocation allocation = new AlignedAllocation(segments, baseAddress, alignedAddress, (int) size, allocatedBytes);
+                alignedAllocations.put(alignedAddress, allocation);
+
+                // Track memory usage
+                usedBytes += allocatedBytes;
+
+                LOG.debug("Allocated aligned memory: base=0x{}, aligned=0x{}, size={}, alignment={}, pages={}",
+                         Long.toHexString(baseAddress), Long.toHexString(alignedAddress), size, alignment, segments.size());
+
+                return alignedAddress;
+            } else {
+                // Release the segments since we can't use heap memory for aligned allocation
+                memoryManager.release(segments);
+                throw new MemoryAllocationException("Cannot perform aligned allocation on heap memory segments");
+            }
+        } catch (Exception e) {
+            throw new MemoryAllocationException("Failed to allocate aligned memory", e);
+        }
+    }
+
+    @Override
+    public void release(List<MemorySegment> segments) {
         if (segments == null || segments.isEmpty()) {
             return;
         }
 
-        // Check if segments are already freed to prevent double-free
-        for (MemorySegment segment : segments) {
-            if (segment.isFreed()) {
-                LOG.warn("Attempting to free already freed segment, skipping");
-                return;
-            }
-        }
-
-        final long releasedBytes = segments.size() * (long) pageSize;
-
         try {
-            // Create a mutable copy of the segments list to avoid UnsupportedOperationException
-            // since MemoryManager.allocatePages() might return an immutable list
-            List<MemorySegment> mutableSegments = new ArrayList<>(segments);
+            // First, remove from tracking to get the allocated size
+            Long allocatedBytes = allocatedSegments.remove(segments);
 
-            // Release pages back to MemoryManager
-            memoryManager.release(mutableSegments);
+            // Release the memory
+            memoryManager.release(segments);
 
-            // Only update counter if release was successful
-            usedBytes.add(-releasedBytes);
-
-            LOG.debug("Released {} pages ({} bytes). Remaining outstanding: {} bytes",
-                    segments.size(), releasedBytes, usedBytes.sum());
+            // Update used bytes only if this was actually tracked
+            if (allocatedBytes != null) {
+                usedBytes -= allocatedBytes;
+                LOG.debug("Released {} memory segments ({} bytes) for owner {}", segments.size(), allocatedBytes, owner);
+            } else {
+                LOG.debug("Released {} untracked memory segments for owner {}", segments.size(), owner);
+            }
 
         } catch (Exception e) {
-            LOG.error("Error releasing memory segments, counter not updated", e);
-            // Don't update counter if release failed
-            throw new RuntimeException("Failed to release memory segments", e);
-        }
-    }
-
-    /**
-     * Convenience method to free a single memory segment.
-     *
-     * @param segment the memory segment to free
-     */
-    public void free(MemorySegment segment) {
-        if (segment != null) {
-            free(Collections.singletonList(segment));
+            LOG.warn("Error releasing memory segments for owner {}: {}", owner, e.getMessage());
         }
     }
 
     @Override
-    public long outstandingBytes() {
-        return Math.max(0, usedBytes.sum()); // Ensure non-negative value
-    }
+    public void deallocate(long address, long size) {
+        AlignedAllocation allocation = alignedAllocations.remove(address);
+        if (allocation != null) {
+            // Update used bytes first
+            usedBytes -= allocation.allocatedBytes;
 
-    @Override
-    public void close() {
-        if (closed.compareAndSet(false, true)) {
+            // Then release the underlying segments
             try {
-                // Release all outstanding memory for this owner
-                memoryManager.releaseAll(owner);
-
-                final long outstandingBeforeClose = usedBytes.sum();
-                usedBytes.reset(); // Reset counter after releasing all memory
-
-                LOG.debug("Closed MemoryManagerAllocator, released {} bytes", outstandingBeforeClose);
-
+                memoryManager.release(allocation.segments);
+                LOG.debug("Deallocated aligned memory at address 0x{} ({} bytes)", Long.toHexString(address), allocation.allocatedBytes);
             } catch (Exception e) {
-                LOG.warn("Error during MemoryManagerAllocator cleanup", e);
+                LOG.warn("Error releasing aligned memory segments: {}", e.getMessage());
             }
+        } else {
+            LOG.warn("Attempted to deallocate unknown aligned address: 0x{}", Long.toHexString(address));
         }
     }
 
-    /**
-     * Returns the page size used by this allocator.
-     *
-     * @return the page size in bytes
-     */
+    @Override
     public int getPageSize() {
         return pageSize;
     }
 
-    /**
-     * Returns the owner object associated with this allocator.
-     *
-     * @return the owner object
-     */
-    public Object getOwner() {
-        return owner;
-    }
-
-    /**
-     * Checks if this allocator has been closed.
-     *
-     * @return true if closed, false otherwise
-     */
+    @Override
     public boolean isClosed() {
-        return closed.get();
+        return closed;
     }
 
-    // ------------------------------------------------------------------------
-    //  utilities
-    // ------------------------------------------------------------------------
+    /**
+     * Gets the current memory usage in bytes.
+     */
+    public long getUsedBytes() {
+        return usedBytes;
+    }
+
+    /**
+     * Gets the number of currently allocated segment lists.
+     */
+    public int getAllocatedSegmentLists() {
+        return allocatedSegments.size();
+    }
+
+    /**
+     * Gets the number of currently allocated aligned memory blocks.
+     */
+    public int getAllocatedAlignedBlocks() {
+        return alignedAllocations.size();
+    }
+
+    @Override
+    public void close() {
+        if (!closed) {
+            closed = true;
+            LOG.debug("Closing MemoryManagerAllocator for owner {}", owner);
+
+            // Release all aligned allocations first
+            for (AlignedAllocation allocation : alignedAllocations.values()) {
+                try {
+                    usedBytes -= allocation.allocatedBytes;
+                    memoryManager.release(allocation.segments);
+                } catch (Exception e) {
+                    LOG.warn("Error releasing aligned allocation during close: {}", e.getMessage());
+                }
+            }
+            alignedAllocations.clear();
+
+            // Release all remaining segment allocations
+            for (Map.Entry<List<MemorySegment>, Long> entry : allocatedSegments.entrySet()) {
+                try {
+                    usedBytes -= entry.getValue();
+                    memoryManager.release(entry.getKey());
+                } catch (Exception e) {
+                    LOG.warn("Error releasing segments during close: {}", e.getMessage());
+                }
+            }
+            allocatedSegments.clear();
+
+            LOG.debug("MemoryManagerAllocator closed for owner {}, final used bytes: {}", owner, usedBytes);
+        }
+    }
 
     private void ensureOpen() {
-        if (closed.get()) {
-            throw new IllegalStateException("MemoryManagerAllocator has already been closed");
+        if (closed) {
+            throw new IllegalStateException("MemoryManagerAllocator is closed");
+        }
+    }
+
+    private static boolean isPowerOfTwo(int n) {
+        return n > 0 && (n & (n - 1)) == 0;
+    }
+
+    /**
+     * Information about an aligned memory allocation.
+     */
+    private static class AlignedAllocation {
+        final List<MemorySegment> segments;
+        final long baseAddress;
+        final long alignedAddress;
+        final int size;
+        final long allocatedBytes;
+
+        AlignedAllocation(List<MemorySegment> segments, long baseAddress, long alignedAddress, int size, long allocatedBytes) {
+            this.segments = segments;
+            this.baseAddress = baseAddress;
+            this.alignedAddress = alignedAddress;
+            this.size = size;
+            this.allocatedBytes = allocatedBytes;
         }
     }
 }
