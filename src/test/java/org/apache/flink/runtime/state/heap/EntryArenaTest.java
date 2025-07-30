@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Nested;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -48,238 +49,196 @@ class EntryArenaTest {
     }
 
     @Nested
-    class BasicFunctionalityTests {
+    class BasicEntryOperations {
 
         @Test
         void testArenaInitialization() {
             EntryArena.ArenaStats stats = arena.getStats();
             assertTrue(stats.totalSystemMemory > 0); // Should have allocated initial slab
-            assertEquals(0, stats.totalAllocated);
-            assertEquals(0, stats.totalFreed);
             assertEquals(0, stats.activeAllocations);
-            assertEquals(0, stats.usedMemory);
         }
 
         @Test
-        void testSimpleAllocation() {
-            int size = 64;
-            long address = arena.allocate(size);
+        void testSimpleEntryPutAndGet() {
+            byte[] keyBytes = "testKey".getBytes();
+            byte[] namespaceBytes = "testNamespace".getBytes();
+            byte[] valueBytes = "testValue".getBytes();
 
-            assertTrue(address > 0);
+            // Put entry
+            long entryAddress = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
+            assertTrue(entryAddress > 0);
 
+            // Get entry components back
+            assertArrayEquals(keyBytes, arena.getKeyBytes(entryAddress));
+            assertArrayEquals(namespaceBytes, arena.getNamespaceBytes(entryAddress));
+            assertArrayEquals(valueBytes, arena.getValueBytes(entryAddress));
+
+            // Verify stats
             EntryArena.ArenaStats stats = arena.getStats();
-            assertTrue(stats.totalAllocated >= size);
             assertEquals(1, stats.activeAllocations);
-            assertEquals(stats.totalAllocated - stats.totalFreed, stats.usedMemory);
         }
 
         @Test
-        void testAllocationSizeAlignment() {
-            // Test that allocations are properly aligned
-            int[] testSizes = {1, 7, 8, 15, 16, 31, 32, 33, 64, 100};
+        void testEntryMatching() {
+            byte[] keyBytes = "matchKey".getBytes();
+            byte[] namespaceBytes = "matchNamespace".getBytes();
+            byte[] valueBytes = "matchValue".getBytes();
 
-            for (int size : testSizes) {
-                long address = arena.allocate(size);
-                assertTrue(address > 0);
-                assertEquals(0, address % 8, "Address should be 8-byte aligned");
-                arena.deallocate(address, size);
+            long entryAddress = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
+
+            // Test exact match
+            assertTrue(arena.matchesKey(entryAddress, keyBytes, namespaceBytes));
+
+            // Test mismatch
+            assertFalse(arena.matchesKey(entryAddress, "differentKey".getBytes(), namespaceBytes));
+            assertFalse(arena.matchesKey(entryAddress, keyBytes, "differentNamespace".getBytes()));
+        }
+
+        @Test
+        void testEntryUpdate() {
+            byte[] keyBytes = "updateKey".getBytes();
+            byte[] namespaceBytes = "updateNamespace".getBytes();
+            byte[] originalValue = "originalValue".getBytes();
+            byte[] newValue = "newValue".getBytes();
+
+            // Put original entry
+            long originalAddress = arena.putEntry(keyBytes, namespaceBytes, originalValue);
+            assertArrayEquals(originalValue, arena.getValueBytes(originalAddress));
+
+            // Update value (same size)
+            long updatedAddress = arena.updateEntry(originalAddress, newValue);
+
+            if (updatedAddress == originalAddress) {
+                // In-place update
+                assertArrayEquals(newValue, arena.getValueBytes(originalAddress));
+            } else {
+                // New allocation
+                assertTrue(updatedAddress > 0);
+                assertArrayEquals(newValue, arena.getValueBytes(updatedAddress));
             }
         }
 
         @Test
-        void testDeallocation() {
-            int size = 64;
-            long address = arena.allocate(size);
+        void testEntryRemoval() {
+            byte[] keyBytes = "removeKey".getBytes();
+            byte[] namespaceBytes = "removeNamespace".getBytes();
+            byte[] valueBytes = "removeValue".getBytes();
 
-            EntryArena.ArenaStats statsAfterAlloc = arena.getStats();
-            long allocatedBefore = statsAfterAlloc.totalAllocated;
-            int activeAllocsBefore = statsAfterAlloc.activeAllocations;
+            long entryAddress = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
+            assertTrue(entryAddress > 0);
 
-            arena.deallocate(address, size);
+            EntryArena.ArenaStats statsBefore = arena.getStats();
+            int activeEntriesBefore = statsBefore.activeAllocations;
 
-            EntryArena.ArenaStats statsAfterDealloc = arena.getStats();
-            assertEquals(allocatedBefore, statsAfterDealloc.totalAllocated); // Total allocated doesn't decrease
-            assertTrue(statsAfterDealloc.totalFreed > 0);
-            assertEquals(activeAllocsBefore - 1, statsAfterDealloc.activeAllocations);
+            // Remove entry
+            arena.removeEntry(entryAddress);
+
+            EntryArena.ArenaStats statsAfter = arena.getStats();
+            assertEquals(activeEntriesBefore - 1, statsAfter.activeAllocations);
         }
 
         @Test
-        void testMultipleAllocations() {
-            List<Long> addresses = new ArrayList<>();
-            int[] sizes = {32, 64, 128, 256, 512};
+        void testEntrySize() {
+            byte[] keyBytes = "sizeKey".getBytes();
+            byte[] namespaceBytes = "sizeNamespace".getBytes();
+            byte[] valueBytes = "sizeValue".getBytes();
 
-            for (int size : sizes) {
-                long address = arena.allocate(size);
+            long entryAddress = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
+            int entrySize = arena.getEntrySize(entryAddress);
+
+            // Entry size should include header (12 bytes) plus data, aligned
+            int expectedMinSize = 12 + keyBytes.length + namespaceBytes.length + valueBytes.length;
+            assertTrue(entrySize >= expectedMinSize);
+            assertEquals(0, entrySize % 8); // Should be 8-byte aligned
+        }
+    }
+
+    @Nested
+    class MultipleEntriesTests {
+
+        @Test
+        void testMultipleEntries() {
+            List<Long> addresses = new ArrayList<>();
+
+            for (int i = 0; i < 10; i++) {
+                byte[] keyBytes = ("key" + i).getBytes();
+                byte[] namespaceBytes = ("namespace" + i).getBytes();
+                byte[] valueBytes = ("value" + i).getBytes();
+
+                long address = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
                 assertTrue(address > 0);
                 addresses.add(address);
+            }
 
-                // Verify addresses are different
-                for (int i = 0; i < addresses.size() - 1; i++) {
-                    assertNotEquals(addresses.get(i), address);
+            // Verify all entries
+            for (int i = 0; i < 10; i++) {
+                long address = addresses.get(i);
+                assertEquals("key" + i, new String(arena.getKeyBytes(address)));
+                assertEquals("namespace" + i, new String(arena.getNamespaceBytes(address)));
+                assertEquals("value" + i, new String(arena.getValueBytes(address)));
+            }
+
+            EntryArena.ArenaStats stats = arena.getStats();
+            assertEquals(10, stats.activeAllocations);
+        }
+
+        @Test
+        void testEntryUniqueness() {
+            List<Long> addresses = new ArrayList<>();
+
+            // Create entries with same content but should get different addresses
+            for (int i = 0; i < 5; i++) {
+                byte[] keyBytes = "sameKey".getBytes();
+                byte[] namespaceBytes = "sameNamespace".getBytes();
+                byte[] valueBytes = "sameValue".getBytes();
+
+                long address = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
+                addresses.add(address);
+            }
+
+            // All addresses should be different
+            for (int i = 0; i < addresses.size(); i++) {
+                for (int j = i + 1; j < addresses.size(); j++) {
+                    assertNotEquals(addresses.get(i), addresses.get(j));
+                }
+            }
+        }
+
+        @Test
+        void testDifferentSizedEntries() {
+            // Test entries of various sizes
+            int[] keySizes = {1, 10, 100, 1000};
+            int[] namespaceSizes = {1, 20, 200};
+            int[] valueSizes = {1, 50, 500, 5000};
+
+            List<Long> addresses = new ArrayList<>();
+
+            for (int keySize : keySizes) {
+                for (int namespaceSize : namespaceSizes) {
+                    for (int valueSize : valueSizes) {
+                        byte[] keyBytes = new byte[keySize];
+                        byte[] namespaceBytes = new byte[namespaceSize];
+                        byte[] valueBytes = new byte[valueSize];
+
+                        Arrays.fill(keyBytes, (byte) 'K');
+                        Arrays.fill(namespaceBytes, (byte) 'N');
+                        Arrays.fill(valueBytes, (byte) 'V');
+
+                        long address = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
+                        assertTrue(address > 0);
+                        addresses.add(address);
+
+                        // Verify content
+                        assertArrayEquals(keyBytes, arena.getKeyBytes(address));
+                        assertArrayEquals(namespaceBytes, arena.getNamespaceBytes(address));
+                        assertArrayEquals(valueBytes, arena.getValueBytes(address));
+                    }
                 }
             }
 
+            assertTrue(addresses.size() > 0);
             EntryArena.ArenaStats stats = arena.getStats();
-            assertEquals(sizes.length, stats.activeAllocations);
-
-            // Deallocate all
-            for (int i = 0; i < addresses.size(); i++) {
-                arena.deallocate(addresses.get(i), sizes[i]);
-            }
-
-            EntryArena.ArenaStats finalStats = arena.getStats();
-            assertEquals(0, finalStats.activeAllocations);
-        }
-
-        @Test
-        void testMinimumAllocationSize() {
-            // Arena should enforce minimum allocation size
-            long address1 = arena.allocate(1);
-            long address2 = arena.allocate(32);
-
-            assertTrue(address1 > 0);
-            assertTrue(address2 > 0);
-
-            EntryArena.ArenaStats stats = arena.getStats();
-            // Both allocations should be at least minimum size (32 bytes)
-            assertTrue(stats.totalAllocated >= 64); // 2 * 32
-        }
-    }
-
-    @Nested
-    class FreeListTests {
-
-        @Test
-        void testFreeListReuse() {
-            int size = 64;
-
-            // Allocate and deallocate
-            long address1 = arena.allocate(size);
-            arena.deallocate(address1, size);
-
-            // Allocate same size again - should reuse from free list
-            long address2 = arena.allocate(size);
-
-            // Address might be the same (reused) or different (new allocation)
-            assertTrue(address2 > 0);
-
-            EntryArena.ArenaStats stats = arena.getStats();
-            assertEquals(1, stats.activeAllocations);
-        }
-
-        @Test
-        void testFreeListDifferentSizes() {
-            // Allocate different sizes
-            long addr64 = arena.allocate(64);
-            long addr128 = arena.allocate(128);
-            long addr256 = arena.allocate(256);
-
-            // Deallocate all
-            arena.deallocate(addr64, 64);
-            arena.deallocate(addr128, 128);
-            arena.deallocate(addr256, 256);
-
-            // Allocate different sizes - should find best fit
-            long newAddr128 = arena.allocate(128);
-            long newAddr64 = arena.allocate(64);
-            long newAddr256 = arena.allocate(256);
-
-            assertTrue(newAddr64 > 0);
-            assertTrue(newAddr128 > 0);
-            assertTrue(newAddr256 > 0);
-
-            EntryArena.ArenaStats stats = arena.getStats();
-            assertEquals(3, stats.activeAllocations);
-        }
-
-        @Test
-        void testFreeListFragmentation() {
-            List<Long> addresses = new ArrayList<>();
-            int size = 64;
-
-            // Allocate many blocks
-            for (int i = 0; i < 20; i++) {
-                addresses.add(arena.allocate(size));
-            }
-
-            // Free every other block to create fragmentation
-            for (int i = 0; i < addresses.size(); i += 2) {
-                arena.deallocate(addresses.get(i), size);
-            }
-
-            EntryArena.ArenaStats statsWithFragmentation = arena.getStats();
-            int freeBlocksBefore = statsWithFragmentation.freeBlocks;
-
-            // Compact should reduce fragmentation
-            arena.compact();
-
-            EntryArena.ArenaStats statsAfterCompact = arena.getStats();
-            // Fragmentation might be reduced (implementation dependent)
-            assertTrue(statsAfterCompact.freeBlocks <= freeBlocksBefore);
-        }
-    }
-
-    @Nested
-    class SlabManagementTests {
-
-        @Test
-        void testSlabExpansion() {
-            EntryArena.ArenaStats initialStats = arena.getStats();
-            long initialSystemMemory = initialStats.totalSystemMemory;
-
-            // Allocate enough to potentially trigger new slab allocation
-            List<Long> addresses = new ArrayList<>();
-            int allocationSize = 1024;
-
-            for (int i = 0; i < 100; i++) { // Should exceed initial slab capacity
-                long address = arena.allocate(allocationSize);
-                assertTrue(address > 0);
-                addresses.add(address);
-            }
-
-            EntryArena.ArenaStats finalStats = arena.getStats();
-
-            // System memory might have increased if new slab was allocated
-            assertTrue(finalStats.totalSystemMemory >= initialSystemMemory);
-            assertEquals(100, finalStats.activeAllocations);
-
-            // Clean up
-            for (long address : addresses) {
-                arena.deallocate(address, allocationSize);
-            }
-        }
-
-        @Test
-        void testLargeAllocation() {
-            // Test allocation larger than typical block size
-            int largeSize = 8192; // 8KB
-            long address = arena.allocate(largeSize);
-
-            if (address > 0) {
-                // If allocation succeeded, verify stats
-                EntryArena.ArenaStats stats = arena.getStats();
-                assertEquals(1, stats.activeAllocations);
-                assertTrue(stats.totalAllocated >= largeSize);
-
-                arena.deallocate(address, largeSize);
-            } else {
-                // Large allocation might fail if it exceeds slab size
-                // This is acceptable behavior
-            }
-        }
-
-        @Test
-        void testVeryLargeAllocation() {
-            // Test allocation larger than slab size - should fail gracefully
-            int veryLargeSize = 128 * 1024; // 128KB (larger than 64KB slab)
-            long address = arena.allocate(veryLargeSize);
-
-            // Should either succeed (if implementation handles it) or return 0
-            assertTrue(address >= 0);
-
-            if (address > 0) {
-                arena.deallocate(address, veryLargeSize);
-            }
+            assertEquals(addresses.size(), stats.activeAllocations);
         }
     }
 
@@ -287,143 +246,149 @@ class EntryArenaTest {
     class EdgeCaseTests {
 
         @Test
-        void testZeroSizeAllocation() {
-            long address = arena.allocate(0);
-            assertEquals(0, address); // Should fail
+        void testNullInputs() {
+            // Test null key
+            assertEquals(0, arena.putEntry(null, "namespace".getBytes(), "value".getBytes()));
+
+            // Test null namespace
+            assertEquals(0, arena.putEntry("key".getBytes(), null, "value".getBytes()));
+
+            // Test null value
+            assertEquals(0, arena.putEntry("key".getBytes(), "namespace".getBytes(), null));
         }
 
         @Test
-        void testNegativeSizeAllocation() {
-            long address = arena.allocate(-10);
-            assertEquals(0, address); // Should fail
+        void testEmptyInputs() {
+            byte[] emptyKey = new byte[0];
+            byte[] emptyNamespace = new byte[0];
+            byte[] emptyValue = new byte[0];
+
+            long address = arena.putEntry(emptyKey, emptyNamespace, emptyValue);
+            assertTrue(address > 0);
+
+            assertArrayEquals(emptyKey, arena.getKeyBytes(address));
+            assertArrayEquals(emptyNamespace, arena.getNamespaceBytes(address));
+            assertArrayEquals(emptyValue, arena.getValueBytes(address));
         }
 
         @Test
-        void testDeallocateZeroAddress() {
-            // Should not crash
-            assertDoesNotThrow(() -> arena.deallocate(0, 64));
+        void testZeroAddress() {
+            // Operations on zero address should handle gracefully
+            assertNull(arena.getKeyBytes(0));
+            assertNull(arena.getNamespaceBytes(0));
+            assertNull(arena.getValueBytes(0));
+            assertFalse(arena.matchesKey(0, "key".getBytes(), "namespace".getBytes()));
+            assertEquals(0, arena.getEntrySize(0));
+
+            // Remove zero address should not crash
+            assertDoesNotThrow(() -> arena.removeEntry(0));
         }
 
         @Test
-        void testDeallocateZeroSize() {
-            long address = arena.allocate(64);
-
-            // Should not crash but might not do anything useful
-            assertDoesNotThrow(() -> arena.deallocate(address, 0));
-
-            // Proper deallocation should still work
-            arena.deallocate(address, 64);
+        void testUpdateWithZeroAddress() {
+            long result = arena.updateEntry(0, "newValue".getBytes());
+            assertEquals(0, result);
         }
 
         @Test
-        void testDeallocateNegativeSize() {
-            long address = arena.allocate(64);
+        void testUpdateWithNullValue() {
+            byte[] keyBytes = "key".getBytes();
+            byte[] namespaceBytes = "namespace".getBytes();
+            byte[] valueBytes = "value".getBytes();
 
-            // Should not crash
-            assertDoesNotThrow(() -> arena.deallocate(address, -10));
+            long address = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
 
-            // Proper deallocation should still work
-            arena.deallocate(address, 64);
+            long result = arena.updateEntry(address, null);
+            assertEquals(0, result);
         }
 
         @Test
-        void testDoubleDeallocate() {
-            long address = arena.allocate(64);
+        void testLargeEntries() {
+            // Test with large entries that might trigger new slab allocation
+            byte[] largeKey = new byte[8192];
+            byte[] largeNamespace = new byte[4096];
+            byte[] largeValue = new byte[16384];
 
-            // First deallocation
-            arena.deallocate(address, 64);
+            Arrays.fill(largeKey, (byte) 'K');
+            Arrays.fill(largeNamespace, (byte) 'N');
+            Arrays.fill(largeValue, (byte) 'V');
 
-            // Second deallocation should not crash
-            assertDoesNotThrow(() -> arena.deallocate(address, 64));
+            long address = arena.putEntry(largeKey, largeNamespace, largeValue);
+
+            if (address > 0) {
+                // If allocation succeeded, verify content
+                assertArrayEquals(largeKey, arena.getKeyBytes(address));
+                assertArrayEquals(largeNamespace, arena.getNamespaceBytes(address));
+                assertArrayEquals(largeValue, arena.getValueBytes(address));
+            }
+            // If allocation failed (address == 0), that's also acceptable for very large entries
         }
     }
 
     @Nested
-    class PerformanceTests {
+    class UpdateTests {
 
         @Test
-        void testManySmallAllocations() {
-            List<Long> addresses = new ArrayList<>();
-            int numAllocations = 1000;
-            int size = 32;
+        void testInPlaceUpdate() {
+            byte[] keyBytes = "updateKey".getBytes();
+            byte[] namespaceBytes = "updateNamespace".getBytes();
+            byte[] originalValue = "originalValue123".getBytes(); // 16 chars
+            byte[] shorterValue = "shorter".getBytes(); // 7 chars
 
-            long startTime = System.nanoTime();
+            long originalAddress = arena.putEntry(keyBytes, namespaceBytes, originalValue);
 
-            for (int i = 0; i < numAllocations; i++) {
-                long address = arena.allocate(size);
-                assertTrue(address > 0);
-                addresses.add(address);
-            }
+            // In simplified implementation, update always allocates new memory
+            long updatedAddress = arena.updateEntry(originalAddress, shorterValue);
+            assertTrue(updatedAddress > 0);
 
-            long endTime = System.nanoTime();
+            // Verify the new entry has correct value
+            assertArrayEquals(shorterValue, arena.getValueBytes(updatedAddress));
 
-            EntryArena.ArenaStats stats = arena.getStats();
-            assertEquals(numAllocations, stats.activeAllocations);
+            // Verify key and namespace are preserved
+            assertArrayEquals(keyBytes, arena.getKeyBytes(updatedAddress));
+            assertArrayEquals(namespaceBytes, arena.getNamespaceBytes(updatedAddress));
+        }
 
-            // Should complete in reasonable time
-            long durationMs = (endTime - startTime) / 1_000_000;
-            assertTrue(durationMs < 1000, "Allocation took too long: " + durationMs + "ms");
+        @Test
+        void testNewAllocationUpdate() {
+            byte[] keyBytes = "updateKey".getBytes();
+            byte[] namespaceBytes = "updateNamespace".getBytes();
+            byte[] originalValue = "short".getBytes(); // 5 chars
+            byte[] longerValue = "this is a much longer value".getBytes(); // 27 chars
 
-            // Clean up
-            for (long address : addresses) {
-                arena.deallocate(address, size);
+            long originalAddress = arena.putEntry(keyBytes, namespaceBytes, originalValue);
+
+            // Update with longer value should allocate new entry
+            long updatedAddress = arena.updateEntry(originalAddress, longerValue);
+
+            if (updatedAddress != originalAddress) {
+                // New allocation happened
+                assertTrue(updatedAddress > 0);
+                assertArrayEquals(longerValue, arena.getValueBytes(updatedAddress));
+
+                // Original address should be invalid now (but we can't easily test this)
             }
         }
 
         @Test
-        void testAllocationPatterns() {
-            List<Long> addresses = new ArrayList<>();
-            int[] sizes = {32, 64, 128, 256, 512, 1024};
+        void testMultipleUpdates() {
+            byte[] keyBytes = "multiUpdateKey".getBytes();
+            byte[] namespaceBytes = "multiUpdateNamespace".getBytes();
 
-            // Allocate in pattern
-            for (int round = 0; round < 50; round++) {
-                for (int size : sizes) {
-                    long address = arena.allocate(size);
-                    if (address > 0) {
-                        addresses.add(address);
-                    }
-                }
-            }
+            long address = arena.putEntry(keyBytes, namespaceBytes, "value1".getBytes());
 
-            EntryArena.ArenaStats stats = arena.getStats();
-            assertTrue(stats.activeAllocations > 0);
-            assertTrue(stats.totalAllocated > 0);
+            // Chain of updates
+            address = arena.updateEntry(address, "value2".getBytes());
+            assertTrue(address > 0);
+            assertArrayEquals("value2".getBytes(), arena.getValueBytes(address));
 
-            // Free all
-            for (int i = 0; i < addresses.size(); i++) {
-                arena.deallocate(addresses.get(i), sizes[i % sizes.length]);
-            }
+            address = arena.updateEntry(address, "value3".getBytes());
+            assertTrue(address > 0);
+            assertArrayEquals("value3".getBytes(), arena.getValueBytes(address));
 
-            EntryArena.ArenaStats finalStats = arena.getStats();
-            assertEquals(0, finalStats.activeAllocations);
-        }
-
-        @Test
-        void testFragmentationMetrics() {
-            List<Long> addresses = new ArrayList<>();
-
-            // Create fragmentation pattern
-            for (int i = 0; i < 50; i++) {
-                addresses.add(arena.allocate(64));
-            }
-
-            // Free every third allocation
-            for (int i = 0; i < addresses.size(); i += 3) {
-                arena.deallocate(addresses.get(i), 64);
-            }
-
-            EntryArena.ArenaStats stats = arena.getStats();
-
-            // Verify fragmentation metric is reasonable
-            assertTrue(stats.fragmentation >= 0);
-            assertTrue(stats.freeBlocks >= 0);
-
-            // Clean up remaining
-            for (int i = 0; i < addresses.size(); i++) {
-                if (i % 3 != 0) {
-                    arena.deallocate(addresses.get(i), 64);
-                }
-            }
+            address = arena.updateEntry(address, "much longer value4".getBytes());
+            assertTrue(address > 0);
+            assertArrayEquals("much longer value4".getBytes(), arena.getValueBytes(address));
         }
     }
 
@@ -431,16 +396,14 @@ class EntryArenaTest {
     class LifecycleTests {
 
         @Test
-        void testCloseWithActiveAllocations() throws Exception {
-            // Allocate some memory
-            List<Long> addresses = new ArrayList<>();
-            for (int i = 0; i < 10; i++) {
-                addresses.add(arena.allocate(64));
+        void testCloseWithActiveEntries() throws Exception {
+            // Add some entries
+            for (int i = 0; i < 5; i++) {
+                arena.putEntry(("key" + i).getBytes(), ("ns" + i).getBytes(), ("value" + i).getBytes());
             }
 
-            EntryArena.ArenaStats statsBeforeClose = arena.getStats();
-            assertTrue(statsBeforeClose.activeAllocations > 0);
-            assertTrue(statsBeforeClose.totalSystemMemory > 0);
+            EntryArena.ArenaStats statsBefore = arena.getStats();
+            assertTrue(statsBefore.activeAllocations > 0);
 
             long allocatorUsedBefore = allocator.getUsedBytes();
 
@@ -451,110 +414,77 @@ class EntryArenaTest {
         }
 
         @Test
-        void testCloseEmptyArena() throws Exception {
-            // Close without any allocations
-            assertDoesNotThrow(() -> arena.close());
-        }
-
-        @Test
         void testOperationsAfterClose() throws Exception {
             arena.close();
 
-            // Operations after close might fail or return default values
-            // The exact behavior depends on implementation
-            long address = arena.allocate(64);
+            // Operations after close should handle gracefully
+            long address = arena.putEntry("key".getBytes(), "ns".getBytes(), "value".getBytes());
             assertTrue(address >= 0); // Should either work or return 0
-
-            if (address > 0) {
-                arena.deallocate(address, 64);
-            }
         }
     }
 
     @Nested
-    class StatisticsTests {
+    class PerformanceTests {
 
         @Test
-        void testStatsAccuracy() {
+        void testManySmallEntries() {
+            int numEntries = 1000;
             List<Long> addresses = new ArrayList<>();
-            int[] sizes = {32, 64, 128};
-            long expectedAllocated = 0;
 
-            // Track allocations
-            for (int size : sizes) {
-                long address = arena.allocate(size);
-                addresses.add(address);
-                expectedAllocated += Math.max(size, 32); // Account for minimum size
+            long startTime = System.nanoTime();
+
+            for (int i = 0; i < numEntries; i++) {
+                byte[] keyBytes = ("key" + i).getBytes();
+                byte[] namespaceBytes = "namespace".getBytes();
+                byte[] valueBytes = ("value" + i).getBytes();
+
+                long address = arena.putEntry(keyBytes, namespaceBytes, valueBytes);
+                if (address > 0) {
+                    addresses.add(address);
+                }
             }
 
-            EntryArena.ArenaStats stats = arena.getStats();
-            assertEquals(sizes.length, stats.activeAllocations);
-            assertTrue(stats.totalAllocated >= expectedAllocated);
-            assertEquals(0, stats.totalFreed);
-            assertTrue(stats.usedMemory > 0);
+            long endTime = System.nanoTime();
+            long durationMs = (endTime - startTime) / 1_000_000;
 
-            // Deallocate and check
-            long expectedFreed = 0;
-            for (int i = 0; i < addresses.size(); i++) {
-                arena.deallocate(addresses.get(i), sizes[i]);
-                expectedFreed += Math.max(sizes[i], 32);
+            // Should complete in reasonable time
+            assertTrue(durationMs < 5000, "Entry operations took too long: " + durationMs + "ms");
+            assertTrue(addresses.size() > 0, "Should have successfully created some entries");
+
+            // Verify a sample of entries
+            for (int i = 0; i < Math.min(10, addresses.size()); i++) {
+                long address = addresses.get(i);
+                assertEquals("key" + i, new String(arena.getKeyBytes(address)));
+            }
+        }
+
+        @Test
+        void testMemoryEfficiency() {
+            // Test that memory usage is reasonable
+            EntryArena.ArenaStats initialStats = arena.getStats();
+
+            List<Long> addresses = new ArrayList<>();
+            for (int i = 0; i < 100; i++) {
+                long address = arena.putEntry(
+                    ("key" + i).getBytes(),
+                    "namespace".getBytes(),
+                    ("value" + i).getBytes()
+                );
+                if (address > 0) {
+                    addresses.add(address);
+                }
             }
 
             EntryArena.ArenaStats finalStats = arena.getStats();
-            assertEquals(0, finalStats.activeAllocations);
-            assertTrue(finalStats.totalFreed >= expectedFreed);
-        }
 
-        @Test
-        void testStatsConsistency() {
-            // usedMemory should equal totalAllocated - totalFreed
+            // Memory usage should have increased
+            assertTrue(finalStats.usedMemory > initialStats.usedMemory);
 
-            List<Long> addresses = new ArrayList<>();
-            for (int i = 0; i < 5; i++) {
-                addresses.add(arena.allocate(64));
-            }
+            // Active allocations should match number of entries
+            assertEquals(addresses.size(), finalStats.activeAllocations);
 
-            EntryArena.ArenaStats stats1 = arena.getStats();
-            assertEquals(stats1.totalAllocated - stats1.totalFreed, stats1.usedMemory);
-
-            // Deallocate some
-            arena.deallocate(addresses.get(0), 64);
-            arena.deallocate(addresses.get(1), 64);
-
-            EntryArena.ArenaStats stats2 = arena.getStats();
-            assertEquals(stats2.totalAllocated - stats2.totalFreed, stats2.usedMemory);
-
-            // Clean up
-            for (int i = 2; i < addresses.size(); i++) {
-                arena.deallocate(addresses.get(i), 64);
-            }
-        }
-
-        @Test
-        void testFragmentationCalculation() {
-            // Test that fragmentation calculation doesn't crash and returns reasonable values
-
-            // Create some fragmentation
-            List<Long> addresses = new ArrayList<>();
-            for (int i = 0; i < 20; i++) {
-                addresses.add(arena.allocate(64));
-            }
-
-            // Free some to create fragments
-            for (int i = 0; i < addresses.size(); i += 2) {
-                arena.deallocate(addresses.get(i), 64);
-            }
-
-            EntryArena.ArenaStats stats = arena.getStats();
-
-            // Fragmentation should be a reasonable value
-            assertTrue(stats.fragmentation >= 0.0);
-            assertTrue(stats.fragmentation <= 100.0); // Assuming it's a percentage or ratio
-
-            // Clean up
-            for (int i = 1; i < addresses.size(); i += 2) {
-                arena.deallocate(addresses.get(i), 64);
-            }
+            // Fragmentation should be reasonable
+            assertTrue(finalStats.fragmentation >= 0);
         }
     }
 }

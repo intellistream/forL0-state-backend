@@ -1,23 +1,31 @@
 package org.apache.flink.runtime.state.heap;
 
+import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
-import sun.misc.Unsafe;
+
+import java.util.List;
 
 /**
  * Extension Bucket Pool for managing extension buckets in Main Table.
  * Supports up to 255 extension buckets per main bucket.
  * Single-threaded implementation as Flink Task state access is single-threaded.
+ *
+ * Uses MemorySegment operations instead of Unsafe for better safety and compatibility.
  */
 public class ExtensionBucketPool implements AutoCloseable {
 
-    private static final Unsafe UNSAFE = UnsafeUtils.unsafe();
     private static final int BUCKET_SIZE = 64;  // Same as main bucket size
+    private static final int SLOTS_PER_BUCKET = 6;  // 6 slots per bucket
+    private static final int SLOT_SIZE = 10;  // tag(2B) + pointer(8B) = 10B
     private static final byte NULL_BUCKET_ID = 0;
+
+    // Slot field offsets within a slot (same as MainTable)
+    private static final int SLOT_TAG_OFFSET = 0;      // 2 bytes
+    private static final int SLOT_POINTER_OFFSET = 2;  // 8 bytes
 
     private final MemoryManagerAllocator allocator;
     private final int maxBuckets;
-    private final long baseAddress;
+    private final List<MemorySegment> memorySegments;
     private final long totalSize;
 
     // Free list for bucket allocation (single-threaded)
@@ -42,8 +50,9 @@ public class ExtensionBucketPool implements AutoCloseable {
         this.nextFreeBucketId = 1; // Start from 1, as 0 is reserved for NULL
 
         try {
-            // Allocate 64-byte aligned memory for extension buckets
-            this.baseAddress = allocator.allocateAligned(totalSize, BUCKET_SIZE);
+            // Allocate memory segments for extension buckets
+            int numPages = (int) ((totalSize + allocator.getPageSize() - 1) / allocator.getPageSize());
+            this.memorySegments = allocator.allocate(numPages);
 
             // Clear all buckets
             clearAllBuckets();
@@ -117,6 +126,7 @@ public class ExtensionBucketPool implements AutoCloseable {
 
     /**
      * Gets the memory address of an extension bucket.
+     * Note: This is kept for compatibility, but new methods should use MemorySegment directly.
      *
      * @param bucketId Bucket ID (1-255)
      * @return Memory address of the bucket
@@ -126,8 +136,241 @@ public class ExtensionBucketPool implements AutoCloseable {
             throw new IllegalArgumentException("Invalid bucket ID: " + bucketId);
         }
 
-        // Bucket IDs start from 1, so subtract 1 for array indexing
-        return baseAddress + (long) (bucketId - 1) * BUCKET_SIZE;
+        // For compatibility with MainTable's current interface
+        // This method should be deprecated in favor of direct MemorySegment access
+        MemorySegment segment = getSegmentForBucket(bucketId);
+        int bucketOffset = getBucketOffsetInSegment(bucketId);
+        return segment.getAddress() + bucketOffset;
+    }
+
+    /**
+     * Searches for an entry in the specified bucket.
+     *
+     * @param bucketAddress Bucket address (from getBucketAddress)
+     * @param tag Tag to search for
+     * @param entryMatcher Matcher to verify entry
+     * @return Entry address if found, 0 if not found
+     */
+    public long searchInBucket(long bucketAddress, short tag, MainTable.EntryMatcher entryMatcher) {
+        byte bucketId = findBucketIdByAddress(bucketAddress);
+        return searchInBucket(bucketId, tag, entryMatcher);
+    }
+
+    /**
+     * Searches for an entry in the specified bucket.
+     *
+     * @param bucketId Bucket ID
+     * @param tag Tag to search for
+     * @param entryMatcher Matcher to verify entry
+     * @return Entry address if found, 0 if not found
+     */
+    public long searchInBucket(byte bucketId, short tag, MainTable.EntryMatcher entryMatcher) {
+        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+            return 0;
+        }
+
+        MemorySegment segment = getSegmentForBucket(bucketId);
+        int bucketOffset = getBucketOffsetInSegment(bucketId);
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+
+            if (slotPointer == 0) continue;  // Empty slot
+            if (slotTag != tag) continue;    // Tag mismatch
+
+            if (entryMatcher.matches(slotPointer)) {
+                return slotPointer;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Puts an entry into the specified bucket.
+     *
+     * @param bucketAddress Bucket address (from getBucketAddress)
+     * @param tag Tag for the entry
+     * @param entryAddress Entry address in EntryArena
+     * @param entryMatcher Matcher to verify existing entries
+     * @return Previous entry address if updated, 0 if newly inserted, -1 if bucket is full
+     */
+    public long putInBucket(long bucketAddress, short tag, long entryAddress, MainTable.EntryMatcher entryMatcher) {
+        byte bucketId = findBucketIdByAddress(bucketAddress);
+        return putInBucket(bucketId, tag, entryAddress, entryMatcher);
+    }
+
+    /**
+     * Puts an entry into the specified bucket.
+     *
+     * @param bucketId Bucket ID
+     * @param tag Tag for the entry
+     * @param entryAddress Entry address in EntryArena
+     * @param entryMatcher Matcher to verify existing entries
+     * @return Previous entry address if updated, 0 if newly inserted, -1 if bucket is full
+     */
+    public long putInBucket(byte bucketId, short tag, long entryAddress, MainTable.EntryMatcher entryMatcher) {
+        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+            return -1;
+        }
+
+        MemorySegment segment = getSegmentForBucket(bucketId);
+        int bucketOffset = getBucketOffsetInSegment(bucketId);
+        int emptySlot = -1;
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+
+            if (slotPointer == 0) {
+                if (emptySlot == -1) {
+                    emptySlot = slot;
+                }
+                continue;
+            }
+
+            if (slotTag == tag && entryMatcher.matches(slotPointer)) {
+                // Update existing entry
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+                return slotPointer;
+            }
+        }
+
+        // Insert in empty slot if available
+        if (emptySlot != -1) {
+            int slotOffset = bucketOffset + emptySlot * SLOT_SIZE;
+            segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
+            segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+            return 0;  // New insertion
+        }
+
+        return -1;  // Bucket is full
+    }
+
+    /**
+     * Removes an entry from the specified bucket.
+     *
+     * @param bucketAddress Bucket address (from getBucketAddress)
+     * @param tag Tag to search for
+     * @param entryMatcher Matcher to verify entry
+     * @return Removed entry address if found, 0 if not found
+     */
+    public long removeFromBucket(long bucketAddress, short tag, MainTable.EntryMatcher entryMatcher) {
+        byte bucketId = findBucketIdByAddress(bucketAddress);
+        return removeFromBucket(bucketId, tag, entryMatcher);
+    }
+
+    /**
+     * Removes an entry from the specified bucket.
+     *
+     * @param bucketId Bucket ID
+     * @param tag Tag to search for
+     * @param entryMatcher Matcher to verify entry
+     * @return Removed entry address if found, 0 if not found
+     */
+    public long removeFromBucket(byte bucketId, short tag, MainTable.EntryMatcher entryMatcher) {
+        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+            return 0;
+        }
+
+        MemorySegment segment = getSegmentForBucket(bucketId);
+        int bucketOffset = getBucketOffsetInSegment(bucketId);
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+
+            if (slotPointer == 0) continue;
+            if (slotTag != tag) continue;
+
+            if (entryMatcher.matches(slotPointer)) {
+                // Clear the slot
+                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short) 0);
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
+                return slotPointer;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Checks if a bucket is empty.
+     *
+     * @param bucketAddress Bucket address (from getBucketAddress)
+     * @return true if bucket is empty, false otherwise
+     */
+    public boolean isBucketEmpty(long bucketAddress) {
+        byte bucketId = findBucketIdByAddress(bucketAddress);
+        return isBucketEmpty(bucketId);
+    }
+
+    /**
+     * Checks if a bucket is empty.
+     *
+     * @param bucketId Bucket ID
+     * @return true if bucket is empty, false otherwise
+     */
+    public boolean isBucketEmpty(byte bucketId) {
+        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+            return true;
+        }
+
+        MemorySegment segment = getSegmentForBucket(bucketId);
+        int bucketOffset = getBucketOffsetInSegment(bucketId);
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (slotPointer != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Visits all slots in the specified bucket.
+     *
+     * @param bucketAddress Bucket address (from getBucketAddress)
+     * @param visitor Visitor to call for each entry
+     * @param bucketIndex Main bucket index (for visitor context)
+     */
+    public void visitBucketSlots(long bucketAddress, MainTable.EntryVisitor visitor, int bucketIndex) {
+        byte bucketId = findBucketIdByAddress(bucketAddress);
+        visitBucketSlots(bucketId, visitor, bucketIndex);
+    }
+
+    /**
+     * Visits all slots in the specified bucket.
+     *
+     * @param bucketId Bucket ID
+     * @param visitor Visitor to call for each entry
+     * @param bucketIndex Main bucket index (for visitor context)
+     */
+    public void visitBucketSlots(byte bucketId, MainTable.EntryVisitor visitor, int bucketIndex) {
+        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+            return;
+        }
+
+        MemorySegment segment = getSegmentForBucket(bucketId);
+        int bucketOffset = getBucketOffsetInSegment(bucketId);
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+
+            if (slotPointer != 0) {
+                visitor.visit(slotPointer, bucketIndex, slotTag);
+            }
+        }
     }
 
     /**
@@ -144,112 +387,119 @@ public class ExtensionBucketPool implements AutoCloseable {
     }
 
     /**
-     * Gets statistics about pool usage.
+     * Gets the number of allocated buckets.
      */
-    public PoolStats getStats() {
-        int bucketsInUse = 0;
+    public int getAllocatedBuckets() {
+        int count = 0;
         for (int i = 1; i <= maxBuckets; i++) {
             if (bucketInUse[i]) {
-                bucketsInUse++;
+                count++;
             }
         }
-
-        return new PoolStats(bucketsInUse, maxBuckets);
+        return count;
     }
 
     /**
-     * Resizes the pool to accommodate more buckets.
-     * This is typically called during main table expansion.
+     * Gets statistics about pool usage.
      */
-    public ExtensionBucketPool resize(int newMaxBuckets) {
-        if (newMaxBuckets <= maxBuckets) {
-            return this; // No need to resize
-        }
+    public PoolStats getStats() {
+        int bucketsInUse = getAllocatedBuckets();
+        int bucketsAvailable = maxBuckets - bucketsInUse;
+        double utilizationRate = maxBuckets > 0 ? (double) bucketsInUse / maxBuckets : 0.0;
 
-        // Create new larger pool
-        ExtensionBucketPool newPool = new ExtensionBucketPool(allocator, newMaxBuckets);
-
-        // Copy existing buckets that are in use
-        for (int id = 1; id <= maxBuckets; id++) {
-            if (bucketInUse[id]) {
-                byte newBucketId = newPool.allocateBucket();
-                if (newBucketId != NULL_BUCKET_ID) {
-                    // Copy bucket data
-                    long oldAddress = getBucketAddress((byte) id);
-                    long newAddress = newPool.getBucketAddress(newBucketId);
-
-                    for (int offset = 0; offset < BUCKET_SIZE; offset += 8) {
-                        long data = UNSAFE.getLong(oldAddress + offset);
-                        UNSAFE.putLong(newAddress + offset, data);
-                    }
-                }
-            }
-        }
-
-        return newPool;
+        return new PoolStats(maxBuckets, bucketsInUse, bucketsAvailable, utilizationRate);
     }
 
     private void updateNextFreeBucketId() {
-        // Find next free bucket for faster allocation
+        // Find next free bucket starting from current hint
         for (int id = nextFreeBucketId; id <= maxBuckets; id++) {
             if (!bucketInUse[id]) {
                 nextFreeBucketId = (byte) id;
                 return;
             }
         }
-
-        // If no free bucket found after current position, wrap around
-        for (int id = 1; id < nextFreeBucketId; id++) {
-            if (!bucketInUse[id]) {
-                nextFreeBucketId = (byte) id;
-                return;
-            }
-        }
-
-        // Pool might be full, keep current hint
+        // No free bucket found, set to an invalid value
+        nextFreeBucketId = (byte) (maxBuckets + 1);
     }
 
     private void clearBucket(byte bucketId) {
-        long bucketAddress = getBucketAddress(bucketId);
+        if (bucketId == NULL_BUCKET_ID || bucketId > maxBuckets) {
+            return;
+        }
 
-        // Zero out the bucket
+        MemorySegment segment = getSegmentForBucket(bucketId);
+        int bucketOffset = getBucketOffsetInSegment(bucketId);
+
+        // Clear the entire bucket (64 bytes)
         for (int offset = 0; offset < BUCKET_SIZE; offset += 8) {
-            UNSAFE.putLong(bucketAddress + offset, 0L);
+            segment.putLong(bucketOffset + offset, 0L);
         }
     }
 
     private void clearAllBuckets() {
-        // Zero out all memory
-        for (long offset = 0; offset < totalSize; offset += 8) {
-            UNSAFE.putLong(baseAddress + offset, 0L);
+        // Zero out all memory segments
+        for (MemorySegment segment : memorySegments) {
+            for (int offset = 0; offset < segment.size(); offset += 8) {
+                segment.putLong(offset, 0L);
+            }
         }
+    }
+
+    private MemorySegment getSegmentForBucket(byte bucketId) {
+        int bucketIndex = bucketId - 1; // Bucket IDs start from 1
+        int segmentIndex = (bucketIndex * BUCKET_SIZE) / memorySegments.get(0).size();
+        return memorySegments.get(Math.min(segmentIndex, memorySegments.size() - 1));
+    }
+
+    private int getBucketOffsetInSegment(byte bucketId) {
+        int bucketIndex = bucketId - 1; // Bucket IDs start from 1
+        int segmentSize = memorySegments.get(0).size();
+        return ((bucketIndex * BUCKET_SIZE) % segmentSize);
+    }
+
+    private byte findBucketIdByAddress(long bucketAddress) {
+        // Find bucket ID by calculating from base address
+        // This is for compatibility with the old interface
+        for (byte id = 1; id <= maxBuckets; id++) {
+            if (bucketInUse[id]) {
+                MemorySegment segment = getSegmentForBucket(id);
+                int bucketOffset = getBucketOffsetInSegment(id);
+                long calculatedAddress = segment.getAddress() + bucketOffset;
+                if (calculatedAddress == bucketAddress) {
+                    return id;
+                }
+            }
+        }
+        throw new IllegalArgumentException("Invalid bucket address: " + bucketAddress);
     }
 
     @Override
     public void close() throws Exception {
-        if (allocator != null && baseAddress != 0) {
-            allocator.deallocate(baseAddress, totalSize);
+        if (allocator != null && memorySegments != null) {
+            allocator.release(memorySegments);
         }
     }
 
     /**
-     * Statistics about extension bucket pool usage.
+     * Statistics about the extension bucket pool.
      */
     public static class PoolStats {
-        public final int bucketsInUse;
         public final int maxBuckets;
-        public final double utilization;
+        public final int bucketsInUse;
+        public final int bucketsAvailable;
+        public final double utilizationRate;
 
-        public PoolStats(int bucketsInUse, int maxBuckets) {
-            this.bucketsInUse = bucketsInUse;
+        public PoolStats(int maxBuckets, int bucketsInUse, int bucketsAvailable, double utilizationRate) {
             this.maxBuckets = maxBuckets;
-            this.utilization = maxBuckets > 0 ? (double) bucketsInUse / maxBuckets : 0.0;
+            this.bucketsInUse = bucketsInUse;
+            this.bucketsAvailable = bucketsAvailable;
+            this.utilizationRate = utilizationRate;
         }
 
         @Override
         public String toString() {
-            return String.format("ExtensionPool[%d/%d buckets, %.2f%% utilization]",
-                    bucketsInUse, maxBuckets, utilization * 100);
+            return String.format("PoolStats[max=%d, inUse=%d, available=%d, utilization=%.2f%%]",
+                    maxBuckets, bucketsInUse, bucketsAvailable, utilizationRate * 100);
         }
     }
 }

@@ -3,6 +3,7 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,13 +11,19 @@ import org.junit.jupiter.api.Nested;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Test class for L0Table implementation.
+ * Tests the cache functionality including get/put operations,
+ * replacement policies, and cache statistics.
+ */
 class L0TableTest {
 
     private static final int DEFAULT_PAGE_SIZE = 32 * 1024; // 32KB
-    private static final long DEFAULT_MEMORY_SIZE = 64L * DEFAULT_PAGE_SIZE; // 2MB
+    private static final long DEFAULT_MEMORY_SIZE = 64L * DEFAULT_PAGE_SIZE; // 2MB for tests
 
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
+    private EntryArena entryArena;
     private L0Table l0Table;
     private Object owner;
 
@@ -28,13 +35,19 @@ class L0TableTest {
                 .build();
         owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
-        l0Table = new L0Table(allocator, 4); // 16 buckets (2^4)
+        entryArena = new EntryArena(allocator);
+
+        // Create L0Table with 4 buckets (2^2) and 4 slots per bucket = 16 total slots
+        l0Table = new L0Table(allocator, 2);
     }
 
     @AfterEach
     void tearDown() throws Exception {
         if (l0Table != null) {
             l0Table.close();
+        }
+        if (entryArena != null) {
+            entryArena.close();
         }
         if (allocator != null && !allocator.isClosed()) {
             allocator.close();
@@ -48,244 +61,363 @@ class L0TableTest {
     class BasicFunctionalityTests {
 
         @Test
-        void testTableInitialization() {
-            L0Table.L0TableStats stats = l0Table.getStats();
-            assertEquals(0, stats.validSlots);
-            assertEquals(16 * 4, stats.totalSlots); // 16 buckets * 4 slots each
-            assertEquals(16, stats.bucketCount);
-            assertEquals(0.0, stats.loadFactor);
-        }
-
-        @Test
         void testPutAndGet() {
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
-            long kvPointer = 0x123456789ABCDEFL;
+            // Prepare test data
+            byte[] key = "testKey".getBytes();
+            byte[] namespace = "testNamespace".getBytes();
+            byte[] value = "testValue".getBytes();
 
-            // Mock KV matcher that always returns true
-            L0Table.KVMatcher alwaysMatch = (pointer) -> pointer == kvPointer;
+            // Store entry in EntryArena
+            long entryAddress = entryArena.putEntry(key, namespace, value);
+            assertTrue(entryAddress > 0, "Entry should be stored successfully");
 
-            // Put entry
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
+            // Calculate hash and tag
+            int keyHash = HashFunctions.murmurHash3(key);
+            int namespaceHash = HashFunctions.murmurHash3(namespace);
+            int hash = keyHash ^ namespaceHash;
+            short tag = (short) (hash & 0xFFFF);
 
-            // Get entry back
-            long result = l0Table.get(keyHash, tag, alwaysMatch);
-            assertEquals(kvPointer, result);
+            // Create entry matcher
+            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
-            // Verify stats
-            L0Table.L0TableStats stats = l0Table.getStats();
-            assertEquals(1, stats.validSlots);
-            assertTrue(stats.loadFactor > 0);
+            // Put entry into L0Table
+            long result = l0Table.put(hash, tag, entryAddress, matcher);
+            assertEquals(0, result, "Should return 0 for new insertion");
+
+            // Get entry from L0Table
+            long retrievedAddress = l0Table.get(hash, tag, matcher);
+            assertEquals(entryAddress, retrievedAddress, "Should retrieve the same entry address");
+
+            // Verify entry data
+            assertArrayEquals(key, entryArena.getKeyBytes(retrievedAddress));
+            assertArrayEquals(namespace, entryArena.getNamespaceBytes(retrievedAddress));
+            assertArrayEquals(value, entryArena.getValueBytes(retrievedAddress));
         }
 
         @Test
-        void testGetNonExistentEntry() {
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
+        void testUpdate() {
+            // Prepare test data
+            byte[] key = "updateKey".getBytes();
+            byte[] namespace = "updateNamespace".getBytes();
+            byte[] value1 = "initialValue".getBytes();
+            byte[] value2 = "updatedValue".getBytes();
 
-            L0Table.KVMatcher alwaysMatch = (pointer) -> true;
+            // Store initial entry
+            long entryAddress1 = entryArena.putEntry(key, namespace, value1);
+            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            short tag = (short) (hash & 0xFFFF);
+            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
-            // Try to get non-existent entry
-            long result = l0Table.get(keyHash, tag, alwaysMatch);
-            assertEquals(0, result);
+            // Insert initial entry
+            long result1 = l0Table.put(hash, tag, entryAddress1, matcher);
+            assertEquals(0, result1, "Should return 0 for new insertion");
+
+            // Store updated entry
+            long entryAddress2 = entryArena.putEntry(key, namespace, value2);
+
+            // Update entry in L0Table
+            long result2 = l0Table.put(hash, tag, entryAddress2, matcher);
+            assertEquals(entryAddress1, result2, "Should return previous entry address for update");
+
+            // Verify updated entry
+            long retrievedAddress = l0Table.get(hash, tag, matcher);
+            assertEquals(entryAddress2, retrievedAddress, "Should retrieve updated entry address");
+            assertArrayEquals(value2, entryArena.getValueBytes(retrievedAddress));
         }
 
         @Test
-        void testRemoveEntry() {
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
-            long kvPointer = 0x123456789ABCDEFL;
+        void testRemove() {
+            // Prepare test data
+            byte[] key = "removeKey".getBytes();
+            byte[] namespace = "removeNamespace".getBytes();
+            byte[] value = "removeValue".getBytes();
 
-            L0Table.KVMatcher matcher = (pointer) -> pointer == kvPointer;
+            // Store and insert entry
+            long entryAddress = entryArena.putEntry(key, namespace, value);
+            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            short tag = (short) (hash & 0xFFFF);
+            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
-            // Put and verify
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
-            assertEquals(kvPointer, l0Table.get(keyHash, tag, matcher));
+            l0Table.put(hash, tag, entryAddress, matcher);
 
-            // Remove
-            l0Table.remove(keyHash, tag, kvPointer);
+            // Remove entry
+            long removedAddress = l0Table.remove(hash, tag, matcher);
+            assertEquals(entryAddress, removedAddress, "Should return removed entry address");
 
-            // Verify removed
-            assertEquals(0, l0Table.get(keyHash, tag, matcher));
+            // Verify entry is removed
+            long retrievedAddress = l0Table.get(hash, tag, matcher);
+            assertEquals(0, retrievedAddress, "Entry should not be found after removal");
+        }
 
-            // Verify stats
+        @Test
+        void testGetNonExistent() {
+            byte[] key = "nonExistentKey".getBytes();
+            byte[] namespace = "nonExistentNamespace".getBytes();
+            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            short tag = (short) (hash & 0xFFFF);
+            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
+
+            long result = l0Table.get(hash, tag, matcher);
+            assertEquals(0, result, "Should return 0 for non-existent entry");
+        }
+    }
+
+    @Nested
+    class ReplacementPolicyTests {
+
+        @Test
+        void testLRUPolicy() {
+            try (L0Table lruTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.LRU)) {
+                // Fill all 4 slots in bucket 0 (force same bucket using hash & 3 = 0)
+                TestEntry[] entries = new TestEntry[5];  // 5 entries, 4 slots
+
+                for (int i = 0; i < 5; i++) {
+                    entries[i] = createTestEntry("lruKey" + i, "lruValue" + i);
+                    int hash = 0x12340000 | (i << 2); // All map to bucket 0
+                    short tag = (short) (0x1000 + i);
+                    entries[i].hash = hash;
+                    entries[i].tag = tag;
+                }
+
+                // Insert first 4 entries (fill bucket)
+                for (int i = 0; i < 4; i++) {
+                    long result = lruTable.put(entries[i].hash, entries[i].tag,
+                                             entries[i].entryAddress, entries[i].matcher);
+                    assertEquals(0, result, "Should insert successfully");
+                }
+
+                // Access entry 1 to make it most recently used
+                lruTable.get(entries[1].hash, entries[1].tag, entries[1].matcher);
+
+                // Insert 5th entry - should evict LRU (entry 0, since entry 1 was accessed)
+                long evictedAddress = lruTable.put(entries[4].hash, entries[4].tag,
+                                                 entries[4].entryAddress, entries[4].matcher);
+                assertEquals(entries[0].entryAddress, evictedAddress, "Should evict least recently used entry");
+
+                // Verify entry 0 is gone, but entry 1 is still there
+                assertEquals(0, lruTable.get(entries[0].hash, entries[0].tag, entries[0].matcher));
+                assertEquals(entries[1].entryAddress,
+                           lruTable.get(entries[1].hash, entries[1].tag, entries[1].matcher));
+            }
+        }
+
+        @Test
+        void testLFUPolicy() {
+            try (L0Table lfuTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.LFU)) {
+                // Create test entries
+                TestEntry[] entries = new TestEntry[5];
+
+                for (int i = 0; i < 5; i++) {
+                    entries[i] = createTestEntry("lfuKey" + i, "lfuValue" + i);
+                    int hash = 0x12340000 | (i << 2); // All map to bucket 0
+                    short tag = (short) (0x1000 + i);
+                    entries[i].hash = hash;
+                    entries[i].tag = tag;
+                }
+
+                // Insert first 4 entries
+                for (int i = 0; i < 4; i++) {
+                    lfuTable.put(entries[i].hash, entries[i].tag,
+                               entries[i].entryAddress, entries[i].matcher);
+                }
+
+                // Access entry 1 multiple times to increase frequency
+                for (int j = 0; j < 3; j++) {
+                    lfuTable.get(entries[1].hash, entries[1].tag, entries[1].matcher);
+                }
+
+                // Insert 5th entry - should evict LFU (one of the entries accessed only once)
+                long evictedAddress = lfuTable.put(entries[4].hash, entries[4].tag,
+                                                 entries[4].entryAddress, entries[4].matcher);
+                assertTrue(evictedAddress > 0, "Should evict an entry");
+
+                // Entry 1 should still be there (highest frequency)
+                assertEquals(entries[1].entryAddress,
+                           lfuTable.get(entries[1].hash, entries[1].tag, entries[1].matcher));
+            }
+        }
+
+        @Test
+        void testRandomPolicy() {
+            try (L0Table randomTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.RANDOM)) {
+                // Create test entries
+                TestEntry[] entries = new TestEntry[5];
+
+                for (int i = 0; i < 5; i++) {
+                    entries[i] = createTestEntry("randomKey" + i, "randomValue" + i);
+                    int hash = 0x12340000 | (i << 2); // All map to bucket 0
+                    short tag = (short) (0x1000 + i);
+                    entries[i].hash = hash;
+                    entries[i].tag = tag;
+                }
+
+                // Insert first 4 entries
+                for (int i = 0; i < 4; i++) {
+                    randomTable.put(entries[i].hash, entries[i].tag,
+                                  entries[i].entryAddress, entries[i].matcher);
+                }
+
+                // Insert 5th entry - should evict some entry randomly
+                long evictedAddress = randomTable.put(entries[4].hash, entries[4].tag,
+                                                    entries[4].entryAddress, entries[4].matcher);
+                assertTrue(evictedAddress > 0, "Should evict an entry");
+
+                // Verify that 5th entry was inserted
+                assertEquals(entries[4].entryAddress,
+                           randomTable.get(entries[4].hash, entries[4].tag, entries[4].matcher));
+            }
+        }
+    }
+
+    @Nested
+    class CacheManagementTests {
+
+        @Test
+        void testRemoveByAddress() {
+            // Insert test entries
+            TestEntry entry1 = createTestEntry("removeAddr1", "value1");
+            TestEntry entry2 = createTestEntry("removeAddr2", "value2");
+
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
+
+            // Remove by address
+            l0Table.removeByAddress(entry1.entryAddress);
+
+            // Verify entry1 is removed, entry2 remains
+            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.matcher));
+            assertEquals(entry2.entryAddress, l0Table.get(entry2.hash, entry2.tag, entry2.matcher));
+        }
+
+        @Test
+        void testInvalidateRange() {
+            // Insert test entries with known addresses
+            TestEntry entry1 = createTestEntry("range1", "value1");
+            TestEntry entry2 = createTestEntry("range2", "value2");
+            TestEntry entry3 = createTestEntry("range3", "value3");
+
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
+            l0Table.put(entry3.hash, entry3.tag, entry3.entryAddress, entry3.matcher);
+
+            // Invalidate range that includes entry1 and entry2
+            long minAddr = Math.min(entry1.entryAddress, entry2.entryAddress);
+            long maxAddr = Math.max(entry1.entryAddress, entry2.entryAddress) + 1;
+
+            l0Table.invalidateRange(minAddr, maxAddr);
+
+            // Verify affected entries are invalidated
+            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.matcher));
+            assertEquals(0, l0Table.get(entry2.hash, entry2.tag, entry2.matcher));
+
+            // Entry3 might still be there if outside range
+            if (entry3.entryAddress < minAddr || entry3.entryAddress >= maxAddr) {
+                assertEquals(entry3.entryAddress, l0Table.get(entry3.hash, entry3.tag, entry3.matcher));
+            }
+        }
+
+        @Test
+        void testClear() {
+            // Insert test entries
+            TestEntry entry1 = createTestEntry("clear1", "value1");
+            TestEntry entry2 = createTestEntry("clear2", "value2");
+
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
+
+            // Clear all entries
+            l0Table.clear();
+
+            // Verify stats are reset first (before calling get which would increment accessCount)
             L0Table.L0TableStats stats = l0Table.getStats();
             assertEquals(0, stats.validSlots);
-        }
+            assertEquals(0, stats.accessCount);
+            assertEquals(0, stats.hitCount);
+            assertEquals(0, stats.missCount);
+            assertEquals(0, stats.evictionCount);
 
-        @Test
-        void testUpdateExistingEntry() {
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
-            long kvPointer1 = 0x111111111111111L;
-            long kvPointer2 = 0x222222222222222L;
-
-            L0Table.KVMatcher matcher1 = (pointer) -> pointer == kvPointer1;
-            L0Table.KVMatcher matcher2 = (pointer) -> pointer == kvPointer2;
-
-            // Put first entry
-            assertTrue(l0Table.put(keyHash, tag, kvPointer1));
-            assertEquals(kvPointer1, l0Table.get(keyHash, tag, matcher1));
-
-            // Update with same key hash and tag
-            assertTrue(l0Table.put(keyHash, tag, kvPointer2));
-            assertEquals(kvPointer2, l0Table.get(keyHash, tag, matcher2));
-            assertEquals(0, l0Table.get(keyHash, tag, matcher1)); // Old pointer should not match
-
-            // Stats should still show only 1 slot (updated, not new)
-            L0Table.L0TableStats stats = l0Table.getStats();
-            assertEquals(1, stats.validSlots);
+            // Then verify all entries are removed
+            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.matcher));
+            assertEquals(0, l0Table.get(entry2.hash, entry2.tag, entry2.matcher));
         }
     }
 
     @Nested
-    class CollisionHandlingTests {
+    class StatisticsTests {
 
         @Test
-        void testSameBucketMultipleEntries() {
-            // Use same hash but different tags to force same bucket
-            int keyHash = 0;
-            short tag1 = (short) 0x1111;
-            short tag2 = (short) 0x2222;
-            short tag3 = (short) 0x3333;
-            short tag4 = (short) 0x4444;
+        void testHitMissStatistics() {
+            TestEntry entry = createTestEntry("statsKey", "statsValue");
 
-            long pointer1 = 0x111L;
-            long pointer2 = 0x222L;
-            long pointer3 = 0x333L;
-            long pointer4 = 0x444L;
+            // Miss: get non-existent entry
+            l0Table.get(entry.hash, entry.tag, entry.matcher);
 
-            L0Table.KVMatcher matcher1 = (p) -> p == pointer1;
-            L0Table.KVMatcher matcher2 = (p) -> p == pointer2;
-            L0Table.KVMatcher matcher3 = (p) -> p == pointer3;
-            L0Table.KVMatcher matcher4 = (p) -> p == pointer4;
+            // Hit: insert then get
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
+            l0Table.get(entry.hash, entry.tag, entry.matcher);
 
-            // Fill all 4 slots in bucket 0
-            assertTrue(l0Table.put(keyHash, tag1, pointer1));
-            assertTrue(l0Table.put(keyHash, tag2, pointer2));
-            assertTrue(l0Table.put(keyHash, tag3, pointer3));
-            assertTrue(l0Table.put(keyHash, tag4, pointer4));
-
-            // Verify all entries
-            assertEquals(pointer1, l0Table.get(keyHash, tag1, matcher1));
-            assertEquals(pointer2, l0Table.get(keyHash, tag2, matcher2));
-            assertEquals(pointer3, l0Table.get(keyHash, tag3, matcher3));
-            assertEquals(pointer4, l0Table.get(keyHash, tag4, matcher4));
-
-            // Stats should show 4 valid slots
             L0Table.L0TableStats stats = l0Table.getStats();
-            assertEquals(4, stats.validSlots);
+            assertEquals(2, stats.accessCount, "Should have 2 total accesses");
+            assertEquals(1, stats.hitCount, "Should have 1 hit");
+            assertEquals(1, stats.missCount, "Should have 1 miss");
+            assertEquals(0.5, stats.hitRate, 0.001, "Hit rate should be 50%");
         }
 
         @Test
-        void testBucketEviction() {
-            // Fill a bucket and add one more to trigger eviction
-            int keyHash = 0;
-            short tag1 = (short) 0x1111;
-            short tag2 = (short) 0x2222;
-            short tag3 = (short) 0x3333;
-            short tag4 = (short) 0x4444;
-            short tag5 = (short) 0x5555; // This should trigger eviction
+        void testLoadFactorCalculation() {
+            L0Table.L0TableStats initialStats = l0Table.getStats();
+            assertEquals(0.0, initialStats.loadFactor, 0.001, "Initial load factor should be 0");
 
-            long pointer1 = 0x111L;
-            long pointer2 = 0x222L;
-            long pointer3 = 0x333L;
-            long pointer4 = 0x444L;
-            long pointer5 = 0x555L;
+            // Insert entries to increase load factor
+            TestEntry entry1 = createTestEntry("load1", "value1");
+            TestEntry entry2 = createTestEntry("load2", "value2");
 
-            L0Table.KVMatcher matcher1 = (p) -> p == pointer1;
-            L0Table.KVMatcher matcher5 = (p) -> p == pointer5;
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
 
-            // Fill all 4 slots
-            assertTrue(l0Table.put(keyHash, tag1, pointer1));
-            assertTrue(l0Table.put(keyHash, tag2, pointer2));
-            assertTrue(l0Table.put(keyHash, tag3, pointer3));
-            assertTrue(l0Table.put(keyHash, tag4, pointer4));
+            L0Table.L0TableStats stats = l0Table.getStats();
+            assertEquals(2, stats.validSlots, "Should have 2 valid slots");
+            assertEquals(16, stats.totalSlots, "Should have 16 total slots (4 buckets × 4 slots)");
+            assertEquals(2.0 / 16.0, stats.loadFactor, 0.001, "Load factor should be 2/16");
+        }
 
-            // Add delay to ensure different timestamps for LRU
-            try {
-                Thread.sleep(1);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        @Test
+        void testEvictionCount() {
+            // Fill one bucket completely (4 slots)
+            TestEntry[] entries = new TestEntry[5]; // 5 entries for 4 slots
+
+            for (int i = 0; i < 5; i++) {
+                entries[i] = createTestEntry("evict" + i, "value" + i);
+                int hash = 0x12340000; // Force same bucket
+                short tag = (short) (0x1000 + i);
+                entries[i].hash = hash;
+                entries[i].tag = tag;
             }
 
-            // Add 5th entry (should evict one of the existing)
-            assertTrue(l0Table.put(keyHash, tag5, pointer5));
-
-            // New entry should be findable
-            assertEquals(pointer5, l0Table.get(keyHash, tag5, matcher5));
-
-            // Should still have 4 valid slots (eviction happened)
-            L0Table.L0TableStats stats = l0Table.getStats();
-            assertEquals(4, stats.validSlots);
-        }
-
-        @Test
-        void testTagMismatch() {
-            int keyHash = 12345;
-            short tag1 = (short) 0x1234;
-            short tag2 = (short) 0x5678;
-            long kvPointer = 0x123456789ABCDEFL;
-
-            L0Table.KVMatcher matcher = (pointer) -> pointer == kvPointer;
-
-            // Put with tag1
-            assertTrue(l0Table.put(keyHash, tag1, kvPointer));
-
-            // Try to get with tag2 (should not find)
-            assertEquals(0, l0Table.get(keyHash, tag2, matcher));
-
-            // Get with correct tag should work
-            assertEquals(kvPointer, l0Table.get(keyHash, tag1, matcher));
-        }
-    }
-
-    @Nested
-    class HashDistributionTests {
-
-        @Test
-        void testDifferentBucketsForDifferentHashes() {
-            short tag = (short) 0x1234;
-            long basePointer = 0x1000000000000000L;
-
-            // Add entries to different buckets
-            for (int i = 0; i < 16; i++) {
-                int keyHash = i; // This should map to different buckets
-                long pointer = basePointer + i;
-                L0Table.KVMatcher matcher = (p) -> p == pointer;
-
-                assertTrue(l0Table.put(keyHash, tag, pointer));
-                assertEquals(pointer, l0Table.get(keyHash, tag, matcher));
+            // Insert first 4 (no eviction)
+            for (int i = 0; i < 4; i++) {
+                l0Table.put(entries[i].hash, entries[i].tag, entries[i].entryAddress, entries[i].matcher);
             }
 
-            // Should have 16 valid slots (one per bucket)
+            // Insert 5th (should cause eviction)
+            l0Table.put(entries[4].hash, entries[4].tag, entries[4].entryAddress, entries[4].matcher);
+
             L0Table.L0TableStats stats = l0Table.getStats();
-            assertEquals(16, stats.validSlots);
-            assertEquals(16, stats.bucketCount);
-            assertEquals(1.0 / 4.0, stats.loadFactor, 0.001); // 16 slots out of 64 total
+            assertEquals(1, stats.evictionCount, "Should have 1 eviction");
         }
 
         @Test
-        void testHashMasking() {
-            // Test that hash values properly map to bucket indices
-            short tag = (short) 0x1234;
+        void testStatsToString() {
+            TestEntry entry = createTestEntry("toStringKey", "toStringValue");
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
 
-            // Hash that should map to bucket 0
-            int hash0 = 16; // 16 & 15 = 0
-            long pointer0 = 0x1000L;
+            L0Table.L0TableStats stats = l0Table.getStats();
+            String statsString = stats.toString();
 
-            // Hash that should map to bucket 1
-            int hash1 = 17; // 17 & 15 = 1
-            long pointer1 = 0x2000L;
-
-            L0Table.KVMatcher matcher0 = (p) -> p == pointer0;
-            L0Table.KVMatcher matcher1 = (p) -> p == pointer1;
-
-            assertTrue(l0Table.put(hash0, tag, pointer0));
-            assertTrue(l0Table.put(hash1, tag, pointer1));
-
-            assertEquals(pointer0, l0Table.get(hash0, tag, matcher0));
-            assertEquals(pointer1, l0Table.get(hash1, tag, matcher1));
+            assertNotNull(statsString);
+            assertTrue(statsString.contains("L0Table"));
+            assertTrue(statsString.contains("buckets=4"));
+            assertTrue(statsString.contains("LRU")); // Default policy
         }
     }
 
@@ -293,69 +425,69 @@ class L0TableTest {
     class EdgeCaseTests {
 
         @Test
-        void testZeroPointer() {
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
-            long kvPointer = 0L; // Zero pointer
-
-            L0Table.KVMatcher matcher = (pointer) -> pointer == kvPointer;
-
-            // Should be able to store zero pointer
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
-            assertEquals(kvPointer, l0Table.get(keyHash, tag, matcher));
-        }
-
-        @Test
-        void testNegativeHash() {
-            int keyHash = -12345;
-            short tag = (short) 0x1234;
-            long kvPointer = 0x123456789ABCDEFL;
-
-            L0Table.KVMatcher matcher = (pointer) -> pointer == kvPointer;
-
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
-            assertEquals(kvPointer, l0Table.get(keyHash, tag, matcher));
-        }
-
-        @Test
-        void testMaxValues() {
-            int keyHash = Integer.MAX_VALUE;
-            short tag = Short.MAX_VALUE;
-            long kvPointer = Long.MAX_VALUE;
-
-            L0Table.KVMatcher matcher = (pointer) -> pointer == kvPointer;
-
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
-            assertEquals(kvPointer, l0Table.get(keyHash, tag, matcher));
-        }
-
-        @Test
-        void testRemoveNonExistentEntry() {
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
-            long kvPointer = 0x123456789ABCDEFL;
-
-            // Remove non-existent entry should not crash
-            assertDoesNotThrow(() -> l0Table.remove(keyHash, tag, kvPointer));
-
-            // Stats should remain at 0
+        void testEmptyTable() {
             L0Table.L0TableStats stats = l0Table.getStats();
             assertEquals(0, stats.validSlots);
+            assertEquals(0.0, stats.loadFactor, 0.001);
+            assertEquals(0.0, stats.hitRate, 0.001);
         }
 
         @Test
-        void testKVMatcherReturnsFalse() {
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
-            long kvPointer = 0x123456789ABCDEFL;
+        void testTagCollisions() {
+            // Create entries with same tag but different content
+            byte[] key1 = "tagCollision1".getBytes();
+            byte[] key2 = "tagCollision2".getBytes();
+            byte[] namespace = "collisionNamespace".getBytes();
+            byte[] value1 = "value1".getBytes();
+            byte[] value2 = "value2".getBytes();
 
-            // Matcher that always returns false
-            L0Table.KVMatcher neverMatch = (pointer) -> false;
+            long entryAddress1 = entryArena.putEntry(key1, namespace, value1);
+            long entryAddress2 = entryArena.putEntry(key2, namespace, value2);
 
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
+            // Force same hash and tag
+            int sameHash = 0x12345678;
+            short sameTag = (short) 0x1234;
 
-            // Should not find entry due to matcher
-            assertEquals(0, l0Table.get(keyHash, tag, neverMatch));
+            L0Table.EntryMatcher matcher1 = (addr) -> entryArena.matchesKey(addr, key1, namespace);
+            L0Table.EntryMatcher matcher2 = (addr) -> entryArena.matchesKey(addr, key2, namespace);
+
+            // Insert both entries
+            long result1 = l0Table.put(sameHash, sameTag, entryAddress1, matcher1);
+            long result2 = l0Table.put(sameHash, sameTag, entryAddress2, matcher2);
+
+            assertEquals(0, result1, "First entry should insert successfully");
+            assertEquals(0, result2, "Second entry should insert successfully");
+
+            // Verify both can be retrieved correctly
+            assertEquals(entryAddress1, l0Table.get(sameHash, sameTag, matcher1));
+            assertEquals(entryAddress2, l0Table.get(sameHash, sameTag, matcher2));
+        }
+
+        @Test
+        void testMultipleUpdates() {
+            TestEntry entry = createTestEntry("updateKey", "initialValue");
+
+            // Insert initial entry
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
+
+            // Keep track of current entry address
+            long currentEntryAddress = entry.entryAddress;
+
+            // Update multiple times
+            for (int i = 1; i <= 3; i++) {
+                byte[] newValue = ("updatedValue" + i).getBytes();
+                long newEntryAddress = entryArena.putEntry(entry.key, entry.namespace, newValue);
+
+                long oldAddress = l0Table.put(entry.hash, entry.tag, newEntryAddress, entry.matcher);
+                assertEquals(currentEntryAddress, oldAddress, "Should return previous address for update");
+
+                // Verify updated value
+                long retrievedAddress = l0Table.get(entry.hash, entry.tag, entry.matcher);
+                assertEquals(newEntryAddress, retrievedAddress, "Should get updated entry");
+                assertArrayEquals(newValue, entryArena.getValueBytes(retrievedAddress));
+
+                currentEntryAddress = newEntryAddress; // Update for next iteration
+            }
         }
     }
 
@@ -363,158 +495,56 @@ class L0TableTest {
     class LifecycleTests {
 
         @Test
-        void testClearTable() {
-            // Add some entries
-            for (int i = 0; i < 8; i++) {
-                short tag = (short) i;
-                long pointer = 0x1000L + i;
-                assertTrue(l0Table.put(i, tag, pointer));
-            }
+        void testClose() throws Exception {
+            // Insert some entries
+            TestEntry entry = createTestEntry("closeKey", "closeValue");
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
 
-            // Verify entries exist
-            L0Table.L0TableStats statsBefore = l0Table.getStats();
-            assertEquals(8, statsBefore.validSlots);
-
-            // Clear table
-            l0Table.clear();
-
-            // Verify all entries are gone
-            L0Table.L0TableStats statsAfter = l0Table.getStats();
-            assertEquals(0, statsAfter.validSlots);
-            assertEquals(0.0, statsAfter.loadFactor);
+            // Close should not throw exception
+            assertDoesNotThrow(() -> l0Table.close());
         }
 
         @Test
-        void testTableAfterClear() {
-            // Add entry, clear, then add again
-            int keyHash = 12345;
-            short tag = (short) 0x1234;
-            long kvPointer = 0x123456789ABCDEFL;
-
-            L0Table.KVMatcher matcher = (pointer) -> pointer == kvPointer;
-
-            // Add entry
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
-            assertEquals(kvPointer, l0Table.get(keyHash, tag, matcher));
-
-            // Clear
-            l0Table.clear();
-            assertEquals(0, l0Table.get(keyHash, tag, matcher));
-
-            // Add again
-            assertTrue(l0Table.put(keyHash, tag, kvPointer));
-            assertEquals(kvPointer, l0Table.get(keyHash, tag, matcher));
-        }
-
-        @Test
-        void testCloseAndResourceCleanup() throws Exception {
-            long initialUsedBytes = allocator.getUsedBytes();
-
+        void testMultipleClose() throws Exception {
+            // Multiple close calls should be safe
             l0Table.close();
-
-            // Memory should be freed
-            assertTrue(allocator.getUsedBytes() < initialUsedBytes);
+            assertDoesNotThrow(() -> l0Table.close());
         }
     }
 
-    @Nested
-    class PerformanceTests {
+    // Helper methods
+    private TestEntry createTestEntry(String keyStr, String valueStr) {
+        byte[] key = keyStr.getBytes();
+        byte[] namespace = "testNamespace".getBytes();
+        byte[] value = valueStr.getBytes();
 
-        @Test
-        void testLoadFactorCalculation() {
-            int totalSlots = 16 * 4; // 16 buckets * 4 slots
+        long entryAddress = entryArena.putEntry(key, namespace, value);
+        int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+        short tag = (short) (hash & 0xFFFF);
+        L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
-            // Add entries and check load factor progression
-            for (int i = 1; i <= 32; i++) {
-                short tag = (short) i;
-                long pointer = 0x1000L + i;
-                int hash = i * 17; // Spread across buckets
-
-                l0Table.put(hash, tag, pointer);
-
-                L0Table.L0TableStats stats = l0Table.getStats();
-                assertTrue(stats.validSlots <= totalSlots);
-                assertTrue(stats.loadFactor >= 0.0 && stats.loadFactor <= 1.0);
-            }
-        }
-
-        @Test
-        void testHighLoadScenario() {
-            // Try to fill the table beyond capacity
-            int attempts = 100;
-            int successful = 0;
-
-            for (int i = 0; i < attempts; i++) {
-                short tag = (short) (i & 0xFFFF);
-                long pointer = 0x1000L + i;
-                int hash = i;
-
-                if (l0Table.put(hash, tag, pointer)) {
-                    successful++;
-                }
-            }
-
-            L0Table.L0TableStats stats = l0Table.getStats();
-
-            // Should not exceed total capacity
-            assertTrue(stats.validSlots <= stats.totalSlots);
-
-            // Should have some successful insertions
-            assertTrue(successful > 0);
-
-            // Load factor should be reasonable
-            assertTrue(stats.loadFactor <= 1.0);
-        }
+        return new TestEntry(key, namespace, value, entryAddress, hash, tag, matcher);
     }
 
-    @Nested
-    class TableSizeTests {
+    // Test entry helper class
+    private static class TestEntry {
+        final byte[] key;
+        final byte[] namespace;
+        final byte[] value;
+        final long entryAddress;
+        int hash;
+        short tag;
+        final L0Table.EntryMatcher matcher;
 
-        @Test
-        void testDifferentTableSizes() throws Exception {
-            // Test with different bucket counts
-            int[] bucketPowers = {2, 3, 4, 5, 6}; // 4, 8, 16, 32, 64 buckets
-
-            for (int power : bucketPowers) {
-                try (L0Table table = new L0Table(allocator, power)) {
-                    int expectedBuckets = 1 << power;
-                    int expectedTotalSlots = expectedBuckets * 4;
-
-                    L0Table.L0TableStats stats = table.getStats();
-                    assertEquals(expectedBuckets, stats.bucketCount);
-                    assertEquals(expectedTotalSlots, stats.totalSlots);
-                    assertEquals(0, stats.validSlots);
-                    assertEquals(0.0, stats.loadFactor);
-
-                    // Test basic functionality
-                    short tag = (short) 0x1234;
-                    long pointer = 0x5678L;
-                    L0Table.KVMatcher matcher = (p) -> p == pointer;
-
-                    assertTrue(table.put(12345, tag, pointer));
-                    assertEquals(pointer, table.get(12345, tag, matcher));
-                }
-            }
-        }
-
-        @Test
-        void testMinimalTable() throws Exception {
-            // Test with smallest possible table (1 bucket)
-            try (L0Table table = new L0Table(allocator, 0)) {
-                L0Table.L0TableStats stats = table.getStats();
-                assertEquals(1, stats.bucketCount);
-                assertEquals(4, stats.totalSlots);
-
-                // All hashes should map to bucket 0
-                for (int hash : new int[]{0, 1, 15, 255, 12345}) {
-                    short tag = (short) hash;
-                    long pointer = 0x1000L + hash;
-                    L0Table.KVMatcher matcher = (p) -> p == pointer;
-
-                    assertTrue(table.put(hash, tag, pointer));
-                    assertEquals(pointer, table.get(hash, tag, matcher));
-                }
-            }
+        TestEntry(byte[] key, byte[] namespace, byte[] value, long entryAddress,
+                  int hash, short tag, L0Table.EntryMatcher matcher) {
+            this.key = key;
+            this.namespace = namespace;
+            this.value = value;
+            this.entryAddress = entryAddress;
+            this.hash = hash;
+            this.tag = tag;
+            this.matcher = matcher;
         }
     }
 }

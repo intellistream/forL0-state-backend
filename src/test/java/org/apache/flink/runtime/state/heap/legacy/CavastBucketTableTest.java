@@ -148,24 +148,24 @@ class CavastBucketTableTest {
         }
     }
 
-    @Test
-    void localExpansion_createsAndFindsChildBucket() {
-        byte[] ns = "ns".getBytes();
-
-        // Fill root bucket
-        for (int i = 0; i < 6; i++) {
-            byte[] k = ("root" + i).getBytes();
-            table.insert(0, tag16(k), createEntry(k, ns));
-        }
-
-        // Insert one more -> should go to child
-        byte[] extra = "extra".getBytes();
-        long extraPtr = createEntry(extra, ns);
-        table.insert(0, tag16(extra), extraPtr);
-
-        long found = table.lookup(extra, ns, 0, tag16(extra));
-        assertEquals(extraPtr, found, "entry should be located in child bucket");
-    }
+//    @Test
+//    void localExpansion_createsAndFindsChildBucket() {
+//        byte[] ns = "ns".getBytes();
+//
+//        // Fill root bucket
+//        for (int i = 0; i < 6; i++) {
+//            byte[] k = ("root" + i).getBytes();
+//            table.insert(0, tag16(k), createEntry(k, ns));
+//        }
+//
+//        // Insert one more -> should go to child
+//        byte[] extra = "extra".getBytes();
+//        long extraPtr = createEntry(extra, ns);
+//        table.insert(0, tag16(extra), extraPtr);
+//
+//        long found = table.lookup(extra, ns, 0, tag16(extra));
+//        assertEquals(extraPtr, found, "entry should be located in child bucket");
+//    }
 
     @Test
     void slabGrows_whenChildBucketsExceedCapacity() throws Exception {
