@@ -37,6 +37,13 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
      * @param owner an arbitrary token that identifies this allocator instance
      */
     public MemoryManagerAllocator(MemoryManager memoryManager, Object owner) {
+        if (memoryManager == null) {
+            throw new IllegalArgumentException(
+                "MemoryManager cannot be null. This usually indicates that the Flink environment " +
+                "is not properly configured or the state backend is being used in an unsupported context. " +
+                "Please ensure that the task is running in a proper Flink TaskManager environment.");
+        }
+
         this.memoryManager = memoryManager;
         this.pageSize = memoryManager.getPageSize();
         this.owner = owner;

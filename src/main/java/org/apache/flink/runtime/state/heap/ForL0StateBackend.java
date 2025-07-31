@@ -3,6 +3,7 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.core.execution.SavepointFormatType;
+import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.*;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
@@ -50,7 +51,10 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
 
         LOG.info("++++++++++++++ Creating ForL0KeyedStateBackend by ForL0StateBackend +++++++++++++++++++");
 
-        TaskStateManager taskStateManager = parameters.getEnv().getTaskStateManager();
+        Environment env = parameters.getEnv();
+        LOG.info("Environment class: {}", env.getClass().getName());
+
+        TaskStateManager taskStateManager = env.getTaskStateManager();
         LocalRecoveryConfig localRecoveryConfig = taskStateManager.createLocalRecoveryConfig();
         HeapPriorityQueueSetFactory priorityQueueSetFactory =
                 new HeapPriorityQueueSetFactory(
@@ -58,22 +62,42 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
 
         LatencyTrackingStateConfig latencyTrackingStateConfig =
                 latencyTrackingConfigBuilder.setMetricGroup(parameters.getMetricGroup()).build();
+
+        // Get MemoryManager and provide detailed debugging info
+        MemoryManager memoryManager = env.getMemoryManager();
+        LOG.info("MemoryManager from environment: {}", memoryManager);
+
+        if (memoryManager == null) {
+            LOG.error("MemoryManager is null! Environment details:");
+            LOG.error("  Environment class: {}", env.getClass().getName());
+            LOG.error("  Environment toString: {}", env.toString());
+            LOG.error("This suggests the Flink environment is not properly configured for managed memory.");
+
+            throw new IllegalStateException(
+                "MemoryManager is null from Environment. " +
+                "This indicates that the Flink TaskManager environment is not properly configured. " +
+                "Environment class: " + env.getClass().getName());
+        }
+
+        LOG.info("MemoryManager successfully obtained: pageSize={}, class={}",
+                memoryManager.getPageSize(), memoryManager.getClass().getName());
+
         return new ForL0KeyedStateBackendBuilder<>(
                         parameters.getKvStateRegistry(),
                         parameters.getKeySerializer(),
-                        parameters.getEnv().getUserCodeClassLoader().asClassLoader(),
+                        env.getUserCodeClassLoader().asClassLoader(),
                         parameters.getNumberOfKeyGroups(),
                         parameters.getKeyGroupRange(),
-                        parameters.getEnv().getExecutionConfig(),
+                        env.getExecutionConfig(),
                         parameters.getTtlTimeProvider(),
                         latencyTrackingStateConfig,
                         parameters.getStateHandles(),
-                        getCompressionDecorator(parameters.getEnv().getExecutionConfig()),
+                        getCompressionDecorator(env.getExecutionConfig()),
                         localRecoveryConfig,
                         priorityQueueSetFactory,
                         true,
                         parameters.getCancelStreamRegistry(),
-                        parameters.getEnv().getMemoryManager()) // get MemoryManager for off-heap memory allocation
+                        memoryManager)
                 .build();
     }
 

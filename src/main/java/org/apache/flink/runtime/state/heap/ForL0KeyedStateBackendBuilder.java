@@ -78,7 +78,13 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             public <N, V> StateTable<K, N, V> newStateTable(InternalKeyContext<K> keyContext,
                                                             RegisteredKeyValueStateBackendMetaInfo<N, V> keyValueStateMetaInfo,
                                                             TypeSerializer<K> keySerializer) {
-                return new ForL0StateTable<>(keyContext, keyValueStateMetaInfo, keySerializer, memoryManager);
+                // Use the static factory method to ensure MemoryManager is available during construction
+                MemoryManager mm = ForL0KeyedStateBackendBuilder.this.memoryManager;
+                if (mm == null) {
+                    throw new IllegalStateException("MemoryManager is null in ForL0KeyedStateBackendBuilder. " +
+                        "This indicates that the MemoryManager was not properly passed from the Environment.");
+                }
+                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, mm);
             }
         };
 
