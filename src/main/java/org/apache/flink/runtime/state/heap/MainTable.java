@@ -72,14 +72,17 @@ public class MainTable implements AutoCloseable {
 
         try {
             // Allocate memory segments for main table
-            int numPages = (int) ((bucketCount * BUCKET_SIZE + allocator.getPageSize() - 1) / allocator.getPageSize());
-            this.memorySegments = allocator.allocate(numPages);
+            long totalSize = (long) bucketCount * BUCKET_SIZE;
+            // 直接传递总字节数给allocator，而不是页面数
+            this.memorySegments = allocator.allocate((int) totalSize);
 
-            // Initialize extension bucket pool
-            this.extensionPool = new ExtensionBucketPool(allocator, bucketCount * 4); // Initial pool size
+            // Initialize extension bucket pool with fixed reasonable size
+            // ExtensionBucketPool is for local expansion when hash collisions occur
+            // When extension buckets reach the limit, MainTable should do global expansion
+            this.extensionPool = new ExtensionBucketPool(allocator, 255); // Fixed max size
 
             // Clear all buckets
-            clearAllBuckets();
+            clearAllSlots();
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to allocate Main Table memory", e);
@@ -407,7 +410,7 @@ public class MainTable implements AutoCloseable {
         }
     }
 
-    private void clearAllBuckets() {
+    private void clearAllSlots() {
         // Zero out all memory segments
         for (MemorySegment segment : memorySegments) {
             for (int offset = 0; offset < segment.size(); offset += 8) {

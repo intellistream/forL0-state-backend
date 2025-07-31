@@ -1,6 +1,8 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.common.typeutils.base.IntSerializer;
+import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
@@ -24,12 +26,16 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
     }
 
     @Override
-    protected LevelHashStateMap<K, N, S> createStateMap() {
-        return new LevelHashStateMap<>(8,
-                                    getKeySerializer(),
-                                    getNamespaceSerializer(),
-                                    getStateSerializer(),
-                                    new MemoryManagerAllocator(memoryManager, this));
+    protected ForL0StateMap<K, N, S> createStateMap() {
+        return new ForL0StateMap<>(
+                new MemoryManagerAllocator(memoryManager, this),
+                4, // MainTable: 16 buckets
+                3, // L0Table: 8 buckets
+                getKeySerializer(),
+                getNamespaceSerializer(),
+                getStateSerializer(),
+                true // L0 cache enabled
+        );
     }
 
     @Override

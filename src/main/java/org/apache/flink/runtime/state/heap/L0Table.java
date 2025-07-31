@@ -76,8 +76,8 @@ public class L0Table implements AutoCloseable {
         try {
             // Allocate memory segments for L0 table
             long totalSize = (long) bucketCount * BUCKET_SIZE;
-            int numPages = (int) ((totalSize + allocator.getPageSize() - 1) / allocator.getPageSize());
-            this.memorySegments = allocator.allocate(numPages);
+            // 直接传递总字节数给allocator，而不是页面数
+            this.memorySegments = allocator.allocate((int) totalSize);
 
             // Initialize all slots as invalid
             clearAllSlots();
@@ -304,8 +304,17 @@ public class L0Table implements AutoCloseable {
 
     private long getBucketAddress(int bucketIndex) {
         long offset = (long) bucketIndex * BUCKET_SIZE;
-        int segmentIndex = (int) (offset / allocator.getPageSize());
-        int segmentOffset = (int) (offset % allocator.getPageSize());
+        int pageSize = allocator.getPageSize();
+        int segmentIndex = (int) (offset / pageSize);
+        int segmentOffset = (int) (offset % pageSize);
+
+        // 确保segmentIndex不超出memorySegments的范围
+        if (segmentIndex >= memorySegments.size()) {
+            throw new IllegalStateException("Segment index " + segmentIndex +
+                " exceeds allocated segments " + memorySegments.size() +
+                " for bucket " + bucketIndex + ", offset " + offset);
+        }
+
         return (long) segmentIndex << 32 | segmentOffset;
     }
 
