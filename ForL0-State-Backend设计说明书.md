@@ -133,7 +133,7 @@ l **管理策略**：热点key会被动态提升至L0 Table。插入、更新、
 
 l **一致性维护**：L0 Table 仅作缓存，主表持有全量状态索引，写入或扩容等变更后，相关 L0 条目会自动失效或被刷新。
 
- 
+
 
 表 1 L0 Table Slot数据结构
 
@@ -161,7 +161,7 @@ l 扩展池管理每主表最多支持255个子 bucket，下标存储于4B的 su
 
 其具体数据结构由表2和表3给出：
 
- 
+
 
 表 2 Main Table Slot数据结构
 
@@ -170,7 +170,7 @@ l 扩展池管理每主表最多支持255个子 bucket，下标存储于4B的 su
 | Tag     | Key的哈希摘要  | 2            |
 | Pointer | 指向KV项的指针 | 8            |
 
- 
+
 
 表 3 Main Table Bucket数据结构
 
@@ -179,7 +179,7 @@ l 扩展池管理每主表最多支持255个子 bucket，下标存储于4B的 su
 | slot[]   | Main Table Slot数组，共6个    | 60           |
 | subPtr[] | 用于解决冲突的扩展指针，共4个 | 4            |
 
- 
+
 
 ## 3.4 KV 存储区（Entry Arena）
 
@@ -206,7 +206,7 @@ KVNode结构由表4所示。
 | namespace    | 序列化后的namespace | namespaceLen |
 | value        | 序列化后的value     | valueLen     |
 
- 
+
 
 ## 3.5 主要操作流程
 
@@ -239,9 +239,9 @@ b)    递归步骤2对该扩展bucket进行插入操作。
 
 4. 插入/更新后可按策略将key提升为 L0 热点。
 
- 
 
- 
+
+
 
 **查询（Get）**
 
@@ -273,7 +273,7 @@ a)    如果对应subPtr存在扩展bucket，则递归步骤4对扩展bucket重�
 
 6. 若所有主表与扩展bucket均未命中，返回未找到。
 
- 
+
 
 **删除（Delete）**
 
@@ -292,7 +292,7 @@ a)    若slot有效且tag匹配，取指针指向的KVNode，比较key数据是�
 4. 最后，找到L0 Table中slot指针指向该KVNode地址的条目，将其有效位清零。
 5. 删除操作结束。
 
- 
+
 
 **全局扩容（Resize）**
 
@@ -308,14 +308,323 @@ b)    迁移过程中，所有 KVNode 物理地址保持不变，仅重建索引
 5. L0 Table 整体清空，待后续访问自动重建热点 key 缓存。
 6. 扩容过程可与 Checkpoint 一致性机制配合，采用写时复制等手段保证数据一致性。
 
- 
+
 
 ## 3.6 一致性与容错保障
 
- 
+
 
 l L0 Table 与 Main Table 保持最终一致性，所有写入、删除和扩容操作均以主表为准，L0 仅为 cache，可随时失效重建。
 
 l 内存分配、回收和生命周期受 Flink MemoryManager 和 StateBackend 管控，保证资源安全和系统容错能力。
 
 l 所有操作流程兼容 Flink 的 Checkpoint/快照，支持高可用和任务自动恢复。
+
+# 5. 当前实现细节分析
+
+## 5.1 实现架构现状
+
+### 5.1.1 核心组件实现
+当前ForL0 State Backend实现了设计规范中的核心架构，主要包括：
+
+**主要实现类**：
+- `ForL0StateTable<K, N, S>`: 状态表顶层抽象，继承自Flink的StateTable
+- `L0Table`: L0缓存表的完整实现，支持多种替换策略
+- `MainTable`: 主表实现，支持局部扩展机制
+- `ExtensionBucketPool`: 扩展桶池，管理MainTable的局部扩展
+- `ForL0StateMap<K, N, S>`: 状态映射实现，整合L0和Main表逻辑
+
+**内存管理组件**：
+- `HybridMemoryAllocator`: 混合内存分配器接口
+- `MemoryManagerAllocator`: 基于Flink MemoryManager的实现
+- `EntryArena`: 键值对物理存储管理
+
+### 5.1.2 数据结构实现
+
+**L0Table结构**：
+```java
+// L0 bucket和slot布局常量
+private static final int BUCKET_SIZE = 64;  // 64字节对齐
+private static final int SLOTS_PER_BUCKET = 4;  // 每桶4个slot
+private static final int SLOT_SIZE = 16;  // 每slot 16字节
+
+// Slot字段偏移
+private static final int SLOT_TAG_OFFSET = 0;      // Tag(2B)
+private static final int SLOT_VALID_OFFSET = 2;    // Valid(1B) 
+private static final int SLOT_EXTENSION_OFFSET = 3; // Extension(5B)
+private static final int SLOT_POINTER_OFFSET = 8;  // Pointer(8B)
+```
+
+**MainTable结构**：
+```java
+private static final int BUCKET_SIZE = 64;  // 64字节对齐
+private static final int SLOTS_PER_BUCKET = 6;  // 每桶6个slot
+private static final int SLOT_SIZE = 10;  // Tag(2B) + Pointer(8B)
+private static final int EXTENSION_POINTERS = 4;  // 4个扩展指针
+```
+
+### 5.1.3 替换策略实现
+实现了完整的多策略支持：
+```java
+public enum ReplacementPolicy {
+    LRU,    // 最近最少使用
+    LFU,    // 最少使用频率
+    FIFO,   // 先进先出
+    RANDOM  // 随机替换
+}
+```
+
+每种策略都有相应的时间戳或计数器机制支持。
+
+## 5.2 核心算法实现
+
+### 5.2.1 查找算法实现
+当前实现的查找流程：
+```java
+public long get(int keyHash, short tag, EntryMatcher entryMatcher) {
+    // 1. 计算桶索引
+    int bucketIndex = keyHash & (bucketCount - 1);
+    
+    // 2. 遍历桶内slot
+    for (int slotIndex = 0; slotIndex < SLOTS_PER_BUCKET; slotIndex++) {
+        // 检查tag匹配和有效位
+        if (isSlotValid(bucketAddress, slotIndex) && 
+            getSlotTag(bucketAddress, slotIndex) == tag) {
+            // 3. 调用EntryMatcher验证完整键
+            long pointer = getSlotPointer(bucketAddress, slotIndex);
+            if (entryMatcher.matches(pointer)) {
+                updateAccessInfo(bucketAddress, slotIndex); // 更新LRU/LFU信息
+                return pointer;
+            }
+        }
+    }
+    return 0; // 未找到
+}
+```
+
+### 5.2.2 插入算法实现
+MainTable的插入包含扩展桶逻辑：
+```java
+public boolean put(int keyHash, short tag, long entryPointer) {
+    int bucketIndex = keyHash & (bucketCount - 1);
+    
+    // 1. 尝试在主桶插入
+    if (insertIntoMainBucket(bucketIndex, tag, entryPointer)) {
+        return true;
+    }
+    
+    // 2. 查找或分配扩展桶
+    byte extensionId = findOrAllocateExtensionBucket(bucketIndex);
+    if (extensionId != 0) {
+        return insertIntoExtensionBucket(extensionId, tag, entryPointer);
+    }
+    
+    // 3. 触发全局扩容
+    triggerGlobalResize();
+    return false; // 需要重试
+}
+```
+
+### 5.2.3 扩展桶池管理
+```java
+public class ExtensionBucketPool {
+    private byte nextFreeBucketId = 1;
+    private final boolean[] bucketInUse;
+    
+    public byte allocateBucket() {
+        if (nextFreeBucketId > maxBuckets) {
+            return NULL_BUCKET_ID; // 池已满
+        }
+        byte bucketId = nextFreeBucketId++;
+        bucketInUse[bucketId] = true;
+        return bucketId;
+    }
+}
+```
+
+## 5.3 内存管理实现
+
+### 5.3.1 内存分配策略
+```java
+public class MemoryManagerAllocator implements HybridMemoryAllocator {
+    public List<MemorySegment> allocate(int bytes) throws MemoryAllocationException {
+        // 使用Flink MemoryManager分配页面
+        int pagesNeeded = (bytes + pageSize - 1) / pageSize;
+        return memoryManager.allocatePages(owner, pagesNeeded);
+    }
+    
+    public long allocateAligned(long size, int alignment) throws MemoryAllocationException {
+        // 为L0 Cache预留的对齐内存分配接口
+        // 当前实现返回普通内存，未来可扩展为真正的L0映射
+        List<MemorySegment> segments = allocate((int)size);
+        return segments.get(0).getAddress();
+    }
+}
+```
+
+### 5.3.2 Entry Arena实现
+```java
+public class EntryArena {
+    private static final int HEADER_SIZE = 12; // keyHash + lenK + lenV
+    
+    public long put(byte[] keySer, byte[] valSer) {
+        int totalSize = HEADER_SIZE + keySer.length + valSer.length;
+        
+        // 确保有足够空间
+        ensureCapacity(totalSize);
+        
+        // 写入header
+        long addr = writeCursor;
+        writeInt(addr, computeHash(keySer));
+        writeInt(addr + 4, keySer.length);
+        writeInt(addr + 8, valSer.length);
+        
+        // 写入数据
+        copyBytes(keySer, addr + HEADER_SIZE);
+        copyBytes(valSer, addr + HEADER_SIZE + keySer.length);
+        
+        writeCursor += totalSize;
+        return addr;
+    }
+}
+```
+
+## 5.4 状态管理集成
+
+### 5.4.1 Flink StateBackend集成
+```java
+public class ForL0StateBackend implements ConfigurableStateBackend {
+    @Override
+    public <K> CheckpointableKeyedStateBackend<K> createKeyedStateBackend(...) {
+        return new ForL0KeyedStateBackend<>(
+            env,
+            jobID,
+            operatorIdentifier,
+            keySerializer,
+            numberOfKeyGroups,
+            keyGroupRange,
+            kvStateRegistry,
+            ttlTimeProvider,
+            metricGroup,
+            stateHandles,
+            cancelStreamRegistry
+        );
+    }
+}
+```
+
+### 5.4.2 状态类型支持
+当前实现支持Flink的主要状态类型：
+- `ForL0ValueState<T>`: 值状态
+- `ForL0ListState<T>`: 列表状态  
+- `ForL0MapState<UK, UV>`: 映射状态
+- `ForL0AggregatingState<IN, ACC, OUT>`: 聚合状态
+- `ForL0ReducingState<T>`: 归约状态
+
+## 5.5 性能监控与统计
+
+### 5.5.1 L0Table统计
+```java
+public static class L0TableStats {
+    private final long accessCount;
+    private final long hitCount;
+    private final long missCount;
+    private final long evictionCount;
+    
+    public double getHitRate() {
+        return accessCount > 0 ? (double) hitCount / accessCount : 0.0;
+    }
+    
+    public double getEvictionRate() {
+        return accessCount > 0 ? (double) evictionCount / accessCount : 0.0;
+    }
+}
+```
+
+### 5.5.2 MainTable和扩展池统计
+```java
+public class ExtensionBucketPool {
+    public PoolStats getStats() {
+        return new PoolStats(
+            nextFreeBucketId - 1,  // 已分配桶数
+            maxBuckets - (nextFreeBucketId - 1), // 剩余桶数
+            calculateFragmentation()  // 碎片率
+        );
+    }
+}
+```
+
+# 6. 实现与设计的差距分析
+
+## 6.1 架构层面差距
+
+### 6.1.1 L0 Cache集成状态
+**设计预期**：L0Table应该直接映射到鲲鹏CPU的L0 Cache硬件特性
+**当前实现**：L0Table使用普通DRAM内存，通过普通的MemoryManagerAllocator分配
+
+**差距分析**：
+- 当前实现完全没有预留L0 Cache硬件集成接口
+- HybridMemoryAllocator接口中的`allocateAligned()`方法是通用的内存对齐分配功能，与L0 Cache无关
+- `allocateAligned()`的实现是通过分配额外空间并进行位运算对齐，仅在测试中使用
+- L0Table的内存分配通过标准的`allocate()`方法完成，返回普通MemorySegment
+- 缺少JNI层面的L0 Cache映射实现
+- 未实现真正的L0 Cache内存区域管理
+- 没有为L0 Cache硬件特性预留任何专门的接口或抽象层
+
+**影响评估**：
+- 性能提升完全来自算法优化和缓存友好的数据结构设计
+- L0 Cache的超低延迟硬件优势完全未利用
+- 当前架构在L0 Cache集成方面与设计目标存在显著差距
+- 需要重新设计内存分配接口才能支持真正的L0 Cache集成
+
+### 6.1.2 内存管理机制现状
+**设计预期**：L0Memory Manager和普通MemoryManager分离管理
+**当前实现**：统一使用Flink MemoryManager，EntryArena采用简单的线性分配策略
+
+**EntryArena实现现状**：
+- 采用简单的写入指针(writeCursor)线性分配
+- 缺少内存回收和重用机制
+- 删除操作后的内存空间无法复用
+- 存在内存碎片和浪费问题
+
+**实际优势与不足**：
+- 优势：更好的Flink集成兼容性，统一的内存生命周期管理
+- 不足：内存利用率有待优化，缺少sophisticated的内存管理策略
+
+## 6.2 功能层面差距
+
+### 6.2.1 替换策略丰富化
+**设计预期**：主要支持LRU策略
+**当前实现**：支持LRU、LFU、FIFO、RANDOM四种策略
+
+**增强价值**：
+- 适应不同工作负载特征
+- 提供更灵活的缓存管理选项
+- 支持运行时策略切换
+
+### 6.2.2 监控统计完善
+**设计预期**：基本的性能监控
+**当前实现**：完整的多维度统计体系
+
+**统计维度**：
+- L0缓存命中率、缺失率、驱逐率
+- 主表负载因子、扩展桶使用率
+- 内存使用量、分配频率、碎片率
+- 各操作的延迟分布
+
+### 6.2.3 配置系统实现现状
+**设计声称**：丰富的配置参数体系
+**当前实际**：配置文件为空，配置系统尚未实现
+
+**实际情况**：
+- `config.properties`文件为空
+- 代码中未发现配置参数的读取和使用逻辑
+- 文档中提到的配置项（如`forl0.l0table.bucket.count.pow2`等）未在代码中找到对应实现
+- 当前主要通过构造函数参数进行配置
+
+**配置方式现状**：
+```java
+// 当前的配置方式是通过构造函数参数
+new L0Table(allocator, bucketCountPow2, ReplacementPolicy.LRU);
+new MainTable(allocator, bucketCountPow2, DEFAULT_LOAD_FACTOR_THRESHOLD);
+```
