@@ -138,6 +138,16 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
     }
 
     @Override
+    public List<MemorySegment> allocateL0(int bytes) throws MemoryAllocationException {
+        ensureOpen();
+
+        // Currently, this is a reserved interface for future L0 integration
+        // For now, we simply delegate to the regular allocate method
+        LOG.debug("Allocating L0 memory using regular allocation (reserved interface), bytes: {}", bytes);
+        return allocate(bytes);
+    }
+
+    @Override
     public void release(List<MemorySegment> segments) {
         if (segments == null || segments.isEmpty()) {
             return;

@@ -30,6 +30,16 @@ public interface HybridMemoryAllocator extends AutoCloseable {
     long allocateAligned(long size, int alignment) throws MemoryAllocationException;
 
     /**
+     * Allocates memory segments specifically for L0 tables.
+     * This is a reserved interface for future L0 integration.
+     *
+     * @param bytes Number of bytes to allocate
+     * @return List of memory segments
+     * @throws MemoryAllocationException if allocation fails
+     */
+    List<MemorySegment> allocateL0(int bytes) throws MemoryAllocationException;
+
+    /**
      * Releases previously allocated memory segments.
      *
      * @param segments Memory segments to release

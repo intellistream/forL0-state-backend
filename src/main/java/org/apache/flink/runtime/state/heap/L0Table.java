@@ -74,10 +74,10 @@ public class L0Table implements AutoCloseable {
         this.random = (replacementPolicy == ReplacementPolicy.RANDOM) ? new Random() : null;
 
         try {
-            // Allocate memory segments for L0 table
+            // Allocate memory segments for L0 table using the dedicated L0 allocation interface
             long totalSize = (long) bucketCount * BUCKET_SIZE;
-            // 直接传递总字节数给allocator，而不是页面数
-            this.memorySegments = allocator.allocate((int) totalSize);
+            // Use allocateL0 instead of allocate for L0-specific memory allocation
+            this.memorySegments = allocator.allocateL0((int) totalSize);
 
             // Initialize all slots as invalid
             clearAllSlots();

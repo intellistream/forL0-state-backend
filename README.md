@@ -41,7 +41,7 @@ ForL0 State Backend采用双层索引结构设计：
 
 ```bash
 # 克隆项目
-git clone <repository-url>
+git clone https://github.com/intellistream/forL0-state-backend.git
 cd forL0-state-backend
 
 # 编译项目

@@ -177,7 +177,7 @@ class EntryArenaStressTest {
             if (i % 1000 == 0) {
                 EntryArena.ArenaStats stats = arena.getStats();
                 System.out.println("Allocated " + i + " entries, used memory: " +
-                    stats.usedMemory + "/" + stats.totalSystemMemory);
+                    stats.totalAllocated + "/" + stats.totalSystemMemory);
             }
         }
 
@@ -273,6 +273,230 @@ class EntryArenaStressTest {
 
         System.out.println("Light stress test completed with " + addresses.size() + " entries");
         assertTrue(addresses.size() > 950, "Should allocate most entries successfully");
+    }
+
+    @RepeatedTest(5)
+    void testFreeListStressAllocation() {
+        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+            List<Long> addresses = new ArrayList<>();
+
+            // Allocate many entries of various sizes with FREE_LIST strategy
+            for (int i = 0; i < 8000; i++) {
+                byte[] key = ("freeListKey" + i).getBytes();
+                byte[] namespace = ("freeListNs" + (i % 50)).getBytes();
+                byte[] value = generateRandomValue(random.nextInt(800) + 50);
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                if (address > 0) {
+                    addresses.add(address);
+
+                    // Verify data integrity for some entries
+                    if (i % 1000 == 0) {
+                        assertArrayEquals(key, freeListArena.getKeyBytes(address));
+                        assertArrayEquals(namespace, freeListArena.getNamespaceBytes(address));
+                        assertArrayEquals(value, freeListArena.getValueBytes(address));
+                    }
+                }
+            }
+
+            System.out.println("FREE_LIST stress allocation completed with " + addresses.size() + " entries");
+            assertTrue(addresses.size() > 6000, "Should allocate most entries successfully with FREE_LIST");
+
+            EntryArena.ArenaStats stats = freeListArena.getStats();
+            assertEquals(EntryArena.AllocationStrategy.FREE_LIST, stats.strategy);
+            assertTrue(stats.memoryEfficiency > 0, "Memory efficiency should be positive");
+        } catch (Exception e) {
+            fail("FREE_LIST stress test failed with exception: " + e.getMessage());
+        }
+    }
+
+    @RepeatedTest(3)
+    void testFreeListMixedOperationsStress() {
+        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+            List<Long> addresses = new ArrayList<>();
+
+            // Phase 1: Initial allocation
+            for (int i = 0; i < 5000; i++) {
+                byte[] key = ("mixedFreeListKey" + i).getBytes();
+                byte[] namespace = ("mixedFreeListNs" + (i % 20)).getBytes();
+                byte[] value = generateRandomValue(random.nextInt(500) + 50);
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                if (address > 0) {
+                    addresses.add(address);
+                }
+            }
+
+            EntryArena.ArenaStats afterAllocation = freeListArena.getStats();
+            int initialAllocations = afterAllocation.activeAllocations;
+            System.out.println("FREE_LIST mixed operations - Initial allocations: " + initialAllocations);
+
+            // Phase 2: Remove random entries to create free blocks
+            List<Long> toRemove = new ArrayList<>();
+            for (int i = 0; i < Math.min(2000, addresses.size()); i += 2) {
+                toRemove.add(addresses.get(i));
+            }
+
+            for (Long address : toRemove) {
+                freeListArena.removeEntry(address);
+            }
+            addresses.removeAll(toRemove);
+
+            EntryArena.ArenaStats afterRemoval = freeListArena.getStats();
+            System.out.println("FREE_LIST mixed operations - After removal: active=" +
+                afterRemoval.activeAllocations + ", freed=" + afterRemoval.totalFreed +
+                ", freeBlocks=" + afterRemoval.freeBlocks);
+
+            assertTrue(afterRemoval.freeBlocks > 0, "Should have free blocks after removal");
+            assertTrue(afterRemoval.totalFreed > 0, "Should track freed memory");
+
+            // Phase 3: Update some entries
+            for (int i = 0; i < Math.min(500, addresses.size()); i++) {
+                long oldAddress = addresses.get(i);
+                byte[] newValue = generateRandomValue(random.nextInt(600) + 100);
+
+                long newAddress = freeListArena.updateEntry(oldAddress, newValue);
+                if (newAddress > 0) {
+                    addresses.set(i, newAddress);
+                    assertArrayEquals(newValue, freeListArena.getValueBytes(newAddress));
+                }
+            }
+
+            // Phase 4: Allocate new entries (should reuse freed memory)
+            for (int i = 0; i < 1000; i++) {
+                byte[] key = ("newFreeListKey" + i).getBytes();
+                byte[] namespace = "newFreeListNs".getBytes();
+                byte[] value = generateRandomValue(random.nextInt(400) + 50);
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                if (address > 0) {
+                    addresses.add(address);
+                }
+            }
+
+            // Phase 5: Verify remaining entries
+            int validCount = 0;
+            for (Long address : addresses) {
+                byte[] key = freeListArena.getKeyBytes(address);
+                byte[] namespace = freeListArena.getNamespaceBytes(address);
+                byte[] value = freeListArena.getValueBytes(address);
+
+                if (key != null && namespace != null && value != null) {
+                    validCount++;
+                }
+            }
+
+            EntryArena.ArenaStats finalStats = freeListArena.getStats();
+            System.out.println("FREE_LIST mixed operations completed - Valid entries: " + validCount +
+                ", Final active: " + finalStats.activeAllocations +
+                ", Memory efficiency: " + String.format("%.2f%%", finalStats.memoryEfficiency) +
+                ", Fragmentation: " + String.format("%.2f%%", finalStats.fragmentation));
+
+            assertTrue(validCount > 0, "Should have valid entries");
+            assertTrue(finalStats.memoryEfficiency > 0, "Memory efficiency should be positive");
+        } catch (Exception e) {
+            fail("FREE_LIST mixed operations stress test failed: " + e.getMessage());
+        }
+    }
+
+    @Test
+    void testFreeListMemoryExhaustion() {
+        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+            List<Long> addresses = new ArrayList<>();
+
+            // Keep allocating until we run out of memory, with periodic removals to test recycling
+            for (int i = 0; i < 100000; i++) {
+                byte[] key = ("exhaustFreeListKey" + i).getBytes();
+                byte[] namespace = "exhaustFreeListNs".getBytes();
+                byte[] value = generateRandomValue(800); // 800 bytes each
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                if (address == 0) {
+                    // Expected when memory is exhausted
+                    break;
+                }
+                addresses.add(address);
+
+                // Periodically remove some entries to test memory recycling
+                if (i > 0 && i % 500 == 0 && addresses.size() > 100) {
+                    // Remove oldest 50 entries
+                    for (int j = 0; j < 50 && !addresses.isEmpty(); j++) {
+                        freeListArena.removeEntry(addresses.remove(0));
+                    }
+                }
+
+                // Check progress every 1000 allocations
+                if (i % 1000 == 0) {
+                    EntryArena.ArenaStats stats = freeListArena.getStats();
+                    System.out.println("FREE_LIST exhaustion test - Allocated " + i + " entries, " +
+                        "active: " + stats.activeAllocations +
+                        ", freed: " + stats.totalFreed +
+                        ", freeBlocks: " + stats.freeBlocks +
+                        ", efficiency: " + String.format("%.2f%%", stats.memoryEfficiency));
+                }
+            }
+
+            EntryArena.ArenaStats finalStats = freeListArena.getStats();
+            System.out.println("FREE_LIST memory exhaustion test completed with " + addresses.size() +
+                " final entries, freed: " + finalStats.totalFreed +
+                " bytes, freeBlocks: " + finalStats.freeBlocks);
+
+            assertTrue(addresses.size() > 1000, "Should allocate substantial number of entries");
+            assertTrue(finalStats.totalFreed > 0, "Should have recycled memory during test");
+        } catch (Exception e) {
+            fail("FREE_LIST memory exhaustion test failed: " + e.getMessage());
+        }
+    }
+
+    @Test
+    void testFreeListLargeEntryHandling() {
+        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+            List<Long> largeAddresses = new ArrayList<>();
+
+            // Test very large entries with FREE_LIST
+            for (int i = 0; i < 10; i++) {
+                byte[] largeKey = generateRandomValue(4000 + i * 100);
+                byte[] largeNamespace = generateRandomValue(2000 + i * 50);
+                byte[] largeValue = generateRandomValue(8000 + i * 200);
+
+                long address = freeListArena.putEntry(largeKey, largeNamespace, largeValue);
+
+                if (address > 0) {
+                    largeAddresses.add(address);
+                    // Verify large entry integrity
+                    assertArrayEquals(largeKey, freeListArena.getKeyBytes(address));
+                    assertArrayEquals(largeNamespace, freeListArena.getNamespaceBytes(address));
+                    assertArrayEquals(largeValue, freeListArena.getValueBytes(address));
+                }
+            }
+
+            System.out.println("FREE_LIST large entries allocated: " + largeAddresses.size());
+
+            // Remove some large entries to create large free blocks
+            for (int i = 0; i < largeAddresses.size() / 2; i++) {
+                freeListArena.removeEntry(largeAddresses.get(i));
+            }
+
+            EntryArena.ArenaStats afterRemoval = freeListArena.getStats();
+            System.out.println("FREE_LIST after removing large entries - freeBlocks: " +
+                afterRemoval.freeBlocks + ", totalFreed: " + afterRemoval.totalFreed);
+
+            // Try to allocate medium-sized entries that should fit in the freed large blocks
+            for (int i = 0; i < 5; i++) {
+                byte[] mediumKey = generateRandomValue(1000);
+                byte[] mediumNamespace = generateRandomValue(500);
+                byte[] mediumValue = generateRandomValue(2000);
+
+                long address = freeListArena.putEntry(mediumKey, mediumNamespace, mediumValue);
+                if (address > 0) {
+                    assertArrayEquals(mediumValue, freeListArena.getValueBytes(address));
+                }
+            }
+
+            System.out.println("FREE_LIST large entry handling test completed successfully");
+        } catch (Exception e) {
+            fail("FREE_LIST large entry handling test failed: " + e.getMessage());
+        }
     }
 
     private byte[] generateRandomValue(int size) {

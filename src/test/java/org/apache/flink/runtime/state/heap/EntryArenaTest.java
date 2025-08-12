@@ -478,13 +478,215 @@ class EntryArenaTest {
             EntryArena.ArenaStats finalStats = arena.getStats();
 
             // Memory usage should have increased
-            assertTrue(finalStats.usedMemory > initialStats.usedMemory);
+            assertTrue(finalStats.totalAllocated > initialStats.totalAllocated);
 
             // Active allocations should match number of entries
             assertEquals(addresses.size(), finalStats.activeAllocations);
 
             // Fragmentation should be reasonable
             assertTrue(finalStats.fragmentation >= 0);
+        }
+    }
+
+    @Nested
+    class FreeListStrategyTests {
+
+        private EntryArena freeListArena;
+
+        @BeforeEach
+        void setUpFreeList() {
+            freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST);
+        }
+
+        @AfterEach
+        void tearDownFreeList() throws Exception {
+            if (freeListArena != null) {
+                freeListArena.close();
+            }
+        }
+
+        @Test
+        void testFreeListArenaInitialization() {
+            assertEquals(EntryArena.AllocationStrategy.FREE_LIST, freeListArena.getAllocationStrategy());
+
+            EntryArena.ArenaStats stats = freeListArena.getStats();
+            assertTrue(stats.totalSystemMemory > 0);
+            assertEquals(0, stats.activeAllocations);
+            assertEquals(0, stats.freeBlocks);
+            assertEquals(0, stats.totalFreed);
+        }
+
+        @Test
+        void testBasicFreeListOperations() {
+            byte[] keyBytes = "freeListKey".getBytes();
+            byte[] namespaceBytes = "freeListNamespace".getBytes();
+            byte[] valueBytes = "freeListValue".getBytes();
+
+            // Put entry
+            long entryAddress = freeListArena.putEntry(keyBytes, namespaceBytes, valueBytes);
+            assertTrue(entryAddress > 0);
+
+            // Verify entry data
+            assertArrayEquals(keyBytes, freeListArena.getKeyBytes(entryAddress));
+            assertArrayEquals(namespaceBytes, freeListArena.getNamespaceBytes(entryAddress));
+            assertArrayEquals(valueBytes, freeListArena.getValueBytes(entryAddress));
+
+            // Check stats
+            EntryArena.ArenaStats stats = freeListArena.getStats();
+            assertEquals(1, stats.activeAllocations);
+            assertEquals(0, stats.freeBlocks);
+        }
+
+        @Test
+        void testMemoryRecycling() {
+            List<Long> addresses = new ArrayList<>();
+
+            // Allocate multiple entries
+            for (int i = 0; i < 10; i++) {
+                byte[] key = ("key" + i).getBytes();
+                byte[] namespace = ("ns" + i).getBytes();
+                byte[] value = ("value" + i).getBytes();
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                assertTrue(address > 0);
+                addresses.add(address);
+            }
+
+            EntryArena.ArenaStats beforeRemoval = freeListArena.getStats();
+            assertEquals(10, beforeRemoval.activeAllocations);
+            assertEquals(0, beforeRemoval.freeBlocks);
+
+            // Remove half of the entries
+            for (int i = 0; i < 5; i++) {
+                freeListArena.removeEntry(addresses.get(i));
+            }
+
+            EntryArena.ArenaStats afterRemoval = freeListArena.getStats();
+            assertEquals(5, afterRemoval.activeAllocations);
+            assertTrue(afterRemoval.freeBlocks > 0, "Should have free blocks after removal");
+            assertTrue(afterRemoval.totalFreed > 0, "Should track freed memory");
+
+            // Allocate new entries - should reuse freed memory
+            List<Long> newAddresses = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                byte[] key = ("newKey" + i).getBytes();
+                byte[] namespace = ("newNs" + i).getBytes();
+                byte[] value = ("newValue" + i).getBytes();
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                assertTrue(address > 0);
+                newAddresses.add(address);
+            }
+
+            EntryArena.ArenaStats afterReallocation = freeListArena.getStats();
+            assertEquals(8, afterReallocation.activeAllocations);
+
+            // Verify new entries are correct
+            for (int i = 0; i < 3; i++) {
+                long address = newAddresses.get(i);
+                assertArrayEquals(("newKey" + i).getBytes(), freeListArena.getKeyBytes(address));
+                assertArrayEquals(("newNs" + i).getBytes(), freeListArena.getNamespaceBytes(address));
+                assertArrayEquals(("newValue" + i).getBytes(), freeListArena.getValueBytes(address));
+            }
+        }
+
+        @Test
+        void testUpdateWithMemoryRecycling() {
+            byte[] keyBytes = "updateKey".getBytes();
+            byte[] namespaceBytes = "updateNamespace".getBytes();
+            byte[] originalValue = "originalValue".getBytes();
+            byte[] newValue = "newUpdatedValue".getBytes();
+
+            // Put original entry
+            long originalAddress = freeListArena.putEntry(keyBytes, namespaceBytes, originalValue);
+            assertTrue(originalAddress > 0);
+
+            EntryArena.ArenaStats beforeUpdate = freeListArena.getStats();
+            assertEquals(1, beforeUpdate.activeAllocations);
+            assertEquals(0, beforeUpdate.freeBlocks);
+
+            // Update entry
+            long updatedAddress = freeListArena.updateEntry(originalAddress, newValue);
+            assertTrue(updatedAddress > 0);
+
+            EntryArena.ArenaStats afterUpdate = freeListArena.getStats();
+            assertEquals(1, afterUpdate.activeAllocations);
+            assertTrue(afterUpdate.freeBlocks > 0, "Should have freed the old entry");
+            assertTrue(afterUpdate.totalFreed > 0, "Should track freed memory from update");
+
+            // Verify updated entry
+            assertArrayEquals(keyBytes, freeListArena.getKeyBytes(updatedAddress));
+            assertArrayEquals(namespaceBytes, freeListArena.getNamespaceBytes(updatedAddress));
+            assertArrayEquals(newValue, freeListArena.getValueBytes(updatedAddress));
+        }
+
+        @Test
+        void testSizeClassAllocation() {
+            List<Long> addresses = new ArrayList<>();
+
+            // Test different size classes
+            int[] sizes = {16, 64, 256, 1024, 4096}; // Different size classes
+
+            for (int size : sizes) {
+                byte[] key = "key".getBytes();
+                byte[] namespace = "ns".getBytes();
+                byte[] value = new byte[size];
+                Arrays.fill(value, (byte) 'V');
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                assertTrue(address > 0);
+                addresses.add(address);
+
+                // Verify content
+                assertArrayEquals(value, freeListArena.getValueBytes(address));
+            }
+
+            // Remove all entries to create free blocks of different sizes
+            for (Long address : addresses) {
+                freeListArena.removeEntry(address);
+            }
+
+            EntryArena.ArenaStats stats = freeListArena.getStats();
+            assertEquals(0, stats.activeAllocations);
+            assertTrue(stats.freeBlocks > 0, "Should have free blocks of various sizes");
+
+            // Reallocate with different sizes - should find appropriate free blocks
+            for (int size : sizes) {
+                byte[] key = "newKey".getBytes();
+                byte[] namespace = "newNs".getBytes();
+                byte[] value = new byte[size / 2]; // Smaller values to test splitting
+                Arrays.fill(value, (byte) 'N');
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                assertTrue(address > 0);
+                assertArrayEquals(value, freeListArena.getValueBytes(address));
+            }
+        }
+
+        @Test
+        void testFragmentationMetrics() {
+            // Create fragmentation by allocating and removing entries
+            List<Long> addresses = new ArrayList<>();
+
+            for (int i = 0; i < 20; i++) {
+                byte[] key = ("fragKey" + i).getBytes();
+                byte[] namespace = "fragNs".getBytes();
+                byte[] value = ("fragValue" + i).getBytes();
+
+                long address = freeListArena.putEntry(key, namespace, value);
+                addresses.add(address);
+            }
+
+            // Remove every other entry to create fragmentation
+            for (int i = 0; i < addresses.size(); i += 2) {
+                freeListArena.removeEntry(addresses.get(i));
+            }
+
+            EntryArena.ArenaStats stats = freeListArena.getStats();
+            assertEquals(10, stats.activeAllocations); // Half removed
+            assertTrue(stats.freeBlocks > 0, "Should have free blocks");
+            assertTrue(stats.fragmentation > 0, "Should report fragmentation");
+            assertTrue(stats.fragmentation <= 100, "Fragmentation should be percentage");
         }
     }
 }

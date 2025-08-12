@@ -54,6 +54,21 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          TypeSerializer<N> namespaceSerializer,
                          TypeSerializer<S> stateSerializer,
                          boolean l0CacheEnabled) {
+        this(allocator, mainTableInitPow2, l0CacheSizePow2, keySerializer, namespaceSerializer,
+             stateSerializer, l0CacheEnabled, EntryArena.AllocationStrategy.FREE_LIST);
+    }
+
+    /**
+     * Creates a ForL0StateMap with configurable EntryArena allocation strategy.
+     */
+    public ForL0StateMap(MemoryManagerAllocator allocator,
+                         int mainTableInitPow2,
+                         int l0CacheSizePow2,
+                         TypeSerializer<K> keySerializer,
+                         TypeSerializer<N> namespaceSerializer,
+                         TypeSerializer<S> stateSerializer,
+                         boolean l0CacheEnabled,
+                         EntryArena.AllocationStrategy arenaAllocationStrategy) {
         this.allocator = allocator;
         this.keySerializer = keySerializer;
         this.namespaceSerializer = namespaceSerializer;
@@ -61,15 +76,15 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         this.l0CacheEnabled = l0CacheEnabled;
 
         try {
-            // Initialize storage components
-            this.entryArena = new EntryArena(allocator);
+            // Initialize storage components with configurable allocation strategy
+            this.entryArena = new EntryArena(allocator, arenaAllocationStrategy);
             // 使用更高的负载因子阈值以支持压力测试
             this.mainTable = new MainTable(allocator, mainTableInitPow2, 0.95);
             // L0Table大小固定，不会扩容
             this.l0Table = l0CacheEnabled ? new L0Table(allocator, l0CacheSizePow2, L0Table.ReplacementPolicy.LRU) : null;
 
-            LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}",
-                    1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled);
+            LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}, arenaStrategy={}",
+                    1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled, arenaAllocationStrategy);
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize ForL0StateMap", e);
