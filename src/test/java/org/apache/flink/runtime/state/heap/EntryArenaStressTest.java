@@ -291,7 +291,7 @@ class EntryArenaStressTest {
                     addresses.add(address);
 
                     // Verify data integrity for some entries
-                    if (i % 1000 == 0) {
+                    if (i % 100 == 0) {
                         assertArrayEquals(key, freeListArena.getKeyBytes(address));
                         assertArrayEquals(namespace, freeListArena.getNamespaceBytes(address));
                         assertArrayEquals(value, freeListArena.getValueBytes(address));

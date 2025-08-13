@@ -28,7 +28,7 @@ public class ForL0StateMapStressTest {
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMapStressTest.class);
 
     private static final int DEFAULT_PAGE_SIZE = 32 * 1024; // 32KB
-    private static final long HEAP_SIZE = 256L * DEFAULT_PAGE_SIZE; // 8MB for stress tests
+    private static final long HEAP_SIZE = 512 * 256L * DEFAULT_PAGE_SIZE;
     private static final int STRESS_DURATION_SECONDS = 30;
 
     private MemoryManager memoryManager;
@@ -73,7 +73,7 @@ public class ForL0StateMapStressTest {
         @Timeout(value = STRESS_DURATION_SECONDS + 10, unit = TimeUnit.SECONDS)
         @DisplayName("大量PUT操作压力测试")
         void testMassivePutOperations() throws Exception {
-            final int totalOperations = 50_000; // 提高测试强度
+            final int totalOperations = 1_000_000;
 
             LOG.info("PUT操作压力测试: {} 次操作", totalOperations);
 
@@ -87,7 +87,7 @@ public class ForL0StateMapStressTest {
 
                 stateMap.put(i, namespace, value);
 
-                if (i % 10000 == 0 && i > 0) {
+                if (i % 50000 == 0 && i > 0) {
                     LOG.info("已完成 {} 次PUT操作, 当前大小: {}, 内存使用: {} KB",
                             i, stateMap.size(), allocator.getUsedBytes() / 1024);
                 }
@@ -111,7 +111,7 @@ public class ForL0StateMapStressTest {
 
             // 验证数据正确性
             Random verifyRandom = new Random(42);
-            int verifyCount = 1000;
+            int verifyCount = totalOperations / 10;
             int correctCount = 0;
 
             for (int i = 0; i < verifyCount; i++) {
@@ -134,8 +134,8 @@ public class ForL0StateMapStressTest {
         @Timeout(value = STRESS_DURATION_SECONDS + 10, unit = TimeUnit.SECONDS)
         @DisplayName("大量GET操作压力测试")
         void testMassiveGetOperations() throws Exception {
-            final int dataSize = 20_000; // 提高数据量
-            final int getOperations = 200_000; // 提高GET操作数量
+            final int dataSize = 5_000_000; // 提高数据量
+            final int getOperations = 1_000_000; // 提高GET操作数量
 
             // 先准备数据
             LOG.info("准备测试数据: {} 条记录", dataSize);
@@ -197,7 +197,7 @@ public class ForL0StateMapStressTest {
         @Timeout(value = STRESS_DURATION_SECONDS + 10, unit = TimeUnit.SECONDS)
         @DisplayName("混合操作压力测试")
         void testMixedOperationsStress() throws Exception {
-            final int totalOperations = 30_000;
+            final int totalOperations = 30_000_000;
             final double putRatio = 0.4;    // 40% PUT
             final double getRatio = 0.5;    // 50% GET
             final double removeRatio = 0.1; // 10% REMOVE
@@ -267,7 +267,7 @@ public class ForL0StateMapStressTest {
         @Timeout(value = 60, unit = TimeUnit.SECONDS)
         @DisplayName("大数据量内存使用测试")
         void testLargeDataSet() throws Exception {
-            final int targetSize = 10_000; // 提高到10K条记录
+            final int targetSize = 5_000_000;
             final String largeValue = createLargeString(300); // 减少字符串长度以容纳更多数据
 
             LOG.info("插入 {} 个大对象 (每个约300字符)...", targetSize);
@@ -279,21 +279,21 @@ public class ForL0StateMapStressTest {
             for (int i = 0; i < targetSize; i++) {
                 stateMap.put(i, "ns", largeValue + i);
 
-                if (i % 2000 == 0 && i > 0) {
-                    LOG.info("已插入 {} 条记录, 当前大小: {}, 已用内存: {} KB",
-                            i, stateMap.size(), allocator.getUsedBytes() / 1024);
+                if (i % 50000 == 0 && i > 0) {
+                    LOG.info("已插入 {} 条记录, 当前大小: {}, 已用内存: {} MB",
+                            i, stateMap.size(), allocator.getUsedBytes() / 1024 / 1024);
                 }
             }
 
             long insertTime = System.currentTimeMillis();
             long insertMemory = allocator.getUsedBytes();
 
-            LOG.info("插入完成: {} 条记录, 耗时: {}ms, 内存使用: {} KB",
-                    stateMap.size(), insertTime - startTime, insertMemory / 1024);
+            LOG.info("插入完成: {} 条记录, 耗时: {}ms, 内存使用: {} MB",
+                    stateMap.size(), insertTime - startTime, insertMemory / 1024 / 1024);
 
             // 随机读取测试并验证数据正确性
             Random random = new Random(42); // 固定种子保证可重复性
-            int readCount = 10_000; // 增加读取次数
+            int readCount = 1_000_000; // 增加读取次数
             int hits = 0;
             int correctValues = 0;
 
@@ -322,7 +322,7 @@ public class ForL0StateMapStressTest {
 
             assertEquals(targetSize, stateMap.size());
             // 移除命中率断言，改为验证数据正确性
-            assertEquals(hits, correctValues, "所有命中的数据都应该��确");
+            assertEquals(hits, correctValues, "所有命中的数据都应该正确");
         }
 
         @Test
@@ -456,8 +456,8 @@ public class ForL0StateMapStressTest {
         @DisplayName("长时间运行稳定性测试")
         void testLongRunningStability() throws Exception {
             final int duration = 30; // 30秒
-            final int keyRange = 5_000;
-            final int operationsPerSecond = 1_000; // 每秒操作数
+            final int keyRange = 5_000_000;
+            final int operationsPerSecond = 100_000; // 每秒操作数
 
             long operationCount = 0;
             int errorCount = 0;
@@ -523,6 +523,107 @@ public class ForL0StateMapStressTest {
 
             assertTrue(operationCount > 0);
             assertTrue(errorCount < operationCount * 0.01); // 错误率应小于1%
+        }
+    }
+
+    @Nested
+    @DisplayName("自动扩容压力测试")
+    class AutoResizeStressTests {
+        private ForL0StateMap<Integer, String, String> smallMap;
+
+        @BeforeEach
+        void initSmall() {
+            // 初始仅2 buckets 便于快速触发扩容
+            smallMap = new ForL0StateMap<>(
+                allocator,
+                1,   // mainTable 2 buckets
+                2,   // l0 4 buckets
+                IntSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                true
+            );
+        }
+
+        @AfterEach
+        void closeSmall() throws Exception {
+            if (smallMap != null) smallMap.close();
+        }
+
+        @Test
+        @DisplayName("高写入触发多次扩容并验证数据一致性")
+        void testMultipleAutoResizes() {
+            int expectedMinBucket = 2;
+            int lastBucket = smallMap.getDetailedStats().mainTableStats.bucketCount;
+            assertEquals(expectedMinBucket, lastBucket);
+
+            // 记录扩容发生的 bucketCount 序列
+            java.util.List<Integer> bucketHistory = new java.util.ArrayList<>();
+            bucketHistory.add(lastBucket);
+
+            int totalInsert = 0;
+            int targetBucket = 32; // 期望最终扩容到至少32 buckets
+            while (smallMap.getDetailedStats().mainTableStats.bucketCount < targetBucket && totalInsert < 10_000) {
+                smallMap.put(totalInsert, "ns", "v" + totalInsert);
+                totalInsert++;
+                int current = smallMap.getDetailedStats().mainTableStats.bucketCount;
+                if (current != lastBucket) {
+                    bucketHistory.add(current);
+                    lastBucket = current;
+                }
+            }
+
+            ForL0StateMap.DetailedStats stats = smallMap.getDetailedStats();
+            assertTrue(stats.mainTableStats.bucketCount >= targetBucket, "应已扩容到 >= " + targetBucket + " buckets, 实际=" + stats.mainTableStats.bucketCount);
+
+            // 抽样验证数据
+            for (int k = 0; k < totalInsert; k += Math.max(1, totalInsert / 50)) {
+                assertEquals("v" + k, smallMap.get(k, "ns"));
+            }
+
+            // bucket 序列应严格递增且为2的幂
+            int prev = -1;
+            for (int b : bucketHistory) {
+                assertTrue((b & (b - 1)) == 0, "bucketCount 应为2次幂: " + b);
+                if (prev != -1) {
+                    assertTrue(b > prev, "bucketCount 应递增: " + prev + "->" + b);
+                }
+                prev = b;
+            }
+        }
+
+        @Test
+        @DisplayName("扩容过程中混合读写一致性验证")
+        void testMixedOpsDuringResize() {
+            java.util.Random rnd = new java.util.Random(123);
+            int writes = 0;
+            for (int i = 0; i < 5000; i++) {
+                int op = rnd.nextInt(100);
+                if (op < 60) { // 写
+                    smallMap.put(i, "n" + (i % 7), "val" + i);
+                    writes++;
+                } else if (op < 90) { // 读
+                    int k = rnd.nextInt(i + 1);
+                    smallMap.get(k, "n" + (k % 7));
+                } else { // 删
+                    int k = rnd.nextInt(i + 1);
+                    smallMap.remove(k, "n" + (k % 7));
+                }
+            }
+            // 强制再进行一次读写穿插，确保最新 bucket 使用正常
+            for (int i = 0; i < 1000; i++) {
+                smallMap.put(10_000 + i, "nX", "VX" + i);
+                assertEquals("VX" + i, smallMap.get(10_000 + i, "nX"));
+            }
+            // 校验部分旧数据仍可访问（存在被删除则允许null）
+            for (int i = 0; i < 5000; i += 500) {
+                String v = smallMap.get(i, "n" + (i % 7));
+                if (v != null) {
+                    assertTrue(v.equals("val" + i) || v.startsWith("VX"), "返回的数据应为原值或新写值");
+                }
+            }
+            // 确认已经至少扩容一次
+            assertTrue(smallMap.getDetailedStats().mainTableStats.bucketCount > 2);
         }
     }
 

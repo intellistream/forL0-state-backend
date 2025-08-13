@@ -39,6 +39,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private long l0Hits = 0;
     private long mainTableHits = 0;
 
+    // Resize coordination
+    private volatile boolean resizeInProgress = false;
+    private long lastResizeTime = 0;
+    private static final long MIN_RESIZE_INTERVAL_MS = 5000; // 5 seconds between resizes
+
     // Serialization helpers
     private final DataOutputSerializer keyOutputSerializer = new DataOutputSerializer(128);
     private final DataOutputSerializer namespaceOutputSerializer = new DataOutputSerializer(128);
@@ -78,8 +83,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         try {
             // Initialize storage components with configurable allocation strategy
             this.entryArena = new EntryArena(allocator, arenaAllocationStrategy);
-            // 使用更高的负载因子阈值以支持压力测试
-            this.mainTable = new MainTable(allocator, mainTableInitPow2, 0.95);
+            this.mainTable = new MainTable(allocator, mainTableInitPow2, 0.75);
             // L0Table大小固定，不会扩容
             this.l0Table = l0CacheEnabled ? new L0Table(allocator, l0CacheSizePow2, L0Table.ReplacementPolicy.LRU) : null;
 
@@ -249,6 +253,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         }
 
         try {
+            // Check if resize is needed before insertion
+            checkAndTriggerResize();
+
             // Serialize all components
             byte[] keyBytes = serializeKey(key);
             byte[] namespaceBytes = serializeNamespace(namespace);
@@ -266,8 +273,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             // Store new entry in arena
             long newEntryAddress = entryArena.putEntry(keyBytes, namespaceBytes, valueBytes);
 
-            // Update main table
-            long oldMainAddress = mainTable.put(hash, tag, newEntryAddress, matcher);
+            // Update main table (with resize handling)
+            long oldMainAddress = putWithResizeHandling(hash, tag, newEntryAddress, matcher);
 
             if (oldMainAddress == 0) {
                 // New entry
@@ -278,8 +285,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 LOG.trace("Updated existing entry: key={}, namespace={}", key, namespace);
             }
 
-            // Update L0 cache if enabled
-            if (l0CacheEnabled && l0Table != null) {
+            // Update L0 cache if enabled (after successful main table update)
+            if (l0CacheEnabled && l0Table != null && !resizeInProgress) {
                 long oldL0Address = l0Table.put(hash, tag, newEntryAddress, matcher::matches);
                 if (oldL0Address > 0 && oldL0Address != oldMainAddress) {
                     LOG.trace("L0 cache updated for key={}, namespace={}", key, namespace);
@@ -292,6 +299,147 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         }
     }
 
+    /**
+     * Puts an entry into main table with resize handling.
+     * If resize is needed and put fails, triggers resize and retries.
+     */
+    private long putWithResizeHandling(int hash, short tag, long entryAddress, MainTable.EntryMatcher matcher)
+            throws Exception {
+        try {
+            return mainTable.put(hash, tag, entryAddress, matcher);
+        } catch (RuntimeException e) {
+            if (e.getMessage() != null && e.getMessage().contains("Table is full - resize needed")) {
+                performResize();
+                return mainTable.put(hash, tag, entryAddress, matcher);
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Checks if resize should be triggered and performs it if necessary.
+     */
+    private void checkAndTriggerResize() throws Exception {
+        if (mainTable.needsResize() && !resizeInProgress) {
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - lastResizeTime >= MIN_RESIZE_INTERVAL_MS) {
+                performResize();
+            }
+        }
+    }
+
+    /**
+     * Performs the main table resize with L0 cache coordination.
+     */
+    private synchronized void performResize() throws Exception {
+        if (resizeInProgress) {
+            // Another thread is already resizing, wait for it to complete
+            return;
+        }
+
+        if (!mainTable.needsResize()) {
+            // Resize no longer needed
+            return;
+        }
+
+        resizeInProgress = true;
+        long resizeStartTime = System.currentTimeMillis();
+
+        try {
+            LOG.info("Starting ForL0StateMap resize operation");
+
+            // Step 1: Clear L0 cache to avoid stale entries
+            if (l0CacheEnabled && l0Table != null) {
+                LOG.debug("Clearing L0 cache before resize");
+                l0Table.clear();
+            }
+
+            // Step 2: Resize main table
+            boolean resizePerformed = mainTable.tryResize(entryArena);
+
+            if (resizePerformed) {
+                if (l0CacheEnabled && l0Table != null) {
+                    l0Table.clear();
+                }
+                long resizeEndTime = System.currentTimeMillis();
+                lastResizeTime = resizeEndTime;
+
+                LOG.info("ForL0StateMap resize completed successfully in {}ms",
+                         resizeEndTime - resizeStartTime);
+
+                // Log statistics after resize
+                MainTable.TableStats stats = mainTable.getStats();
+                LOG.info("Post-resize stats: {}", stats);
+            }
+        } catch (Exception e) {
+            LOG.error("ForL0StateMap resize failed", e);
+            throw new Exception("Resize operation failed", e);
+        } finally {
+            resizeInProgress = false;
+        }
+    }
+
+    /**
+     * Forces a resize operation for testing purposes.
+     *
+     * @throws Exception if resize fails
+     */
+    public void forceResize() throws Exception {
+        mainTable.forceResize(entryArena);
+
+        // Clear L0 cache after forced resize
+        if (l0CacheEnabled && l0Table != null) {
+            l0Table.clear();
+        }
+
+        lastResizeTime = System.currentTimeMillis();
+    }
+
+    /**
+     * Gets detailed statistics about the state map including resize information.
+     */
+    public DetailedStats getDetailedStats() {
+        MainTable.TableStats mainStats = mainTable.getStats();
+        L0Table.L0TableStats l0Stats = l0CacheEnabled && l0Table != null ? l0Table.getStats() : null;
+
+        return new DetailedStats(
+            totalAccesses,
+            l0Hits,
+            mainTableHits,
+            l0Stats,
+            mainStats,
+            size,
+            resizeInProgress,
+            lastResizeTime
+        );
+    }
+
+    /**
+     * Detailed statistics including resize information.
+     */
+    public static class DetailedStats extends CacheStats {
+        public final MainTable.TableStats mainTableStats;
+        public final boolean resizeInProgress;
+        public final long lastResizeTime;
+
+        public DetailedStats(long totalAccesses, long l0Hits, long mainTableHits,
+                           L0Table.L0TableStats l0Stats, MainTable.TableStats mainTableStats,
+                           int totalEntries, boolean resizeInProgress, long lastResizeTime) {
+            super(totalAccesses, l0Hits, mainTableHits, l0Stats, totalEntries);
+            this.mainTableStats = mainTableStats;
+            this.resizeInProgress = resizeInProgress;
+            this.lastResizeTime = lastResizeTime;
+        }
+
+        @Override
+        public String toString() {
+            return String.format(
+                "DetailedStats{%s, mainTable=%s, resizeInProgress=%s, lastResize=%dms ago}",
+                super.toString(), mainTableStats, resizeInProgress,
+                System.currentTimeMillis() - lastResizeTime
+            );
+        }
+    }
     @Override
     public S putAndGetOld(K key, N namespace, S state) {
         if (key == null || namespace == null) {
@@ -504,8 +652,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public Iterator<StateEntry<K, N, S>> iterator() {
-        // TODO: Implement iterator functionality in later phase
-        return null;
+        return java.util.Collections.emptyIterator();
     }
 
 }

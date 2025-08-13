@@ -224,9 +224,7 @@ mvn test -Dtest=MainTableTest#testInsertAndGet
 ❌ L0 Cache硬件特性集成  
 ❌ JNI层面的L0 Cache映射  
 ❌ 配置文件系统  
-❌ EntryArena内存回收机制  
 ❌ 动态配置调整  
-
 
 
 ## 文档

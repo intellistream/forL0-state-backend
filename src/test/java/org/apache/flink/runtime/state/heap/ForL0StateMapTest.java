@@ -366,31 +366,83 @@ class ForL0StateMapTest {
         }
     }
 
-//    @Nested
-//    class CompatibilityConstructorTests {
-//
-//        @Test
-//        void testCompatibilityConstructor() {
-//            // Test the compatibility constructor (without full initialization)
-//            ForL0StateMap<String, Integer, String> compatMap = new ForL0StateMap<>(
-//                4,
-//                StringSerializer.INSTANCE,
-//                IntSerializer.INSTANCE,
-//                StringSerializer.INSTANCE
-//            );
-//
-//            // Should handle gracefully when not fully initialized
-//            assertNull(compatMap.get("key", 1));
-//            assertEquals(0, compatMap.size());
-//
-//            // Operations should not throw exceptions
-//            assertDoesNotThrow(() -> compatMap.put("key", 1, "value"));
-//            assertDoesNotThrow(() -> compatMap.remove("key", 1));
-//
-//            // Close should also work
-//            assertDoesNotThrow(() -> compatMap.close());
-//        }
-//    }
+    @Nested
+    class AutoResizeTests {
+
+        private ForL0StateMap<String, Integer, String> smallMap;
+
+        @BeforeEach
+        void setupSmall() {
+            // 使用极小的主表容量以快速触发扩容：2 buckets (pow2=1)
+            smallMap = new ForL0StateMap<>(
+                allocator,
+                1, // 2 buckets, 12 slots, 阈值 0.75 * 12 = 9
+                2, // L0 4 buckets
+                StringSerializer.INSTANCE,
+                IntSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                true
+            );
+        }
+
+        @AfterEach
+        void tearDownSmall() throws Exception {
+            if (smallMap != null) {
+                smallMap.close();
+            }
+        }
+
+        @Test
+        void testAutoResizeTriggeredByLoadFactor() {
+            int initialBuckets = smallMap.getDetailedStats().mainTableStats.bucketCount;
+            assertEquals(2, initialBuckets);
+
+            int insertCount = 20; // 足够触发一次扩容（>9 entries）
+            for (int i = 0; i < insertCount; i++) {
+                smallMap.put("k" + i, 0, "v" + i);
+            }
+
+            ForL0StateMap.DetailedStats stats = smallMap.getDetailedStats();
+            int afterBuckets = stats.mainTableStats.bucketCount;
+            assertTrue(afterBuckets >= 4, "应已至少扩容到4 buckets, 实际=" + afterBuckets);
+            assertEquals(insertCount, stats.totalEntries);
+
+            // 校验数据仍可访问
+            for (int i = 0; i < insertCount; i++) {
+                assertEquals("v" + i, smallMap.get("k" + i, 0));
+            }
+        }
+
+        @Test
+        void testForceResizeKeepsData() throws Exception {
+            for (int i = 0; i < 8; i++) {
+                smallMap.put("fk" + i, 1, "fv" + i);
+            }
+            int beforeBuckets = smallMap.getDetailedStats().mainTableStats.bucketCount;
+            smallMap.forceResize();
+            int afterBuckets = smallMap.getDetailedStats().mainTableStats.bucketCount;
+            assertTrue(afterBuckets > beforeBuckets, "forceResize 应扩大 bucket 数");
+            for (int i = 0; i < 8; i++) {
+                assertEquals("fv" + i, smallMap.get("fk" + i, 1));
+            }
+        }
+
+        @Test
+        void testMultipleResizesAndDataIntegrity() {
+            int targetBucketCount = 8; // 希望触发到 8 buckets
+            int i = 0;
+            while (smallMap.getDetailedStats().mainTableStats.bucketCount < targetBucketCount && i < 2000) {
+                smallMap.put("mk" + i, 2, "mv" + i);
+                i++;
+            }
+            ForL0StateMap.DetailedStats stats = smallMap.getDetailedStats();
+            assertTrue(stats.mainTableStats.bucketCount >= targetBucketCount, "应已达到多次扩容");
+            // 抽样验证
+            for (int k = 0; k < i; k += Math.max(1, i / 10)) {
+                assertEquals("mv" + k, smallMap.get("mk" + k, 2));
+            }
+        }
+    }
 
     @Nested
     class LifecycleTests {

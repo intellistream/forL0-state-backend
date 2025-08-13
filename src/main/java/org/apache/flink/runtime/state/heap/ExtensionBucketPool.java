@@ -29,7 +29,8 @@ public class ExtensionBucketPool implements AutoCloseable {
     private final long totalSize;
 
     // Free list for bucket allocation (single-threaded)
-    private byte nextFreeBucketId;
+    // 将 nextFreeBucketId 改为int，避免超过127时byte溢出为负
+    private int nextFreeBucketId; // 下一个候选可用桶ID (1..maxBuckets+1)
     private final boolean[] bucketInUse;
 
     /**
@@ -68,37 +69,36 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @return Bucket ID (1-255), or 0 if allocation failed
      */
     public byte allocateBucket() {
-        // Find next available bucket
+        // 优先从 nextFreeBucketId 往后找
         for (int id = nextFreeBucketId; id <= maxBuckets; id++) {
             if (!bucketInUse[id]) {
                 bucketInUse[id] = true;
 
                 // Clear the allocated bucket
-                clearBucket((byte) id);
+                clearBucketInternal(id);
 
                 // Update next free bucket hint
-                updateNextFreeBucketId();
+                updateNextFreeBucketId(id + 1);
 
-                return (byte) id;
+                return (byte) id; // 仍用 byte 返回，写入主表
             }
         }
-
-        // Wrap around and search from beginning
+        // 回绕从1开始找直到 nextFreeBucketId-1
         for (int id = 1; id < nextFreeBucketId; id++) {
             if (!bucketInUse[id]) {
                 bucketInUse[id] = true;
 
                 // Clear the allocated bucket
-                clearBucket((byte) id);
+                clearBucketInternal(id);
 
                 // Update next free bucket hint
-                updateNextFreeBucketId();
+                updateNextFreeBucketId(id + 1);
 
                 return (byte) id;
             }
         }
 
-        return NULL_BUCKET_ID; // Pool exhausted
+        return NULL_BUCKET_ID; // 池耗尽
     }
 
     /**
@@ -107,19 +107,20 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @param bucketId Bucket ID to free
      */
     public void freeBucket(byte bucketId) {
-        if (bucketId == NULL_BUCKET_ID || bucketId > maxBuckets) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || id > maxBuckets) {
             return; // Invalid bucket ID
         }
 
-        if (bucketInUse[bucketId]) {
-            bucketInUse[bucketId] = false;
+        if (bucketInUse[id]) {
+            bucketInUse[id] = false;
 
             // Clear the freed bucket
-            clearBucket(bucketId);
+            clearBucketInternal(id);
 
             // Update free bucket hint
-            if (bucketId < nextFreeBucketId) {
-                nextFreeBucketId = bucketId;
+            if (id < nextFreeBucketId) {
+                nextFreeBucketId = id; // 回缩指针
             }
         }
     }
@@ -132,14 +133,15 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @return Memory address of the bucket
      */
     public long getBucketAddress(byte bucketId) {
-        if (bucketId == NULL_BUCKET_ID || bucketId > maxBuckets) {
-            throw new IllegalArgumentException("Invalid bucket ID: " + bucketId);
+        int id = bucketId & 0xFF;
+        if (id == 0 || id > maxBuckets) {
+            throw new IllegalArgumentException("Invalid bucket ID: " + id);
         }
 
         // For compatibility with MainTable's current interface
         // This method should be deprecated in favor of direct MemorySegment access
-        MemorySegment segment = getSegmentForBucket(bucketId);
-        int bucketOffset = getBucketOffsetInSegment(bucketId);
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
         return segment.getAddress() + bucketOffset;
     }
 
@@ -165,12 +167,13 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @return Entry address if found, 0 if not found
      */
     public long searchInBucket(byte bucketId, short tag, MainTable.EntryMatcher entryMatcher) {
-        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) {
             return 0;
         }
 
-        MemorySegment segment = getSegmentForBucket(bucketId);
-        int bucketOffset = getBucketOffsetInSegment(bucketId);
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
 
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
             int slotOffset = bucketOffset + slot * SLOT_SIZE;
@@ -212,12 +215,13 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @return Previous entry address if updated, 0 if newly inserted, -1 if bucket is full
      */
     public long putInBucket(byte bucketId, short tag, long entryAddress, MainTable.EntryMatcher entryMatcher) {
-        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) {
             return -1;
         }
 
-        MemorySegment segment = getSegmentForBucket(bucketId);
-        int bucketOffset = getBucketOffsetInSegment(bucketId);
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
         int emptySlot = -1;
 
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
@@ -227,9 +231,7 @@ public class ExtensionBucketPool implements AutoCloseable {
             long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
 
             if (slotPointer == 0) {
-                if (emptySlot == -1) {
-                    emptySlot = slot;
-                }
+                if (emptySlot == -1) emptySlot = slot;
                 continue;
             }
 
@@ -273,12 +275,13 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @return Removed entry address if found, 0 if not found
      */
     public long removeFromBucket(byte bucketId, short tag, MainTable.EntryMatcher entryMatcher) {
-        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) {
             return 0;
         }
 
-        MemorySegment segment = getSegmentForBucket(bucketId);
-        int bucketOffset = getBucketOffsetInSegment(bucketId);
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
 
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
             int slotOffset = bucketOffset + slot * SLOT_SIZE;
@@ -291,7 +294,7 @@ public class ExtensionBucketPool implements AutoCloseable {
 
             if (entryMatcher.matches(slotPointer)) {
                 // Clear the slot
-                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short) 0);
+                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short)0);
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
                 return slotPointer;
             }
@@ -317,19 +320,18 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @return true if bucket is empty, false otherwise
      */
     public boolean isBucketEmpty(byte bucketId) {
-        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) {
             return true;
         }
 
-        MemorySegment segment = getSegmentForBucket(bucketId);
-        int bucketOffset = getBucketOffsetInSegment(bucketId);
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
 
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
             int slotOffset = bucketOffset + slot * SLOT_SIZE;
             long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (slotPointer != 0) {
-                return false;
-            }
+            if (slotPointer != 0) return false;
         }
         return true;
     }
@@ -354,19 +356,14 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @param bucketIndex Main bucket index (for visitor context)
      */
     public void visitBucketSlots(byte bucketId, MainTable.EntryVisitor visitor, int bucketIndex) {
-        if (bucketId == NULL_BUCKET_ID || !bucketInUse[bucketId]) {
-            return;
-        }
-
-        MemorySegment segment = getSegmentForBucket(bucketId);
-        int bucketOffset = getBucketOffsetInSegment(bucketId);
-
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) return;
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
             int slotOffset = bucketOffset + slot * SLOT_SIZE;
-
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
             long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
             if (slotPointer != 0) {
                 visitor.visit(slotPointer, bucketIndex, slotTag);
             }
@@ -380,10 +377,9 @@ public class ExtensionBucketPool implements AutoCloseable {
      * @return true if bucket is in use, false otherwise
      */
     public boolean isBucketInUse(byte bucketId) {
-        if (bucketId == NULL_BUCKET_ID || bucketId > maxBuckets || bucketId < 0) {
-            return false;
-        }
-        return bucketInUse[bucketId];
+        int id = bucketId & 0xFF;
+        if (id == 0 || id > maxBuckets) return false;
+        return bucketInUse[id];
     }
 
     /**
@@ -392,9 +388,7 @@ public class ExtensionBucketPool implements AutoCloseable {
     public int getAllocatedBuckets() {
         int count = 0;
         for (int i = 1; i <= maxBuckets; i++) {
-            if (bucketInUse[i]) {
-                count++;
-            }
+            if (bucketInUse[i]) count++;
         }
         return count;
     }
@@ -410,63 +404,51 @@ public class ExtensionBucketPool implements AutoCloseable {
         return new PoolStats(maxBuckets, bucketsInUse, bucketsAvailable, utilizationRate);
     }
 
-    private void updateNextFreeBucketId() {
+    private void updateNextFreeBucketId(int start) {
         // Find next free bucket starting from current hint
-        for (int id = nextFreeBucketId; id <= maxBuckets; id++) {
+        for (int id = Math.max(1, start); id <= maxBuckets; id++) {
             if (!bucketInUse[id]) {
-                nextFreeBucketId = (byte) id;
+                nextFreeBucketId = id;
                 return;
             }
         }
-        // No free bucket found, set to an invalid value
-        nextFreeBucketId = (byte) (maxBuckets + 1);
+        // 没有空闲，指向 maxBuckets+1
+        nextFreeBucketId = maxBuckets + 1;
     }
 
-    private void clearBucket(byte bucketId) {
-        if (bucketId == NULL_BUCKET_ID || bucketId > maxBuckets) {
-            return;
-        }
-
-        MemorySegment segment = getSegmentForBucket(bucketId);
-        int bucketOffset = getBucketOffsetInSegment(bucketId);
-
+    // 保留原 clearBucket(byte) API，改为内部使用int实现
+    private void clearBucket(byte bucketId) { clearBucketInternal(bucketId & 0xFF); }
+    private void clearBucketInternal(int id) {
+        if (id <= 0 || id > maxBuckets) return;
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
         // Clear the entire bucket (64 bytes)
         for (int offset = 0; offset < BUCKET_SIZE; offset += 8) {
             segment.putLong(bucketOffset + offset, 0L);
         }
     }
 
-    private void clearAllBuckets() {
-        // Zero out all memory segments
-        for (MemorySegment segment : memorySegments) {
-            for (int offset = 0; offset < segment.size(); offset += 8) {
-                segment.putLong(offset, 0L);
-            }
-        }
-    }
-
-    private MemorySegment getSegmentForBucket(byte bucketId) {
-        int bucketIndex = bucketId - 1; // Bucket IDs start from 1
+    private MemorySegment getSegmentForBucket(byte bucketId) { return getSegmentForBucketInternal(bucketId & 0xFF); }
+    private MemorySegment getSegmentForBucketInternal(int id) {
+        int bucketIndex = id - 1;
         int segmentIndex = (bucketIndex * BUCKET_SIZE) / memorySegments.get(0).size();
         return memorySegments.get(Math.min(segmentIndex, memorySegments.size() - 1));
     }
-
-    private int getBucketOffsetInSegment(byte bucketId) {
-        int bucketIndex = bucketId - 1; // Bucket IDs start from 1
+    private int getBucketOffsetInSegment(byte bucketId) { return getBucketOffsetInSegmentInternal(bucketId & 0xFF); }
+    private int getBucketOffsetInSegmentInternal(int id) {
+        int bucketIndex = id - 1;
         int segmentSize = memorySegments.get(0).size();
-        return ((bucketIndex * BUCKET_SIZE) % segmentSize);
+        return (bucketIndex * BUCKET_SIZE) % segmentSize;
     }
 
     private byte findBucketIdByAddress(long bucketAddress) {
-        // Find bucket ID by calculating from base address
-        // This is for compatibility with the old interface
-        for (byte id = 1; id <= maxBuckets; id++) {
+        for (int id = 1; id <= maxBuckets; id++) {
             if (bucketInUse[id]) {
-                MemorySegment segment = getSegmentForBucket(id);
-                int bucketOffset = getBucketOffsetInSegment(id);
+                MemorySegment segment = getSegmentForBucketInternal(id);
+                int bucketOffset = getBucketOffsetInSegmentInternal(id);
                 long calculatedAddress = segment.getAddress() + bucketOffset;
                 if (calculatedAddress == bucketAddress) {
-                    return id;
+                    return (byte) id;
                 }
             }
         }
@@ -500,6 +482,16 @@ public class ExtensionBucketPool implements AutoCloseable {
         public String toString() {
             return String.format("PoolStats[max=%d, inUse=%d, available=%d, utilization=%.2f%%]",
                     maxBuckets, bucketsInUse, bucketsAvailable, utilizationRate * 100);
+        }
+    }
+
+    // 重新加入clearAllBuckets实现（之前被覆盖删除）
+    private void clearAllBuckets() {
+        if (memorySegments == null) return;
+        for (MemorySegment segment : memorySegments) {
+            for (int offset = 0; offset < segment.size(); offset += 8) {
+                segment.putLong(offset, 0L);
+            }
         }
     }
 }
