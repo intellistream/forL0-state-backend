@@ -73,6 +73,8 @@ class ForL0ListState<K, N, V> extends AbstractHeapMergingState<K, N, V, List<V>,
             map.put(namespace, list);
         }
         list.add(value);
+        // 显式写回，确保底层 StateTable 能看到变更
+        map.put(namespace, list);
     }
 
     @Override

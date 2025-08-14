@@ -25,7 +25,6 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     private ForL0StateBackend(ForL0StateBackend original, ReadableConfig config) {
         // configure latency tracking
         latencyTrackingConfigBuilder = original.latencyTrackingConfigBuilder.configure(config);
-        LOG.info("++++++++++++++++++ ForL0StateBackend Constructor called +++++++++++++++++++++");
     }
 
     @Override

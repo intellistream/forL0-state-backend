@@ -30,9 +30,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
-
-    private static final Logger LOG = LoggerFactory.getLogger(ForL0KeyedStateBackend.class);
-
     private static final Map<StateDescriptor.Type, StateCreateFactory> STATE_CREATE_FACTORIES =
             Stream.of(
                             Tuple2.of(StateDescriptor.Type.VALUE, (StateCreateFactory) ForL0ValueState::create),
@@ -116,8 +113,6 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                         keyContext.getKeyGroupRange(),
                         keyContext.getNumberOfKeyGroups());
         this.memoryManager = memoryManager;
-
-        LOG.info("++++++++++++++++++ Initializing ForL0KeyedStateBackend ++++++++++++++++++++");
     }
 
     // ------------------------------------------------------------------------

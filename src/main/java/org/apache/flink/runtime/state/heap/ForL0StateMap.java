@@ -622,7 +622,27 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public <T> void transform(K key, N namespace, T value, StateTransformationFunction<S, T> transformation) throws Exception {
-        // TODO: Implement transform functionality in later phase
+        if (key == null || namespace == null || transformation == null) {
+            return;
+        }
+        try {
+            // 读取旧值
+            S previous = get(key, namespace);
+            // 计算新值
+            S updated = transformation.apply(previous, value);
+            if (updated == null) {
+                // 返回 null 表示清空该状态
+                if (previous != null) {
+                    remove(key, namespace);
+                }
+            } else {
+                // 写回新值（内部包含必要的扩容与缓存更新）
+                put(key, namespace, updated);
+            }
+        } catch (Exception e) {
+            LOG.error("Error during transform operation for key={}, namespace={}", key, namespace, e);
+            throw e;
+        }
     }
 
     @Override
