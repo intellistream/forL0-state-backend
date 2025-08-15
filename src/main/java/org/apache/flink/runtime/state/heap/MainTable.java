@@ -437,6 +437,17 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
+     * Public iteration over all entries for snapshotting/inspection.
+     * This visits main bucket slots and all extension buckets.
+     */
+    public void forEachEntry(EntryVisitor visitor) {
+        for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
+            visitBucketSlots(bucketIndex, visitor);
+            visitExtensionBuckets(bucketIndex, visitor);
+        }
+    }
+
+    /**
      * Helper methods for new table operations during resize.
      */
     private MemorySegment getSegmentForBucket(List<MemorySegment> segments, int bucketIndex) {

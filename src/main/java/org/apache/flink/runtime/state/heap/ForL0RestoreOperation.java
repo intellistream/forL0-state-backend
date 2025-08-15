@@ -13,10 +13,10 @@ import java.util.Map;
 
 /**
  * ForL0 specialized restore operation that handles ForL0StateBackend's checkpoint format.
- * This class extends HeapRestoreOperation but ensures compatibility with ForL0's data format.
+ * This class extends HeapRestoreOperation and uses the same data format for compatibility.
  */
 public class ForL0RestoreOperation<K> extends HeapRestoreOperation<K> {
-    
+
     private static final Logger LOG = LoggerFactory.getLogger(ForL0RestoreOperation.class);
 
     public ForL0RestoreOperation(
@@ -47,26 +47,19 @@ public class ForL0RestoreOperation<K> extends HeapRestoreOperation<K> {
 
     @Override
     public Void restore() throws Exception {
-        LOG.info("Starting ForL0RestoreOperation for {} state handles", restoreStateHandles.size());
-        
-        // If no state to restore, create empty state tables
-        if (restoreStateHandles.isEmpty()) {
-            LOG.info("No state handles to restore, creating empty state backend");
-            return null;
-        }
+        LOG.info("Starting ForL0RestoreOperation");
 
-        // For ForL0StateBackend, we need to ensure the restored state tables are ForL0StateTable instances
         try {
-            return super.restore();
+            // Use the standard HeapRestoreOperation restore logic directly
+            // ForL0StateBackend should use the same data format as HeapStateBackend
+            super.restore();
+            LOG.info("Successfully restored ForL0StateBackend using standard restore operation");
+            return null;
         } catch (Exception e) {
-            LOG.warn("Failed to restore using standard HeapRestoreOperation, attempting ForL0-specific recovery", e);
-            
-            // If standard restore fails, try to handle gracefully
-            // This might happen if the checkpoint was created with a different format
-            // For now, we'll let it fail but with better error message
-            throw new Exception("ForL0StateBackend checkpoint format incompatibility. " +
-                    "This might be due to checkpoint created by a different state backend implementation. " +
-                    "Original error: " + e.getMessage(), e);
+            // Log the error for debugging but don't try to handle it specially
+            // Any format issues should be fixed at the snapshot creation level
+            LOG.error("ForL0StateBackend restore failed: {}", e.getMessage(), e);
+            throw new Exception("Failed to restore ForL0StateBackend: " + e.getMessage(), e);
         }
     }
 }

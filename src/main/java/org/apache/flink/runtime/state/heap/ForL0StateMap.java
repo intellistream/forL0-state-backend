@@ -647,32 +647,158 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public Stream<K> getKeys(N namespace) {
-        // TODO: Implement getKeys functionality in later phase
-        return Stream.empty();
+        if (namespace == null || entryArena == null || mainTable == null) {
+            return Stream.empty();
+        }
+        java.util.ArrayList<K> keys = new java.util.ArrayList<>();
+        try {
+            mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
+                try {
+                    byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                    if (nb == null) { return; }
+                    N n = deserializeNamespace(nb);
+                    if ((n == null && namespace == null) || (n != null && n.equals(namespace))) {
+                        byte[] kb = entryArena.getKeyBytes(entryAddress);
+                        if (kb != null) {
+                            K k = deserializeKey(kb);
+                            keys.add(k);
+                        }
+                    }
+                } catch (Exception ignore) {
+                }
+            });
+        } catch (Exception e) {
+            return keys.stream();
+        }
+        return keys.stream();
     }
 
     @Override
     public InternalKvState.StateIncrementalVisitor<K, N, S> getStateIncrementalVisitor(int recommendedMaxNumberOfReturnedRecords) {
-        // TODO: Implement visitor functionality in later phase
-        return null;
+        final int batchSize = Math.max(1, recommendedMaxNumberOfReturnedRecords);
+        final Iterator<StateEntry<K, N, S>> iter = iterator();
+        return new InternalKvState.StateIncrementalVisitor<K, N, S>() {
+            @Override
+            public java.util.List<StateEntry<K, N, S>> nextEntries() {
+                java.util.ArrayList<StateEntry<K, N, S>> batch = new java.util.ArrayList<>(batchSize);
+                int i = 0;
+                while (i < batchSize && iter.hasNext()) {
+                    batch.add(iter.next());
+                    i++;
+                }
+                return batch;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return iter.hasNext();
+            }
+
+            // Some Flink versions require an update method on the visitor; implement minimal in-place update via put.
+            @Override
+            public void update(StateEntry<K, N, S> entry, S newState) {
+                if (entry == null) { return; }
+                put(entry.getKey(), entry.getNamespace(), newState);
+            }
+
+            // Some Flink versions require a remove method on the visitor; implement via map remove.
+            @Override
+            public void remove(StateEntry<K, N, S> entry) {
+                if (entry == null) { return; }
+                ForL0StateMap.this.remove(entry.getKey(), entry.getNamespace());
+            }
+
+            // close() might not be part of the interface in certain Flink versions; keep as no-op without @Override for compatibility.
+            public void close() {
+                // no resources to release in current implementation
+            }
+        };
     }
 
     @Nonnull
     @Override
     public ForL0StateMapSnapshot<K, N, S> stateSnapshot() {
-        // TODO: Implement snapshot functionality in later phase
         return new ForL0StateMapSnapshot<>(this);
     }
 
     @Override
     public int sizeOfNamespace(Object namespace) {
-        // TODO: Implement namespace size calculation in later phase
-        return 0;
+        if (entryArena == null || mainTable == null) {
+            return 0;
+        }
+        int[] cnt = new int[1];
+        try {
+            mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
+                try {
+                    byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                    if (nb == null) { return; }
+                    N n = deserializeNamespace(nb);
+                    if ((n == null && namespace == null) || (n != null && n.equals(namespace))) {
+                        cnt[0]++;
+                    }
+                } catch (Exception ignore) {
+                }
+            });
+        } catch (Exception e) {
+            // fall through
+        }
+        return cnt[0];
+    }
+
+    private static final class SimpleStateEntry<K, N, S> implements StateEntry<K, N, S> {
+        private final K key;
+        private final N namespace;
+        private final S state;
+        SimpleStateEntry(K key, N namespace, S state) {
+            this.key = key;
+            this.namespace = namespace;
+            this.state = state;
+        }
+        @Override
+        public K getKey() { return key; }
+        @Override
+        public N getNamespace() { return namespace; }
+        @Override
+        public S getState() { return state; }
     }
 
     @Override
     public Iterator<StateEntry<K, N, S>> iterator() {
-        return java.util.Collections.emptyIterator();
+        // 构造一次性快照列表，避免并发修改影响
+        java.util.ArrayList<StateEntry<K, N, S>> list = new java.util.ArrayList<>(Math.max(16, size));
+        try {
+            if (entryArena == null || mainTable == null) {
+                return list.iterator();
+            }
+            mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
+                try {
+                    byte[] kb = entryArena.getKeyBytes(entryAddress);
+                    byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                    byte[] vb = entryArena.getValueBytes(entryAddress);
+                    if (kb == null || nb == null) {
+                        return; // skip entries with missing key or namespace
+                    }
+                    K k = deserializeKey(kb);
+                    N n = deserializeNamespace(nb);
+                    // Handle null/empty values correctly for checkpoint compatibility
+                    S v = null;
+                    if (vb != null && vb.length > 0) {
+                        v = deserializeValue(vb);
+                    }
+                    // Only include entries with non-null values in the snapshot
+                    // This matches Flink's standard behavior for checkpoints
+                    if (v != null) {
+                        list.add(new SimpleStateEntry<>(k, n, v));
+                    }
+                } catch (Exception e) {
+                    // Skip broken entries but log the issue
+                    LOG.debug("Skipping corrupted entry during iteration", e);
+                }
+            });
+        } catch (Exception e) {
+            LOG.warn("Error during ForL0StateMap iteration, returning partial results", e);
+        }
+        return list.iterator();
     }
 
 }

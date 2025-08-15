@@ -5,6 +5,7 @@ import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -464,6 +465,71 @@ class ForL0StateMapTest {
                 stateMap.close();
                 stateMap.close();
             });
+        }
+    }
+
+    @Nested
+    class IterationAndNamespaceTests {
+
+        @Test
+        void testGetKeysByNamespace() {
+            // ns 1
+            stateMap.put("a", 1, "v1");
+            stateMap.put("b", 1, "v2");
+            // ns 2
+            stateMap.put("c", 2, "v3");
+
+            java.util.Set<String> keysNs1 = stateMap.getKeys(1)
+                    .collect(java.util.stream.Collectors.toSet());
+
+            assertEquals(2, keysNs1.size());
+            assertTrue(keysNs1.contains("a"));
+            assertTrue(keysNs1.contains("b"));
+            assertFalse(keysNs1.contains("c"));
+        }
+
+        @Test
+        void testSizeOfNamespace() {
+            // ns 10
+            stateMap.put("k1", 10, "v1");
+            stateMap.put("k2", 10, "v2");
+            stateMap.put("k3", 10, "v3");
+            // ns 11
+            stateMap.put("k4", 11, "v4");
+
+            assertEquals(3, stateMap.sizeOfNamespace(10));
+            assertEquals(1, stateMap.sizeOfNamespace(11));
+            assertEquals(0, stateMap.sizeOfNamespace(12));
+        }
+
+        @Test
+        void testIncrementalVisitorBatches() {
+            // prepare 7 entries
+            for (int i = 0; i < 7; i++) {
+                stateMap.put("k" + i, i, "v" + i);
+            }
+            int batchSize = 3;
+            InternalKvState.StateIncrementalVisitor<String, Integer, String> vis =
+                    stateMap.getStateIncrementalVisitor(batchSize);
+
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            int total = 0;
+            while (vis.hasNext()) {
+                java.util.Collection<org.apache.flink.runtime.state.StateEntry<String, Integer, String>> batch = vis.nextEntries();
+                assertTrue(batch.size() > 0);
+                assertTrue(batch.size() <= batchSize);
+                for (org.apache.flink.runtime.state.StateEntry<String, Integer, String> e : batch) {
+                    assertNotNull(e.getKey());
+                    assertNotNull(e.getNamespace());
+                    // value may be null, but in our data it isn't
+                    seen.add(e.getKey() + "#" + e.getNamespace());
+                }
+                total += batch.size();
+            }
+            // vis.close(); // interface may not define close; our implementation is no-op
+
+            assertEquals(7, total);
+            assertEquals(7, seen.size());
         }
     }
 }

@@ -139,8 +139,9 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                             stateTableFactory,
                             keyContext);
         } else {
+            // Use ForL0RestoreOperation instead of HeapRestoreOperation
             restoreOperation =
-                    new HeapRestoreOperation<>(
+                    new ForL0RestoreOperation<>(
                             restoreStateHandles,
                             keySerializerProvider,
                             userCodeClassLoader,
@@ -155,9 +156,9 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         }
         try {
             restoreOperation.restore();
-            logger.info("Finished to build heap keyed state-backend.");
+            logger.info("Finished to build ForL0 keyed state-backend.");
         } catch (Exception e) {
-            throw new BackendBuildingException("Failed when trying to restore heap backend", e);
+            throw new BackendBuildingException("Failed when trying to restore ForL0 backend", e);
         }
     }
 

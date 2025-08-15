@@ -8,7 +8,6 @@ import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
-import org.apache.flink.runtime.state.heap.levelhash.LevelHashStateMap;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 
@@ -80,11 +79,8 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
     @Override
     public void setMetaInfo(RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo) {
+        // 仅更新元信息，ForL0StateMap 内部序列化器为构造时冻结，避免错误的类型强转
         super.setMetaInfo(metaInfo);
-        for (StateMap<K, N, S> keyGroupedStateMap : keyGroupedStateMaps) {
-            ((CopyOnWriteStateMap<K, N, S>) keyGroupedStateMap)
-                    .setStateSerializer(metaInfo.getStateSerializer());
-        }
     }
 
     @Nonnull
@@ -104,7 +100,7 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
     List<ForL0StateMapSnapshot<K, N, S>> getStateMapSnapshotList() {
         List<ForL0StateMapSnapshot<K, N, S>> snapshotList = new ArrayList<>(keyGroupedStateMaps.length);
         for (StateMap<K, N, S> keyGroupedStateMap : keyGroupedStateMaps) {
-            snapshotList.add(((LevelHashStateMap<K, N, S>) keyGroupedStateMap).stateSnapshot());
+            snapshotList.add(((ForL0StateMap<K, N, S>) keyGroupedStateMap).stateSnapshot());
         }
         return snapshotList;
     }
