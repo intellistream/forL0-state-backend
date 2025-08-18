@@ -21,6 +21,16 @@ public final class HashFunctions {
         if (data == null || data.length == 0) {
             return 0;
         }
+        return murmurHash3(data, 0, data.length);
+    }
+
+    /**
+     * MurmurHash3 for a byte[] slice [offset, offset+length).
+     */
+    public static int murmurHash3(byte[] data, int offset, int length) {
+        if (data == null || length <= 0) {
+            return 0;
+        }
 
         final int c1 = 0xcc9e2d51;
         final int c2 = 0x1b873593;
@@ -31,10 +41,9 @@ public final class HashFunctions {
 
         int hash = 0x9747b28c; // Seed
 
-        int len = data.length;
-        int roundedEnd = len & 0xfffffffc; // Round down to 4 byte block
+        int roundedEnd = offset + (length & 0xfffffffc); // Round down to 4 byte block
 
-        for (int i = 0; i < roundedEnd; i += 4) {
+        for (int i = offset; i < roundedEnd; i += 4) {
             int k = (data[i] & 0xff) | ((data[i + 1] & 0xff) << 8) |
                     ((data[i + 2] & 0xff) << 16) | ((data[i + 3] & 0xff) << 24);
 
@@ -49,7 +58,7 @@ public final class HashFunctions {
 
         // Handle remaining bytes
         int k = 0;
-        switch (len & 3) {
+        switch (length & 3) {
             case 3:
                 k ^= (data[roundedEnd + 2] & 0xff) << 16;
             case 2:
@@ -63,7 +72,7 @@ public final class HashFunctions {
         }
 
         // Finalization
-        hash ^= len;
+        hash ^= length;
         hash ^= (hash >>> 16);
         hash *= 0x85ebca6b;
         hash ^= (hash >>> 13);

@@ -1,11 +1,11 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.core.memory.DataInputDeserializer;
-import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
+import org.apache.flink.runtime.state.heap.io.MemorySegmentDataInputView;
+import org.apache.flink.runtime.state.heap.io.ReusableBufferDataOutputView;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 import org.slf4j.Logger;
@@ -19,6 +19,9 @@ import java.util.stream.Stream;
 public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMap.class);
+
+    // 当使用 FREE_LIST 策略时，仅回收大于该阈值的旧 entry，避免 free list 过长导致热路径变慢
+    private static final int FREE_LIST_RECYCLE_MIN_SIZE = 0; // bytes, 总是回收以促进复用
 
     private final TypeSerializer<K> keySerializer;
     private final TypeSerializer<N> namespaceSerializer;
@@ -42,15 +45,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // Resize coordination
     private volatile boolean resizeInProgress = false;
     private long lastResizeTime = 0;
-    private static final long MIN_RESIZE_INTERVAL_MS = 5000; // 5 seconds between resizes
+    private static final long MIN_RESIZE_INTERVAL_MS = 0; // 立即扩容，避免更新���内存峰值
 
-    // Serialization helpers
-    private final DataOutputSerializer keyOutputSerializer = new DataOutputSerializer(128);
-    private final DataOutputSerializer namespaceOutputSerializer = new DataOutputSerializer(128);
-    private final DataOutputSerializer stateOutputSerializer = new DataOutputSerializer(128);
-    private final DataInputDeserializer keyInputDeserializer = new DataInputDeserializer();
-    private final DataInputDeserializer namespaceInputDeserializer = new DataInputDeserializer();
-    private final DataInputDeserializer stateInputDeserializer = new DataInputDeserializer();
+    // Serialization helpers (zero-copy)
+    private final ReusableBufferDataOutputView keyOut = new ReusableBufferDataOutputView(128);
+    private final ReusableBufferDataOutputView namespaceOut = new ReusableBufferDataOutputView(128);
+    private final ReusableBufferDataOutputView stateOut = new ReusableBufferDataOutputView(128);
+    private final MemorySegmentDataInputView segInput = new MemorySegmentDataInputView();
 
     public ForL0StateMap(MemoryManagerAllocator allocator,
                          int mainTableInitPow2,
@@ -85,7 +86,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             this.entryArena = new EntryArena(allocator, arenaAllocationStrategy);
             this.mainTable = new MainTable(allocator, mainTableInitPow2, 0.75);
             // L0Table大小固定，不会扩容
-            this.l0Table = l0CacheEnabled ? new L0Table(allocator, l0CacheSizePow2, L0Table.ReplacementPolicy.LRU) : null;
+            this.l0Table = l0CacheEnabled ? new L0Table(allocator, l0CacheSizePow2, L0Table.ReplacementPolicy.RANDOM) : null;
 
             LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}, arenaStrategy={}",
                     1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled, arenaAllocationStrategy);
@@ -146,18 +147,22 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         totalAccesses++;
 
         try {
-            // Serialize key and namespace for lookup
-            byte[] keyBytes = serializeKey(key);
-            byte[] namespaceBytes = serializeNamespace(namespace);
+            // Serialize key and namespace for lookup into reusable buffers
+            serializeKeyToBuffer(key);
+            serializeNamespaceToBuffer(namespace);
+            byte[] kb = keyOut.getBuffer();
+            int klen = keyOut.getLength();
+            byte[] nb = namespaceOut.getBuffer();
+            int nlen = namespaceOut.getLength();
 
             // Calculate hash and tag
-            int keyHash = HashFunctions.murmurHash3(keyBytes);
-            int namespaceHash = HashFunctions.murmurHash3(namespaceBytes);
+            int keyHash = HashFunctions.murmurHash3(kb, 0, klen);
+            int namespaceHash = HashFunctions.murmurHash3(nb, 0, nlen);
             int hash = keyHash ^ namespaceHash;
             short tag = (short) (hash & 0xFFFF);
 
-            // Create entry matcher for exact key/namespace matching
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, keyBytes, namespaceBytes);
+            // Create entry matcher for exact key/namespace matching (zero-copy compare)
+            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
 
             long entryAddress;
 
@@ -167,7 +172,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 if (entryAddress > 0) {
                     l0Hits++;
                     LOG.trace("L0 cache hit for key={}, namespace={}", key, namespace);
-                    return deserializeValue(entryArena.getValueBytes(entryAddress));
+                    return deserializeValueFromArena(entryAddress);
                 }
             }
 
@@ -185,7 +190,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                     }
                 }
 
-                return deserializeValue(entryArena.getValueBytes(entryAddress));
+                return deserializeValueFromArena(entryAddress);
             }
 
             LOG.trace("Key not found: key={}, namespace={}", key, namespace);
@@ -195,6 +200,15 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             LOG.error("Error during get operation for key={}, namespace={}", key, namespace, e);
             throw new RuntimeException("Get operation failed", e);
         }
+    }
+
+    private S deserializeValueFromArena(long entryAddress) throws IOException {
+        EntryArena.Slice slice = entryArena.getValueSlice(entryAddress);
+        if (slice == null || slice.length == 0) {
+            return null;
+        }
+        segInput.reset(slice.segment, slice.offset, slice.length);
+        return stateSerializer.deserialize(segInput);
     }
 
     @Override
@@ -210,17 +224,21 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
         try {
             // Serialize key and namespace for lookup
-            byte[] keyBytes = serializeKey(key);
-            byte[] namespaceBytes = serializeNamespace(namespace);
+            serializeKeyToBuffer(key);
+            serializeNamespaceToBuffer(namespace);
+            byte[] kb = keyOut.getBuffer();
+            int klen = keyOut.getLength();
+            byte[] nb = namespaceOut.getBuffer();
+            int nlen = namespaceOut.getLength();
 
             // Calculate hash and tag
-            int keyHash = HashFunctions.murmurHash3(keyBytes);
-            int namespaceHash = HashFunctions.murmurHash3(namespaceBytes);
+            int keyHash = HashFunctions.murmurHash3(kb, 0, klen);
+            int namespaceHash = HashFunctions.murmurHash3(nb, 0, nlen);
             int hash = keyHash ^ namespaceHash;
             short tag = (short) (hash & 0xFFFF);
 
             // Create entry matcher for exact key/namespace matching
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, keyBytes, namespaceBytes);
+            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
 
             // Try L0 cache first if enabled
             if (l0CacheEnabled && l0Table != null) {
@@ -256,22 +274,29 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             // Check if resize is needed before insertion
             checkAndTriggerResize();
 
-            // Serialize all components
-            byte[] keyBytes = serializeKey(key);
-            byte[] namespaceBytes = serializeNamespace(namespace);
-            byte[] valueBytes = state != null ? serializeValue(state) : new byte[0];
+            // Serialize all components into reusable buffers
+            serializeKeyToBuffer(key);
+            serializeNamespaceToBuffer(namespace);
+            serializeValueToBuffer(state);
+
+            byte[] kb = keyOut.getBuffer();
+            int klen = keyOut.getLength();
+            byte[] nb = namespaceOut.getBuffer();
+            int nlen = namespaceOut.getLength();
+            byte[] vb = stateOut.getBuffer();
+            int vlen = stateOut.getLength();
 
             // Calculate hash and tag
-            int keyHash = HashFunctions.murmurHash3(keyBytes);
-            int namespaceHash = HashFunctions.murmurHash3(namespaceBytes);
+            int keyHash = HashFunctions.murmurHash3(kb, 0, klen);
+            int namespaceHash = HashFunctions.murmurHash3(nb, 0, nlen);
             int hash = keyHash ^ namespaceHash;
             short tag = (short) (hash & 0xFFFF);
 
             // Create entry matcher
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, keyBytes, namespaceBytes);
+            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
 
-            // Store new entry in arena
-            long newEntryAddress = entryArena.putEntry(keyBytes, namespaceBytes, valueBytes);
+            // Store new entry in arena (zero-copy from buffers)
+            long newEntryAddress = entryArena.putEntry(kb, klen, nb, nlen, vb, vlen);
 
             // Update main table (with resize handling)
             long oldMainAddress = putWithResizeHandling(hash, tag, newEntryAddress, matcher);
@@ -281,7 +306,19 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 size++;
                 LOG.trace("Inserted new entry: key={}, namespace={}, size={}", key, namespace, size);
             } else {
-                // Updated existing entry
+                // Updated existing entry：按阈值回收旧 entry，避免 free list 膨胀拖慢热路径
+                if (entryArena.getAllocationStrategy() == EntryArena.AllocationStrategy.FREE_LIST) {
+                    try {
+                        if (oldMainAddress != newEntryAddress) {
+                            int oldSize = entryArena.getEntrySize(oldMainAddress);
+                            if (oldSize >= FREE_LIST_RECYCLE_MIN_SIZE) {
+                                entryArena.removeEntry(oldMainAddress);
+                            }
+                        }
+                    } catch (Exception ex) {
+                        LOG.debug("Skip recycle old entry {} due to exception", oldMainAddress, ex);
+                    }
+                }
                 LOG.trace("Updated existing entry: key={}, namespace={}", key, namespace);
             }
 
@@ -289,7 +326,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             if (l0CacheEnabled && l0Table != null && !resizeInProgress) {
                 long oldL0Address = l0Table.put(hash, tag, newEntryAddress, matcher::matches);
                 if (oldL0Address > 0 && oldL0Address != oldMainAddress) {
-                    LOG.trace("L0 cache updated for key={}, namespace={}", key, namespace);
+                    LOG.trace("L0 cache updated/evicted for key={}, namespace={}", key, namespace);
                 }
             }
 
@@ -475,17 +512,21 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
         try {
             // Serialize key and namespace for lookup
-            byte[] keyBytes = serializeKey(key);
-            byte[] namespaceBytes = serializeNamespace(namespace);
+            serializeKeyToBuffer(key);
+            serializeNamespaceToBuffer(namespace);
+            byte[] kb = keyOut.getBuffer();
+            int klen = keyOut.getLength();
+            byte[] nb = namespaceOut.getBuffer();
+            int nlen = namespaceOut.getLength();
 
             // Calculate hash and tag
-            int keyHash = HashFunctions.murmurHash3(keyBytes);
-            int namespaceHash = HashFunctions.murmurHash3(namespaceBytes);
+            int keyHash = HashFunctions.murmurHash3(kb, 0, klen);
+            int namespaceHash = HashFunctions.murmurHash3(nb, 0, nlen);
             int hash = keyHash ^ namespaceHash;
             short tag = (short) (hash & 0xFFFF);
 
             // Create entry matcher
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, keyBytes, namespaceBytes);
+            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
 
             // Remove from main table
             long removedAddress = mainTable.remove(hash, tag, matcher);
@@ -497,6 +538,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 // Remove from L0 cache if enabled
                 if (l0CacheEnabled && l0Table != null) {
                     l0Table.remove(hash, tag, matcher::matches);
+                }
+
+                // Free the removed entry block back to arena (enables reuse under FREE_LIST strategy)
+                try {
+                    entryArena.removeEntry(removedAddress);
+                } catch (Exception ex) {
+                    LOG.debug("Failed to free removed entry address {}", removedAddress, ex);
                 }
             } else {
                 LOG.trace("Entry not found for removal: key={}, namespace={}", key, namespace);
@@ -529,41 +577,40 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         }
     }
 
-    // Serialization helper methods
-    private byte[] serializeKey(K key) throws IOException {
-        keyOutputSerializer.clear();
-        keySerializer.serialize(key, keyOutputSerializer);
-        return keyOutputSerializer.getCopyOfBuffer();
+    // Serialization helper methods (zero-copy)
+    private void serializeKeyToBuffer(K key) throws IOException {
+        keyOut.clear();
+        keySerializer.serialize(key, keyOut);
     }
 
-    private byte[] serializeNamespace(N namespace) throws IOException {
-        namespaceOutputSerializer.clear();
-        namespaceSerializer.serialize(namespace, namespaceOutputSerializer);
-        return namespaceOutputSerializer.getCopyOfBuffer();
+    private void serializeNamespaceToBuffer(N namespace) throws IOException {
+        namespaceOut.clear();
+        namespaceSerializer.serialize(namespace, namespaceOut);
     }
 
-    private byte[] serializeValue(S value) throws IOException {
-        stateOutputSerializer.clear();
-        stateSerializer.serialize(value, stateOutputSerializer);
-        return stateOutputSerializer.getCopyOfBuffer();
+    private void serializeValueToBuffer(S value) throws IOException {
+        stateOut.clear();
+        if (value != null) {
+            stateSerializer.serialize(value, stateOut);
+        }
     }
 
     private K deserializeKey(byte[] keyBytes) throws IOException {
-        keyInputDeserializer.setBuffer(keyBytes);
-        return keySerializer.deserialize(keyInputDeserializer);
+        org.apache.flink.core.memory.DataInputDeserializer in = new org.apache.flink.core.memory.DataInputDeserializer(keyBytes);
+        return keySerializer.deserialize(in);
     }
 
     private N deserializeNamespace(byte[] namespaceBytes) throws IOException {
-        namespaceInputDeserializer.setBuffer(namespaceBytes);
-        return namespaceSerializer.deserialize(namespaceInputDeserializer);
+        org.apache.flink.core.memory.DataInputDeserializer in = new org.apache.flink.core.memory.DataInputDeserializer(namespaceBytes);
+        return namespaceSerializer.deserialize(in);
     }
 
     private S deserializeValue(byte[] valueBytes) throws IOException {
         if (valueBytes == null || valueBytes.length == 0) {
             return null;
         }
-        stateInputDeserializer.setBuffer(valueBytes);
-        return stateSerializer.deserialize(stateInputDeserializer);
+        org.apache.flink.core.memory.DataInputDeserializer in = new org.apache.flink.core.memory.DataInputDeserializer(valueBytes);
+        return stateSerializer.deserialize(in);
     }
 
     // Additional ForL0 specific functionality

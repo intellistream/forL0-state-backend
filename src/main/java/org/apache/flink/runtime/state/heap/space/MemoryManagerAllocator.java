@@ -175,6 +175,11 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
 
     @Override
     public void deallocate(long address, long size) {
+        // 忽略无效地址的释放请求（常见于测试用例），避免产生误导性告警
+        if (address == 0L) {
+            LOG.debug("Ignore deallocate for null/zero aligned address");
+            return;
+        }
         AlignedAllocation allocation = alignedAllocations.remove(address);
         if (allocation != null) {
             // Update used bytes first
@@ -188,7 +193,8 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
                 LOG.warn("Error releasing aligned memory segments: {}", e.getMessage());
             }
         } else {
-            LOG.warn("Attempted to deallocate unknown aligned address: 0x{}", Long.toHexString(address));
+            // 将告警降级为调试日志：未知地址通常来自边界/生命周期测试
+            LOG.debug("Attempted to deallocate unknown aligned address: 0x{}", Long.toHexString(address));
         }
     }
 

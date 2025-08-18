@@ -38,6 +38,9 @@ public class EntryArena implements AutoCloseable {
     private static final int FREE_BLOCK_HEADER_SIZE = 8;  // next_pointer(8B)
     private static final int MIN_FREE_BLOCK_SIZE = FREE_BLOCK_HEADER_SIZE + ALIGNMENT;
 
+    // Limit free list scan to avoid O(n) overhead in hot path
+    private static final int MAX_FREE_LIST_SCAN = 16;
+
     /**
      * Memory allocation strategy.
      */
@@ -115,6 +118,20 @@ public class EntryArena implements AutoCloseable {
     private long totalAllocated;
     private int activeEntries;
     private boolean closed;
+
+    /**
+     * Slice view for zero-copy read of key/namespace/value in a single segment.
+     */
+    public static final class Slice {
+        public final MemorySegment segment;
+        public final int offset;
+        public final int length;
+        public Slice(MemorySegment segment, int offset, int length) {
+            this.segment = segment;
+            this.offset = offset;
+            this.length = length;
+        }
+    }
 
     /**
      * Creates an Entry Arena with linear allocation strategy (backward compatibility).
@@ -206,6 +223,51 @@ public class EntryArena implements AutoCloseable {
             return address;
         } catch (Exception e) {
             // If write fails, just return 0 - memory will be "lost" but won't crash
+            return 0;
+        }
+    }
+
+    /**
+     * Stores a new entry and returns its address (buffer+length 重载，避免复制 DataOutputSerializer 缓冲区）。
+     */
+    public long putEntry(byte[] keyBuffer, int keyLen, byte[] namespaceBuffer, int namespaceLen, byte[] valueBuffer, int valueLen) {
+        if (closed || keyBuffer == null || namespaceBuffer == null || valueBuffer == null) {
+            return 0;
+        }
+        // Validate input sizes and lengths
+        if (keyLen < 0 || keyLen > keyBuffer.length || namespaceLen < 0 || namespaceLen > namespaceBuffer.length ||
+                valueLen < 0 || valueLen > valueBuffer.length) {
+            return 0;
+        }
+        if (keyLen > 16 * 1024 || namespaceLen > 16 * 1024 || valueLen > 256 * 1024) {
+            return 0;
+        }
+        int entrySize = calculateEntrySize(keyLen, namespaceLen, valueLen);
+        long address = allocateEntry(entrySize);
+        if (address == 0) {
+            return 0;
+        }
+        try {
+            int slabIndex = (int)(address >>> 32) - 1;
+            int offset = (int)(address & 0xFFFFFFFFL) - 1;
+            if (slabIndex < 0 || slabIndex >= segments.size()) {
+                return 0;
+            }
+            MemorySegment segment = segments.get(slabIndex);
+            // header
+            segment.putInt(offset + KEY_LEN_OFFSET, keyLen);
+            segment.putInt(offset + NAMESPACE_LEN_OFFSET, namespaceLen);
+            segment.putInt(offset + VALUE_LEN_OFFSET, valueLen);
+            // body
+            int dataOffset = offset + ENTRY_HEADER_SIZE;
+            segment.put(dataOffset, keyBuffer, 0, keyLen);
+            dataOffset += keyLen;
+            segment.put(dataOffset, namespaceBuffer, 0, namespaceLen);
+            dataOffset += namespaceLen;
+            segment.put(dataOffset, valueBuffer, 0, valueLen);
+            activeEntries++;
+            return address;
+        } catch (Exception e) {
             return 0;
         }
     }
@@ -367,262 +429,316 @@ public class EntryArena implements AutoCloseable {
     }
 
     /**
-     * Removes an entry and potentially adds it to free list.
+     * Zero-copy matches check with external buffers and explicit lengths.
      */
-    public void removeEntry(long address) {
-        if (closed || address == 0) {
-            return;
+    public boolean matchesKey(long address, byte[] keyBuffer, int keyLen, byte[] namespaceBuffer, int namespaceLen) {
+        if (address == 0 || keyBuffer == null || namespaceBuffer == null) {
+            return false;
         }
-
         try {
-            if (strategy == AllocationStrategy.FREE_LIST) {
-                // Get the size of the entry to be removed
-                int entrySize = getEntrySize(address);
-                if (entrySize > 0) {
-                    // Add to free list for reuse
-                    addToFreeList(address, entrySize);
-                }
-            }
-
-            // Decrement active entries count
-            activeEntries--;
-        } catch (Exception e) {
-            // Ignore errors in simplified implementation
-        }
-    }
-
-    /**
-     * Gets entry size for given address.
-     */
-    public int getEntrySize(long address) {
-        if (closed || address == 0) {
-            return 0;
-        }
-
-        try {
-            // Decode address: subtract 1 from both slabIndex and offset
             int slabIndex = (int)(address >>> 32) - 1;
-            int offset = (int)(address & 0xFFFFFFFFL) - 1;
-
+            int base = (int)(address & 0xFFFFFFFFL) - 1;
             if (slabIndex < 0 || slabIndex >= segments.size()) {
-                return 0;
+                return false;
             }
-
             MemorySegment segment = segments.get(slabIndex);
-            int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
-            int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
-            int valueLen = segment.getInt(offset + VALUE_LEN_OFFSET);
-
-            return calculateEntrySize(keyLen, namespaceLen, valueLen);
+            int storedKeyLen = segment.getInt(base + KEY_LEN_OFFSET);
+            int storedNsLen = segment.getInt(base + NAMESPACE_LEN_OFFSET);
+            if (storedKeyLen != keyLen || storedNsLen != namespaceLen) {
+                return false;
+            }
+            int dataOffset = base + ENTRY_HEADER_SIZE;
+            // compare key
+            if (!equalsSegmentBytes(segment, dataOffset, keyBuffer, 0, keyLen)) {
+                return false;
+            }
+            dataOffset += storedKeyLen;
+            // compare namespace
+            return equalsSegmentBytes(segment, dataOffset, namespaceBuffer, 0, namespaceLen);
         } catch (Exception e) {
-            return 0;
+            return false;
         }
     }
 
-    /**
-     * Calculates total entry size including alignment.
-     */
+    private static boolean equalsSegmentBytes(MemorySegment seg, int segOffset, byte[] arr, int arrOff, int len) {
+        int i = 0;
+        // compare 8 bytes at a time when possible
+        int limit8 = len & ~7;
+        for (; i < limit8; i += 8) {
+            long a = seg.getLong(segOffset + i);
+            long b = (((long)arr[arrOff + i] & 0xFF)      ) |
+                     (((long)arr[arrOff + i + 1] & 0xFF) << 8) |
+                     (((long)arr[arrOff + i + 2] & 0xFF) << 16) |
+                     (((long)arr[arrOff + i + 3] & 0xFF) << 24) |
+                     (((long)arr[arrOff + i + 4] & 0xFF) << 32) |
+                     (((long)arr[arrOff + i + 5] & 0xFF) << 40) |
+                     (((long)arr[arrOff + i + 6] & 0xFF) << 48) |
+                     (((long)arr[arrOff + i + 7] & 0xFF) << 56);
+            if (a != b) {
+                return false;
+            }
+        }
+        for (; i < len; i++) {
+            if (seg.get(segOffset + i) != arr[arrOff + i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // ==== allocation helpers (restored) ====
     private int calculateEntrySize(int keyLen, int namespaceLen, int valueLen) {
         int dataSize = ENTRY_HEADER_SIZE + keyLen + namespaceLen + valueLen;
         return alignSize(Math.max(dataSize, MIN_ENTRY_SIZE));
-    }
-
-    private boolean allocateNewSegment() {
-        if (closed) {
-            return false;
-        }
-
-        try {
-            // Allocate memory segments
-            List<MemorySegment> newSegments = allocator.allocate(SEGMENT_SIZE);
-
-            if (newSegments.isEmpty()) {
-                return false;
-            }
-
-            // Store original allocation for proper cleanup
-            originalAllocations.add(new ArrayList<>(newSegments));
-
-            // Calculate total available memory from all segments
-            long totalSize = 0;
-            for (MemorySegment segment : newSegments) {
-                totalSize += segment.size();
-            }
-
-            // Check if we have enough total memory
-            if (totalSize < SEGMENT_SIZE) {
-                allocator.release(newSegments);
-                originalAllocations.remove(originalAllocations.size() - 1); // Remove the allocation we just added
-                return false;
-            }
-
-            // Use the largest available segment
-            MemorySegment largestSegment = newSegments.get(0);
-            for (MemorySegment seg : newSegments) {
-                if (seg.size() > largestSegment.size()) {
-                    largestSegment = seg;
-                }
-            }
-
-            segments.add(largestSegment);
-            currentSegment = largestSegment;
-            currentOffset = 0;
-
-            // Note: We keep all segments in originalAllocations for proper cleanup
-            // even though we only use the largest one
-
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /**
-     * Allocates memory for an entry of the specified size.
-     */
-    private long allocateEntry(int size) {
-        if (closed || size <= 0) {
-            return 0;
-        }
-
-        // Try free list allocation first if using FREE_LIST strategy
-        if (strategy == AllocationStrategy.FREE_LIST) {
-            long address = allocateFromFreeList(size);
-            if (address != 0) {
-                return address;
-            }
-        }
-
-        // Fall back to linear allocation
-        return linearAllocate(size);
-    }
-
-    /**
-     * Linear allocation from current segment.
-     */
-    private long linearAllocate(int size) {
-        // Try to allocate from current segment
-        if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
-            int slabIndex = segments.size() - 1; // Current segment is always the last one
-
-            // Address encoding: ((slabIndex + 1) << 32) | (currentOffset + 1)
-            // This ensures address is never 0, which we use to indicate allocation failure
-            long address = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
-            currentOffset += size;
-            totalAllocated += size;
-            return address;
-        }
-
-        // Need new segment - but first check if entry can fit in a new segment
-        if (size > SEGMENT_SIZE) {
-            return 0; // Entry too large for any segment
-        }
-
-        // Try to allocate new segment
-        if (!allocateNewSegment()) {
-            return 0;
-        }
-
-        // Try again with new segment
-        if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
-            int slabIndex = segments.size() - 1; // Current segment is always the last one
-            long address = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
-            currentOffset += size;
-            totalAllocated += size;
-            return address;
-        }
-
-        return 0;
-    }
-
-    /**
-     * Attempts to allocate from free list.
-     */
-    private long allocateFromFreeList(int size) {
-        SizeClass sizeClass = SizeClass.getSizeClass(size);
-        FreeBlock head = freeListHeads.get(sizeClass);
-
-        // Look for a suitable block in this size class
-        FreeBlock prev = null;
-        FreeBlock current = head;
-
-        while (current != null) {
-            if (current.size >= size) {
-                // Found a suitable block
-                if (prev == null) {
-                    freeListHeads.put(sizeClass, current.next);
-                } else {
-                    prev.next = current.next;
-                }
-
-                totalFreeBlocks--;
-                totalFreedMemory -= current.size;
-
-                // If the block is much larger than needed, split it
-                int remaining = current.size - size;
-                if (remaining >= MIN_FREE_BLOCK_SIZE) {
-                    long remainingAddress = current.address + size;
-                    addToFreeList(remainingAddress, remaining);
-                }
-
-                return current.address;
-            }
-            prev = current;
-            current = current.next;
-        }
-
-        // No suitable block found in this size class, try larger classes
-        for (SizeClass largerClass : SizeClass.values()) {
-            if (largerClass.ordinal() > sizeClass.ordinal()) {
-                head = freeListHeads.get(largerClass);
-                current = head;
-
-                if (current != null && current.size >= size) {
-                    // Use the first block from a larger class
-                    freeListHeads.put(largerClass, current.next);
-                    totalFreeBlocks--;
-                    totalFreedMemory -= current.size;
-
-                    // Split the block if it's much larger
-                    int remaining = current.size - size;
-                    if (remaining >= MIN_FREE_BLOCK_SIZE) {
-                        long remainingAddress = current.address + size;
-                        addToFreeList(remainingAddress, remaining);
-                    }
-
-                    return current.address;
-                }
-            }
-        }
-
-        return 0; // No suitable free block found
-    }
-
-    /**
-     * Adds a block to the appropriate free list.
-     */
-    private void addToFreeList(long address, int size) {
-        if (size < MIN_FREE_BLOCK_SIZE) {
-            return; // Block too small to be useful
-        }
-
-        SizeClass sizeClass = SizeClass.getSizeClass(size);
-        FreeBlock newBlock = new FreeBlock(address, size);
-
-        // Insert at head of free list
-        newBlock.next = freeListHeads.get(sizeClass);
-        freeListHeads.put(sizeClass, newBlock);
-
-        totalFreeBlocks++;
-        totalFreedMemory += size;
     }
 
     private static int alignSize(int size) {
         return (size + ALIGNMENT - 1) & (-ALIGNMENT);
     }
 
+    private boolean allocateNewSegment() {
+        if (closed) {
+            return false;
+        }
+        try {
+            List<MemorySegment> newSegments = allocator.allocate(SEGMENT_SIZE);
+            if (newSegments == null || newSegments.isEmpty()) {
+                return false;
+            }
+            originalAllocations.add(new ArrayList<>(newSegments));
+            long totalSize = 0;
+            for (MemorySegment seg : newSegments) { totalSize += seg.size(); }
+            if (totalSize < SEGMENT_SIZE) {
+                allocator.release(newSegments);
+                originalAllocations.remove(originalAllocations.size() - 1);
+                return false;
+            }
+            MemorySegment largest = newSegments.get(0);
+            for (MemorySegment seg : newSegments) { if (seg.size() > largest.size()) largest = seg; }
+            segments.add(largest);
+            currentSegment = largest;
+            currentOffset = 0;
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private long allocateEntry(int size) {
+        if (closed || size <= 0) { return 0; }
+        if (strategy == AllocationStrategy.FREE_LIST && freeListHeads != null) {
+            long reused = allocateFromFreeListBounded(size, MAX_FREE_LIST_SCAN);
+            if (reused != 0) { return reused; }
+        }
+        if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
+            int slabIndex = segments.size() - 1;
+            long addr = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
+            currentOffset += size;
+            totalAllocated += size;
+            return addr;
+        }
+        return linearAllocate(size);
+    }
+
+    private long linearAllocate(int size) {
+        if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
+            int slabIndex = segments.size() - 1;
+            long addr = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
+            currentOffset += size;
+            totalAllocated += size;
+            return addr;
+        }
+        if (size > SEGMENT_SIZE) { return 0; }
+        if (!allocateNewSegment()) { return 0; }
+        if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
+            int slabIndex = segments.size() - 1;
+            long addr = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
+            currentOffset += size;
+            totalAllocated += size;
+            return addr;
+        }
+        return 0;
+    }
+
+    private long allocateFromFreeListBounded(int size, int maxScan) {
+        SizeClass sc = SizeClass.getSizeClass(size);
+        long addr = scanFreeList(sc, size, maxScan);
+        if (addr != 0) { return addr; }
+        int remainProbe = Math.max(1, maxScan / 4);
+        for (SizeClass larger : SizeClass.values()) {
+            if (larger.ordinal() > sc.ordinal()) {
+                addr = scanFreeList(larger, size, remainProbe);
+                if (addr != 0) { return addr; }
+            }
+        }
+        return 0;
+    }
+
+    private long scanFreeList(SizeClass sc, int size, int maxScan) {
+        if (freeListHeads == null) { return 0; }
+        FreeBlock head = freeListHeads.get(sc);
+        FreeBlock prev = null, cur = head;
+        int scanned = 0;
+        while (cur != null && scanned < maxScan) {
+            if (cur.size >= size) {
+                if (prev == null) { freeListHeads.put(sc, cur.next); } else { prev.next = cur.next; }
+                totalFreeBlocks--; totalFreedMemory -= cur.size;
+                int remaining = cur.size - size;
+                if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
+                return cur.address;
+            }
+            prev = cur; cur = cur.next; scanned++;
+        }
+        return 0;
+    }
+
+    private long allocateFromFreeList(int size) {
+        if (freeListHeads == null) { return 0; }
+        SizeClass sc = SizeClass.getSizeClass(size);
+        FreeBlock head = freeListHeads.get(sc);
+        FreeBlock prev = null, cur = head;
+        while (cur != null) {
+            if (cur.size >= size) {
+                if (prev == null) { freeListHeads.put(sc, cur.next); } else { prev.next = cur.next; }
+                totalFreeBlocks--; totalFreedMemory -= cur.size;
+                int remaining = cur.size - size;
+                if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
+                return cur.address;
+            }
+            prev = cur; cur = cur.next;
+        }
+        for (SizeClass larger : SizeClass.values()) {
+            if (larger.ordinal() > sc.ordinal()) {
+                head = freeListHeads.get(larger);
+                cur = head;
+                if (cur != null && cur.size >= size) {
+                    freeListHeads.put(larger, cur.next);
+                    totalFreeBlocks--; totalFreedMemory -= cur.size;
+                    int remaining = cur.size - size;
+                    if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
+                    return cur.address;
+                }
+            }
+        }
+        return 0;
+    }
+
+    private void addToFreeList(long address, int size) {
+        if (freeListHeads == null) { return; }
+        if (size < MIN_FREE_BLOCK_SIZE) { return; }
+        SizeClass sc = SizeClass.getSizeClass(size);
+        FreeBlock nb = new FreeBlock(address, size);
+        nb.next = freeListHeads.get(sc);
+        freeListHeads.put(sc, nb);
+        totalFreeBlocks++;
+        totalFreedMemory += size;
+    }
+
+    public int getEntrySize(long address) {
+        if (closed || address == 0) { return 0; }
+        try {
+            int slabIndex = (int)(address >>> 32) - 1;
+            int offset = (int)(address & 0xFFFFFFFFL) - 1;
+            if (slabIndex < 0 || slabIndex >= segments.size()) { return 0; }
+            MemorySegment seg = segments.get(slabIndex);
+            int k = seg.getInt(offset + KEY_LEN_OFFSET);
+            int n = seg.getInt(offset + NAMESPACE_LEN_OFFSET);
+            int v = seg.getInt(offset + VALUE_LEN_OFFSET);
+            return calculateEntrySize(k, n, v);
+        } catch (Exception e) { return 0; }
+    }
+
+    public void removeEntry(long address) {
+        if (closed || address == 0) { return; }
+        try {
+            if (strategy == AllocationStrategy.FREE_LIST && freeListHeads != null) {
+                int sz = getEntrySize(address);
+                if (sz > 0) { addToFreeList(address, sz); }
+            }
+            activeEntries--;
+        } catch (Exception ignore) { }
+    }
+
     /**
-     * Gets the current allocation strategy.
+     * Returns a Slice of the value for zero-copy deserialization.
+     */
+    public Slice getValueSlice(long address) {
+        if (closed || address == 0) {
+            return null;
+        }
+        try {
+            int slabIndex = (int)(address >>> 32) - 1;
+            int base = (int)(address & 0xFFFFFFFFL) - 1;
+            if (slabIndex < 0 || slabIndex >= segments.size()) {
+                return null;
+            }
+            MemorySegment seg = segments.get(slabIndex);
+            int keyLen = seg.getInt(base + KEY_LEN_OFFSET);
+            int nsLen = seg.getInt(base + NAMESPACE_LEN_OFFSET);
+            int valLen = seg.getInt(base + VALUE_LEN_OFFSET);
+            if (valLen < 0 || valLen > 256 * 1024) {
+                return null;
+            }
+            int off = base + ENTRY_HEADER_SIZE + keyLen + nsLen;
+            return new Slice(seg, off, valLen);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Returns a Slice of the key (optional helper for iterations).
+     */
+    public Slice getKeySlice(long address) {
+        if (closed || address == 0) {
+            return null;
+        }
+        try {
+            int slabIndex = (int)(address >>> 32) - 1;
+            int base = (int)(address & 0xFFFFFFFFL) - 1;
+            if (slabIndex < 0 || slabIndex >= segments.size()) {
+                return null;
+            }
+            MemorySegment seg = segments.get(slabIndex);
+            int keyLen = seg.getInt(base + KEY_LEN_OFFSET);
+            if (keyLen < 0 || keyLen > 16 * 1024) {
+                return null;
+            }
+            int off = base + ENTRY_HEADER_SIZE;
+            return new Slice(seg, off, keyLen);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Returns a Slice of the namespace (optional helper for iterations).
+     */
+    public Slice getNamespaceSlice(long address) {
+        if (closed || address == 0) {
+            return null;
+        }
+        try {
+            int slabIndex = (int)(address >>> 32) - 1;
+            int base = (int)(address & 0xFFFFFFFFL) - 1;
+            if (slabIndex < 0 || slabIndex >= segments.size()) {
+                return null;
+            }
+            MemorySegment seg = segments.get(slabIndex);
+            int keyLen = seg.getInt(base + KEY_LEN_OFFSET);
+            int nsLen = seg.getInt(base + NAMESPACE_LEN_OFFSET);
+            if (nsLen < 0 || nsLen > 16 * 1024) {
+                return null;
+            }
+            int off = base + ENTRY_HEADER_SIZE + keyLen;
+            return new Slice(seg, off, nsLen);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Memory allocation strategy.
      */
     public AllocationStrategy getAllocationStrategy() {
         return strategy;

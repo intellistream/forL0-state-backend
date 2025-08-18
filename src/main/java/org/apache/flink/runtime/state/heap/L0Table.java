@@ -412,7 +412,7 @@ public class L0Table implements AutoCloseable {
         }
     }
 
-    private synchronized int incrementGlobalCounter() {
+    private int incrementGlobalCounter() {
         return ++globalCounter;
     }
 
