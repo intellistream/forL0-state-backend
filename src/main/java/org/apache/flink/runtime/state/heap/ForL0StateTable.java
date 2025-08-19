@@ -1,28 +1,25 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.api.common.typeutils.base.IntSerializer;
-import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
-import org.apache.flink.runtime.state.StateEntry;
-import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.apache.flink.runtime.state.internal.InternalKvState;
 
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
-import java.util.stream.Stream;
 
 public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
     private static final MemoryManager currentMemoryManager = new ThreadLocal<MemoryManager>().get();
     private static final ThreadLocal<MemoryManager> MEMORY_MANAGER_HOLDER = new ThreadLocal<>();
+    // 新增：通过ThreadLocal在构造阶段传递是否启用L0缓存
+    private static final ThreadLocal<Boolean> L0_CACHE_ENABLED_HOLDER = new ThreadLocal<>();
 
     private final MemoryManager memoryManager;
+    // 新增：记录是否启用L0缓存
+    private final boolean l0CacheEnabled;
 
     // Private constructor that uses the pre-stored MemoryManager
     private ForL0StateTable(InternalKeyContext<K> keyContext,
@@ -30,6 +27,10 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
                     TypeSerializer<K> keySerializer) {
         super(keyContext, metaInfo, keySerializer);
         this.memoryManager = MEMORY_MANAGER_HOLDER.get();
+        // 读取并清理开关的ThreadLocal；默认启用
+        Boolean enabled = L0_CACHE_ENABLED_HOLDER.get();
+        this.l0CacheEnabled = enabled == null ? true : enabled;
+        L0_CACHE_ENABLED_HOLDER.remove();
         MEMORY_MANAGER_HOLDER.remove(); // Clean up after use
 
         if (this.memoryManager == null) {
@@ -37,7 +38,7 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         }
     }
 
-    // Public static factory method
+    // Public static factory method（保持兼容，默认启用L0）
     public static <K, N, S> ForL0StateTable<K, N, S> create(
             InternalKeyContext<K> keyContext,
             RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
@@ -50,6 +51,24 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
             return new ForL0StateTable<>(keyContext, metaInfo, keySerializer);
         } catch (Exception e) {
             MEMORY_MANAGER_HOLDER.remove(); // Clean up on error
+            throw e;
+        }
+    }
+
+    // 新增：可显式指定是否启用L0缓存
+    public static <K, N, S> ForL0StateTable<K, N, S> create(
+            InternalKeyContext<K> keyContext,
+            RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
+            TypeSerializer<K> keySerializer,
+            MemoryManager memoryManager,
+            boolean l0CacheEnabled) {
+        MEMORY_MANAGER_HOLDER.set(memoryManager);
+        L0_CACHE_ENABLED_HOLDER.set(l0CacheEnabled);
+        try {
+            return new ForL0StateTable<>(keyContext, metaInfo, keySerializer);
+        } catch (Exception e) {
+            MEMORY_MANAGER_HOLDER.remove();
+            L0_CACHE_ENABLED_HOLDER.remove();
             throw e;
         }
     }
@@ -73,7 +92,7 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
                 getKeySerializer(),
                 getNamespaceSerializer(),
                 getStateSerializer(),
-                true // L0 cache enabled
+                this.l0CacheEnabled // 根据构造时传入的开关决定是否启用L0
         );
     }
 

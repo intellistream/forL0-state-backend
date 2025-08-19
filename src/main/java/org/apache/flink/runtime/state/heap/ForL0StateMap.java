@@ -45,7 +45,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // Resize coordination
     private volatile boolean resizeInProgress = false;
     private long lastResizeTime = 0;
-    private static final long MIN_RESIZE_INTERVAL_MS = 0; // 立即扩容，避免更新���内存峰值
+    private static final long MIN_RESIZE_INTERVAL_MS = 0; // 立即扩容
 
     // Serialization helpers (zero-copy)
     private final ReusableBufferDataOutputView keyOut = new ReusableBufferDataOutputView(128);

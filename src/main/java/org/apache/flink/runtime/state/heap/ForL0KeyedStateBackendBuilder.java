@@ -26,7 +26,10 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     private final boolean asynchronousSnapshots;
     /** Memory manager for allocating memory for the state backend. */
     private final MemoryManager memoryManager;
+    /** Whether L0 cache is enabled for ForL0StateMap. */
+    private final boolean l0CacheEnabled;
 
+    // 主构造器：显式指定是否启用L0缓存
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
             TypeSerializer<K> keySerializer,
@@ -42,7 +45,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
             boolean asynchronousSnapshots,
             CloseableRegistry cancelStreamRegistry,
-            MemoryManager memoryManager) {
+            MemoryManager memoryManager,
+            boolean l0CacheEnabled) {
         super(
                 kvStateRegistry,
                 keySerializer,
@@ -59,6 +63,43 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.priorityQueueSetFactory = priorityQueueSetFactory;
         this.asynchronousSnapshots = asynchronousSnapshots;
         this.memoryManager = memoryManager;
+        this.l0CacheEnabled = l0CacheEnabled;
+    }
+
+    // 兼容旧签名：默认启用L0缓存
+    public ForL0KeyedStateBackendBuilder(
+            TaskKvStateRegistry kvStateRegistry,
+            TypeSerializer<K> keySerializer,
+            ClassLoader userCodeClassLoader,
+            int numberOfKeyGroups,
+            KeyGroupRange keyGroupRange,
+            ExecutionConfig executionConfig,
+            TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
+            @Nonnull Collection<KeyedStateHandle> stateHandles,
+            StreamCompressionDecorator keyGroupCompressionDecorator,
+            LocalRecoveryConfig localRecoveryConfig,
+            HeapPriorityQueueSetFactory priorityQueueSetFactory,
+            boolean asynchronousSnapshots,
+            CloseableRegistry cancelStreamRegistry,
+            MemoryManager memoryManager) {
+        this(
+                kvStateRegistry,
+                keySerializer,
+                userCodeClassLoader,
+                numberOfKeyGroups,
+                keyGroupRange,
+                executionConfig,
+                ttlTimeProvider,
+                latencyTrackingStateConfig,
+                stateHandles,
+                keyGroupCompressionDecorator,
+                localRecoveryConfig,
+                priorityQueueSetFactory,
+                asynchronousSnapshots,
+                cancelStreamRegistry,
+                memoryManager,
+                true);
     }
 
     @Override
@@ -84,7 +125,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                     throw new IllegalStateException("MemoryManager is null in ForL0KeyedStateBackendBuilder. " +
                         "This indicates that the MemoryManager was not properly passed from the Environment.");
                 }
-                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, mm);
+                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, mm, l0CacheEnabled);
             }
         };
 

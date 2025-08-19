@@ -18,8 +18,6 @@ import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.StateMigrationException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 import java.util.HashMap;
@@ -85,7 +83,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             Map<String, HeapPriorityQueueSnapshotRestoreWrapper<?>> registeredPQStates,
             LocalRecoveryConfig localRecoveryConfig,
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
-            HeapSnapshotStrategy<K> checkpointStrategy, // TODO: need to be modified
+            HeapSnapshotStrategy<K> checkpointStrategy,
             SnapshotExecutionType snapshotExecutionType,
             StateTableFactory<K> stateTableFactory,
             InternalKeyContext<K> keyContext,
