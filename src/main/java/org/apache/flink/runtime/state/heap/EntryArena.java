@@ -4,9 +4,7 @@ import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Entry Arena manages the actual storage of key-value entries.
@@ -110,7 +108,7 @@ public class EntryArena implements AutoCloseable {
     private int currentOffset;
 
     // Free list data structures (only used by FREE_LIST strategy)
-    private final Map<SizeClass, FreeBlock> freeListHeads;
+    private final FreeBlock[] freeListHeads; // 使用数组按ordinal索引
     private long totalFreedMemory;
     private int totalFreeBlocks;
 
@@ -154,9 +152,9 @@ public class EntryArena implements AutoCloseable {
 
         // Initialize free list structures only if needed
         if (strategy == AllocationStrategy.FREE_LIST) {
-            this.freeListHeads = new HashMap<>();
-            for (SizeClass sizeClass : SizeClass.values()) {
-                freeListHeads.put(sizeClass, null);
+            this.freeListHeads = new FreeBlock[SizeClass.values().length];
+            for (int i = 0; i < freeListHeads.length; i++) {
+                freeListHeads[i] = null;
             }
             this.totalFreedMemory = 0;
             this.totalFreeBlocks = 0;
@@ -576,12 +574,12 @@ public class EntryArena implements AutoCloseable {
 
     private long scanFreeList(SizeClass sc, int size, int maxScan) {
         if (freeListHeads == null) { return 0; }
-        FreeBlock head = freeListHeads.get(sc);
+        FreeBlock head = freeListHeads[sc.ordinal()];
         FreeBlock prev = null, cur = head;
         int scanned = 0;
         while (cur != null && scanned < maxScan) {
             if (cur.size >= size) {
-                if (prev == null) { freeListHeads.put(sc, cur.next); } else { prev.next = cur.next; }
+                if (prev == null) { freeListHeads[sc.ordinal()] = cur.next; } else { prev.next = cur.next; }
                 totalFreeBlocks--; totalFreedMemory -= cur.size;
                 int remaining = cur.size - size;
                 if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
@@ -595,11 +593,11 @@ public class EntryArena implements AutoCloseable {
     private long allocateFromFreeList(int size) {
         if (freeListHeads == null) { return 0; }
         SizeClass sc = SizeClass.getSizeClass(size);
-        FreeBlock head = freeListHeads.get(sc);
+        FreeBlock head = freeListHeads[sc.ordinal()];
         FreeBlock prev = null, cur = head;
         while (cur != null) {
             if (cur.size >= size) {
-                if (prev == null) { freeListHeads.put(sc, cur.next); } else { prev.next = cur.next; }
+                if (prev == null) { freeListHeads[sc.ordinal()] = cur.next; } else { prev.next = cur.next; }
                 totalFreeBlocks--; totalFreedMemory -= cur.size;
                 int remaining = cur.size - size;
                 if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
@@ -609,10 +607,10 @@ public class EntryArena implements AutoCloseable {
         }
         for (SizeClass larger : SizeClass.values()) {
             if (larger.ordinal() > sc.ordinal()) {
-                head = freeListHeads.get(larger);
+                head = freeListHeads[larger.ordinal()];
                 cur = head;
                 if (cur != null && cur.size >= size) {
-                    freeListHeads.put(larger, cur.next);
+                    freeListHeads[larger.ordinal()] = cur.next;
                     totalFreeBlocks--; totalFreedMemory -= cur.size;
                     int remaining = cur.size - size;
                     if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
@@ -628,8 +626,8 @@ public class EntryArena implements AutoCloseable {
         if (size < MIN_FREE_BLOCK_SIZE) { return; }
         SizeClass sc = SizeClass.getSizeClass(size);
         FreeBlock nb = new FreeBlock(address, size);
-        nb.next = freeListHeads.get(sc);
-        freeListHeads.put(sc, nb);
+        nb.next = freeListHeads[sc.ordinal()];
+        freeListHeads[sc.ordinal()] = nb;
         totalFreeBlocks++;
         totalFreedMemory += size;
     }
@@ -754,8 +752,8 @@ public class EntryArena implements AutoCloseable {
 
         // Clear free lists if using FREE_LIST strategy
         if (strategy == AllocationStrategy.FREE_LIST && freeListHeads != null) {
-            for (SizeClass sizeClass : SizeClass.values()) {
-                freeListHeads.put(sizeClass, null);
+            for (int i = 0; i < freeListHeads.length; i++) {
+                freeListHeads[i] = null;
             }
             totalFreedMemory = 0;
             totalFreeBlocks = 0;
@@ -878,3 +876,4 @@ public class EntryArena implements AutoCloseable {
         }
     }
 }
+

@@ -45,14 +45,13 @@ public class MemorySegmentDataInputView implements DataInputView {
     @Override
     public int read(byte[] b, int off, int len) throws IOException {
         if (b == null) { throw new NullPointerException("buffer"); }
-        if (len <= 0) { return 0; }
-        if (segment == null) { return -1; }
-        int avail = Math.max(0, limit - position);
-        if (avail == 0) { return -1; }
-        int toRead = Math.min(len, avail);
-        segment.get(position, b, off, toRead);
-        position += toRead;
-        return toRead;
+        if (len < 0) { throw new IndexOutOfBoundsException("len < 0"); }
+        if (len == 0) { return 0; }
+        // DataInput 风格：要么读取恰好 len 字节，要么抛 EOF
+        ensureAvailable(len);
+        segment.get(position, b, off, len);
+        position += len;
+        return len;
     }
 
     @Override

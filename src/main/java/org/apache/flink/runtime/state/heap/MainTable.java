@@ -345,7 +345,7 @@ public class MainTable implements AutoCloseable {
             int keyHash = HashFunctions.murmurHash3(keyBytes);
             int nsHash = HashFunctions.murmurHash3(nsBytes);
             int fullHash = keyHash ^ nsHash;
-            short tag = (short) (fullHash & 0xFFFF);
+            short tag = (short) (fullHash & 0xFFFF); // 与运行时一致：低16位
             entries.add(new ResizeEntry(entryAddress, fullHash, tag));
         } catch (Exception ignore) {
             // 忽略损坏条目

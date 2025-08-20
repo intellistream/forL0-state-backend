@@ -53,6 +53,10 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private final ReusableBufferDataOutputView stateOut = new ReusableBufferDataOutputView(128);
     private final MemorySegmentDataInputView segInput = new MemorySegmentDataInputView();
 
+    // 使用反序列化复用以避免频繁反射构造（TupleSerializer.instantiateRaw → Class.newInstance）
+    // 每个线程仅创建一次可复用实例，然后走 deserialize(reuse, ...) 热路径
+    private final ThreadLocal<S> reuseHolder = new ThreadLocal<>();
+
     public ForL0StateMap(MemoryManagerAllocator allocator,
                          int mainTableInitPow2,
                          int l0CacheSizePow2,
@@ -208,7 +212,24 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             return null;
         }
         segInput.reset(slice.segment, slice.offset, slice.length);
-        return stateSerializer.deserialize(segInput);
+
+        // 优先走复用反序列化，避免每条记录 new/反射构造
+        S reuse = reuseHolder.get();
+        if (reuse == null) {
+            // 仅在首次缺少复用对象时创建一次；多数 Flink 序列化器会在 createInstance 内部用一次反射
+            // 但这比每条记录一次要小得多，且后续 deserialize(reuse, ...) 可完全绕开 instantiateRaw 热点
+            reuse = stateSerializer.createInstance();
+            if (reuse != null) {
+                reuseHolder.set(reuse);
+            }
+        }
+
+        if (reuse != null) {
+            return stateSerializer.deserialize(reuse, segInput);
+        } else {
+            // 回退路径（某些特殊序列化器可能不支持复用实例）
+            return stateSerializer.deserialize(segInput);
+        }
     }
 
     @Override
