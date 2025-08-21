@@ -11,7 +11,6 @@ import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.stream.Stream;
