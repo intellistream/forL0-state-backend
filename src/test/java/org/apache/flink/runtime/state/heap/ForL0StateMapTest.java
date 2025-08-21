@@ -257,6 +257,25 @@ class ForL0StateMapTest {
             ForL0StateMap.CacheStats stats = stateMap.getCacheStats();
             assertTrue(stats.totalAccesses > 0);
         }
+
+        @Test
+        void testConstructWithCustomL0Policy() throws Exception {
+            try (ForL0StateMap<String, Integer, String> custom = new ForL0StateMap<>(
+                    allocator,
+                    4,
+                    3,
+                    StringSerializer.INSTANCE,
+                    IntSerializer.INSTANCE,
+                    StringSerializer.INSTANCE,
+                    true,
+                    L0Table.ReplacementPolicy.FIFO
+            )) {
+                custom.put("pKey", 42, "v1");
+                assertEquals("v1", custom.get("pKey", 42));
+                custom.put("pKey", 42, "v2");
+                assertEquals("v2", custom.get("pKey", 42));
+            }
+        }
     }
 
     @Nested

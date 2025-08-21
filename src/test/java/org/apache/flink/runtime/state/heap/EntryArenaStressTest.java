@@ -277,7 +277,7 @@ class EntryArenaStressTest {
 
     @RepeatedTest(5)
     void testFreeListStressAllocation() {
-        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+        try (EntryArena freeListArena = new EntryArena(allocator)) {
             List<Long> addresses = new ArrayList<>();
 
             // Allocate many entries of various sizes with FREE_LIST strategy
@@ -303,7 +303,6 @@ class EntryArenaStressTest {
             assertTrue(addresses.size() > 6000, "Should allocate most entries successfully with FREE_LIST");
 
             EntryArena.ArenaStats stats = freeListArena.getStats();
-            assertEquals(EntryArena.AllocationStrategy.FREE_LIST, stats.strategy);
             assertTrue(stats.memoryEfficiency > 0, "Memory efficiency should be positive");
         } catch (Exception e) {
             fail("FREE_LIST stress test failed with exception: " + e.getMessage());
@@ -312,7 +311,7 @@ class EntryArenaStressTest {
 
     @RepeatedTest(3)
     void testFreeListMixedOperationsStress() {
-        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+        try (EntryArena freeListArena = new EntryArena(allocator)) {
             List<Long> addresses = new ArrayList<>();
 
             // Phase 1: Initial allocation
@@ -401,7 +400,7 @@ class EntryArenaStressTest {
 
     @Test
     void testFreeListMemoryExhaustion() {
-        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+        try (EntryArena freeListArena = new EntryArena(allocator)) {
             List<Long> addresses = new ArrayList<>();
 
             // Keep allocating until we run out of memory, with periodic removals to test recycling
@@ -450,7 +449,7 @@ class EntryArenaStressTest {
 
     @Test
     void testFreeListLargeEntryHandling() {
-        try (EntryArena freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST)) {
+        try (EntryArena freeListArena = new EntryArena(allocator)) {
             List<Long> largeAddresses = new ArrayList<>();
 
             // Test very large entries with FREE_LIST

@@ -299,11 +299,8 @@ a)    若slot有效且tag匹配，取指针指向的KVNode，比较key数据是�
 1. 检查当前主表全局负载因子或单 bucket 扩展池数量，若超过阈值，则触发扩容。
 2. 分配新主表 bucket 数组（容量为原表 2 倍），分配新的扩展 bucket 池和内存区域。
 3. 递归遍历当前主表所有 bucket 及扩展 bucket：
-
-a)    对于每个有效 slot，重新计算在新表中的 hash 下标和 tag，并插入新表。
-
-b)    迁移过程中，所有 KVNode 物理地址保持不变，仅重建索引结构。
-
+   - 对于每个有效 slot，重新计算在新表中的 hash 下标和 tag，并插入新表。
+   - 迁移过程中，所有 KVNode 物理地址保持不变，仅重建索引结构。
 4. 完成后，用新表和新扩展池替换旧主表和旧扩展池，释放旧内存。
 5. L0 Table 整体清空，待后续访问自动重建热点 key 缓存。
 6. 扩容过程可与 Checkpoint 一致性机制配合，采用写时复制等手段保证数据一致性。
@@ -446,29 +443,22 @@ public class ExtensionBucketPool {
 本节描述 ForL0StateMap 当前已实现的主表自动扩容流程，与第3章“全局扩容”设计对应。
 
 #### 触发条件
-1. 预检测：在写路径 `put()` 入口调用 `checkAndTriggerResize()`，若 `mainTable.needsResize()` 为 true 且距离上次扩容时间 ≥ `MIN_RESIZE_INTERVAL_MS`（默认 5000ms）则进入扩容。
-2. 兜底触发：`mainTable.put()` 过程中若抛出包含字符串 "Table is full - resize needed" 的异常，`putWithResizeHandling()` 捕获后立即调用 `performResize()` 并重试插入。
-3. needsResize() 判定依据（内部封装）：
-   - 全局负载因子超过阈值（当前主表默认阈值 0.75）。
-   - 局部冲突：单 bucket 扩展深度/扩展池耗尽导致插入失败。
+- 预检测：在写路径 `put()` 入口调用 `checkAndTriggerResize()`，若 `mainTable.needsResize()` 为 true 则进入扩容。
+- 兜底触发：`mainTable.put()` 过程中若抛出包含字符串 "Table is full - resize needed" 的异常，`putWithResizeHandling()` 捕获后立即调用 `performResize()` 并重试插入。
+- `needsResize()` 判定依据（内部封装）：全局负载因子阈值、局部扩展深度、或失败插入信号。
 
 #### 并发假设与控制
-- Flink task 的状态读写单线程；Checkpoint 线程不与写路径并发修改，故无需细粒度锁。
-- 使用 `volatile boolean resizeInProgress` + `synchronized performResize()` 防止重入；检测阶段先判断标志，已在扩容中则直接返回由后续写继续。
+- Flink task 的状态读写单线程；Checkpoint 线程不与写路径并发修改。
+- 使用 `volatile boolean resizeInProgress` + `synchronized performResize()` 防止重入。
 
 #### 扩容步骤（performResize）
 1. Guard：若已在扩容或当前不再需要扩容直接返回。
-2. 标记：`resizeInProgress = true` 记录开始时间。
-3. L0 协同预清理：若启用 L0，`l0Table.clear()` 清除热点缓存，避免迁移过程中 L0 保留指向旧桶的陈旧信息。
-4. 主表重建：调用 `mainTable.tryResize(entryArena)`：
-   - 分配 2 倍 bucket 数量的新主表数组与新的扩展桶池；
-   - 遍历旧主表及其所有扩展桶，对每个有效 slot 重新 hash（桶下标 = 新容量掩码 & hash），直接写入新结构；
-   - KV 实体 (EntryArena 中的节点) 物理地址不变，仅重建索引指针；
-   - 迁移完成后用新引用替换旧结构并释放旧索引内存。
-5. 二次 L0 清理：再次 `clear()`（原因：扩容窗口内可能发生少量访问导致新热点写入旧 L0 数据结构；双清简化一致性保证）。
-6. 统计：更新 `lastResizeTime`，从 `mainTable.getStats()` 抓取最新装载指标，对外通过 `DetailedStats` 暴露。
-7. 结束：`resizeInProgress = false`。
-8. 失败处理：异常直接抛出，旧结构仍保持完整；调用方插入操作回滚或重试。
+2. 标记：`resizeInProgress = true`。
+3. L0 协同预清理：若启用 L0，`l0Table.clear()`。
+4. 主表重建：调用 `mainTable.tryResize(entryArena)` 完成重散列与结构替换。
+5. 二次 L0 清理：再次 `clear()`（简化一致性保证）。
+6. 结束：`resizeInProgress = false`。
+7. 失败处理：异常直接抛出，旧结构仍保持完整。
 
 #### 关键方法伪代码
 ```java
@@ -476,15 +466,13 @@ public class ExtensionBucketPool {
 put(key, ns, val) {
     checkAndTriggerResize();
     addr = arena.putEntry(...);
-    old = putWithResizeHandling(hash, tag, addr, matcher); // 可能触发兜底扩容
+    old = putWithResizeHandling(hash, tag, addr, matcher);
     if (l0Enabled && !resizeInProgress) l0Table.put(...);
 }
 
 checkAndTriggerResize() {
     if (mainTable.needsResize() && !resizeInProgress) {
-        if (now - lastResizeTime >= MIN_RESIZE_INTERVAL_MS) {
-            performResize();
-        }
+        performResize();
     }
 }
 
@@ -498,39 +486,10 @@ putWithResizeHandling(...) {
         throw e;
     }
 }
-
-synchronized performResize() {
-    if (resizeInProgress || !mainTable.needsResize()) return;
-    resizeInProgress = true;
-    try {
-        if (l0Enabled) l0Table.clear();
-        boolean resized = mainTable.tryResize(entryArena);
-        if (resized && l0Enabled) l0Table.clear();
-        if (resized) lastResizeTime = now;
-    } finally { resizeInProgress = false; }
-}
 ```
 
-#### 正确性与一致性
-- 迁移过程中只读旧索引、写新索引，不修改 KV 数据，避免值层复制成本。
-- L0 视为非权威缓存，双清保证无陈旧指针；扩容后热点将按访问反馈自然回升。
-- 单线程写 + 短暂同步块确保不会出现同时两次扩容导致的资源浪费或指针错乱。
-
-#### 复杂度分析
-- 时间：O(E)（E=有效 entry 数），每个 entry 重新 hash + 写入一次；均摊至多次写操作后，整体仍保持稳定吞吐。
-- 空间：扩容瞬时需要旧表 + 新表两份索引（≈ 2x 主表索引区），KV 区域不复制。
-- 暂停影响：取决于 E；当前未做分段迁移，后续可按阈值引入增量策略。
-
 #### 监控指标
-- `DetailedStats`: totalAccesses / l0Hits / mainTableHits / totalEntries / resizeInProgress / lastResizeTime / mainTableStats(含负载因子、扩展桶使用)。
-- 可在上层暴露为指标：扩容次数、距离上次扩容时长、单次扩容耗时（后续新增）。
-
-#### 未来优化方向
-- 参数外部化（阈值、间隔、倍增系数）。
-- 自适应倍增或按需扩容（基于增长斜率 / 冲突分布）。
-- 增量/分阶段迁移（降低大表停顿）。
-- 热点预热：保留上一轮热点统计用于扩容后快速回填 L0。
-- 扩容耗时与迁移条目计数指标完善。
+- `DetailedStats`: totalAccesses / l0Hits / mainTableHits / totalEntries / resizeInProgress / mainTableStats(含负载因子、扩展桶使用)。
 
 ## 5.3 内存管理实现
 
@@ -710,24 +669,22 @@ public interface HybridMemoryAllocator {
 **当前实现**：完整实现并支持可配置的EntryArena分配策略
 
 **组件集成状况**：
-- `ForL0StateMap`已完全集成新的EntryArena双策略内存管理
-- 支持通过构造函数参数选择LINEAR或FREE_LIST分配策略
-- 保持完全的向后兼容性，默认使用LINEAR策略
-- 与L0Table和MainTable的协同工作机制完善
+- `ForL0StateMap` 完整实现 L0 + Main 两层索引；EntryArena 采用单一 FREE_LIST 分配实现。
+- 支持通过构造函数注入 L0Table 替换策略（ReplacementPolicy），默认 RANDOM；目前不对外暴露用户配置。
 
 **构造函数设计**：
 ```java
-// 向后兼容构造函数（默认LINEAR策略）
+// 默认策略（RANDOM）
 public ForL0StateMap(MemoryManagerAllocator allocator, int mainTableInitPow2,
                      int l0CacheSizePow2, TypeSerializer<K> keySerializer,
                      TypeSerializer<N> namespaceSerializer, TypeSerializer<S> stateSerializer,
                      boolean l0CacheEnabled)
 
-// 新增策略选择构造函数
+// 可注入 L0 替换策略的构造函数
 public ForL0StateMap(MemoryManagerAllocator allocator, int mainTableInitPow2,
                      int l0CacheSizePow2, TypeSerializer<K> keySerializer,
                      TypeSerializer<N> namespaceSerializer, TypeSerializer<S> stateSerializer,
-                     boolean l0CacheEnabled, EntryArena.AllocationStrategy arenaAllocationStrategy)
+                     boolean l0CacheEnabled, L0Table.ReplacementPolicy l0Policy)
 ```
 
 
@@ -795,8 +752,8 @@ new MainTable(allocator, bucketCountPow2, DEFAULT_LOAD_FACTOR_THRESHOLD);
 - 暂停影响：取决于 E；当前未做分段迁移，后续可按阈值引入增量策略。
 
 #### 监控指标
-- `DetailedStats`: totalAccesses / l0Hits / mainTableHits / totalEntries / resizeInProgress / lastResizeTime / mainTableStats(含负载因子、扩展桶使用)。
-- 可在上层暴露为指标：扩容次数、距离上次扩容时长、单次扩容耗时（后续新增）。
+- `DetailedStats`: totalAccesses / l0Hits / mainTableHits / totalEntries / resizeInProgress / mainTableStats(含负载因子、扩展桶使用)。
+- 可在上层暴露为指标：扩容次数、单次扩容耗时（后续新增）。
 
 #### 未来优化方向
 - 参数外部化（阈值、间隔、倍增系数）。

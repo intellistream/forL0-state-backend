@@ -495,7 +495,7 @@ class EntryArenaTest {
 
         @BeforeEach
         void setUpFreeList() {
-            freeListArena = new EntryArena(allocator, EntryArena.AllocationStrategy.FREE_LIST);
+            freeListArena = new EntryArena(allocator);
         }
 
         @AfterEach
@@ -507,8 +507,7 @@ class EntryArenaTest {
 
         @Test
         void testFreeListArenaInitialization() {
-            assertEquals(EntryArena.AllocationStrategy.FREE_LIST, freeListArena.getAllocationStrategy());
-
+            // strategy 固定为 FREE_LIST，无需断言具体枚举
             EntryArena.ArenaStats stats = freeListArena.getStats();
             assertTrue(stats.totalSystemMemory > 0);
             assertEquals(0, stats.activeAllocations);

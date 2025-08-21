@@ -11,10 +11,7 @@ import java.util.List;
  * Stores serialized key/namespace/value byte arrays directly in off-heap memory.
  * Entry format: [keyLen(4B)][namespaceLen(4B)][valueLen(4B)][key][namespace][value]
  *
- * Supports two allocation strategies:
- * 1. LINEAR: Simple linear allocation (original implementation)
- * 2. FREE_LIST: Free list with size classes for better memory reuse
- *
+ * Simplified to single allocation strategy: FREE_LIST with size classes for reuse.
  * Safe implementation: uses Flink MemorySegment instead of Unsafe operations.
  */
 public class EntryArena implements AutoCloseable {
@@ -32,29 +29,12 @@ public class EntryArena implements AutoCloseable {
     // Memory segment management
     private static final int SEGMENT_SIZE = 64 * 1024;  // 64KB per slab
 
-    // Free list constants for FREE_LIST strategy
+    // Free list constants
     private static final int FREE_BLOCK_HEADER_SIZE = 8;  // next_pointer(8B)
     private static final int MIN_FREE_BLOCK_SIZE = FREE_BLOCK_HEADER_SIZE + ALIGNMENT;
 
     // Limit free list scan to avoid O(n) overhead in hot path
     private static final int MAX_FREE_LIST_SCAN = 16;
-
-    /**
-     * Memory allocation strategy.
-     */
-    public enum AllocationStrategy {
-        /**
-         * Linear allocation strategy - simple write cursor advancement.
-         * No memory reuse, but very fast allocation.
-         */
-        LINEAR,
-
-        /**
-         * Free list allocation strategy - maintains free blocks by size classes.
-         * Better memory utilization with slight allocation overhead.
-         */
-        FREE_LIST
-    }
 
     /**
      * Size classes for free list allocation strategy.
@@ -99,15 +79,14 @@ public class EntryArena implements AutoCloseable {
     }
 
     private final MemoryManagerAllocator allocator;
-    private final AllocationStrategy strategy;
     private final List<MemorySegment> segments;
     private final List<List<MemorySegment>> originalAllocations;
 
-    // Current allocation segment (used by both strategies)
+    // Current allocation segment
     private MemorySegment currentSegment;
     private int currentOffset;
 
-    // Free list data structures (only used by FREE_LIST strategy)
+    // Free list data structures
     private final FreeBlock[] freeListHeads; // 使用数组按ordinal索引
     private long totalFreedMemory;
     private int totalFreeBlocks;
@@ -132,37 +111,23 @@ public class EntryArena implements AutoCloseable {
     }
 
     /**
-     * Creates an Entry Arena with linear allocation strategy (backward compatibility).
+     * Creates an Entry Arena (FREE_LIST allocation strategy).
      */
     public EntryArena(MemoryManagerAllocator allocator) {
-        this(allocator, AllocationStrategy.LINEAR);
-    }
-
-    /**
-     * Creates an Entry Arena with the specified allocation strategy.
-     */
-    public EntryArena(MemoryManagerAllocator allocator, AllocationStrategy strategy) {
         this.allocator = allocator;
-        this.strategy = strategy;
         this.segments = new ArrayList<>();
         this.originalAllocations = new ArrayList<>();
         this.totalAllocated = 0;
         this.activeEntries = 0;
         this.closed = false;
 
-        // Initialize free list structures only if needed
-        if (strategy == AllocationStrategy.FREE_LIST) {
-            this.freeListHeads = new FreeBlock[SizeClass.values().length];
-            for (int i = 0; i < freeListHeads.length; i++) {
-                freeListHeads[i] = null;
-            }
-            this.totalFreedMemory = 0;
-            this.totalFreeBlocks = 0;
-        } else {
-            this.freeListHeads = null;
-            this.totalFreedMemory = 0;
-            this.totalFreeBlocks = 0;
+        // Initialize free list structures
+        this.freeListHeads = new FreeBlock[SizeClass.values().length];
+        for (int i = 0; i < freeListHeads.length; i++) {
+            freeListHeads[i] = null;
         }
+        this.totalFreedMemory = 0;
+        this.totalFreeBlocks = 0;
 
         // Allocate initial segment
         allocateNewSegment();
@@ -272,7 +237,7 @@ public class EntryArena implements AutoCloseable {
 
     /**
      * Updates an existing entry's value.
-     * For FREE_LIST strategy, this properly frees the old entry.
+     * Always allocates new entry and frees the old one into free list.
      */
     public long updateEntry(long address, byte[] valueBytes) {
         if (closed || address == 0 || valueBytes == null) {
@@ -291,12 +256,10 @@ public class EntryArena implements AutoCloseable {
             long newAddress = putEntry(keyBytes, namespaceBytes, valueBytes);
 
             if (newAddress != 0) {
-                // For FREE_LIST strategy, properly free the old entry
-                if (strategy == AllocationStrategy.FREE_LIST) {
-                    int oldSize = getEntrySize(address);
-                    if (oldSize > 0) {
-                        addToFreeList(address, oldSize);
-                    }
+                // Free the old entry into free list
+                int oldSize = getEntrySize(address);
+                if (oldSize > 0) {
+                    addToFreeList(address, oldSize);
                 }
                 // Decrement active entries count
                 activeEntries--;
@@ -484,7 +447,7 @@ public class EntryArena implements AutoCloseable {
         return true;
     }
 
-    // ==== allocation helpers (restored) ====
+    // ==== allocation helpers ====
     private int calculateEntrySize(int keyLen, int namespaceLen, int valueLen) {
         int dataSize = ENTRY_HEADER_SIZE + keyLen + namespaceLen + valueLen;
         return alignSize(Math.max(dataSize, MIN_ENTRY_SIZE));
@@ -524,10 +487,8 @@ public class EntryArena implements AutoCloseable {
 
     private long allocateEntry(int size) {
         if (closed || size <= 0) { return 0; }
-        if (strategy == AllocationStrategy.FREE_LIST && freeListHeads != null) {
-            long reused = allocateFromFreeListBounded(size, MAX_FREE_LIST_SCAN);
-            if (reused != 0) { return reused; }
-        }
+        long reused = allocateFromFreeListBounded(size, MAX_FREE_LIST_SCAN);
+        if (reused != 0) { return reused; }
         if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
             int slabIndex = segments.size() - 1;
             long addr = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
@@ -573,7 +534,6 @@ public class EntryArena implements AutoCloseable {
     }
 
     private long scanFreeList(SizeClass sc, int size, int maxScan) {
-        if (freeListHeads == null) { return 0; }
         FreeBlock head = freeListHeads[sc.ordinal()];
         FreeBlock prev = null, cur = head;
         int scanned = 0;
@@ -590,39 +550,7 @@ public class EntryArena implements AutoCloseable {
         return 0;
     }
 
-    private long allocateFromFreeList(int size) {
-        if (freeListHeads == null) { return 0; }
-        SizeClass sc = SizeClass.getSizeClass(size);
-        FreeBlock head = freeListHeads[sc.ordinal()];
-        FreeBlock prev = null, cur = head;
-        while (cur != null) {
-            if (cur.size >= size) {
-                if (prev == null) { freeListHeads[sc.ordinal()] = cur.next; } else { prev.next = cur.next; }
-                totalFreeBlocks--; totalFreedMemory -= cur.size;
-                int remaining = cur.size - size;
-                if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
-                return cur.address;
-            }
-            prev = cur; cur = cur.next;
-        }
-        for (SizeClass larger : SizeClass.values()) {
-            if (larger.ordinal() > sc.ordinal()) {
-                head = freeListHeads[larger.ordinal()];
-                cur = head;
-                if (cur != null && cur.size >= size) {
-                    freeListHeads[larger.ordinal()] = cur.next;
-                    totalFreeBlocks--; totalFreedMemory -= cur.size;
-                    int remaining = cur.size - size;
-                    if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
-                    return cur.address;
-                }
-            }
-        }
-        return 0;
-    }
-
     private void addToFreeList(long address, int size) {
-        if (freeListHeads == null) { return; }
         if (size < MIN_FREE_BLOCK_SIZE) { return; }
         SizeClass sc = SizeClass.getSizeClass(size);
         FreeBlock nb = new FreeBlock(address, size);
@@ -649,10 +577,8 @@ public class EntryArena implements AutoCloseable {
     public void removeEntry(long address) {
         if (closed || address == 0) { return; }
         try {
-            if (strategy == AllocationStrategy.FREE_LIST && freeListHeads != null) {
-                int sz = getEntrySize(address);
-                if (sz > 0) { addToFreeList(address, sz); }
-            }
+            int sz = getEntrySize(address);
+            if (sz > 0) { addToFreeList(address, sz); }
             activeEntries--;
         } catch (Exception ignore) { }
     }
@@ -735,13 +661,6 @@ public class EntryArena implements AutoCloseable {
         }
     }
 
-    /**
-     * Memory allocation strategy.
-     */
-    public AllocationStrategy getAllocationStrategy() {
-        return strategy;
-    }
-
     @Override
     public void close() throws Exception {
         if (closed) {
@@ -750,14 +669,12 @@ public class EntryArena implements AutoCloseable {
 
         closed = true;
 
-        // Clear free lists if using FREE_LIST strategy
-        if (strategy == AllocationStrategy.FREE_LIST && freeListHeads != null) {
-            for (int i = 0; i < freeListHeads.length; i++) {
-                freeListHeads[i] = null;
-            }
-            totalFreedMemory = 0;
-            totalFreeBlocks = 0;
+        // Clear free lists
+        for (int i = 0; i < freeListHeads.length; i++) {
+            freeListHeads[i] = null;
         }
+        totalFreedMemory = 0;
+        totalFreeBlocks = 0;
 
         // Free all original allocations - this ensures proper memory accounting
         for (List<MemorySegment> allocation : originalAllocations) {
@@ -784,7 +701,6 @@ public class EntryArena implements AutoCloseable {
     public ArenaStats getStats() {
         long systemMemory = (long) segments.size() * SEGMENT_SIZE;
         return new ArenaStats(
-            strategy,
             systemMemory,
             totalAllocated,
             totalFreedMemory,
@@ -802,41 +718,17 @@ public class EntryArena implements AutoCloseable {
         if (systemMemory == 0) {
             return 0.0;
         }
-
-        if (strategy == AllocationStrategy.FREE_LIST) {
-            // For FREE_LIST, efficiency should consider active memory usage
-            // We use totalAllocated as it represents the total amount of memory that has been used
-            // The freed memory is available for reuse, so it's not "wasted"
-            return (double) totalAllocated / systemMemory * 100.0;
-        } else {
-            // For LINEAR, efficiency = allocated / system
-            return (double) totalAllocated / systemMemory * 100.0;
-        }
+        return (double) totalAllocated / systemMemory * 100.0;
     }
 
     /**
      * Compacts the arena by attempting to coalesce adjacent free blocks.
-     * Only effective for FREE_LIST strategy.
+     * Placeholder for potential future enhancement.
      */
     public void compact() {
-        if (strategy != AllocationStrategy.FREE_LIST || freeListHeads == null) {
-            return; // No-op for LINEAR strategy
-        }
-
-        // Basic compaction: this is a placeholder for more sophisticated
-        // compaction algorithms that could be implemented in the future
-        // For now, we just ensure free lists are clean
-        int coalescedBlocks = 0;
-
-        // TODO: Implement more sophisticated compaction logic
-        // This could include:
-        // 1. Sorting free blocks by address
-        // 2. Merging adjacent blocks
-        // 3. Moving active entries to reduce fragmentation
-
-        // For now, just report if we have fragmentation
+        // No-op simple placeholder; free list already enables reuse.
         if (totalFreeBlocks > 0) {
-            // Simple defragmentation opportunity exists
+            // potential defragmentation opportunity exists
         }
     }
 
@@ -844,7 +736,6 @@ public class EntryArena implements AutoCloseable {
      * Statistics class for arena memory usage.
      */
     public static class ArenaStats {
-        public final AllocationStrategy strategy;
         public final long totalSystemMemory;
         public final long totalAllocated;
         public final long totalFreed;
@@ -853,9 +744,8 @@ public class EntryArena implements AutoCloseable {
         public final double memoryEfficiency;
         public final double fragmentation;
 
-        public ArenaStats(AllocationStrategy strategy, long totalSystemMemory, long totalAllocated,
+        public ArenaStats(long totalSystemMemory, long totalAllocated,
                          long totalFreed, int activeAllocations, int freeBlocks, double memoryEfficiency) {
-            this.strategy = strategy;
             this.totalSystemMemory = totalSystemMemory;
             this.totalAllocated = totalAllocated;
             this.totalFreed = totalFreed;
@@ -868,9 +758,9 @@ public class EntryArena implements AutoCloseable {
         @Override
         public String toString() {
             return String.format(
-                "ArenaStats{strategy=%s, systemMemory=%d, allocated=%d, freed=%d, " +
+                "ArenaStats{systemMemory=%d, allocated=%d, freed=%d, " +
                 "activeEntries=%d, freeBlocks=%d, efficiency=%.2f%%, fragmentation=%.2f%%}",
-                strategy, totalSystemMemory, totalAllocated, totalFreed,
+                totalSystemMemory, totalAllocated, totalFreed,
                 activeAllocations, freeBlocks, memoryEfficiency, fragmentation
             );
         }

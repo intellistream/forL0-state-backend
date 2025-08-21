@@ -45,7 +45,7 @@ public class OffHeapMemoryReleaseTest {
 
     @Test
     void testOffHeapMemoryReuseAndRelease() throws Exception {
-        // Build a ForL0StateMap with FREE_LIST Arena to enable reuse
+        // Build a ForL0StateMap with default FREE_LIST Arena
         ForL0StateMap<Integer, String, Integer> map = new ForL0StateMap<>(
                 allocator,
                 10, // main table buckets: 1<<10
@@ -53,8 +53,7 @@ public class OffHeapMemoryReleaseTest {
                 IntSerializer.INSTANCE,
                 StringSerializer.INSTANCE,
                 IntSerializer.INSTANCE,
-                true,
-                EntryArena.AllocationStrategy.FREE_LIST
+                true
         );
 
         final String ns = "ns";
@@ -94,4 +93,3 @@ public class OffHeapMemoryReleaseTest {
         assertEquals(0L, allocator.getUsedBytes(), "allocator should release all managed memory on close");
     }
 }
-
