@@ -88,140 +88,6 @@ public class L0Table implements AutoCloseable {
     }
 
     /**
-     * Gets a value from L0 table by key hash and tag.
-     *
-     * @param keyHash Hash value of the key
-     * @param tag Tag value for quick comparison
-     * @param entryMatcher Function to verify actual entry match using EntryArena
-     * @return Entry address if found, 0 if not found
-     */
-    public long get(int keyHash, short tag, EntryMatcher entryMatcher) {
-        accessCount++;
-        int bucketIndex = keyHash & (bucketCount - 1);
-        long bucketAddress = getBucketAddress(bucketIndex);
-
-        // Check all 4 slots in the bucket
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-
-            // Read slot fields
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
-            if (valid == 0) continue;  // Skip invalid slots
-
-            short slotTag = getShort(slotAddress + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;  // Tag mismatch
-
-            long pointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
-
-            // Verify actual entry match using the matcher
-            if (entryMatcher.matches(pointer)) {
-                hitCount++;
-                // Update access information for replacement policy
-                updateSlotOnAccess(slotAddress);
-                return pointer;
-            }
-        }
-
-        missCount++;
-        return 0;  // Not found
-    }
-
-    /**
-     * Puts a key-value entry into L0 table.
-     * Uses configurable eviction policy when bucket is full.
-     *
-     * @param keyHash Hash value of the key
-     * @param tag Tag value for quick comparison
-     * @param entryAddress Address of entry in EntryArena
-     * @param entryMatcher Function to verify entry match for updates
-     * @return Previous entry address if updated, 0 if newly inserted
-     */
-    public long put(int keyHash, short tag, long entryAddress, EntryMatcher entryMatcher) {
-        int bucketIndex = keyHash & (bucketCount - 1);
-        long bucketAddress = getBucketAddress(bucketIndex);
-
-        // First, try to find an empty slot or update existing entry
-        int emptySlot = -1;
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
-            if (valid == 0) {
-                // Found empty slot, remember it but continue checking for updates
-                if (emptySlot == -1) {
-                    emptySlot = slot;
-                }
-                continue;
-            }
-
-            short slotTag = getShort(slotAddress + SLOT_TAG_OFFSET);
-            long slotPointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
-
-            if (slotTag == tag && entryMatcher.matches(slotPointer)) {
-                // Found existing entry, update it
-                long oldAddress = slotPointer;
-                putLong(slotAddress + SLOT_POINTER_OFFSET, entryAddress);
-                updateSlotOnAccess(slotAddress);
-                return oldAddress;
-            }
-        }
-
-        // No existing entry found, use empty slot if available
-        if (emptySlot != -1) {
-            long slotAddress = bucketAddress + (long) emptySlot * SLOT_SIZE;
-            writeSlot(slotAddress, tag, entryAddress);
-            return 0;  // New insertion
-        }
-
-        // No empty slot found, need eviction
-        int victimSlot = selectVictimSlot(bucketAddress);
-        long victimAddress = bucketAddress + (long) victimSlot * SLOT_SIZE;
-
-        // Get old entry address before overwriting
-        long oldEntryAddress = getLong(victimAddress + SLOT_POINTER_OFFSET);
-
-        writeSlot(victimAddress, tag, entryAddress);
-        evictionCount++;
-
-        return oldEntryAddress;  // Return evicted entry address
-    }
-
-    /**
-     * Removes an entry from L0 table by key hash and tag.
-     *
-     * @param keyHash Hash value of the key
-     * @param tag Tag value for quick comparison
-     * @param entryMatcher Function to verify actual entry match
-     * @return Removed entry address, 0 if not found
-     */
-    public long remove(int keyHash, short tag, EntryMatcher entryMatcher) {
-        int bucketIndex = keyHash & (bucketCount - 1);
-        long bucketAddress = getBucketAddress(bucketIndex);
-
-        // Check all 4 slots in the bucket
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
-            if (valid == 0) continue;  // Skip invalid slots
-
-            short slotTag = getShort(slotAddress + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;  // Tag mismatch
-
-            long pointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
-
-            // Verify actual entry match using the matcher
-            if (entryMatcher.matches(pointer)) {
-                // Mark slot as invalid
-                putByte(slotAddress + SLOT_VALID_OFFSET, (byte) 0);
-                return pointer;
-            }
-        }
-
-        return 0;  // Not found
-    }
-
-    /**
      * Removes an entry from L0 table by entry address.
      *
      * @param entryAddress Entry address to remove
@@ -249,8 +115,8 @@ public class L0Table implements AutoCloseable {
     }
 
     /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
-    public long getInline(int keyHash, short tag,
-                          byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long get(int keyHash, short tag,
+                    byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         accessCount++;
         int bucketIndex = keyHash & (bucketCount - 1);
         long bucketAddress = getBucketAddress(bucketIndex);
@@ -282,8 +148,8 @@ public class L0Table implements AutoCloseable {
     }
 
     /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
-    public long putInline(int keyHash, short tag, long entryAddress,
-                          byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long put(int keyHash, short tag, long entryAddress,
+                    byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
         long bucketAddress = getBucketAddress(bucketIndex);
 
@@ -334,8 +200,8 @@ public class L0Table implements AutoCloseable {
     }
 
     /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
-    public long removeInline(int keyHash, short tag,
-                             byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long remove(int keyHash, short tag,
+                       byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
         long bucketAddress = getBucketAddress(bucketIndex);
 
@@ -708,12 +574,4 @@ public class L0Table implements AutoCloseable {
         }
     }
 
-    /**
-     * Interface for matching entries in L0 table.
-     * Used to verify that tag matches correspond to actual key matches.
-     */
-    @FunctionalInterface
-    public interface EntryMatcher {
-        boolean matches(long entryAddress);
-    }
 }

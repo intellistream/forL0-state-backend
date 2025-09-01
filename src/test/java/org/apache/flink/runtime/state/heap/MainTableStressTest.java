@@ -91,8 +91,7 @@ class MainTableStressTest {
         // Verify all inserted entries can be retrieved
         int verifyCount = 0;
         for (TestEntry entry : insertedEntries) {
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, matcher);
+            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
 
             if (retrievedAddress > 0) {
                 assertArrayEquals(entry.key, entryArena.getKeyBytes(retrievedAddress));
@@ -168,8 +167,7 @@ class MainTableStressTest {
                     List<TestEntry> entryList = new ArrayList<>(currentEntries.values());
                     TestEntry entryToDelete = entryList.get(random.nextInt(entryList.size()));
 
-                    MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entryToDelete.key, entryToDelete.namespace);
-                    long removedAddress = mainTable.remove(entryToDelete.hash, entryToDelete.tag, matcher);
+                    long removedAddress = mainTable.remove(entryToDelete.hash, entryToDelete.tag, entryToDelete.key, entryToDelete.key.length, entryToDelete.namespace, entryToDelete.namespace.length, entryArena);
 
                     if (removedAddress > 0) {
                         currentEntries.remove(entryToDelete.keyString);
@@ -186,8 +184,7 @@ class MainTableStressTest {
         // Phase 3: Verify remaining entries
         int verifyCount = 0;
         for (TestEntry entry : currentEntries.values()) {
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, matcher);
+            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
 
             if (retrievedAddress > 0) {
                 assertArrayEquals(entry.value, entryArena.getValueBytes(retrievedAddress));
@@ -219,10 +216,8 @@ class MainTableStressTest {
                     entry.hash = hash;
                     entry.tag = tag;
 
-                    MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
-
                     try {
-                        long result = smallTable.put(hash, tag, entryAddress, matcher);
+                        long result = smallTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
                         if (result >= 0) {
                             pressureEntries.add(entry);
                         }
@@ -247,8 +242,7 @@ class MainTableStressTest {
             // Verify entries still accessible under pressure
             int verifyCount = 0;
             for (TestEntry entry : pressureEntries) {
-                MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
-                long retrievedAddress = smallTable.get(entry.hash, entry.tag, matcher);
+                long retrievedAddress = smallTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
 
                 if (retrievedAddress > 0) {
                     assertArrayEquals(entry.value, entryArena.getValueBytes(retrievedAddress));
@@ -285,8 +279,7 @@ class MainTableStressTest {
         int readCount = 0;
         for (int round = 0; round < 100; round++) {
             for (TestEntry entry : baseEntries) {
-                MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
-                long retrievedAddress = mainTable.get(entry.hash, entry.tag, matcher);
+                long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
 
                 if (retrievedAddress > 0) {
                     assertArrayEquals(entry.value, entryArena.getValueBytes(retrievedAddress));
@@ -314,10 +307,9 @@ class MainTableStressTest {
             long entryAddress = entryArena.putEntry(entry.key, entry.namespace, entry.value);
             if (entryAddress > 0) {
                 entry.entryAddress = entryAddress;
-                MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
 
                 try {
-                    long result = mainTable.put(entry.hash, entry.tag, entryAddress, matcher);
+                    long result = mainTable.put(entry.hash, entry.tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
                     if (result >= 0) {
                         exhaustionEntries.add(entry);
                     }
@@ -334,8 +326,7 @@ class MainTableStressTest {
         // Verify inserted entries are still accessible
         int verifyCount = 0;
         for (TestEntry entry : exhaustionEntries) {
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, matcher);
+            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
 
             if (retrievedAddress > 0) {
                 verifyCount++;
@@ -395,11 +386,10 @@ class MainTableStressTest {
             int hash = HashFunctions.jenkinsHashCombined(e.key, e.key.length, e.namespace, e.namespace.length);
             short tag = HashFunctions.murmur16(e.key, e.key.length, e.namespace, e.namespace.length);
             e.hash = hash; e.tag = tag;
-            MainTable.EntryMatcher matcher = (a) -> entryArena.matchesKey(a, e.key, e.namespace);
             boolean done = false;
             for (int attempt = 0; attempt < 2 && !done; attempt++) {
                 try {
-                    long prev = mainTable.put(hash, tag, addr, matcher);
+                    long prev = mainTable.put(hash, tag, addr, e.key, e.key.length, e.namespace, e.namespace.length, entryArena);
                     if (prev >= 0) { insertSuccess++; }
                     else { insertFail++; }
                     done = true;
@@ -426,8 +416,7 @@ class MainTableStressTest {
         long readStart = System.nanoTime();
         for (TestEntry e : measurementEntries) {
             if (e.entryAddress == 0) continue;
-            MainTable.EntryMatcher matcher = (a) -> entryArena.matchesKey(a, e.key, e.namespace);
-            long found = mainTable.get(e.hash, e.tag, matcher);
+            long found = mainTable.get(e.hash, e.tag, e.key, e.key.length, e.namespace, e.namespace.length, entryArena);
             if (found != 0) {
                 byte[] v = entryArena.getValueBytes(found);
                 if (v != null && v.length == e.value.length) { readSuccess++; }
@@ -440,8 +429,7 @@ class MainTableStressTest {
         long hotReadStart = System.nanoTime();
         for (TestEntry e : measurementEntries) {
             if (e.entryAddress == 0) continue;
-            MainTable.EntryMatcher matcher = (a) -> entryArena.matchesKey(a, e.key, e.namespace);
-            long found = mainTable.get(e.hash, e.tag, matcher);
+            long found = mainTable.get(e.hash, e.tag, e.key, e.key.length, e.namespace, e.namespace.length, entryArena);
             if (found != 0) {
                 byte[] v = entryArena.getValueBytes(found);
                 if (v != null && v.length == e.value.length) { hotReadSuccess++; }
@@ -479,9 +467,8 @@ class MainTableStressTest {
         short tag = HashFunctions.murmur16(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
         entry.hash = hash;
         entry.tag = tag;
-        MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, entry.key, entry.namespace);
         try {
-            long result = mainTable.put(hash, tag, entryAddress, matcher);
+            long result = mainTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
             return result >= 0;
         } catch (RuntimeException e) {
             return false;
@@ -510,10 +497,9 @@ class MainTableStressTest {
         final byte[] key;
         final byte[] namespace;
         final byte[] value;
-
+        long entryAddress = 0;
         int hash;
         short tag;
-        long entryAddress;
 
         TestEntry(String keyString, byte[] key, byte[] namespace, byte[] value) {
             this.keyString = keyString;

@@ -24,32 +24,19 @@ class TableCore implements AutoCloseable {
 
     boolean isL0Enabled() { return l0Table != null; }
 
-    // L0 delegates
-    long l0Get(int hash, short tag, L0Table.EntryMatcher matcher) {
-        return l0Table == null ? 0L : l0Table.get(hash, tag, matcher);
+    long l0Get(int hash, short tag,
+               byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        return l0Table == null ? 0L : l0Table.get(hash, tag, kb, klen, nb, nlen, arena);
     }
 
-    long l0Put(int hash, short tag, long entryAddr, L0Table.EntryMatcher matcher) {
-        return l0Table == null ? 0L : l0Table.put(hash, tag, entryAddr, matcher);
+    long l0Put(int hash, short tag, long entryAddr,
+               byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        return l0Table == null ? 0L : l0Table.put(hash, tag, entryAddr, kb, klen, nb, nlen, arena);
     }
 
-    long l0Remove(int hash, short tag, L0Table.EntryMatcher matcher) {
-        return l0Table == null ? 0L : l0Table.remove(hash, tag, matcher);
-    }
-
-    long l0GetInline(int hash, short tag,
-                     byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        return l0Table == null ? 0L : l0Table.getInline(hash, tag, kb, klen, nb, nlen, arena);
-    }
-
-    long l0PutInline(int hash, short tag, long entryAddr,
-                     byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        return l0Table == null ? 0L : l0Table.putInline(hash, tag, entryAddr, kb, klen, nb, nlen, arena);
-    }
-
-    long l0RemoveInline(int hash, short tag,
-                        byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        return l0Table == null ? 0L : l0Table.removeInline(hash, tag, kb, klen, nb, nlen, arena);
+    long l0Remove(int hash, short tag,
+                  byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        return l0Table == null ? 0L : l0Table.remove(hash, tag, kb, klen, nb, nlen, arena);
     }
 
     void l0Clear() {
@@ -62,32 +49,19 @@ class TableCore implements AutoCloseable {
         return l0Table == null ? null : l0Table.getStats();
     }
 
-    // Main table delegates
-    long mainGet(int hash, short tag, MainTable.EntryMatcher matcher) {
-        return mainTable.get(hash, tag, matcher);
+    long mainGet(int hash, short tag,
+                 byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        return mainTable.get(hash, tag, kb, klen, nb, nlen, arena);
     }
 
-    long mainPut(int hash, short tag, long entryAddr, MainTable.EntryMatcher matcher) {
-        return mainTable.put(hash, tag, entryAddr, matcher);
+    long mainPut(int hash, short tag, long entryAddr,
+                 byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        return mainTable.put(hash, tag, entryAddr, kb, klen, nb, nlen, arena);
     }
 
-    long mainRemove(int hash, short tag, MainTable.EntryMatcher matcher) {
-        return mainTable.remove(hash, tag, matcher);
-    }
-
-    long mainGetInline(int hash, short tag,
-                       byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        return mainTable.getInline(hash, tag, kb, klen, nb, nlen, arena);
-    }
-
-    long mainPutInline(int hash, short tag, long entryAddr,
-                       byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        return mainTable.putInline(hash, tag, entryAddr, kb, klen, nb, nlen, arena);
-    }
-
-    long mainRemoveInline(int hash, short tag,
-                          byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        return mainTable.removeInline(hash, tag, kb, klen, nb, nlen, arena);
+    long mainRemove(int hash, short tag,
+                    byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        return mainTable.remove(hash, tag, kb, klen, nb, nlen, arena);
     }
 
     boolean mainNeedsResize() {

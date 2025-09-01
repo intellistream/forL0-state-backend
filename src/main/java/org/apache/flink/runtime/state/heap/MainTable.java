@@ -85,77 +85,17 @@ public class MainTable implements AutoCloseable {
         this.extensionBucketCounts = new int[bucketCount];
     }
 
-    /**
-     * Gets a value from main table by key hash and tag.
-     *
-     * @param keyHash Hash value of the key
-     * @param tag Tag value for quick comparison
-     * @param entryMatcher Function to verify actual entry match using EntryArena
-     * @return Entry address if found, 0 if not found
-     */
-    public long get(int keyHash, short tag, EntryMatcher entryMatcher) {
-        int bucketIndex = keyHash & (bucketCount - 1);
-
-        // First check main bucket slots
-        long result = searchBucketSlots(bucketIndex, tag, entryMatcher);
-        if (result != 0) {
-            return result;
-        }
-
-        // Check extension buckets if main bucket is full
-        return searchExtensionBuckets(bucketIndex, tag, entryMatcher);
-    }
-
     /** Inline 版本：直接传入序列化后 key / namespace，避免 lambda Matcher 开销 */
-    public long getInline(int keyHash, short tag,
-                          byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long get(int keyHash, short tag,
+                    byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
         long r = searchBucketSlotsInline(bucketIndex, tag, kb, klen, nb, nlen, arena);
         return r != 0 ? r : searchExtensionBucketsInline(bucketIndex, tag, kb, klen, nb, nlen, arena);
     }
 
-    /**
-     * Puts a key-value entry into main table with automatic resizing support.
-     *
-     * @param keyHash Hash value of the key
-     * @param tag Tag value for quick comparison
-     * @param entryAddress Address of entry in EntryArena
-     * @param entryMatcher Function to verify entry match for updates
-     * @return Previous entry address if updated, 0 if newly inserted
-     */
-    public long put(int keyHash, short tag, long entryAddress, EntryMatcher entryMatcher) {
-        int bucketIndex = keyHash & (bucketCount - 1);
-
-        // First try to update existing entry or find empty slot in main bucket
-        long oldPointer = putInBucketSlots(bucketIndex, tag, entryAddress, entryMatcher);
-        if (oldPointer != -1) {
-            if (oldPointer == 0) {
-                // New insertion
-                totalEntries++;
-                checkResizeNeeded();
-            }
-            return oldPointer;  // Successfully handled in main bucket
-        }
-
-        // Main bucket is full, need extension bucket
-        long result = putInExtensionBuckets(bucketIndex, tag, entryAddress, entryMatcher);
-        if (result != -1) {
-            if (result == 0) {
-                // New insertion
-                totalEntries++;
-                checkResizeNeeded();
-            }
-            return result;
-        }
-
-        // Extension buckets are also full, trigger resize flag and throw exception
-        needsResize = true;
-        throw new RuntimeException("Table is full - resize needed");
-    }
-
     /** Inline 版本：直接传入序列化后 key / namespace，避免 lambda Matcher 开销 */
-    public long putInline(int keyHash, short tag, long entryAddress,
-                          byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long put(int keyHash, short tag, long entryAddress,
+                    byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
         long oldPtr = putInBucketSlotsInline(bucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
         if (oldPtr != -1) {
@@ -171,35 +111,9 @@ public class MainTable implements AutoCloseable {
         throw new RuntimeException("Table is full - resize needed");
     }
 
-    /**
-     * Removes an entry from main table.
-     *
-     * @param keyHash Hash value of the key
-     * @param tag Tag value for quick comparison
-     * @param entryMatcher Function to verify actual entry match
-     * @return Address of removed entry if found, 0 if not found
-     */
-    public long remove(int keyHash, short tag, EntryMatcher entryMatcher) {
-        int bucketIndex = keyHash & (bucketCount - 1);
-
-        // First check main bucket slots
-        long removedPointer = removeFromBucketSlots(bucketIndex, tag, entryMatcher);
-        if (removedPointer != 0) {
-            totalEntries--;
-            return removedPointer;
-        }
-
-        // Check extension buckets
-        long removedFromExtension = removeFromExtensionBuckets(bucketIndex, tag, entryMatcher);
-        if (removedFromExtension != 0) {
-            totalEntries--;
-        }
-        return removedFromExtension;
-    }
-
     /** Inline 版本：直接传入序列化后 key / namespace，避免 lambda Matcher 开销 */
-    public long removeInline(int keyHash, short tag,
-                             byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long remove(int keyHash, short tag,
+                       byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
         long rem = removeFromBucketSlotsInline(bucketIndex, tag, kb, klen, nb, nlen, arena);
         if (rem != 0) { totalEntries--; return rem; }
@@ -233,7 +147,7 @@ public class MainTable implements AutoCloseable {
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
         byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
         if (extId == 0) return 0;
-        return extensionPool.searchInBucketInline(extId, tag, kb, klen, nb, nlen, arena);
+        return extensionPool.searchInBucket(extId, tag, kb, klen, nb, nlen, arena);
     }
 
     private long putInBucketSlotsInline(int bucketIndex, short tag, long entryAddress,
@@ -272,7 +186,7 @@ public class MainTable implements AutoCloseable {
             segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extId);
             updateExtensionBucketCount(bucketIndex, 1);
         }
-        return extensionPool.putInBucketInline(extId, tag, entryAddress, kb, klen, nb, nlen, arena);
+        return extensionPool.putInBucket(extId, tag, entryAddress, kb, klen, nb, nlen, arena);
     }
 
     private long removeFromBucketSlotsInline(int bucketIndex, short tag,
@@ -301,7 +215,7 @@ public class MainTable implements AutoCloseable {
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
         byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
         if (extId == 0) return 0;
-        long removed = extensionPool.removeFromBucketInline(extId, tag, kb, klen, nb, nlen, arena);
+        long removed = extensionPool.removeFromBucket(extId, tag, kb, klen, nb, nlen, arena);
         if (removed != 0 && extensionPool.isBucketEmpty(extId)) {
             extensionPool.freeBucket(extId);
             segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, (byte)0);
@@ -408,7 +322,7 @@ public class MainTable implements AutoCloseable {
             throw new Exception("Resize failed: could not allocate new table memory", e);
         }
         try {
-            migrateEntriesToNewTable(allEntries, newMemorySegments, newExtensionPool, newBucketCount, newExtensionBucketCounts);
+            migrateEntriesToNewTable(allEntries, newMemorySegments, newExtensionPool, newBucketCount, newExtensionBucketCounts, entryArena);
         } catch (Exception e) {
             try {
                 newExtensionPool.close();
@@ -458,14 +372,9 @@ public class MainTable implements AutoCloseable {
         // Visit all buckets and their extensions
         for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
             // Collect from main bucket slots
-            visitBucketSlots(bucketIndex, (entryAddress, ignoredHash, ignoredTag) -> {
-                addResizeEntry(entryArena, entries, entryAddress);
-            });
-
+            collectBucketSlots(bucketIndex, entries, entryArena);
             // Collect from extension buckets
-            visitExtensionBuckets(bucketIndex, (entryAddress, ignoredHash, ignoredTag) -> {
-                addResizeEntry(entryArena, entries, entryAddress);
-            });
+            collectExtensionBuckets(bucketIndex, entries, entryArena);
         }
         return entries;
     }
@@ -487,12 +396,41 @@ public class MainTable implements AutoCloseable {
         }
     }
 
-    // 调整迁移逻辑使用真实hash
+    private void collectBucketSlots(int bucketIndex, List<ResizeEntry> entries, EntryArena entryArena) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+
+            if (slotPointer != 0) {
+                addResizeEntry(entryArena, entries, slotPointer);
+            }
+        }
+    }
+
+    private void collectExtensionBuckets(int bucketIndex, List<ResizeEntry> entries, EntryArena entryArena) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+
+        for (int i = 0; i < EXTENSION_POINTERS; i++) {
+            byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + i);
+            if (extensionBucketId != 0) {
+                // 直接收集扩展桶中的 entries，使用 lambda 来调用 addResizeEntry
+                extensionPool.collectBucketSlots(extensionBucketId, entryAddress -> {
+                    addResizeEntry(entryArena, entries, entryAddress);
+                });
+            }
+        }
+    }
+
     private void migrateEntriesToNewTable(List<ResizeEntry> entries,
                                           List<MemorySegment> newMemorySegments,
                                           ExtensionBucketPool newExtensionPool,
                                           int newBucketCount,
-                                          int[] newExtensionBucketCounts) throws Exception {
+                                          int[] newExtensionBucketCounts,
+                                          EntryArena entryArena) throws Exception {
         int migratedCount = 0;
         for (ResizeEntry entry : entries) {
             int newBucketIndex = entry.keyHash & (newBucketCount - 1);
@@ -500,7 +438,7 @@ public class MainTable implements AutoCloseable {
                 migratedCount++;
                 continue;
             }
-            if (insertInNewExtensionBucket(newMemorySegments, newExtensionPool, newExtensionBucketCounts, newBucketIndex, entry.tag, entry.entryAddress)) {
+            if (insertInNewExtensionBucket(newMemorySegments, newExtensionPool, newExtensionBucketCounts, newBucketIndex, entry.tag, entry.entryAddress, entryArena)) {
                 migratedCount++;
                 continue;
             }
@@ -539,9 +477,12 @@ public class MainTable implements AutoCloseable {
      * Inserts an entry into new table's extension bucket.
      */
     private boolean insertInNewExtensionBucket(List<MemorySegment> newMemorySegments,
-                                             ExtensionBucketPool newExtensionPool,
-                                             int[] newExtensionBucketCounts,
-                                             int bucketIndex, short tag, long entryAddress) {
+                                               ExtensionBucketPool newExtensionPool,
+                                               int[] newExtensionBucketCounts,
+                                               int bucketIndex,
+                                               short tag,
+                                               long entryAddress,
+                                               EntryArena entryArena) throws Exception {
         int extensionIndex = tag & 0x3;
         MemorySegment segment = getSegmentForBucket(newMemorySegments, bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex, segment.size());
@@ -558,35 +499,17 @@ public class MainTable implements AutoCloseable {
             newExtensionBucketCounts[bucketIndex]++;
         }
 
-        // 迁移期间按 bucketId 插入
-        EntryMatcher dummyMatcher = (addr) -> false;
         try {
-            long result = newExtensionPool.putInBucket(extensionBucketId, tag, entryAddress, dummyMatcher);
+            byte[] keyBytes = entryArena.getKeyBytes(entryAddress);
+            byte[] nsBytes = entryArena.getNamespaceBytes(entryAddress);
+            if (keyBytes == null || nsBytes == null) {
+                return false;
+            }
+            long result = newExtensionPool.putInBucket(extensionBucketId, tag, entryAddress, keyBytes, keyBytes.length, nsBytes, nsBytes.length, entryArena);
             return result == 0;
         } catch (Exception e) {
             return false; // 迁移期间失败视为不可用
         }
-    }
-
-    private long putInExtensionBuckets(int bucketIndex, short tag, long entryAddress, EntryMatcher entryMatcher) {
-        int extensionIndex = tag & 0x3;
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
-
-        if (extensionBucketId == 0) {
-            // Allocate new extension bucket
-            extensionBucketId = extensionPool.allocateBucket();
-            if (extensionBucketId == 0) {
-                return -1;  // Pool exhausted
-            }
-            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extensionBucketId);
-            updateExtensionBucketCount(bucketIndex, 1);
-        }
-
-        // 直接按 bucketId 插入
-        return extensionPool.putInBucket(extensionBucketId, tag, entryAddress, entryMatcher);
     }
 
     /**
@@ -643,94 +566,6 @@ public class MainTable implements AutoCloseable {
         }
     }
 
-    private long searchBucketSlots(int bucketIndex, short tag, EntryMatcher entryMatcher) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
-            if (slotPointer == 0) {
-                continue;  // Empty slot
-            }
-            if (slotTag != tag) {
-                continue;    // Tag mismatch
-            }
-
-            if (entryMatcher.matches(slotPointer)) {
-                return slotPointer;
-            }
-        }
-        return 0;
-    }
-
-    private long searchExtensionBuckets(int bucketIndex, short tag, EntryMatcher entryMatcher) {
-        int extensionIndex = tag & 0x3;  // Use tag's low 2 bits to select extension
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
-
-        if (extensionBucketId == 0) {
-            return 0;  // No extension bucket
-        }
-
-        return extensionPool.searchInBucket(extensionBucketId, tag, entryMatcher);
-    }
-
-    private long removeFromBucketSlots(int bucketIndex, short tag, EntryMatcher entryMatcher) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
-            if (slotPointer == 0) {
-                continue;
-            }
-            if (slotTag != tag) {
-                continue;
-            }
-
-            if (entryMatcher.matches(slotPointer)) {
-                // Clear the slot
-                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short) 0);
-                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
-                return slotPointer;
-            }
-        }
-        return 0;
-    }
-
-    private long removeFromExtensionBuckets(int bucketIndex, short tag, EntryMatcher entryMatcher) {
-        int extensionIndex = tag & 0x3;
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
-
-        if (extensionBucketId == 0) {
-            return 0;  // No extension bucket
-        }
-
-        long removedPointer = extensionPool.removeFromBucket(extensionBucketId, tag, entryMatcher);
-
-        // Check if extension bucket is now empty and can be freed
-        if (removedPointer != 0 && extensionPool.isBucketEmpty(extensionBucketId)) {
-            extensionPool.freeBucket(extensionBucketId);
-            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, (byte) 0);
-            updateExtensionBucketCount(bucketIndex, -1);
-        }
-
-        return removedPointer;
-    }
-
     private void visitBucketSlots(int bucketIndex, EntryVisitor visitor) {
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
@@ -783,42 +618,6 @@ public class MainTable implements AutoCloseable {
         return ((bucketIndex * BUCKET_SIZE) % segmentSize);
     }
 
-    private long putInBucketSlots(int bucketIndex, short tag, long entryAddress, EntryMatcher entryMatcher) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        int emptySlot = -1;
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
-            if (slotPointer == 0) {
-                if (emptySlot == -1) {
-                    emptySlot = slot;
-                }
-                continue;
-            }
-
-            if (slotTag == tag && entryMatcher.matches(slotPointer)) {
-                // Update existing entry
-                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-                return slotPointer;
-            }
-        }
-
-        // Insert in empty slot if available
-        if (emptySlot != -1) {
-            int slotOffset = bucketOffset + emptySlot * SLOT_SIZE;
-            segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
-            segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-            return 0;  // New insertion
-        }
-
-        return -1;  // Bucket is full
-    }
-
     @Override
     public void close() throws Exception {
         if (extensionPool != null) {
@@ -827,14 +626,6 @@ public class MainTable implements AutoCloseable {
         if (allocator != null && memorySegments != null) {
             allocator.release(memorySegments);
         }
-    }
-
-    /**
-     * Interface for matching entries using EntryArena.
-     */
-    @FunctionalInterface
-    public interface EntryMatcher {
-        boolean matches(long entryAddress);
     }
 
     /**

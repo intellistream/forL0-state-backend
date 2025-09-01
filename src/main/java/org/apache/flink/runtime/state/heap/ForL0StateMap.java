@@ -148,14 +148,14 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
             long addr;
             if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                addr = tableCore.l0GetInline(hash, tag, kb, klen, nb, nlen, entryArena);
+                addr = tableCore.l0Get(hash, tag, kb, klen, nb, nlen, entryArena);
                 if (addr > 0) { l0Hits++; return deserializeValueFromArena(addr); }
             }
-            addr = tableCore.mainGetInline(hash, tag, kb, klen, nb, nlen, entryArena);
+            addr = tableCore.mainGet(hash, tag, kb, klen, nb, nlen, entryArena);
             if (addr > 0) {
                 mainTableHits++;
                 if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                    tableCore.l0PutInline(hash, tag, addr, kb, klen, nb, nlen, entryArena);
+                    tableCore.l0Put(hash, tag, addr, kb, klen, nb, nlen, entryArena);
                 }
                 return deserializeValueFromArena(addr);
             }
@@ -206,11 +206,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
 
             if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                if (tableCore.l0GetInline(hash, tag, kb, klen, nb, nlen, entryArena) > 0)
+                if (tableCore.l0Get(hash, tag, kb, klen, nb, nlen, entryArena) > 0)
                     return true;
             }
 
-            return tableCore.mainGetInline(hash, tag, kb, klen, nb, nlen, entryArena) > 0;
+            return tableCore.mainGet(hash, tag, kb, klen, nb, nlen, entryArena) > 0;
         } catch (Exception e) {
             LOG.error("Error during containsKey operation for key={}, namespace={}", key, namespace, e);
             return false;
@@ -240,11 +240,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
             // TODO: remove try-catch
             try {
-                oldAddr = tableCore.mainPutInline(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
+                oldAddr = tableCore.mainPut(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
             } catch (RuntimeException ex) {
                 if (ex.getMessage() != null && ex.getMessage().contains("Table is full - resize needed")) {
                     performResize();
-                    oldAddr = tableCore.mainPutInline(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
+                    oldAddr = tableCore.mainPut(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
                 } else throw ex;
             }
 
@@ -257,7 +257,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             }
 
             if (l0CacheEnabled && tableCore.isL0Enabled() && !resizeInProgress) {
-                tableCore.l0PutInline(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
+                tableCore.l0Put(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
             }
 
         } catch (Exception e) {
@@ -396,12 +396,12 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             int nlen = serializerPack.namespaceLength();
             int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
             short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
-            long removed = tableCore.mainRemoveInline(hash, tag, kb, klen, nb, nlen, entryArena);
+            long removed = tableCore.mainRemove(hash, tag, kb, klen, nb, nlen, entryArena);
 
             if (removed > 0) {
                 size--;
                 if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                    tableCore.l0RemoveInline(hash, tag, kb, klen, nb, nlen, entryArena);
+                    tableCore.l0Remove(hash, tag, kb, klen, nb, nlen, entryArena);
                 }
                 try {
                     entryArena.removeEntry(removed);

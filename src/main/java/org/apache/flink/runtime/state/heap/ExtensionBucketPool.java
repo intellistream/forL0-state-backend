@@ -145,55 +145,8 @@ public class ExtensionBucketPool implements AutoCloseable {
         return segment.getAddress() + bucketOffset;
     }
 
-    /**
-     * Searches for an entry in the specified bucket.
-     *
-     * @param bucketAddress Bucket address (from getBucketAddress)
-     * @param tag Tag to search for
-     * @param entryMatcher Matcher to verify entry
-     * @return Entry address if found, 0 if not found
-     */
-    public long searchInBucket(long bucketAddress, short tag, MainTable.EntryMatcher entryMatcher) {
-        byte bucketId = findBucketIdByAddress(bucketAddress);
-        return searchInBucket(bucketId, tag, entryMatcher);
-    }
-
-    /**
-     * Searches for an entry in the specified bucket.
-     *
-     * @param bucketId Bucket ID
-     * @param tag Tag to search for
-     * @param entryMatcher Matcher to verify entry
-     * @return Entry address if found, 0 if not found
-     */
-    public long searchInBucket(byte bucketId, short tag, MainTable.EntryMatcher entryMatcher) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !bucketInUse[id]) {
-            return 0;
-        }
-
-        MemorySegment segment = getSegmentForBucketInternal(id);
-        int bucketOffset = getBucketOffsetInSegmentInternal(id);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
-            if (slotPointer == 0) continue;  // Empty slot
-            if (slotTag != tag) continue;    // Tag mismatch
-
-            if (entryMatcher.matches(slotPointer)) {
-                return slotPointer;
-            }
-        }
-        return 0;
-    }
-
-    // --- inline 版本：直接传 key/namespace，绕过 EntryMatcher ---
-    public long searchInBucketInline(byte bucketId, short tag,
-                                     byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long searchInBucket(byte bucketId, short tag,
+                               byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int id = bucketId & 0xFF;
         if (id == 0 || !bucketInUse[id]) return 0;
         MemorySegment segment = getSegmentForBucketInternal(id);
@@ -211,8 +164,8 @@ public class ExtensionBucketPool implements AutoCloseable {
         return 0;
     }
 
-    public long putInBucketInline(byte bucketId, short tag, long entryAddress,
-                                  byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long putInBucket(byte bucketId, short tag, long entryAddress,
+                            byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int id = bucketId & 0xFF;
         if (id == 0 || !bucketInUse[id]) return -1;
         MemorySegment segment = getSegmentForBucketInternal(id);
@@ -237,8 +190,8 @@ public class ExtensionBucketPool implements AutoCloseable {
         return -1; // full
     }
 
-    public long removeFromBucketInline(byte bucketId, short tag,
-                                       byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long removeFromBucket(byte bucketId, short tag,
+                                 byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int id = bucketId & 0xFF;
         if (id == 0 || !bucketInUse[id]) return 0;
         MemorySegment segment = getSegmentForBucketInternal(id);
@@ -253,117 +206,6 @@ public class ExtensionBucketPool implements AutoCloseable {
                 segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short)0);
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
                 return ptr;
-            }
-        }
-        return 0;
-    }
-
-    /**
-     * Puts an entry into the specified bucket.
-     *
-     * @param bucketAddress Bucket address (from getBucketAddress)
-     * @param tag Tag for the entry
-     * @param entryAddress Entry address in EntryArena
-     * @param entryMatcher Matcher to verify existing entries
-     * @return Previous entry address if updated, 0 if newly inserted, -1 if bucket is full
-     */
-    public long putInBucket(long bucketAddress, short tag, long entryAddress, MainTable.EntryMatcher entryMatcher) {
-        byte bucketId = findBucketIdByAddress(bucketAddress);
-        return putInBucket(bucketId, tag, entryAddress, entryMatcher);
-    }
-
-    /**
-     * Puts an entry into the specified bucket.
-     *
-     * @param bucketId Bucket ID
-     * @param tag Tag for the entry
-     * @param entryAddress Entry address in EntryArena
-     * @param entryMatcher Matcher to verify existing entries
-     * @return Previous entry address if updated, 0 if newly inserted, -1 if bucket is full
-     */
-    public long putInBucket(byte bucketId, short tag, long entryAddress, MainTable.EntryMatcher entryMatcher) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !bucketInUse[id]) {
-            return -1;
-        }
-
-        MemorySegment segment = getSegmentForBucketInternal(id);
-        int bucketOffset = getBucketOffsetInSegmentInternal(id);
-        int emptySlot = -1;
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
-            if (slotPointer == 0) {
-                if (emptySlot == -1) emptySlot = slot;
-                continue;
-            }
-
-            if (slotTag == tag && entryMatcher.matches(slotPointer)) {
-                // Update existing entry
-                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-                return slotPointer;
-            }
-        }
-
-        // Insert in empty slot if available
-        if (emptySlot != -1) {
-            int slotOffset = bucketOffset + emptySlot * SLOT_SIZE;
-            segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
-            segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-            return 0;  // New insertion
-        }
-
-        return -1;  // Bucket is full
-    }
-
-    /**
-     * Removes an entry from the specified bucket.
-     *
-     * @param bucketAddress Bucket address (from getBucketAddress)
-     * @param tag Tag to search for
-     * @param entryMatcher Matcher to verify entry
-     * @return Removed entry address if found, 0 if not found
-     */
-    public long removeFromBucket(long bucketAddress, short tag, MainTable.EntryMatcher entryMatcher) {
-        byte bucketId = findBucketIdByAddress(bucketAddress);
-        return removeFromBucket(bucketId, tag, entryMatcher);
-    }
-
-    /**
-     * Removes an entry from the specified bucket.
-     *
-     * @param bucketId Bucket ID
-     * @param tag Tag to search for
-     * @param entryMatcher Matcher to verify entry
-     * @return Removed entry address if found, 0 if not found
-     */
-    public long removeFromBucket(byte bucketId, short tag, MainTable.EntryMatcher entryMatcher) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !bucketInUse[id]) {
-            return 0;
-        }
-
-        MemorySegment segment = getSegmentForBucketInternal(id);
-        int bucketOffset = getBucketOffsetInSegmentInternal(id);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
-            if (slotPointer == 0) continue;
-            if (slotTag != tag) continue;
-
-            if (entryMatcher.matches(slotPointer)) {
-                // Clear the slot
-                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short)0);
-                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
-                return slotPointer;
             }
         }
         return 0;
@@ -438,6 +280,26 @@ public class ExtensionBucketPool implements AutoCloseable {
     }
 
     /**
+     * 直接收集指定桶中的所有 entry 地址到列表中，避免 EntryVisitor 开销
+     *
+     * @param bucketId Bucket ID
+     * @param collector 用于收集 entry 地址的回调函数
+     */
+    public void collectBucketSlots(byte bucketId, java.util.function.Consumer<Long> collector) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) return;
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (slotPointer != 0) {
+                collector.accept(slotPointer);
+            }
+        }
+    }
+
+    /**
      * Checks if a bucket is currently in use.
      *
      * @param bucketId Bucket ID to check
@@ -483,8 +345,6 @@ public class ExtensionBucketPool implements AutoCloseable {
         nextFreeBucketId = maxBuckets + 1;
     }
 
-    // 保留原 clearBucket(byte) API，改为内部使用int实现
-    private void clearBucket(byte bucketId) { clearBucketInternal(bucketId & 0xFF); }
     private void clearBucketInternal(int id) {
         if (id <= 0 || id > maxBuckets) return;
         MemorySegment segment = getSegmentForBucketInternal(id);
@@ -495,13 +355,12 @@ public class ExtensionBucketPool implements AutoCloseable {
         }
     }
 
-    private MemorySegment getSegmentForBucket(byte bucketId) { return getSegmentForBucketInternal(bucketId & 0xFF); }
     private MemorySegment getSegmentForBucketInternal(int id) {
         int bucketIndex = id - 1;
         int segmentIndex = (bucketIndex * BUCKET_SIZE) / memorySegments.get(0).size();
         return memorySegments.get(Math.min(segmentIndex, memorySegments.size() - 1));
     }
-    private int getBucketOffsetInSegment(byte bucketId) { return getBucketOffsetInSegmentInternal(bucketId & 0xFF); }
+
     private int getBucketOffsetInSegmentInternal(int id) {
         int bucketIndex = id - 1;
         int segmentSize = memorySegments.get(0).size();

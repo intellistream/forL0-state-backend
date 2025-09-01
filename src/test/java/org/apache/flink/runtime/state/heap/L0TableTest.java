@@ -77,15 +77,12 @@ class L0TableTest {
             int hash = keyHash ^ namespaceHash;
             short tag = (short) (hash & 0xFFFF);
 
-            // Create entry matcher
-            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
-
-            // Put entry into L0Table
-            long result = l0Table.put(hash, tag, entryAddress, matcher);
+            // Put entry into L0Table using new inline method
+            long result = l0Table.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(0, result, "Should return 0 for new insertion");
 
-            // Get entry from L0Table
-            long retrievedAddress = l0Table.get(hash, tag, matcher);
+            // Get entry from L0Table using new inline method
+            long retrievedAddress = l0Table.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(entryAddress, retrievedAddress, "Should retrieve the same entry address");
 
             // Verify entry data
@@ -106,21 +103,20 @@ class L0TableTest {
             long entryAddress1 = entryArena.putEntry(key, namespace, value1);
             int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
             short tag = (short) (hash & 0xFFFF);
-            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
             // Insert initial entry
-            long result1 = l0Table.put(hash, tag, entryAddress1, matcher);
+            long result1 = l0Table.put(hash, tag, entryAddress1, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(0, result1, "Should return 0 for new insertion");
 
             // Store updated entry
             long entryAddress2 = entryArena.putEntry(key, namespace, value2);
 
             // Update entry in L0Table
-            long result2 = l0Table.put(hash, tag, entryAddress2, matcher);
+            long result2 = l0Table.put(hash, tag, entryAddress2, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(entryAddress1, result2, "Should return previous entry address for update");
 
             // Verify updated entry
-            long retrievedAddress = l0Table.get(hash, tag, matcher);
+            long retrievedAddress = l0Table.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(entryAddress2, retrievedAddress, "Should retrieve updated entry address");
             assertArrayEquals(value2, entryArena.getValueBytes(retrievedAddress));
         }
@@ -136,16 +132,15 @@ class L0TableTest {
             long entryAddress = entryArena.putEntry(key, namespace, value);
             int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
             short tag = (short) (hash & 0xFFFF);
-            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
-            l0Table.put(hash, tag, entryAddress, matcher);
+            l0Table.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
 
             // Remove entry
-            long removedAddress = l0Table.remove(hash, tag, matcher);
+            long removedAddress = l0Table.remove(hash, tag, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(entryAddress, removedAddress, "Should return removed entry address");
 
             // Verify entry is removed
-            long retrievedAddress = l0Table.get(hash, tag, matcher);
+            long retrievedAddress = l0Table.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(0, retrievedAddress, "Entry should not be found after removal");
         }
 
@@ -155,9 +150,8 @@ class L0TableTest {
             byte[] namespace = "nonExistentNamespace".getBytes();
             int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
             short tag = (short) (hash & 0xFFFF);
-            L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
-            long result = l0Table.get(hash, tag, matcher);
+            long result = l0Table.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(0, result, "Should return 0 for non-existent entry");
         }
     }
@@ -182,22 +176,27 @@ class L0TableTest {
                 // Insert first 4 entries (fill bucket)
                 for (int i = 0; i < 4; i++) {
                     long result = lruTable.put(entries[i].hash, entries[i].tag,
-                                             entries[i].entryAddress, entries[i].matcher);
+                                             entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                                             entries[i].namespace, entries[i].namespace.length, entryArena);
                     assertEquals(0, result, "Should insert successfully");
                 }
 
                 // Access entry 1 to make it most recently used
-                lruTable.get(entries[1].hash, entries[1].tag, entries[1].matcher);
+                lruTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                           entries[1].namespace, entries[1].namespace.length, entryArena);
 
                 // Insert 5th entry - should evict LRU (entry 0, since entry 1 was accessed)
                 long evictedAddress = lruTable.put(entries[4].hash, entries[4].tag,
-                                                 entries[4].entryAddress, entries[4].matcher);
+                                                 entries[4].entryAddress, entries[4].key, entries[4].key.length,
+                                                 entries[4].namespace, entries[4].namespace.length, entryArena);
                 assertEquals(entries[0].entryAddress, evictedAddress, "Should evict least recently used entry");
 
                 // Verify entry 0 is gone, but entry 1 is still there
-                assertEquals(0, lruTable.get(entries[0].hash, entries[0].tag, entries[0].matcher));
+                assertEquals(0, lruTable.get(entries[0].hash, entries[0].tag, entries[0].key, entries[0].key.length,
+                                           entries[0].namespace, entries[0].namespace.length, entryArena));
                 assertEquals(entries[1].entryAddress,
-                           lruTable.get(entries[1].hash, entries[1].tag, entries[1].matcher));
+                           lruTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                                      entries[1].namespace, entries[1].namespace.length, entryArena));
             }
         }
 
@@ -218,22 +217,26 @@ class L0TableTest {
                 // Insert first 4 entries
                 for (int i = 0; i < 4; i++) {
                     lfuTable.put(entries[i].hash, entries[i].tag,
-                               entries[i].entryAddress, entries[i].matcher);
+                               entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                               entries[i].namespace, entries[i].namespace.length, entryArena);
                 }
 
                 // Access entry 1 multiple times to increase frequency
                 for (int j = 0; j < 3; j++) {
-                    lfuTable.get(entries[1].hash, entries[1].tag, entries[1].matcher);
+                    lfuTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                               entries[1].namespace, entries[1].namespace.length, entryArena);
                 }
 
                 // Insert 5th entry - should evict LFU (one of the entries accessed only once)
                 long evictedAddress = lfuTable.put(entries[4].hash, entries[4].tag,
-                                                 entries[4].entryAddress, entries[4].matcher);
+                                                 entries[4].entryAddress, entries[4].key, entries[4].key.length,
+                                                 entries[4].namespace, entries[4].namespace.length, entryArena);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
                 // Entry 1 should still be there (highest frequency)
                 assertEquals(entries[1].entryAddress,
-                           lfuTable.get(entries[1].hash, entries[1].tag, entries[1].matcher));
+                           lfuTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                                      entries[1].namespace, entries[1].namespace.length, entryArena));
             }
         }
 
@@ -254,17 +257,20 @@ class L0TableTest {
                 // Insert first 4 entries
                 for (int i = 0; i < 4; i++) {
                     randomTable.put(entries[i].hash, entries[i].tag,
-                                  entries[i].entryAddress, entries[i].matcher);
+                                  entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                                  entries[i].namespace, entries[i].namespace.length, entryArena);
                 }
 
                 // Insert 5th entry - should evict some entry randomly
                 long evictedAddress = randomTable.put(entries[4].hash, entries[4].tag,
-                                                    entries[4].entryAddress, entries[4].matcher);
+                                                    entries[4].entryAddress, entries[4].key, entries[4].key.length,
+                                                    entries[4].namespace, entries[4].namespace.length, entryArena);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
                 // Verify that 5th entry was inserted
                 assertEquals(entries[4].entryAddress,
-                           randomTable.get(entries[4].hash, entries[4].tag, entries[4].matcher));
+                           randomTable.get(entries[4].hash, entries[4].tag, entries[4].key, entries[4].key.length,
+                                         entries[4].namespace, entries[4].namespace.length, entryArena));
             }
         }
     }
@@ -278,15 +284,19 @@ class L0TableTest {
             TestEntry entry1 = createTestEntry("removeAddr1", "value1");
             TestEntry entry2 = createTestEntry("removeAddr2", "value2");
 
-            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
-            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.key, entry1.key.length,
+                       entry1.namespace, entry1.namespace.length, entryArena);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.key, entry2.key.length,
+                       entry2.namespace, entry2.namespace.length, entryArena);
 
             // Remove by address
             l0Table.removeByAddress(entry1.entryAddress);
 
             // Verify entry1 is removed, entry2 remains
-            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.matcher));
-            assertEquals(entry2.entryAddress, l0Table.get(entry2.hash, entry2.tag, entry2.matcher));
+            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.key, entry1.key.length,
+                                      entry1.namespace, entry1.namespace.length, entryArena));
+            assertEquals(entry2.entryAddress, l0Table.get(entry2.hash, entry2.tag, entry2.key, entry2.key.length,
+                                                        entry2.namespace, entry2.namespace.length, entryArena));
         }
 
         @Test
@@ -296,9 +306,12 @@ class L0TableTest {
             TestEntry entry2 = createTestEntry("range2", "value2");
             TestEntry entry3 = createTestEntry("range3", "value3");
 
-            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
-            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
-            l0Table.put(entry3.hash, entry3.tag, entry3.entryAddress, entry3.matcher);
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.key, entry1.key.length,
+                       entry1.namespace, entry1.namespace.length, entryArena);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.key, entry2.key.length,
+                       entry2.namespace, entry2.namespace.length, entryArena);
+            l0Table.put(entry3.hash, entry3.tag, entry3.entryAddress, entry3.key, entry3.key.length,
+                       entry3.namespace, entry3.namespace.length, entryArena);
 
             // Invalidate range that includes entry1 and entry2
             long minAddr = Math.min(entry1.entryAddress, entry2.entryAddress);
@@ -307,12 +320,15 @@ class L0TableTest {
             l0Table.invalidateRange(minAddr, maxAddr);
 
             // Verify affected entries are invalidated
-            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.matcher));
-            assertEquals(0, l0Table.get(entry2.hash, entry2.tag, entry2.matcher));
+            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.key, entry1.key.length,
+                                      entry1.namespace, entry1.namespace.length, entryArena));
+            assertEquals(0, l0Table.get(entry2.hash, entry2.tag, entry2.key, entry2.key.length,
+                                      entry2.namespace, entry2.namespace.length, entryArena));
 
             // Entry3 might still be there if outside range
             if (entry3.entryAddress < minAddr || entry3.entryAddress >= maxAddr) {
-                assertEquals(entry3.entryAddress, l0Table.get(entry3.hash, entry3.tag, entry3.matcher));
+                assertEquals(entry3.entryAddress, l0Table.get(entry3.hash, entry3.tag, entry3.key, entry3.key.length,
+                                                            entry3.namespace, entry3.namespace.length, entryArena));
             }
         }
 
@@ -322,8 +338,10 @@ class L0TableTest {
             TestEntry entry1 = createTestEntry("clear1", "value1");
             TestEntry entry2 = createTestEntry("clear2", "value2");
 
-            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
-            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.key, entry1.key.length,
+                       entry1.namespace, entry1.namespace.length, entryArena);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.key, entry2.key.length,
+                       entry2.namespace, entry2.namespace.length, entryArena);
 
             // Clear all entries
             l0Table.clear();
@@ -337,8 +355,10 @@ class L0TableTest {
             assertEquals(0, stats.evictionCount);
 
             // Then verify all entries are removed
-            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.matcher));
-            assertEquals(0, l0Table.get(entry2.hash, entry2.tag, entry2.matcher));
+            assertEquals(0, l0Table.get(entry1.hash, entry1.tag, entry1.key, entry1.key.length,
+                                      entry1.namespace, entry1.namespace.length, entryArena));
+            assertEquals(0, l0Table.get(entry2.hash, entry2.tag, entry2.key, entry2.key.length,
+                                      entry2.namespace, entry2.namespace.length, entryArena));
         }
     }
 
@@ -350,11 +370,14 @@ class L0TableTest {
             TestEntry entry = createTestEntry("statsKey", "statsValue");
 
             // Miss: get non-existent entry
-            l0Table.get(entry.hash, entry.tag, entry.matcher);
+            l0Table.get(entry.hash, entry.tag, entry.key, entry.key.length,
+                      entry.namespace, entry.namespace.length, entryArena);
 
             // Hit: insert then get
-            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
-            l0Table.get(entry.hash, entry.tag, entry.matcher);
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.key, entry.key.length,
+                       entry.namespace, entry.namespace.length, entryArena);
+            l0Table.get(entry.hash, entry.tag, entry.key, entry.key.length,
+                      entry.namespace, entry.namespace.length, entryArena);
 
             L0Table.L0TableStats stats = l0Table.getStats();
             assertEquals(2, stats.accessCount, "Should have 2 total accesses");
@@ -372,8 +395,10 @@ class L0TableTest {
             TestEntry entry1 = createTestEntry("load1", "value1");
             TestEntry entry2 = createTestEntry("load2", "value2");
 
-            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.matcher);
-            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.matcher);
+            l0Table.put(entry1.hash, entry1.tag, entry1.entryAddress, entry1.key, entry1.key.length,
+                       entry1.namespace, entry1.namespace.length, entryArena);
+            l0Table.put(entry2.hash, entry2.tag, entry2.entryAddress, entry2.key, entry2.key.length,
+                       entry2.namespace, entry2.namespace.length, entryArena);
 
             L0Table.L0TableStats stats = l0Table.getStats();
             assertEquals(2, stats.validSlots, "Should have 2 valid slots");
@@ -396,11 +421,15 @@ class L0TableTest {
 
             // Insert first 4 (no eviction)
             for (int i = 0; i < 4; i++) {
-                l0Table.put(entries[i].hash, entries[i].tag, entries[i].entryAddress, entries[i].matcher);
+                l0Table.put(entries[i].hash, entries[i].tag, entries[i].entryAddress,
+                          entries[i].key, entries[i].key.length,
+                          entries[i].namespace, entries[i].namespace.length, entryArena);
             }
 
             // Insert 5th (should cause eviction)
-            l0Table.put(entries[4].hash, entries[4].tag, entries[4].entryAddress, entries[4].matcher);
+            l0Table.put(entries[4].hash, entries[4].tag, entries[4].entryAddress,
+                      entries[4].key, entries[4].key.length,
+                      entries[4].namespace, entries[4].namespace.length, entryArena);
 
             L0Table.L0TableStats stats = l0Table.getStats();
             assertEquals(1, stats.evictionCount, "Should have 1 eviction");
@@ -409,7 +438,8 @@ class L0TableTest {
         @Test
         void testStatsToString() {
             TestEntry entry = createTestEntry("toStringKey", "toStringValue");
-            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.key, entry.key.length,
+                       entry.namespace, entry.namespace.length, entryArena);
 
             L0Table.L0TableStats stats = l0Table.getStats();
             String statsString = stats.toString();
@@ -448,19 +478,16 @@ class L0TableTest {
             int sameHash = 0x12345678;
             short sameTag = (short) 0x1234;
 
-            L0Table.EntryMatcher matcher1 = (addr) -> entryArena.matchesKey(addr, key1, namespace);
-            L0Table.EntryMatcher matcher2 = (addr) -> entryArena.matchesKey(addr, key2, namespace);
-
             // Insert both entries
-            long result1 = l0Table.put(sameHash, sameTag, entryAddress1, matcher1);
-            long result2 = l0Table.put(sameHash, sameTag, entryAddress2, matcher2);
+            long result1 = l0Table.put(sameHash, sameTag, entryAddress1, key1, key1.length, namespace, namespace.length, entryArena);
+            long result2 = l0Table.put(sameHash, sameTag, entryAddress2, key2, key2.length, namespace, namespace.length, entryArena);
 
             assertEquals(0, result1, "First entry should insert successfully");
             assertEquals(0, result2, "Second entry should insert successfully");
 
             // Verify both can be retrieved correctly
-            assertEquals(entryAddress1, l0Table.get(sameHash, sameTag, matcher1));
-            assertEquals(entryAddress2, l0Table.get(sameHash, sameTag, matcher2));
+            assertEquals(entryAddress1, l0Table.get(sameHash, sameTag, key1, key1.length, namespace, namespace.length, entryArena));
+            assertEquals(entryAddress2, l0Table.get(sameHash, sameTag, key2, key2.length, namespace, namespace.length, entryArena));
         }
 
         @Test
@@ -468,7 +495,8 @@ class L0TableTest {
             TestEntry entry = createTestEntry("updateKey", "initialValue");
 
             // Insert initial entry
-            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.key, entry.key.length,
+                       entry.namespace, entry.namespace.length, entryArena);
 
             // Keep track of current entry address
             long currentEntryAddress = entry.entryAddress;
@@ -478,11 +506,13 @@ class L0TableTest {
                 byte[] newValue = ("updatedValue" + i).getBytes();
                 long newEntryAddress = entryArena.putEntry(entry.key, entry.namespace, newValue);
 
-                long oldAddress = l0Table.put(entry.hash, entry.tag, newEntryAddress, entry.matcher);
+                long oldAddress = l0Table.put(entry.hash, entry.tag, newEntryAddress, entry.key, entry.key.length,
+                                            entry.namespace, entry.namespace.length, entryArena);
                 assertEquals(currentEntryAddress, oldAddress, "Should return previous address for update");
 
                 // Verify updated value
-                long retrievedAddress = l0Table.get(entry.hash, entry.tag, entry.matcher);
+                long retrievedAddress = l0Table.get(entry.hash, entry.tag, entry.key, entry.key.length,
+                                                  entry.namespace, entry.namespace.length, entryArena);
                 assertEquals(newEntryAddress, retrievedAddress, "Should get updated entry");
                 assertArrayEquals(newValue, entryArena.getValueBytes(retrievedAddress));
 
@@ -498,7 +528,8 @@ class L0TableTest {
         void testClose() throws Exception {
             // Insert some entries
             TestEntry entry = createTestEntry("closeKey", "closeValue");
-            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.matcher);
+            l0Table.put(entry.hash, entry.tag, entry.entryAddress, entry.key, entry.key.length,
+                       entry.namespace, entry.namespace.length, entryArena);
 
             // Close should not throw exception
             assertDoesNotThrow(() -> l0Table.close());
@@ -521,9 +552,8 @@ class L0TableTest {
         long entryAddress = entryArena.putEntry(key, namespace, value);
         int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
         short tag = (short) (hash & 0xFFFF);
-        L0Table.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, key, namespace);
 
-        return new TestEntry(key, namespace, value, entryAddress, hash, tag, matcher);
+        return new TestEntry(key, namespace, value, entryAddress, hash, tag);
     }
 
     // Test entry helper class
@@ -534,17 +564,15 @@ class L0TableTest {
         final long entryAddress;
         int hash;
         short tag;
-        final L0Table.EntryMatcher matcher;
 
         TestEntry(byte[] key, byte[] namespace, byte[] value, long entryAddress,
-                  int hash, short tag, L0Table.EntryMatcher matcher) {
+                  int hash, short tag) {
             this.key = key;
             this.namespace = namespace;
             this.value = value;
             this.entryAddress = entryAddress;
             this.hash = hash;
             this.tag = tag;
-            this.matcher = matcher;
         }
     }
 }
