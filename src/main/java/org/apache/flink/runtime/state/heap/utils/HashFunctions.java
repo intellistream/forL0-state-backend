@@ -82,6 +82,63 @@ public final class HashFunctions {
         return hash;
     }
 
+    // ================= Jenkins Hash & tag helpers =================
+
+    /**
+     * Jenkins one-at-a-time hash over a byte slice.
+     */
+    public static int jenkinsHash(byte[] data, int offset, int length) {
+        if (data == null || length <= 0) { return 0; }
+        int hash = 0;
+        int end = offset + length;
+        for (int i = offset; i < end; i++) {
+            hash += (data[i] & 0xFF);
+            hash += (hash << 10);
+            hash ^= (hash >>> 6);
+        }
+        hash += (hash << 3);
+        hash ^= (hash >>> 11);
+        hash += (hash << 15);
+        return hash;
+    }
+
+    /**
+     * Combined Jenkins hash for key + namespace (顺序叠加避免额外拷贝)。
+     */
+    public static int jenkinsHashCombined(byte[] keyBuf, int keyLen, byte[] nsBuf, int nsLen) {
+        int hash = 0;
+        if (keyBuf != null && keyLen > 0) {
+            hash = mixJenkinsSequence(hash, keyBuf, keyLen);
+        }
+        if (nsBuf != null && nsLen > 0) {
+            hash = mixJenkinsSequence(hash, nsBuf, nsLen);
+        }
+        return hash;
+    }
+
+    private static int mixJenkinsSequence(int seed, byte[] data, int len) {
+        int hash = seed;
+        for (int i = 0; i < len; i++) {
+            hash += (data[i] & 0xFF);
+            hash += (hash << 10);
+            hash ^= (hash >>> 6);
+        }
+        // 终末搅动放在外层调用结束后统一做；为简单直接再做一轮终末
+        hash += (hash << 3);
+        hash ^= (hash >>> 11);
+        hash += (hash << 15);
+        return hash;
+    }
+
+    /**
+     * 生成 16 位 tag：对 key 与 namespace 分别 murmur 再异或，取低 16 位。
+     */
+    public static short murmur16(byte[] keyBuf, int keyLen, byte[] nsBuf, int nsLen) {
+        int h1 = murmurHash3(keyBuf, 0, keyLen);
+        int h2 = murmurHash3(nsBuf, 0, nsLen);
+        return (short)((h1 ^ h2) & 0xFFFF);
+    }
+
 
 
     // Methods for levelhash compatibility (legacy support)

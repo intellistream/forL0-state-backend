@@ -191,6 +191,73 @@ public class ExtensionBucketPool implements AutoCloseable {
         return 0;
     }
 
+    // --- inline 版本：直接传 key/namespace，绕过 EntryMatcher ---
+    public long searchInBucketInline(byte bucketId, short tag,
+                                     byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) return 0;
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (ptr == 0) continue;
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            if (slotTag != tag) continue;
+            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+                return ptr;
+            }
+        }
+        return 0;
+    }
+
+    public long putInBucketInline(byte bucketId, short tag, long entryAddress,
+                                  byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) return -1;
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
+        int empty = -1;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (ptr == 0) { if (empty == -1) empty = slot; continue; }
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+                return ptr; // update
+            }
+        }
+        if (empty != -1) {
+            int slotOffset = bucketOffset + empty * SLOT_SIZE;
+            segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
+            segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+            return 0; // new
+        }
+        return -1; // full
+    }
+
+    public long removeFromBucketInline(byte bucketId, short tag,
+                                       byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int id = bucketId & 0xFF;
+        if (id == 0 || !bucketInUse[id]) return 0;
+        MemorySegment segment = getSegmentForBucketInternal(id);
+        int bucketOffset = getBucketOffsetInSegmentInternal(id);
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (ptr == 0) continue;
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            if (slotTag != tag) continue;
+            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short)0);
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
+                return ptr;
+            }
+        }
+        return 0;
+    }
+
     /**
      * Puts an entry into the specified bucket.
      *

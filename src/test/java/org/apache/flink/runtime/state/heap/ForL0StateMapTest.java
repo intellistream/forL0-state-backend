@@ -396,7 +396,7 @@ class ForL0StateMapTest {
             // 使用极小的主表容量以快速触发扩容：2 buckets (pow2=1)
             smallMap = new ForL0StateMap<>(
                 allocator,
-                1, // 2 buckets, 12 slots, 阈值 0.75 * 12 = 9
+                1, // 2 buckets; 新负载因子阈值 1.5 * 2 = 3 entries 即标记需扩容（旧注释: 0.75 * 12=9 已废弃）
                 2, // L0 4 buckets
                 StringSerializer.INSTANCE,
                 IntSerializer.INSTANCE,

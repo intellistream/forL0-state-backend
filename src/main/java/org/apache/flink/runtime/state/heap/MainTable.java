@@ -35,7 +35,7 @@ public class MainTable implements AutoCloseable {
     private static final int EXTENSION_POINTERS_OFFSET = 60;  // 4 bytes for extension pointers
 
     // Resize thresholds
-    private static final double DEFAULT_LOAD_FACTOR_THRESHOLD = 0.75;
+    private static final double DEFAULT_LOAD_FACTOR_THRESHOLD = 1.5; // 修改：负载因子阈值=1.5（entries / base buckets）
     private static final int MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET = 255;
 
     // 去掉final，允许resize后直接更新而不使用反射
@@ -106,6 +106,14 @@ public class MainTable implements AutoCloseable {
         return searchExtensionBuckets(bucketIndex, tag, entryMatcher);
     }
 
+    /** Inline 版本：直接传入序列化后 key / namespace，避免 lambda Matcher 开销 */
+    public long getInline(int keyHash, short tag,
+                          byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int bucketIndex = keyHash & (bucketCount - 1);
+        long r = searchBucketSlotsInline(bucketIndex, tag, kb, klen, nb, nlen, arena);
+        return r != 0 ? r : searchExtensionBucketsInline(bucketIndex, tag, kb, klen, nb, nlen, arena);
+    }
+
     /**
      * Puts a key-value entry into main table with automatic resizing support.
      *
@@ -145,6 +153,24 @@ public class MainTable implements AutoCloseable {
         throw new RuntimeException("Table is full - resize needed");
     }
 
+    /** Inline 版本：直接传入序列化后 key / namespace，避免 lambda Matcher 开销 */
+    public long putInline(int keyHash, short tag, long entryAddress,
+                          byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int bucketIndex = keyHash & (bucketCount - 1);
+        long oldPtr = putInBucketSlotsInline(bucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
+        if (oldPtr != -1) {
+            if (oldPtr == 0) { totalEntries++; checkResizeNeeded(); }
+            return oldPtr;
+        }
+        long ext = putInExtensionBucketsInline(bucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
+        if (ext != -1) {
+            if (ext == 0) { totalEntries++; checkResizeNeeded(); }
+            return ext;
+        }
+        needsResize = true;
+        throw new RuntimeException("Table is full - resize needed");
+    }
+
     /**
      * Removes an entry from main table.
      *
@@ -171,12 +197,125 @@ public class MainTable implements AutoCloseable {
         return removedFromExtension;
     }
 
+    /** Inline 版本：直接传入序列化后 key / namespace，避免 lambda Matcher 开销 */
+    public long removeInline(int keyHash, short tag,
+                             byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int bucketIndex = keyHash & (bucketCount - 1);
+        long rem = removeFromBucketSlotsInline(bucketIndex, tag, kb, klen, nb, nlen, arena);
+        if (rem != 0) { totalEntries--; return rem; }
+        long remExt = removeFromExtensionBucketsInline(bucketIndex, tag, kb, klen, nb, nlen, arena);
+        if (remExt != 0) { totalEntries--; }
+        return remExt;
+    }
+
+    // --- inline 私有扫描实现 ---
+    private long searchBucketSlotsInline(int bucketIndex, short tag,
+                                         byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (ptr == 0) continue;
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            if (slotTag != tag) continue;
+            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+                return ptr;
+            }
+        }
+        return 0;
+    }
+
+    private long searchExtensionBucketsInline(int bucketIndex, short tag,
+                                              byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int extensionIndex = tag & 0x3;
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
+        if (extId == 0) return 0;
+        return extensionPool.searchInBucketInline(extId, tag, kb, klen, nb, nlen, arena);
+    }
+
+    private long putInBucketSlotsInline(int bucketIndex, short tag, long entryAddress,
+                                        byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        int emptySlot = -1;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (ptr == 0) { if (emptySlot == -1) emptySlot = slot; continue; }
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+                return ptr; // update
+            }
+        }
+        if (emptySlot != -1) {
+            int slotOffset = bucketOffset + emptySlot * SLOT_SIZE;
+            segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
+            segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+            return 0; // new
+        }
+        return -1; // full
+    }
+
+    private long putInExtensionBucketsInline(int bucketIndex, short tag, long entryAddress,
+                                             byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int extensionIndex = tag & 0x3;
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
+        if (extId == 0) {
+            extId = extensionPool.allocateBucket();
+            if (extId == 0) return -1; // pool exhausted
+            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extId);
+            updateExtensionBucketCount(bucketIndex, 1);
+        }
+        return extensionPool.putInBucketInline(extId, tag, entryAddress, kb, klen, nb, nlen, arena);
+    }
+
+    private long removeFromBucketSlotsInline(int bucketIndex, short tag,
+                                             byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (ptr == 0) continue;
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            if (slotTag != tag) continue;
+            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short)0);
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
+                return ptr;
+            }
+        }
+        return 0;
+    }
+
+    private long removeFromExtensionBucketsInline(int bucketIndex, short tag,
+                                                  byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        int extensionIndex = tag & 0x3;
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
+        if (extId == 0) return 0;
+        long removed = extensionPool.removeFromBucketInline(extId, tag, kb, klen, nb, nlen, arena);
+        if (removed != 0 && extensionPool.isBucketEmpty(extId)) {
+            extensionPool.freeBucket(extId);
+            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, (byte)0);
+            updateExtensionBucketCount(bucketIndex, -1);
+        }
+        return removed;
+    }
+
     /**
      * Gets the current load factor of the main table.
+     * 修改：定义为 totalEntries / bucketCount （忽略每桶 slot 数，强调“基桶含义”）。
      */
     public double getLoadFactor() {
-        int totalSlots = bucketCount * SLOTS_PER_BUCKET;
-        return totalSlots > 0 ? (double) totalEntries / totalSlots : 0.0;
+        return bucketCount == 0 ? 0.0 : (double) totalEntries / bucketCount;
     }
 
     /**
@@ -333,7 +472,6 @@ public class MainTable implements AutoCloseable {
 
     private void addResizeEntry(EntryArena entryArena, List<ResizeEntry> entries, long entryAddress) {
         if (entryArena == null) {
-            // 兼容：无法重算hash，跳过（理论上不会发生）
             return;
         }
         try {
@@ -342,13 +480,10 @@ public class MainTable implements AutoCloseable {
             if (keyBytes == null || nsBytes == null) {
                 return;
             }
-            int keyHash = HashFunctions.murmurHash3(keyBytes);
-            int nsHash = HashFunctions.murmurHash3(nsBytes);
-            int fullHash = keyHash ^ nsHash;
-            short tag = (short) (fullHash & 0xFFFF); // 与运行时一致：低16位
+            int fullHash = HashFunctions.jenkinsHashCombined(keyBytes, keyBytes.length, nsBytes, nsBytes.length);
+            short tag = HashFunctions.murmur16(keyBytes, keyBytes.length, nsBytes, nsBytes.length);
             entries.add(new ResizeEntry(entryAddress, fullHash, tag));
         } catch (Exception ignore) {
-            // 忽略损坏条目
         }
     }
 
@@ -495,6 +630,7 @@ public class MainTable implements AutoCloseable {
     }
 
     private void checkResizeNeeded() {
+        // 条件：负载因子>=阈值 或 某个基桶扩展桶数达到上限
         if (getLoadFactor() >= loadFactorThreshold || getMaxExtensionBucketsUsed() >= MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET) {
             needsResize = true;
         }
@@ -542,7 +678,6 @@ public class MainTable implements AutoCloseable {
             return 0;  // No extension bucket
         }
 
-        // 直接按 bucketId 查询，避免地址->ID 的线性扫描
         return extensionPool.searchInBucket(extensionBucketId, tag, entryMatcher);
     }
 

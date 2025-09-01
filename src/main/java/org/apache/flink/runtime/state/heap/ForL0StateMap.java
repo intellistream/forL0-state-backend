@@ -7,7 +7,7 @@ import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.apache.flink.runtime.state.heap.io.MemorySegmentDataInputView;
 import org.apache.flink.runtime.state.heap.io.SerializerPack;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.apache.flink.runtime.state.heap.utils.HashSuite;
+import org.apache.flink.runtime.state.heap.utils.HashFunctions; // 替换 HashSuite
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,10 +28,10 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // Core storage components
     private final MemoryManagerAllocator allocator;
     private final EntryArena entryArena;
-    // 删除遗留字段，统一通过 TableCore 访问表
+    // 统一通过 TableCore 访问表
     private final TableCore tableCore;
 
-    // 新增：统一序列化打包器
+    // 统一序列化打包器
     private final SerializerPack<K, N, S> serializerPack;
 
     // Configuration
@@ -90,12 +90,12 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         this.l0CacheEnabled = l0CacheEnabled;
 
         try {
-            // 组装核心组件（固定 FREE_LIST）
+            // 组装核心组件：主表阈值改为 1.5（entries / baseBuckets）
             this.entryArena = new EntryArena(allocator);
             this.tableCore = new TableCore(
                     allocator,
                     mainTableInitPow2,
-                    0.75,
+                    1.5, // 新负载因子阈值语义：entries / bucketCount
                     l0CacheEnabled,
                     l0CacheSizePow2,
                     l0Policy == null ? L0Table.ReplacementPolicy.RANDOM : l0Policy
@@ -130,64 +130,36 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public S get(K key, N namespace) {
-        if (key == null || namespace == null) {
-            return null;
-        }
-
-        // Check if properly initialized
-        if (allocator == null || entryArena == null || tableCore == null) {
-            return null;
-        }
-
+        if (key == null || namespace == null) { return null; }
+        if (allocator == null || entryArena == null || tableCore == null) { return null; }
         totalAccesses++;
 
+        // TODO: remove try-catch
         try {
-            // Serialize key and namespace for lookup into reusable buffers
+
             serializerPack.writeKey(key);
             serializerPack.writeNamespace(namespace);
             byte[] kb = serializerPack.keyBuffer();
             int klen = serializerPack.keyLength();
             byte[] nb = serializerPack.namespaceBuffer();
             int nlen = serializerPack.namespaceLength();
+            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
+            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
 
-            int hash = HashSuite.combinedHash(kb, klen, nb, nlen);
-            short tag = HashSuite.tagOf(hash);
-
-            // Create entry matcher for exact key/namespace matching (zero-copy compare)
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
-
-            long entryAddress;
-
-            // Try L0 cache first if enabled
+            long addr;
             if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                entryAddress = tableCore.l0Get(hash, tag, matcher::matches);
-                if (entryAddress > 0) {
-                    l0Hits++;
-                    LOG.trace("L0 cache hit for key={}, namespace={}", key, namespace);
-                    return deserializeValueFromArena(entryAddress);
-                }
+                addr = tableCore.l0GetInline(hash, tag, kb, klen, nb, nlen, entryArena);
+                if (addr > 0) { l0Hits++; return deserializeValueFromArena(addr); }
             }
-
-            // L0 miss or cache disabled, try main table
-            entryAddress = tableCore.mainGet(hash, tag, matcher);
-            if (entryAddress > 0) {
+            addr = tableCore.mainGetInline(hash, tag, kb, klen, nb, nlen, entryArena);
+            if (addr > 0) {
                 mainTableHits++;
-                LOG.trace("Main table hit for key={}, namespace={}", key, namespace);
-
-                // Promote to L0 cache if enabled
                 if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                    long evictedAddress = tableCore.l0Put(hash, tag, entryAddress, matcher::matches);
-                    if (evictedAddress > 0) {
-                        LOG.trace("L0 cache evicted entry at address {}", evictedAddress);
-                    }
+                    tableCore.l0PutInline(hash, tag, addr, kb, klen, nb, nlen, entryArena);
                 }
-
-                return deserializeValueFromArena(entryAddress);
+                return deserializeValueFromArena(addr);
             }
-
-            LOG.trace("Key not found: key={}, namespace={}", key, namespace);
             return null;
-
         } catch (Exception e) {
             LOG.error("Error during get operation for key={}, namespace={}", key, namespace, e);
             throw new RuntimeException("Get operation failed", e);
@@ -222,42 +194,23 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public boolean containsKey(K key, N namespace) {
-        if (key == null || namespace == null) {
-            return false;
-        }
-
-        // Check if properly initialized
-        if (allocator == null || entryArena == null || tableCore == null) {
-            return false;
-        }
-
+        if (key == null || namespace == null) { return false; }
+        if (allocator == null || entryArena == null || tableCore == null) { return false; }
         try {
-            // Serialize key and namespace for lookup
-            serializerPack.writeKey(key);
-            serializerPack.writeNamespace(namespace);
+            serializerPack.writeKey(key); serializerPack.writeNamespace(namespace);
             byte[] kb = serializerPack.keyBuffer();
             int klen = serializerPack.keyLength();
             byte[] nb = serializerPack.namespaceBuffer();
             int nlen = serializerPack.namespaceLength();
+            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
+            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
 
-            int hash = HashSuite.combinedHash(kb, klen, nb, nlen);
-            short tag = HashSuite.tagOf(hash);
-
-            // Create entry matcher for exact key/namespace matching
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
-
-            // Try L0 cache first if enabled
             if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                long entryAddress = tableCore.l0Get(hash, tag, matcher::matches);
-                if (entryAddress > 0) {
+                if (tableCore.l0GetInline(hash, tag, kb, klen, nb, nlen, entryArena) > 0)
                     return true;
-                }
             }
 
-            // Try main table
-            long entryAddress = tableCore.mainGet(hash, tag, matcher);
-            return entryAddress > 0;
-
+            return tableCore.mainGetInline(hash, tag, kb, klen, nb, nlen, entryArena) > 0;
         } catch (Exception e) {
             LOG.error("Error during containsKey operation for key={}, namespace={}", key, namespace, e);
             return false;
@@ -266,88 +219,50 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public void put(K key, N namespace, S state) {
-        if (key == null || namespace == null) {
-            // For compatibility, silently ignore null key/namespace instead of throwing exception
-            return;
-        }
-
-        // Check if properly initialized
-        if (allocator == null || entryArena == null || tableCore == null) {
-            return;
-        }
-
+        if (key == null || namespace == null) { return; }
+        if (allocator == null || entryArena == null || tableCore == null) { return; }
         try {
-            // Check if resize is needed before insertion
             checkAndTriggerResize();
 
-            // Serialize all components into reusable buffers
             serializerPack.writeKey(key);
             serializerPack.writeNamespace(namespace);
             serializerPack.writeState(state);
-
             byte[] kb = serializerPack.keyBuffer();
             int klen = serializerPack.keyLength();
             byte[] nb = serializerPack.namespaceBuffer();
             int nlen = serializerPack.namespaceLength();
             byte[] vb = serializerPack.stateBuffer();
             int vlen = serializerPack.stateLength();
+            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
+            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
+            long newAddr = entryArena.putEntry(kb, klen, nb, nlen, vb, vlen);
+            long oldAddr;
 
-            int hash = HashSuite.combinedHash(kb, klen, nb, nlen);
-            short tag = HashSuite.tagOf(hash);
-
-            // Create entry matcher
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
-
-            // Store new entry in arena (zero-copy from buffers)
-            long newEntryAddress = entryArena.putEntry(kb, klen, nb, nlen, vb, vlen);
-
-            // Update main table (with resize handling)
-            long oldMainAddress = putWithResizeHandling(hash, tag, newEntryAddress, matcher);
-
-            if (oldMainAddress == 0) {
-                // New entry
-                size++;
-                LOG.trace("Inserted new entry: key={}, namespace={}, size={}", key, namespace, size);
-            } else {
-                // Updated existing entry：回收旧 entry 以便复用
-                try {
-                    if (oldMainAddress != newEntryAddress) {
-                        entryArena.removeEntry(oldMainAddress);
-                    }
-                } catch (Exception ex) {
-                    LOG.debug("Skip recycle old entry {} due to exception", oldMainAddress, ex);
-                }
-                LOG.trace("Updated existing entry: key={}, namespace={}", key, namespace);
+            // TODO: remove try-catch
+            try {
+                oldAddr = tableCore.mainPutInline(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
+            } catch (RuntimeException ex) {
+                if (ex.getMessage() != null && ex.getMessage().contains("Table is full - resize needed")) {
+                    performResize();
+                    oldAddr = tableCore.mainPutInline(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
+                } else throw ex;
             }
 
-            // Update L0 cache if enabled (after successful main table update)
+            if (oldAddr == 0) {
+                size++;
+            } else if (oldAddr != newAddr) {
+                try {
+                    entryArena.removeEntry(oldAddr);
+                } catch (Exception ignore) {}
+            }
+
             if (l0CacheEnabled && tableCore.isL0Enabled() && !resizeInProgress) {
-                long oldL0Address = tableCore.l0Put(hash, tag, newEntryAddress, matcher::matches);
-                if (oldL0Address > 0 && oldL0Address != oldMainAddress) {
-                    LOG.trace("L0 cache updated/evicted for key={}, namespace={}", key, namespace);
-                }
+                tableCore.l0PutInline(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
             }
 
         } catch (Exception e) {
             LOG.error("Error during put operation for key={}, namespace={}", key, namespace, e);
             throw new RuntimeException("Put operation failed", e);
-        }
-    }
-
-    /**
-     * Puts an entry into main table with resize handling.
-     * If resize is needed and put fails, triggers resize and retries.
-     */
-    private long putWithResizeHandling(int hash, short tag, long entryAddress, MainTable.EntryMatcher matcher)
-            throws Exception {
-        try {
-            return tableCore.mainPut(hash, tag, entryAddress, matcher);
-        } catch (RuntimeException e) {
-            if (e.getMessage() != null && e.getMessage().contains("Table is full - resize needed")) {
-                performResize();
-                return tableCore.mainPut(hash, tag, entryAddress, matcher);
-            }
-            throw e;
         }
     }
 
@@ -450,74 +365,47 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             );
         }
     }
+
     @Override
     public S putAndGetOld(K key, N namespace, S state) {
         if (key == null || namespace == null) {
             // For compatibility, return null for null key/namespace instead of throwing exception
             return null;
         }
+        // Get old value first
+        S oldValue = get(key, namespace);
+        // Put new value
+        put(key, namespace, state);
 
-        try {
-            // Get old value first
-            S oldValue = get(key, namespace);
-
-            // Put new value
-            put(key, namespace, state);
-
-            return oldValue;
-
-        } catch (Exception e) {
-            LOG.error("Error during putAndGetOld operation for key={}, namespace={}", key, namespace, e);
-            throw new RuntimeException("PutAndGetOld operation failed", e);
-        }
+        return oldValue;
     }
 
     @Override
     public void remove(K key, N namespace) {
-        if (key == null || namespace == null) {
-            return;
-        }
+        if (key == null || namespace == null) { return; }
+        if (allocator == null || entryArena == null || tableCore == null) { return; }
 
-        // Check if properly initialized
-        if (allocator == null || entryArena == null || tableCore == null) {
-            return;
-        }
-
+        // TODO: remove try-catch
         try {
-            // Serialize key and namespace for lookup
+
             serializerPack.writeKey(key);
             serializerPack.writeNamespace(namespace);
             byte[] kb = serializerPack.keyBuffer();
             int klen = serializerPack.keyLength();
             byte[] nb = serializerPack.namespaceBuffer();
             int nlen = serializerPack.namespaceLength();
+            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
+            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
+            long removed = tableCore.mainRemoveInline(hash, tag, kb, klen, nb, nlen, entryArena);
 
-            int hash = HashSuite.combinedHash(kb, klen, nb, nlen);
-            short tag = HashSuite.tagOf(hash);
-
-            // Create entry matcher
-            MainTable.EntryMatcher matcher = (addr) -> entryArena.matchesKey(addr, kb, klen, nb, nlen);
-
-            // Remove from main table
-            long removedAddress = tableCore.mainRemove(hash, tag, matcher);
-
-            if (removedAddress > 0) {
+            if (removed > 0) {
                 size--;
-                LOG.trace("Removed entry: key={}, namespace={}, size={}", key, namespace, size);
-
-                // Remove from L0 cache if enabled
                 if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                    tableCore.l0Remove(hash, tag, matcher::matches);
+                    tableCore.l0RemoveInline(hash, tag, kb, klen, nb, nlen, entryArena);
                 }
-
-                // Free the removed entry block back to arena (enables reuse)
                 try {
-                    entryArena.removeEntry(removedAddress);
-                } catch (Exception ex) {
-                    LOG.debug("Failed to free removed entry address {}", removedAddress, ex);
-                }
-            } else {
-                LOG.trace("Entry not found for removal: key={}, namespace={}", key, namespace);
+                    entryArena.removeEntry(removed);
+                } catch (Exception ignore) {}
             }
 
         } catch (Exception e) {

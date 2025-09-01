@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap.levelhash;
+package org.apache.flink.runtime.state.heap.legacy.levelhash;
 
 /**
  * 64‑byte bucket layout utilities – offsets, masks and helpers.

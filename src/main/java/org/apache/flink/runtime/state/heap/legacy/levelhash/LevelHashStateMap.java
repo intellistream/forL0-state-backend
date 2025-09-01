@@ -1,4 +1,4 @@
-package org.apache.flink.runtime.state.heap.levelhash;
+package org.apache.flink.runtime.state.heap.legacy.levelhash;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
