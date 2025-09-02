@@ -87,9 +87,9 @@ public class ForL0StateMapStressTest {
 
                 stateMap.put(i, namespace, value);
 
-                if (i % 50000 == 0 && i > 0) {
-                    LOG.info("已完成 {} 次PUT操作, 当前大小: {}, 内存使用: {} KB",
-                            i, stateMap.size(), allocator.getUsedBytes() / 1024);
+                if (i % 500000 == 0 && i > 0) {
+                    LOG.info("已完成 {} 次PUT操作, 当前大小: {}, 内存使用: {} MB",
+                            i + 1, stateMap.size(), allocator.getUsedBytes() / 1024 / 1024);
                 }
             }
 
@@ -169,7 +169,7 @@ public class ForL0StateMapStressTest {
                     misses++;
                 }
 
-                if (i % 20000 == 0 && i > 0) {
+                if (i % 200000 == 0 && i > 0) {
                     LOG.info("已完成 {} 次GET操作, 命中: {}, 未命中: {}, 正确值: {}",
                             i, hits, misses, correctValues);
                 }
@@ -236,7 +236,7 @@ public class ForL0StateMapStressTest {
                     removeCount++;
                 }
 
-                if (i % 5000 == 0 && i > 0) {
+                if (i % 50000 == 0 && i > 0) {
                     LOG.info("已完成 {} 次操作, 当前大小: {}, PUT:{}, GET:{}, REMOVE:{}",
                             i, stateMap.size(), putCount, getCount, removeCount);
                 }
@@ -279,7 +279,7 @@ public class ForL0StateMapStressTest {
             for (int i = 0; i < targetSize; i++) {
                 stateMap.put(i, "ns", largeValue + i);
 
-                if (i % 50000 == 0 && i > 0) {
+                if (i % 500000 == 0 && i > 0) {
                     LOG.info("已插入 {} 条记录, 当前大小: {}, 已用内存: {} MB",
                             i, stateMap.size(), allocator.getUsedBytes() / 1024 / 1024);
                 }

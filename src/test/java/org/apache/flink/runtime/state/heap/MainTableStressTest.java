@@ -446,9 +446,9 @@ class MainTableStressTest {
         System.out.println("Warmup entries: " + WARMUP + ", Planned: " + N);
         System.out.println("Resize count: " + resizeCount + ", Final buckets: " + stats.bucketCount);
         System.out.println("Inserted success: " + insertSuccess + ", failed: " + insertFail);
-        System.out.println(String.format(Locale.ROOT, "Insert time: %.2f ms, throughput: %d ops/s", insertNs/1_000_000.0, (insertSuccess * 1_000_000_000L / Math.max(1L, insertNs))));
-        System.out.println(String.format(Locale.ROOT, "Read cold: %.2f ms, throughput: %d ops/s, success=%d", readNs/1_000_000.0, (readSuccess * 1_000_000_000L / Math.max(1L, readNs)), readSuccess));
-        System.out.println(String.format(Locale.ROOT, "Read hot: %.2f ms, throughput: %d ops/s, success=%d", hotReadNs/1_000_000.0, (hotReadSuccess * 1_000_000_000L / Math.max(1L, hotReadNs)), hotReadSuccess));
+        System.out.printf(Locale.ROOT, "Insert time: %.2f ms, throughput: %d ops/s%n", insertNs/1_000_000.0, (insertSuccess * 1_000_000_000L / Math.max(1L, insertNs)));
+        System.out.printf(Locale.ROOT, "Read cold: %.2f ms, throughput: %d ops/s, success=%d%n", readNs/1_000_000.0, (readSuccess * 1_000_000_000L / Math.max(1L, readNs)), readSuccess);
+        System.out.printf(Locale.ROOT, "Read hot: %.2f ms, throughput: %d ops/s, success=%d%n", hotReadNs/1_000_000.0, (hotReadSuccess * 1_000_000_000L / Math.max(1L, hotReadNs)), hotReadSuccess);
         System.out.println("Final stats: " + stats + ", loadFactor=" + String.format(Locale.ROOT, "%.4f", stats.loadFactor));
 
         assertTrue(insertSuccess > 0, "Should have successful inserts");

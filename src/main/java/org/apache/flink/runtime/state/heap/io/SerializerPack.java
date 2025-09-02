@@ -56,4 +56,3 @@ public class SerializerPack<K, N, S> {
     public TypeSerializer<S> stateSerializer() { return stateSer; }
 }
 
-
