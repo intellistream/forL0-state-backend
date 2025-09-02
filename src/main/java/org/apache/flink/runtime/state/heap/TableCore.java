@@ -68,11 +68,11 @@ class TableCore implements AutoCloseable {
         return mainTable.needsResize();
     }
 
-    boolean mainTryResize(EntryArena arena) throws Exception {
+    boolean mainTryResize(EntryArena arena) {
         return mainTable.tryResize(arena);
     }
 
-    void mainForceResize(EntryArena arena) throws Exception {
+    void mainForceResize(EntryArena arena) {
         mainTable.forceResize(arena);
     }
 

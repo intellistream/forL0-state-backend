@@ -74,7 +74,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         );
     }
 
-    // 新增：允许注入 L0 替换策略的构造函数（对齐 HeapStateBackend：仍使用构造器而非 Builder）
+    // 允许注入 L0 替换策略的构造函数
     public ForL0StateMap(MemoryManagerAllocator allocator,
                          int mainTableInitPow2,
                          int l0CacheSizePow2,
@@ -88,27 +88,19 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         this.namespaceSerializer = namespaceSerializer;
         this.stateSerializer = stateSerializer;
         this.l0CacheEnabled = l0CacheEnabled;
+        this.entryArena = new EntryArena(allocator);
+        this.tableCore = new TableCore(
+                allocator,
+                mainTableInitPow2,
+                1.5, // 负载因子阈值语义：entries / bucketCount
+                l0CacheEnabled,
+                l0CacheSizePow2,
+                l0Policy == null ? L0Table.ReplacementPolicy.RANDOM : l0Policy
+        );
+        this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
 
-        try {
-            // 组装核心组件：主表阈值改为 1.5（entries / baseBuckets）
-            this.entryArena = new EntryArena(allocator);
-            this.tableCore = new TableCore(
-                    allocator,
-                    mainTableInitPow2,
-                    1.5, // 新负载因子阈值语义：entries / bucketCount
-                    l0CacheEnabled,
-                    l0CacheSizePow2,
-                    l0Policy == null ? L0Table.ReplacementPolicy.RANDOM : l0Policy
-            );
-            // 初始化序列化打包器
-            this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
-
-            LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}",
-                    1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled);
-
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize ForL0StateMap", e);
-        }
+        LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}",
+                1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled);
     }
 
     @Override
@@ -134,9 +126,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (allocator == null || entryArena == null || tableCore == null) { return null; }
         totalAccesses++;
 
-        // TODO: remove try-catch
         try {
-
             serializerPack.writeKey(key);
             serializerPack.writeNamespace(namespace);
             byte[] kb = serializerPack.keyBuffer();
@@ -160,9 +150,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 return deserializeValueFromArena(addr);
             }
             return null;
-        } catch (Exception e) {
-            LOG.error("Error during get operation for key={}, namespace={}", key, namespace, e);
-            throw new RuntimeException("Get operation failed", e);
+        } catch (IOException e) {
+            LOG.error("Serialization error during get operation for key={}, namespace={}", key, namespace, e);
+            throw new RuntimeException("Get operation failed due to serialization error", e);
         }
     }
 
@@ -197,7 +187,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (key == null || namespace == null) { return false; }
         if (allocator == null || entryArena == null || tableCore == null) { return false; }
         try {
-            serializerPack.writeKey(key); serializerPack.writeNamespace(namespace);
+            serializerPack.writeKey(key);
+            serializerPack.writeNamespace(namespace);
             byte[] kb = serializerPack.keyBuffer();
             int klen = serializerPack.keyLength();
             byte[] nb = serializerPack.namespaceBuffer();
@@ -211,7 +202,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             }
 
             return tableCore.mainGet(hash, tag, kb, klen, nb, nlen, entryArena) > 0;
-        } catch (Exception e) {
+        } catch (IOException e) {
             LOG.error("Error during containsKey operation for key={}, namespace={}", key, namespace, e);
             return false;
         }
@@ -221,8 +212,12 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     public void put(K key, N namespace, S state) {
         if (key == null || namespace == null) { return; }
         if (allocator == null || entryArena == null || tableCore == null) { return; }
+
         try {
-            checkAndTriggerResize();
+            // 检查是否需要全局扩容
+            if (tableCore.mainNeedsResize() && !resizeInProgress) {
+                performResize();
+            }
 
             serializerPack.writeKey(key);
             serializerPack.writeNamespace(namespace);
@@ -236,134 +231,47 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
             short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
             long newAddr = entryArena.putEntry(kb, klen, nb, nlen, vb, vlen);
-            long oldAddr;
 
-            // TODO: remove try-catch
-            try {
+            long oldAddr = tableCore.mainPut(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
+
+            // 如果返回 -1 表示插入失败（扩展桶池满），强制执行扩容并重试
+            if (oldAddr == -1) {
+                performResize();
                 oldAddr = tableCore.mainPut(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
-            } catch (RuntimeException ex) {
-                if (ex.getMessage() != null && ex.getMessage().contains("Table is full - resize needed")) {
-                    performResize();
-                    oldAddr = tableCore.mainPut(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
-                } else throw ex;
             }
 
             if (oldAddr == 0) {
                 size++;
-            } else if (oldAddr != newAddr) {
-                try {
-                    entryArena.removeEntry(oldAddr);
-                } catch (Exception ignore) {}
+            } else if (oldAddr > 0 && oldAddr != newAddr) {
+                entryArena.removeEntry(oldAddr);
             }
 
             if (l0CacheEnabled && tableCore.isL0Enabled() && !resizeInProgress) {
                 tableCore.l0Put(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
             }
 
-        } catch (Exception e) {
-            LOG.error("Error during put operation for key={}, namespace={}", key, namespace, e);
-            throw new RuntimeException("Put operation failed", e);
-        }
-    }
-
-    /**
-     * Checks if resize should be triggered and performs it if necessary.
-     */
-    private void checkAndTriggerResize() throws Exception {
-        if (tableCore.mainNeedsResize() && !resizeInProgress) {
-            performResize();
+        } catch (IOException e) {
+            LOG.error("Serialization error during put operation for key={}, namespace={}", key, namespace, e);
+            throw new RuntimeException("Put operation failed due to serialization error", e);
         }
     }
 
     /**
      * Performs the main table resize with L0 cache coordination.
      */
-    private synchronized void performResize() throws Exception {
-        if (resizeInProgress) {
-            return;
-        }
-        if (!tableCore.mainNeedsResize()) {
+    private synchronized void performResize() {
+        if (resizeInProgress || !tableCore.mainNeedsResize()) {
             return;
         }
         resizeInProgress = true;
-        long resizeStartTime = System.currentTimeMillis();
-        try {
-            LOG.debug("Starting ForL0StateMap resize operation");
-            if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                LOG.debug("Clearing L0 cache before resize");
-                tableCore.l0Clear();
-            }
-            boolean resizePerformed = tableCore.mainTryResize(entryArena);
-            if (resizePerformed) {
-                if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                    tableCore.l0Clear();
-                }
-                long resizeEndTime = System.currentTimeMillis();
-                LOG.debug("ForL0StateMap resize completed successfully in {}ms",
-                         resizeEndTime - resizeStartTime);
-                MainTable.TableStats stats = tableCore.mainStats();
-                LOG.debug("Post-resize stats: {}", stats);
-            }
-        } catch (Exception e) {
-            LOG.error("ForL0StateMap resize failed", e);
-            throw new Exception("Resize operation failed", e);
-        } finally {
-            resizeInProgress = false;
-        }
-    }
-
-    /**
-     * Forces a resize operation for testing purposes.
-     *
-     * @throws Exception if resize fails
-     */
-    public void forceResize() throws Exception {
-        tableCore.mainForceResize(entryArena);
         if (l0CacheEnabled && tableCore.isL0Enabled()) {
             tableCore.l0Clear();
         }
-    }
-
-    /**
-     * Gets detailed statistics about the state map including resize information.
-     */
-    public DetailedStats getDetailedStats() {
-        MainTable.TableStats mainStats = tableCore.mainStats();
-        L0Table.L0TableStats l0Stats = l0CacheEnabled && tableCore.isL0Enabled() ? tableCore.l0Stats() : null;
-
-        return new DetailedStats(
-            totalAccesses,
-            l0Hits,
-            mainTableHits,
-            l0Stats,
-            mainStats,
-            size,
-            resizeInProgress
-        );
-    }
-
-    /**
-     * Detailed statistics including resize information.
-     */
-    public static class DetailedStats extends CacheStats {
-        public final MainTable.TableStats mainTableStats;
-        public final boolean resizeInProgress;
-
-        public DetailedStats(long totalAccesses, long l0Hits, long mainTableHits,
-                           L0Table.L0TableStats l0Stats, MainTable.TableStats mainTableStats,
-                           int totalEntries, boolean resizeInProgress) {
-            super(totalAccesses, l0Hits, mainTableHits, l0Stats, totalEntries);
-            this.mainTableStats = mainTableStats;
-            this.resizeInProgress = resizeInProgress;
+        tableCore.mainTryResize(entryArena);
+        if (l0CacheEnabled && tableCore.isL0Enabled()) {
+            tableCore.l0Clear();
         }
-
-        @Override
-        public String toString() {
-            return String.format(
-                "DetailedStats{%s, mainTable=%s, resizeInProgress=%s}",
-                super.toString(), mainTableStats, resizeInProgress
-            );
-        }
+        resizeInProgress = false;
     }
 
     @Override
@@ -385,9 +293,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (key == null || namespace == null) { return; }
         if (allocator == null || entryArena == null || tableCore == null) { return; }
 
-        // TODO: remove try-catch
         try {
-
             serializerPack.writeKey(key);
             serializerPack.writeNamespace(namespace);
             byte[] kb = serializerPack.keyBuffer();
@@ -403,14 +309,12 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 if (l0CacheEnabled && tableCore.isL0Enabled()) {
                     tableCore.l0Remove(hash, tag, kb, klen, nb, nlen, entryArena);
                 }
-                try {
-                    entryArena.removeEntry(removed);
-                } catch (Exception ignore) {}
+                entryArena.removeEntry(removed);
             }
 
-        } catch (Exception e) {
-            LOG.error("Error during remove operation for key={}, namespace={}", key, namespace, e);
-            throw new RuntimeException("Remove operation failed", e);
+        } catch (IOException e) {
+            LOG.error("Serialization error during remove operation for key={}, namespace={}", key, namespace, e);
+            throw new RuntimeException("Remove operation failed due to serialization error", e);
         }
     }
 
@@ -517,6 +421,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
 
+    @Nonnull
     @Override
     public Iterator<StateEntry<K, N, S>> iterator() {
         // 构造一次性快照列表，避免并发修改影响
@@ -574,7 +479,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                     byte[] nb = entryArena.getNamespaceBytes(entryAddress);
                     if (nb == null) { return; }
                     N n = deserializeNamespace(nb);
-                    if ((n == null && namespace == null) || (n != null && n.equals(namespace))) {
+                    if (n != null && n.equals(namespace)) {
                         byte[] kb = entryArena.getKeyBytes(entryAddress);
                         if (kb != null) {
                             K k = deserializeKey(kb);
@@ -603,6 +508,18 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             }
         } else {
             put(key, namespace, updated);
+        }
+    }
+
+    // ================== For testing access ==================
+
+    /**
+     * Forces a resize operation for testing purposes.
+     */
+    public void forceResize() {
+        tableCore.mainForceResize(entryArena);
+        if (l0CacheEnabled && tableCore.isL0Enabled()) {
+            tableCore.l0Clear();
         }
     }
 
@@ -654,6 +571,48 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 l0Stats,
                 size
         );
+    }
+
+    /**
+     * Gets detailed statistics about the state map including resize information.
+     */
+    public DetailedStats getDetailedStats() {
+        MainTable.TableStats mainStats = tableCore.mainStats();
+        L0Table.L0TableStats l0Stats = l0CacheEnabled && tableCore.isL0Enabled() ? tableCore.l0Stats() : null;
+
+        return new DetailedStats(
+                totalAccesses,
+                l0Hits,
+                mainTableHits,
+                l0Stats,
+                mainStats,
+                size,
+                resizeInProgress
+        );
+    }
+
+    /**
+     * Detailed statistics including resize information.
+     */
+    public static class DetailedStats extends CacheStats {
+        public final MainTable.TableStats mainTableStats;
+        public final boolean resizeInProgress;
+
+        public DetailedStats(long totalAccesses, long l0Hits, long mainTableHits,
+                             L0Table.L0TableStats l0Stats, MainTable.TableStats mainTableStats,
+                             int totalEntries, boolean resizeInProgress) {
+            super(totalAccesses, l0Hits, mainTableHits, l0Stats, totalEntries);
+            this.mainTableStats = mainTableStats;
+            this.resizeInProgress = resizeInProgress;
+        }
+
+        @Override
+        public String toString() {
+            return String.format(
+                    "DetailedStats{%s, mainTable=%s, resizeInProgress=%s}",
+                    super.toString(), mainTableStats, resizeInProgress
+            );
+        }
     }
 
 }

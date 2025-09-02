@@ -1,9 +1,8 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,8 +17,6 @@ import org.apache.flink.runtime.state.heap.utils.HashFunctions;
  * Uses MemorySegment operations instead of Unsafe for better safety and compatibility.
  */
 public class MainTable implements AutoCloseable {
-
-    private static final Logger LOG = LoggerFactory.getLogger(MainTable.class);
 
     // Main table layout constants
     private static final int BUCKET_SIZE = 64;  // 64 bytes per bucket
@@ -39,7 +36,7 @@ public class MainTable implements AutoCloseable {
     private static final int MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET = 255;
 
     // 去掉final，允许resize后直接更新而不使用反射
-    private MemoryManagerAllocator allocator; // 仍保持引用
+    private final MemoryManagerAllocator allocator; // 仍保持引用
     private int bucketCount;
     private List<MemorySegment> memorySegments;
     private ExtensionBucketPool extensionPool;
@@ -108,7 +105,7 @@ public class MainTable implements AutoCloseable {
             return ext;
         }
         needsResize = true;
-        throw new RuntimeException("Table is full - resize needed");
+        return ext;
     }
 
     /** Inline 版本：直接传入序列化后 key / namespace，避免 lambda Matcher 开销 */
@@ -265,9 +262,8 @@ public class MainTable implements AutoCloseable {
      * This method is called by ForL0StateMap when resize conditions are met.
      *
      * @return true if resize was performed, false if not needed
-     * @throws Exception if resize fails
      */
-    public boolean tryResize(EntryArena entryArena) throws Exception {
+    public boolean tryResize(EntryArena entryArena) {
         if (!needsResize) {
             return false;
         }
@@ -279,10 +275,8 @@ public class MainTable implements AutoCloseable {
     /**
      * Forces a resize of the main table regardless of current conditions.
      * Used for testing and manual resize operations.
-     *
-     * @throws Exception if resize fails
      */
-    public void forceResize(EntryArena entryArena) throws Exception {
+    public void forceResize(EntryArena entryArena) {
         needsResize = true;
         resize(entryArena);
     }
@@ -291,63 +285,48 @@ public class MainTable implements AutoCloseable {
      * Resizes the main table to double capacity.
      * This method performs a full rehash of all entries while preserving KVNode addresses.
      *
-     * @throws Exception if resize fails due to memory allocation issues
      */
-    public synchronized void resize(EntryArena entryArena) throws Exception {
+    public synchronized void resize(EntryArena entryArena) {
         if (!needsResize) {
             return;
         }
         if (entryArena == null) {
             throw new IllegalStateException("EntryArena required for correct rehash during resize");
         }
-        int oldBucketCount = bucketCount;
-        LOG.debug("Starting MainTable resize from {} to {} buckets", oldBucketCount, oldBucketCount * 2);
+
         List<ResizeEntry> allEntries = collectAllEntries(entryArena);
-        LOG.debug("Collected {} entries for migration", allEntries.size());
-        int newBucketCount = oldBucketCount * 2;
-        List<MemorySegment> newMemorySegments;
-        ExtensionBucketPool newExtensionPool;
-        int[] newExtensionBucketCounts;
+        int newBucketCount = bucketCount * 2;
+
+        // 分配新的内存资源
+        long newTotalSize = (long) newBucketCount * BUCKET_SIZE;
+
+        List<MemorySegment> newMemorySegments = null;
         try {
-            long newTotalSize = (long) newBucketCount * BUCKET_SIZE;
-            if (newTotalSize > Integer.MAX_VALUE) {
-                throw new Exception("Requested table size exceeds supported limit");
-            }
             newMemorySegments = allocator.allocate((int) newTotalSize);
-            newExtensionPool = new ExtensionBucketPool(allocator, 255);
-            newExtensionBucketCounts = new int[newBucketCount];
-            clearMemorySegments(newMemorySegments);
-        } catch (Exception e) {
-            LOG.error("Failed to allocate memory for resize", e);
-            throw new Exception("Resize failed: could not allocate new table memory", e);
+        } catch (MemoryAllocationException e) {
+            throw new RuntimeException(e);
         }
-        try {
-            migrateEntriesToNewTable(allEntries, newMemorySegments, newExtensionPool, newBucketCount, newExtensionBucketCounts, entryArena);
-        } catch (Exception e) {
-            try {
-                newExtensionPool.close();
-                allocator.release(newMemorySegments);
-            } catch (Exception cleanupEx) {
-                LOG.warn("Cleanup failure after migration error", cleanupEx);
-            }
-            throw new Exception("Resize failed during entry migration", e);
-        }
-        // 交换引用（不再使用反射）
+        ExtensionBucketPool newExtensionPool = new ExtensionBucketPool(allocator, 255);
+        int[] newExtensionBucketCounts = new int[newBucketCount];
+        clearMemorySegments(newMemorySegments);
+
+        // 迁移条目到新表
+        migrateEntriesToNewTable(allEntries, newMemorySegments, newExtensionPool, newBucketCount, newExtensionBucketCounts, entryArena);
+
+        // 更新表引用
         List<MemorySegment> oldSegments = this.memorySegments;
         ExtensionBucketPool oldPool = this.extensionPool;
+
         this.memorySegments = newMemorySegments;
         this.extensionPool = newExtensionPool;
         this.extensionBucketCounts = newExtensionBucketCounts;
         this.bucketCount = newBucketCount;
         needsResize = false;
         maxExtensionBucketsUsed = calculateMaxExtensionBuckets(newExtensionBucketCounts);
-        try {
-            oldPool.close();
-            allocator.release(oldSegments);
-        } catch (Exception e) {
-            LOG.warn("Failed to cleanup old table resources", e);
-        }
-        LOG.info("MainTable resize completed: {} -> {} buckets, {} entries, load factor: {}", oldBucketCount, newBucketCount, totalEntries, getLoadFactor());
+
+        // 清理旧资源
+        oldPool.close();
+        allocator.release(oldSegments);
     }
 
     /**
@@ -430,22 +409,13 @@ public class MainTable implements AutoCloseable {
                                           ExtensionBucketPool newExtensionPool,
                                           int newBucketCount,
                                           int[] newExtensionBucketCounts,
-                                          EntryArena entryArena) throws Exception {
-        int migratedCount = 0;
+                                          EntryArena entryArena){
         for (ResizeEntry entry : entries) {
             int newBucketIndex = entry.keyHash & (newBucketCount - 1);
             if (insertInNewBucketSlots(newMemorySegments, newBucketIndex, entry.tag, entry.entryAddress)) {
-                migratedCount++;
                 continue;
             }
-            if (insertInNewExtensionBucket(newMemorySegments, newExtensionPool, newExtensionBucketCounts, newBucketIndex, entry.tag, entry.entryAddress, entryArena)) {
-                migratedCount++;
-                continue;
-            }
-            throw new Exception("Failed to migrate entry during resize - new table unexpectedly full");
-        }
-        if (migratedCount != entries.size()) {
-            throw new Exception(String.format("Migration incomplete: %d/%d entries migrated", migratedCount, entries.size()));
+            insertInNewExtensionBucket(newMemorySegments, newExtensionPool, newExtensionBucketCounts, newBucketIndex, entry.tag, entry.entryAddress, entryArena);
         }
     }
 
@@ -482,7 +452,7 @@ public class MainTable implements AutoCloseable {
                                                int bucketIndex,
                                                short tag,
                                                long entryAddress,
-                                               EntryArena entryArena) throws Exception {
+                                               EntryArena entryArena) {
         int extensionIndex = tag & 0x3;
         MemorySegment segment = getSegmentForBucket(newMemorySegments, bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex, segment.size());

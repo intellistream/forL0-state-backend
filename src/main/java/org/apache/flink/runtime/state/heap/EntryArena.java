@@ -1,6 +1,7 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import java.util.ArrayList;
@@ -158,36 +159,31 @@ public class EntryArena implements AutoCloseable {
             return 0;
         }
 
-        try {
-            // Decode address: subtract 1 from both slabIndex and offset
-            int slabIndex = (int)(address >>> 32) - 1;
-            int offset = (int)(address & 0xFFFFFFFFL) - 1;
+        // Decode address: subtract 1 from both slabIndex and offset
+        int slabIndex = (int)(address >>> 32) - 1;
+        int offset = (int)(address & 0xFFFFFFFFL) - 1;
 
-            if (slabIndex < 0 || slabIndex >= segments.size()) {
-                return 0;
-            }
-
-            MemorySegment segment = segments.get(slabIndex);
-
-            // Write entry header
-            segment.putInt(offset + KEY_LEN_OFFSET, keyBytes.length);
-            segment.putInt(offset + NAMESPACE_LEN_OFFSET, namespaceBytes.length);
-            segment.putInt(offset + VALUE_LEN_OFFSET, valueBytes.length);
-
-            // Write entry data
-            int dataOffset = offset + ENTRY_HEADER_SIZE;
-            segment.put(dataOffset, keyBytes);
-            dataOffset += keyBytes.length;
-            segment.put(dataOffset, namespaceBytes);
-            dataOffset += namespaceBytes.length;
-            segment.put(dataOffset, valueBytes);
-
-            activeEntries++;
-            return address;
-        } catch (Exception e) {
-            // If write fails, just return 0 - memory will be "lost" but won't crash
+        if (slabIndex < 0 || slabIndex >= segments.size()) {
             return 0;
         }
+
+        MemorySegment segment = segments.get(slabIndex);
+
+        // Write entry header
+        segment.putInt(offset + KEY_LEN_OFFSET, keyBytes.length);
+        segment.putInt(offset + NAMESPACE_LEN_OFFSET, namespaceBytes.length);
+        segment.putInt(offset + VALUE_LEN_OFFSET, valueBytes.length);
+
+        // Write entry data
+        int dataOffset = offset + ENTRY_HEADER_SIZE;
+        segment.put(dataOffset, keyBytes);
+        dataOffset += keyBytes.length;
+        segment.put(dataOffset, namespaceBytes);
+        dataOffset += namespaceBytes.length;
+        segment.put(dataOffset, valueBytes);
+
+        activeEntries++;
+        return address;
     }
 
     /**
@@ -210,29 +206,26 @@ public class EntryArena implements AutoCloseable {
         if (address == 0) {
             return 0;
         }
-        try {
-            int slabIndex = (int)(address >>> 32) - 1;
-            int offset = (int)(address & 0xFFFFFFFFL) - 1;
-            if (slabIndex < 0 || slabIndex >= segments.size()) {
-                return 0;
-            }
-            MemorySegment segment = segments.get(slabIndex);
-            // header
-            segment.putInt(offset + KEY_LEN_OFFSET, keyLen);
-            segment.putInt(offset + NAMESPACE_LEN_OFFSET, namespaceLen);
-            segment.putInt(offset + VALUE_LEN_OFFSET, valueLen);
-            // body
-            int dataOffset = offset + ENTRY_HEADER_SIZE;
-            segment.put(dataOffset, keyBuffer, 0, keyLen);
-            dataOffset += keyLen;
-            segment.put(dataOffset, namespaceBuffer, 0, namespaceLen);
-            dataOffset += namespaceLen;
-            segment.put(dataOffset, valueBuffer, 0, valueLen);
-            activeEntries++;
-            return address;
-        } catch (Exception e) {
+
+        int slabIndex = (int)(address >>> 32) - 1;
+        int offset = (int)(address & 0xFFFFFFFFL) - 1;
+        if (slabIndex < 0 || slabIndex >= segments.size()) {
             return 0;
         }
+        MemorySegment segment = segments.get(slabIndex);
+        // header
+        segment.putInt(offset + KEY_LEN_OFFSET, keyLen);
+        segment.putInt(offset + NAMESPACE_LEN_OFFSET, namespaceLen);
+        segment.putInt(offset + VALUE_LEN_OFFSET, valueLen);
+        // body
+        int dataOffset = offset + ENTRY_HEADER_SIZE;
+        segment.put(dataOffset, keyBuffer, 0, keyLen);
+        dataOffset += keyLen;
+        segment.put(dataOffset, namespaceBuffer, 0, namespaceLen);
+        dataOffset += namespaceLen;
+        segment.put(dataOffset, valueBuffer, 0, valueLen);
+        activeEntries++;
+        return address;
     }
 
     /**
@@ -244,31 +237,27 @@ public class EntryArena implements AutoCloseable {
             return 0;
         }
 
-        try {
-            byte[] keyBytes = getKeyBytes(address);
-            byte[] namespaceBytes = getNamespaceBytes(address);
+        byte[] keyBytes = getKeyBytes(address);
+        byte[] namespaceBytes = getNamespaceBytes(address);
 
-            if (keyBytes == null || namespaceBytes == null) {
-                return 0;
-            }
-
-            // Always allocate new entry
-            long newAddress = putEntry(keyBytes, namespaceBytes, valueBytes);
-
-            if (newAddress != 0) {
-                // Free the old entry into free list
-                int oldSize = getEntrySize(address);
-                if (oldSize > 0) {
-                    addToFreeList(address, oldSize);
-                }
-                // Decrement active entries count
-                activeEntries--;
-            }
-
-            return newAddress;
-        } catch (Exception e) {
+        if (keyBytes == null || namespaceBytes == null) {
             return 0;
         }
+
+        // Always allocate new entry
+        long newAddress = putEntry(keyBytes, namespaceBytes, valueBytes);
+
+        if (newAddress != 0) {
+            // Free the old entry into free list
+            int oldSize = getEntrySize(address);
+            if (oldSize > 0) {
+                addToFreeList(address, oldSize);
+            }
+            // Decrement active entries count
+            activeEntries--;
+        }
+
+        return newAddress;
     }
 
     /**
@@ -279,28 +268,24 @@ public class EntryArena implements AutoCloseable {
             return null;
         }
 
-        try {
-            // Decode address: subtract 1 from both slabIndex and offset
-            int slabIndex = (int)(address >>> 32) - 1;
-            int offset = (int)(address & 0xFFFFFFFFL) - 1;
+        // Decode address: subtract 1 from both slabIndex and offset
+        int slabIndex = (int)(address >>> 32) - 1;
+        int offset = (int)(address & 0xFFFFFFFFL) - 1;
 
-            if (slabIndex < 0 || slabIndex >= segments.size()) {
-                return null;
-            }
-
-            MemorySegment segment = segments.get(slabIndex);
-            int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
-
-            if (keyLen <= 0 || keyLen > 16 * 1024) {
-                return keyLen == 0 ? new byte[0] : null;
-            }
-
-            byte[] keyBytes = new byte[keyLen];
-            segment.get(offset + ENTRY_HEADER_SIZE, keyBytes);
-            return keyBytes;
-        } catch (Exception e) {
+        if (slabIndex < 0 || slabIndex >= segments.size()) {
             return null;
         }
+
+        MemorySegment segment = segments.get(slabIndex);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+
+        if (keyLen <= 0 || keyLen > 16 * 1024) {
+            return keyLen == 0 ? new byte[0] : null;
+        }
+
+        byte[] keyBytes = new byte[keyLen];
+        segment.get(offset + ENTRY_HEADER_SIZE, keyBytes);
+        return keyBytes;
     }
 
     /**
@@ -311,29 +296,25 @@ public class EntryArena implements AutoCloseable {
             return null;
         }
 
-        try {
-            // Decode address: subtract 1 from both slabIndex and offset
-            int slabIndex = (int)(address >>> 32) - 1;
-            int offset = (int)(address & 0xFFFFFFFFL) - 1;
+        // Decode address: subtract 1 from both slabIndex and offset
+        int slabIndex = (int)(address >>> 32) - 1;
+        int offset = (int)(address & 0xFFFFFFFFL) - 1;
 
-            if (slabIndex < 0 || slabIndex >= segments.size()) {
-                return null;
-            }
-
-            MemorySegment segment = segments.get(slabIndex);
-            int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
-            int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
-
-            if (namespaceLen <= 0 || namespaceLen > 16 * 1024) {
-                return namespaceLen == 0 ? new byte[0] : null;
-            }
-
-            byte[] namespaceBytes = new byte[namespaceLen];
-            segment.get(offset + ENTRY_HEADER_SIZE + keyLen, namespaceBytes);
-            return namespaceBytes;
-        } catch (Exception e) {
+        if (slabIndex < 0 || slabIndex >= segments.size()) {
             return null;
         }
+
+        MemorySegment segment = segments.get(slabIndex);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
+
+        if (namespaceLen <= 0 || namespaceLen > 16 * 1024) {
+            return namespaceLen == 0 ? new byte[0] : null;
+        }
+
+        byte[] namespaceBytes = new byte[namespaceLen];
+        segment.get(offset + ENTRY_HEADER_SIZE + keyLen, namespaceBytes);
+        return namespaceBytes;
     }
 
     /**
@@ -344,30 +325,26 @@ public class EntryArena implements AutoCloseable {
             return null;
         }
 
-        try {
-            // Decode address: subtract 1 from both slabIndex and offset
-            int slabIndex = (int)(address >>> 32) - 1;
-            int offset = (int)(address & 0xFFFFFFFFL) - 1;
+        // Decode address: subtract 1 from both slabIndex and offset
+        int slabIndex = (int)(address >>> 32) - 1;
+        int offset = (int)(address & 0xFFFFFFFFL) - 1;
 
-            if (slabIndex < 0 || slabIndex >= segments.size()) {
-                return null;
-            }
-
-            MemorySegment segment = segments.get(slabIndex);
-            int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
-            int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
-            int valueLen = segment.getInt(offset + VALUE_LEN_OFFSET);
-
-            if (valueLen <= 0 || valueLen > 256 * 1024) {
-                return valueLen == 0 ? new byte[0] : null;
-            }
-
-            byte[] valueBytes = new byte[valueLen];
-            segment.get(offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen, valueBytes);
-            return valueBytes;
-        } catch (Exception e) {
+        if (slabIndex < 0 || slabIndex >= segments.size()) {
             return null;
         }
+
+        MemorySegment segment = segments.get(slabIndex);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
+        int valueLen = segment.getInt(offset + VALUE_LEN_OFFSET);
+
+        if (valueLen <= 0 || valueLen > 256 * 1024) {
+            return valueLen == 0 ? new byte[0] : null;
+        }
+
+        byte[] valueBytes = new byte[valueLen];
+        segment.get(offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen, valueBytes);
+        return valueBytes;
     }
 
     /**
@@ -377,16 +354,11 @@ public class EntryArena implements AutoCloseable {
         if (address == 0 || keyBytes == null || namespaceBytes == null) {
             return false;
         }
+        byte[] entryKey = getKeyBytes(address);
+        byte[] entryNamespace = getNamespaceBytes(address);
 
-        try {
-            byte[] entryKey = getKeyBytes(address);
-            byte[] entryNamespace = getNamespaceBytes(address);
-
-            return java.util.Arrays.equals(keyBytes, entryKey) &&
-                   java.util.Arrays.equals(namespaceBytes, entryNamespace);
-        } catch (Exception e) {
-            return false;
-        }
+        return java.util.Arrays.equals(keyBytes, entryKey) &&
+               java.util.Arrays.equals(namespaceBytes, entryNamespace);
     }
 
     /**
@@ -396,29 +368,25 @@ public class EntryArena implements AutoCloseable {
         if (address == 0 || keyBuffer == null || namespaceBuffer == null) {
             return false;
         }
-        try {
-            int slabIndex = (int)(address >>> 32) - 1;
-            int base = (int)(address & 0xFFFFFFFFL) - 1;
-            if (slabIndex < 0 || slabIndex >= segments.size()) {
-                return false;
-            }
-            MemorySegment segment = segments.get(slabIndex);
-            int storedKeyLen = segment.getInt(base + KEY_LEN_OFFSET);
-            int storedNsLen = segment.getInt(base + NAMESPACE_LEN_OFFSET);
-            if (storedKeyLen != keyLen || storedNsLen != namespaceLen) {
-                return false;
-            }
-            int dataOffset = base + ENTRY_HEADER_SIZE;
-            // compare key
-            if (!equalsSegmentBytes(segment, dataOffset, keyBuffer, 0, keyLen)) {
-                return false;
-            }
-            dataOffset += storedKeyLen;
-            // compare namespace
-            return equalsSegmentBytes(segment, dataOffset, namespaceBuffer, 0, namespaceLen);
-        } catch (Exception e) {
+        int slabIndex = (int)(address >>> 32) - 1;
+        int base = (int)(address & 0xFFFFFFFFL) - 1;
+        if (slabIndex < 0 || slabIndex >= segments.size()) {
             return false;
         }
+        MemorySegment segment = segments.get(slabIndex);
+        int storedKeyLen = segment.getInt(base + KEY_LEN_OFFSET);
+        int storedNsLen = segment.getInt(base + NAMESPACE_LEN_OFFSET);
+        if (storedKeyLen != keyLen || storedNsLen != namespaceLen) {
+            return false;
+        }
+        int dataOffset = base + ENTRY_HEADER_SIZE;
+        // compare key
+        if (!equalsSegmentBytes(segment, dataOffset, keyBuffer, 0, keyLen)) {
+            return false;
+        }
+        dataOffset += storedKeyLen;
+        // compare namespace
+        return equalsSegmentBytes(segment, dataOffset, namespaceBuffer, 0, namespaceLen);
     }
 
     private static boolean equalsSegmentBytes(MemorySegment seg, int segOffset, byte[] arr, int arrOff, int len) {
@@ -480,7 +448,7 @@ public class EntryArena implements AutoCloseable {
             currentSegment = largest;
             currentOffset = 0;
             return true;
-        } catch (Exception e) {
+        } catch (MemoryAllocationException e) {
             return false;
         }
     }
@@ -562,25 +530,26 @@ public class EntryArena implements AutoCloseable {
 
     public int getEntrySize(long address) {
         if (closed || address == 0) { return 0; }
-        try {
-            int slabIndex = (int)(address >>> 32) - 1;
-            int offset = (int)(address & 0xFFFFFFFFL) - 1;
-            if (slabIndex < 0 || slabIndex >= segments.size()) { return 0; }
-            MemorySegment seg = segments.get(slabIndex);
-            int k = seg.getInt(offset + KEY_LEN_OFFSET);
-            int n = seg.getInt(offset + NAMESPACE_LEN_OFFSET);
-            int v = seg.getInt(offset + VALUE_LEN_OFFSET);
-            return calculateEntrySize(k, n, v);
-        } catch (Exception e) { return 0; }
+
+        int slabIndex = (int)(address >>> 32) - 1;
+        int offset = (int)(address & 0xFFFFFFFFL) - 1;
+        if (slabIndex < 0 || slabIndex >= segments.size()) { return 0; }
+
+        MemorySegment seg = segments.get(slabIndex);
+        int k = seg.getInt(offset + KEY_LEN_OFFSET);
+        int n = seg.getInt(offset + NAMESPACE_LEN_OFFSET);
+        int v = seg.getInt(offset + VALUE_LEN_OFFSET);
+        return calculateEntrySize(k, n, v);
     }
 
     public void removeEntry(long address) {
         if (closed || address == 0) { return; }
-        try {
-            int sz = getEntrySize(address);
-            if (sz > 0) { addToFreeList(address, sz); }
-            activeEntries--;
-        } catch (Exception ignore) { }
+
+        int sz = getEntrySize(address);
+        if (sz > 0) {
+            addToFreeList(address, sz);
+        }
+        activeEntries--;
     }
 
     /**
@@ -722,17 +691,6 @@ public class EntryArena implements AutoCloseable {
     }
 
     /**
-     * Compacts the arena by attempting to coalesce adjacent free blocks.
-     * Placeholder for potential future enhancement.
-     */
-    public void compact() {
-        // No-op simple placeholder; free list already enables reuse.
-        if (totalFreeBlocks > 0) {
-            // potential defragmentation opportunity exists
-        }
-    }
-
-    /**
      * Statistics class for arena memory usage.
      */
     public static class ArenaStats {
@@ -766,4 +724,3 @@ public class EntryArena implements AutoCloseable {
         }
     }
 }
-

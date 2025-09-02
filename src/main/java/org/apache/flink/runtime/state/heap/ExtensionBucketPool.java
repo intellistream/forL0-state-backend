@@ -382,7 +382,7 @@ public class ExtensionBucketPool implements AutoCloseable {
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         if (allocator != null && memorySegments != null) {
             allocator.release(memorySegments);
         }
