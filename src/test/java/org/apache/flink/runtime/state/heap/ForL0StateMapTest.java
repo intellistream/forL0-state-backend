@@ -434,20 +434,6 @@ class ForL0StateMapTest {
         }
 
         @Test
-        void testForceResizeKeepsData() throws Exception {
-            for (int i = 0; i < 8; i++) {
-                smallMap.put("fk" + i, 1, "fv" + i);
-            }
-            int beforeBuckets = smallMap.getDetailedStats().mainTableStats.bucketCount;
-            smallMap.forceResize();
-            int afterBuckets = smallMap.getDetailedStats().mainTableStats.bucketCount;
-            assertTrue(afterBuckets > beforeBuckets, "forceResize 应扩大 bucket 数");
-            for (int i = 0; i < 8; i++) {
-                assertEquals("fv" + i, smallMap.get("fk" + i, 1));
-            }
-        }
-
-        @Test
         void testMultipleResizesAndDataIntegrity() {
             int targetBucketCount = 8; // 希望触发到 8 buckets
             int i = 0;

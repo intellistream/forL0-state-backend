@@ -4,7 +4,7 @@ import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 
@@ -62,57 +62,111 @@ public class MainTable implements AutoCloseable {
 
     public long get(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
-        long result = searchBucketSlots(bucketIndex, tag, kb, klen, nb, nlen, arena);
-        return result != 0 ? result : searchExtensionBuckets(bucketIndex, tag, kb, klen, nb, nlen, arena);
+        return searchBucketTree(bucketIndex, tag, kb, klen, nb, nlen, arena);
     }
 
     public long put(int keyHash, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
-        long oldPtr = putInBucketSlots(bucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
-        if (oldPtr != -1) {
-            if (oldPtr == 0) {
-                totalEntries++;
-                checkResizeNeeded();
-            }
-            return oldPtr;
+        long result = putInBucketTree(bucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
+
+        if (result == 0) {
+            totalEntries++;
+            checkResizeNeeded();
+        } else if (result == -1) {
+            needsResize = true;
         }
 
-        long ext = putInExtensionBuckets(bucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
-        if (ext != -1) {
-            if (ext == 0) {
-                totalEntries++;
-                checkResizeNeeded();
-            }
-            return ext;
-        }
-
-        needsResize = true;
-        return ext;
+        return result;
     }
 
     public long remove(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
-        long rem = removeFromBucketSlots(bucketIndex, tag, kb, klen, nb, nlen, arena);
-        if (rem != 0) {
-            totalEntries--;
-            return rem;
-        }
-
-        long remExt = removeFromExtensionBuckets(bucketIndex, tag, kb, klen, nb, nlen, arena);
-        if (remExt != 0) {
+        long removed = removeFromBucketTree(bucketIndex, tag, kb, klen, nb, nlen, arena);
+        if (removed > 0) {
             totalEntries--;
         }
-        return remExt;
+        return removed;
     }
 
-    // --- Core slot operations ---
+    /**
+     * 递归搜索桶树，体现桶的统一结构
+     */
+    private long searchBucketTree(int bucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        // 先搜索当前桶的槽位
+        long result = searchBucketSlots(bucketIndex, tag, kb, klen, nb, nlen, arena);
+        if (result != 0) return result;
+
+        // 根据tag确定扩展桶指针索引
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        int extensionIndex = tag & 0x3;  // tag的低2位决定使用哪个扩展指针
+
+        byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
+        if (extensionBucketId != 0) {
+            int extensionBucketIndex = bucketCount + (extensionBucketId & 0xFF) - 1;
+            return searchBucketTree(extensionBucketIndex, tag, kb, klen, nb, nlen, arena);
+        }
+        return 0;
+    }
+
+    private long searchBucketSlots(int bucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (ptr == 0) continue;
+
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            if (slotTag != tag) continue;
+
+            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+                return ptr;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 递归插入到桶树，优先填充当前桶，满了再尝试扩展桶
+     */
+    private long putInBucketTree(int bucketIndex, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        // 先尝试插入当前桶
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        long result = putInSlots(segment, bucketOffset, tag, entryAddress, kb, klen, nb, nlen, arena);
+        if (result != -1) return result;
+
+        // 当前桶满，根据tag确定扩展桶
+        int extensionIndex = tag & 0x3;  // tag的低2位决定使用哪个扩展指针
+        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
+
+        if (extId == 0) {
+            // 分配新的扩展桶
+            extId = allocateExtensionBucket();
+            if (extId == NULL_BUCKET_ID) return -1;
+            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extId);
+            // 只有当前桶是基桶时才更新扩展桶计数
+            if (bucketIndex < bucketCount) {
+                extensionBucketCounts[bucketIndex] += 1;
+                if (extensionBucketCounts[bucketIndex] > maxExtensionBucketsUsed) {
+                    maxExtensionBucketsUsed = extensionBucketCounts[bucketIndex];
+                }
+            }
+        }
+
+        // 递归插入到扩展桶
+        int extensionBucketIndex = bucketCount + (extId & 0xFF) - 1;
+        return putInBucketTree(extensionBucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
+    }
 
     /**
      * Performs a put operation on bucket slots with unified logic.
      * @return 0 for new entry, positive for updated entry address, -1 for full bucket
      */
     private long putInSlots(MemorySegment segment, int bucketOffset, short tag, long entryAddress,
-                           byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+                            byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int empty = -1;
 
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
@@ -140,29 +194,25 @@ public class MainTable implements AutoCloseable {
         return -1; // full
     }
 
-    private long searchBucketSlots(int bucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    /**
+     * 递归从桶树中删除条目，不释放空扩展桶
+     */
+    private long removeFromBucketTree(int bucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+        // 先尝试从当前桶删除
+        long removed = removeFromBucketSlots(bucketIndex, tag, kb, klen, nb, nlen, arena);
+        if (removed != 0) return removed;
+
+        // 根据tag确定扩展桶指针索引
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        int extensionIndex = tag & 0x3;  // tag的低2位决定使用哪个扩展指针
 
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (ptr == 0) continue;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;
-
-            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
-                return ptr;
-            }
+        byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
+        if (extensionBucketId != 0) {
+            int extensionBucketIndex = bucketCount + (extensionBucketId & 0xFF) - 1;
+            removed = removeFromBucketTree(extensionBucketIndex, tag, kb, klen, nb, nlen, arena);
         }
-        return 0;
-    }
-
-    private long putInBucketSlots(int bucketIndex, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        return putInSlots(segment, bucketOffset, tag, entryAddress, kb, klen, nb, nlen, arena);
+        return removed;
     }
 
     private long removeFromBucketSlots(int bucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
@@ -186,166 +236,74 @@ public class MainTable implements AutoCloseable {
         return 0;
     }
 
-    // --- Extension bucket operations ---
+    // --- Iteration support ---
 
-    private long searchExtensionBuckets(int bucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        int extensionIndex = tag & 0x3;
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
-        if (extId == 0) return 0;
-        return searchInExtensionBucket(extId, tag, kb, klen, nb, nlen, arena);
-    }
-
-    private long putInExtensionBuckets(int bucketIndex, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        int extensionIndex = tag & 0x3;
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
-
-        if (extId == 0) {
-            extId = allocateExtensionBucket();
-            if (extId == NULL_BUCKET_ID) return -1;
-            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extId);
-            updateExtensionBucketCount(bucketIndex, 1);
+    public void forEachEntry(EntryVisitor visitor) {
+        // 遍历所有主桶
+        for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
+            visitBucketTree(bucketIndex, visitor);
         }
-
-        return putInExtensionBucket(extId, tag, entryAddress, kb, klen, nb, nlen, arena);
     }
 
-    private long removeFromExtensionBuckets(int bucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        int extensionIndex = tag & 0x3;
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
-        if (extId == 0) return 0;
+    /**
+     * 统一的桶树遍历方法，递归遍历桶及其所有扩展桶
+     */
+    private void visitBucketTree(int bucketIndex, EntryVisitor visitor) {
+        // 访问当前桶的所有槽位
+        visitBucketSlots(bucketIndex, visitor);
 
-        long removed = removeFromExtensionBucket(extId, tag, kb, klen, nb, nlen, arena);
-        if (removed != 0 && isExtensionBucketEmpty(extId)) {
-            freeExtensionBucket(extId);
-            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, (byte)0);
-            updateExtensionBucketCount(bucketIndex, -1);
-        }
-        return removed;
-    }
+        // 如果是主桶，递归访问其扩展桶
+        if (bucketIndex < bucketCount) {
+            MemorySegment segment = getSegmentForBucket(bucketIndex);
+            int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
-    // --- Extension bucket implementation ---
-
-    private long searchInExtensionBucket(byte bucketId, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !extensionBucketInUse[id]) return 0;
-
-        int extensionBucketIndex = bucketCount + (id - 1);
-        MemorySegment segment = getSegmentForBucket(extensionBucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (ptr == 0) continue;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;
-
-            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
-                return ptr;
+            for (int i = 0; i < EXTENSION_POINTERS; i++) {
+                byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + i);
+                if (extensionBucketId != 0) {
+                    int id = extensionBucketId & 0xFF;
+                    if (extensionBucketInUse[id]) {
+                        int extensionBucketIndex = bucketCount + (id - 1);
+                        visitBucketTree(extensionBucketIndex, visitor);
+                    }
+                }
             }
         }
-        return 0;
     }
 
-    private long putInExtensionBucket(byte bucketId, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !extensionBucketInUse[id]) return -1;
-
-        int extensionBucketIndex = bucketCount + (id - 1);
-        MemorySegment segment = getSegmentForBucket(extensionBucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-        return putInSlots(segment, bucketOffset, tag, entryAddress, kb, klen, nb, nlen, arena);
-    }
-
-    private long removeFromExtensionBucket(byte bucketId, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !extensionBucketInUse[id]) return 0;
-
-        int extensionBucketIndex = bucketCount + (id - 1);
-        MemorySegment segment = getSegmentForBucket(extensionBucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
+    private void visitBucketSlots(int bucketIndex, EntryVisitor visitor) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
             int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (ptr == 0) continue;
-
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;
-
-            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
-                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short)0);
-                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
-                return ptr;
-            }
-        }
-        return 0;
-    }
-
-    private boolean isExtensionBucketEmpty(byte bucketId) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !extensionBucketInUse[id]) return true;
-
-        int extensionBucketIndex = bucketCount + (id - 1);
-        MemorySegment segment = getSegmentForBucket(extensionBucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
             long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (slotPointer != 0) return false;
+            if (slotPointer != 0) {
+                visitor.visit(slotPointer, bucketIndex, slotTag);
+            }
         }
-        return true;
     }
 
     // --- Extension bucket management ---
 
     private byte allocateExtensionBucket() {
-        for (int id = nextFreeExtensionBucket; id <= maxExtensionBuckets; id++) {
+        for (int i = 0; i < maxExtensionBuckets; i++) {
+            int id = (nextFreeExtensionBucket - 1 + i) % maxExtensionBuckets + 1;
             if (!extensionBucketInUse[id]) {
                 extensionBucketInUse[id] = true;
-                updateNextFreeExtensionBucketId(id + 1);
+
+                // 更新 nextFreeExtensionBucket
+                for (int nextId = id + 1; nextId <= maxExtensionBuckets; nextId++) {
+                    if (!extensionBucketInUse[nextId]) {
+                        nextFreeExtensionBucket = nextId;
                 return (byte) id;
             }
         }
-
-        for (int id = 1; id < nextFreeExtensionBucket; id++) {
-            if (!extensionBucketInUse[id]) {
-                extensionBucketInUse[id] = true;
-                updateNextFreeExtensionBucketId(id + 1);
+                nextFreeExtensionBucket = maxExtensionBuckets + 1;
                 return (byte) id;
             }
         }
         return NULL_BUCKET_ID;
-    }
-
-    private void freeExtensionBucket(byte bucketId) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || id > maxExtensionBuckets) return;
-
-        if (extensionBucketInUse[id]) {
-            extensionBucketInUse[id] = false;
-            if (id < nextFreeExtensionBucket) {
-                nextFreeExtensionBucket = id;
-            }
-        }
-    }
-
-    private void updateNextFreeExtensionBucketId(int start) {
-        for (int id = Math.max(1, start); id <= maxExtensionBuckets; id++) {
-            if (!extensionBucketInUse[id]) {
-                nextFreeExtensionBucket = id;
-                return;
-            }
-        }
-        nextFreeExtensionBucket = maxExtensionBuckets + 1;
     }
 
     // --- Public accessors ---
@@ -375,15 +333,9 @@ public class MainTable implements AutoCloseable {
         return true;
     }
 
-    public void forceResize(EntryArena entryArena) {
-        needsResize = true;
-        resize(entryArena);
-    }
-
     public synchronized void resize(EntryArena entryArena) {
         if (!needsResize || entryArena == null) return;
 
-        List<ResizeEntry> allEntries = collectAllEntries(entryArena);
         int newBucketCount = bucketCount * 2;
         long newTotalSize = (long) (newBucketCount + maxExtensionBuckets) * BUCKET_SIZE;
 
@@ -397,32 +349,132 @@ public class MainTable implements AutoCloseable {
         int[] newExtensionBucketCounts = new int[newBucketCount];
         clearMemorySegments(newMemorySegments);
         clearExtensionBuckets();
-        migrateEntriesToNewTable(allEntries, newMemorySegments, newBucketCount, newExtensionBucketCounts, entryArena);
+
+        // 直接迁移条目，无需中间集合
+        migrateAllEntriesToNewTable(newMemorySegments, newBucketCount, newExtensionBucketCounts, entryArena);
 
         List<MemorySegment> oldSegments = this.memorySegments;
         this.memorySegments = newMemorySegments;
         this.extensionBucketCounts = newExtensionBucketCounts;
         this.bucketCount = newBucketCount;
         needsResize = false;
-        maxExtensionBucketsUsed = calculateMaxExtensionBuckets(newExtensionBucketCounts);
+        maxExtensionBucketsUsed = Arrays.stream(extensionBucketCounts).max().orElse(0);
 
         allocator.release(oldSegments);
     }
 
-    // --- Iteration support ---
+    private void checkResizeNeeded() {
+        if (getLoadFactor() >= loadFactorThreshold || getMaxExtensionBucketsUsed() >= MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET) {
+            needsResize = true;
+        }
+    }
 
-    public void forEachEntry(EntryVisitor visitor) {
+    // --- Resize implementation ---
+
+    /**
+     * 优化的直接迁移方法，消除中间数据结构
+     * 在遍历过程中直接将条目插入新表，避免额外的内存分配
+     */
+    private void migrateAllEntriesToNewTable(List<MemorySegment> newMemorySegments, int newBucketCount,
+                                             int[] newExtensionBucketCounts, EntryArena entryArena) {
+        // 遍历所有基桶，每个基桶会递归遍历其扩展子树
         for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
-            visitBucketSlots(bucketIndex, visitor);
-            visitExtensionBuckets(bucketIndex, visitor);
+            migrateBucketTree(bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketCounts, entryArena);
         }
     }
 
-    public void visitBucketSlots(byte bucketId, EntryVisitor visitor, int baseBucketIndex) {
-        if (bucketId != NULL_BUCKET_ID) {
-            visitExtensionBucket(bucketId, visitor, baseBucketIndex);
+    /**
+     * 递归迁移一个桶及其所有扩展桶的条目
+     * 体现桶的树形结构：基桶是根节点，扩展桶是子节点
+     */
+    private void migrateBucketTree(int bucketIndex, List<MemorySegment> newMemorySegments, int newBucketCount,
+                                   int[] newExtensionBucketCounts, EntryArena entryArena) {
+        // 迁移当前桶的所有槽位数据
+        migrateBucketSlots(bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketCounts, entryArena);
+
+        // 如果是基桶，递归迁移所有扩展桶的数据
+        if (bucketIndex < bucketCount) {
+            MemorySegment segment = getSegmentForBucket(bucketIndex);
+            int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+
+            // 遍历4个扩展桶指针
+            for (int i = 0; i < EXTENSION_POINTERS; i++) {
+                byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + i);
+                if (extensionBucketId != 0) {
+                    // 递归迁移扩展桶及其可能的子扩展桶
+                    int extensionBucketIndex = bucketCount + (extensionBucketId & 0xFF) - 1;
+                    migrateBucketTree(extensionBucketIndex, newMemorySegments, newBucketCount, newExtensionBucketCounts, entryArena);
+                }
+            }
         }
     }
+
+    private void migrateBucketSlots(int bucketIndex, List<MemorySegment> newMemorySegments, int newBucketCount,
+                                    int[] newExtensionBucketCounts, EntryArena entryArena) {
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long entryAddress = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+            if (entryAddress == 0) continue;
+
+            short tag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+
+            // 获取key和namespace信息用于重新哈希
+            byte[] keyBytes = entryArena.getKeyBytes(entryAddress);
+            byte[] nsBytes = entryArena.getNamespaceBytes(entryAddress);
+            if (keyBytes == null || nsBytes == null) continue;
+
+            // 重新计算哈希值并确定新桶位置
+            int fullHash = HashFunctions.jenkinsHashCombined(keyBytes, keyBytes.length, nsBytes, nsBytes.length);
+            int newBucketIndex = fullHash & (newBucketCount - 1);
+
+            // 复用现有的递归插入逻辑，支持多级扩展桶
+            putInNewTable(newMemorySegments, newBucketCount, newBucketIndex, tag, entryAddress, newExtensionBucketCounts);
+        }
+    }
+
+    private void putInNewTable(List<MemorySegment> newMemorySegments, int newBucketCount, int bucketIndex,
+                              short tag, long entryAddress, int[] newExtensionBucketCounts) {
+        // 先尝试插入当前桶
+        MemorySegment segment = getSegmentForBucket(newMemorySegments, bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex, segment.size());
+
+        // 查找空槽位直接插入
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
+
+            if (ptr == 0) {
+                // 找到空槽位，直接插入（新表中不需要检查重复）
+                segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+                return;
+            }
+        }
+
+        // 当前桶满，根据tag确定扩展桶 - 复用putInBucketTree的逻辑
+        int extensionIndex = tag & 0x3;
+        byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
+
+        if (extId == 0) {
+            // 分配新的扩展桶
+            extId = allocateExtensionBucket();
+            if (extId == NULL_BUCKET_ID) return; // 无法分配，跳过
+            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extId);
+
+            // 更新扩展桶计数（只对基桶计数）
+            if (bucketIndex < newBucketCount) {
+                newExtensionBucketCounts[bucketIndex]++;
+            }
+        }
+
+        // 递归插入到扩展桶
+        int extensionBucketIndex = newBucketCount + (extId & 0xFF) - 1;
+        putInNewTable(newMemorySegments, newBucketCount, extensionBucketIndex, tag, entryAddress, newExtensionBucketCounts);
+    }
+
 
     // --- Helper methods ---
 
@@ -477,217 +529,6 @@ public class MainTable implements AutoCloseable {
             if (extensionBucketInUse[i]) count++;
         }
         return count;
-    }
-
-    private void visitExtensionBucket(byte bucketId, EntryVisitor visitor, int bucketIndex) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !extensionBucketInUse[id]) return;
-
-        int extensionBucketIndex = bucketCount + (id - 1);
-        MemorySegment segment = getSegmentForBucket(extensionBucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (slotPointer != 0) {
-                visitor.visit(slotPointer, bucketIndex, slotTag);
-            }
-        }
-    }
-
-    private void checkResizeNeeded() {
-        if (getLoadFactor() >= loadFactorThreshold || getMaxExtensionBucketsUsed() >= MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET) {
-            needsResize = true;
-        }
-    }
-
-    private void updateExtensionBucketCount(int bucketIndex, int delta) {
-        extensionBucketCounts[bucketIndex] += delta;
-        if (extensionBucketCounts[bucketIndex] > maxExtensionBucketsUsed) {
-            maxExtensionBucketsUsed = extensionBucketCounts[bucketIndex];
-        }
-    }
-
-    private void visitBucketSlots(int bucketIndex, EntryVisitor visitor) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (slotPointer != 0) {
-                visitor.visit(slotPointer, bucketIndex, slotTag);
-            }
-        }
-    }
-
-    private void visitExtensionBuckets(int bucketIndex, EntryVisitor visitor) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        for (int i = 0; i < EXTENSION_POINTERS; i++) {
-            byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + i);
-            if (extensionBucketId != 0) {
-                visitExtensionBucket(extensionBucketId, visitor, bucketIndex);
-            }
-        }
-    }
-
-    private int calculateMaxExtensionBuckets(int[] extensionBucketCounts) {
-        int max = 0;
-        for (int count : extensionBucketCounts) {
-            if (count > max) {
-                max = count;
-            }
-        }
-        return max;
-    }
-
-    // --- Resize implementation ---
-
-    private static class ResizeEntry {
-        final long entryAddress;
-        final int keyHash;
-        final short tag;
-
-        ResizeEntry(long entryAddress, int keyHash, short tag) {
-            this.entryAddress = entryAddress;
-            this.keyHash = keyHash;
-            this.tag = tag;
-        }
-    }
-
-    private List<ResizeEntry> collectAllEntries(EntryArena entryArena) {
-        List<ResizeEntry> entries = new ArrayList<>();
-        for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
-            collectBucketSlots(bucketIndex, entries, entryArena);
-            collectExtensionBuckets(bucketIndex, entries, entryArena);
-        }
-        return entries;
-    }
-
-    private void collectBucketSlots(int bucketIndex, List<ResizeEntry> entries, EntryArena entryArena) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (slotPointer != 0) {
-                addResizeEntry(entryArena, entries, slotPointer);
-            }
-        }
-    }
-
-    private void collectExtensionBuckets(int bucketIndex, List<ResizeEntry> entries, EntryArena entryArena) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        for (int i = 0; i < EXTENSION_POINTERS; i++) {
-            byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + i);
-            if (extensionBucketId != 0) {
-                collectFromExtensionBucket(bucketIndex, extensionBucketId, entryAddress -> {
-                    addResizeEntry(entryArena, entries, entryAddress);
-                });
-            }
-        }
-    }
-
-    private void addResizeEntry(EntryArena entryArena, List<ResizeEntry> entries, long entryAddress) {
-        if (entryArena == null) return;
-
-        try {
-            byte[] keyBytes = entryArena.getKeyBytes(entryAddress);
-            byte[] nsBytes = entryArena.getNamespaceBytes(entryAddress);
-            if (keyBytes == null || nsBytes == null) return;
-
-            int fullHash = HashFunctions.jenkinsHashCombined(keyBytes, keyBytes.length, nsBytes, nsBytes.length);
-            short tag = HashFunctions.murmur16(keyBytes, keyBytes.length, nsBytes, nsBytes.length);
-            entries.add(new ResizeEntry(entryAddress, fullHash, tag));
-        } catch (Exception ignore) {
-        }
-    }
-
-    private void collectFromExtensionBucket(int bucketIndex, byte bucketId, java.util.function.Consumer<Long> collector) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !extensionBucketInUse[id]) return;
-
-        int extensionBucketIndex = bucketCount + (id - 1);
-        MemorySegment segment = getSegmentForBucket(extensionBucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (slotPointer != 0) {
-                collector.accept(slotPointer);
-            }
-        }
-    }
-
-    private void migrateEntriesToNewTable(List<ResizeEntry> entries, List<MemorySegment> newMemorySegments,
-                                          int newBucketCount, int[] newExtensionBucketCounts, EntryArena entryArena) {
-        for (ResizeEntry entry : entries) {
-            int newBucketIndex = entry.keyHash & (newBucketCount - 1);
-            if (insertInNewBucketSlots(newMemorySegments, newBucketIndex, entry.tag, entry.entryAddress)) {
-                continue;
-            }
-            insertInNewExtensionBucket(newMemorySegments, newExtensionBucketCounts, newBucketIndex, entry.tag, entry.entryAddress, entryArena);
-        }
-    }
-
-    private boolean insertInNewBucketSlots(List<MemorySegment> newMemorySegments, int bucketIndex, short tag, long entryAddress) {
-        MemorySegment segment = getSegmentForBucket(newMemorySegments, bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex, segment.size());
-
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (slotPointer == 0) {
-                segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
-                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean insertInNewExtensionBucket(List<MemorySegment> newMemorySegments, int[] newExtensionBucketCounts,
-                                               int bucketIndex, short tag, long entryAddress, EntryArena entryArena) {
-        int extensionIndex = tag & 0x3;
-        MemorySegment segment = getSegmentForBucket(newMemorySegments, bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex, segment.size());
-
-        byte extensionBucketId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
-        if (extensionBucketId == 0) {
-            extensionBucketId = allocateExtensionBucket();
-            if (extensionBucketId == NULL_BUCKET_ID) return false;
-            segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extensionBucketId);
-            newExtensionBucketCounts[bucketIndex]++;
-        }
-
-        byte[] keyBytes = entryArena.getKeyBytes(entryAddress);
-        byte[] nsBytes = entryArena.getNamespaceBytes(entryAddress);
-        if (keyBytes == null || nsBytes == null) return false;
-
-        long result = putInNewTableExtensionBucket(newMemorySegments, extensionBucketId, tag, entryAddress, keyBytes, keyBytes.length, nsBytes, nsBytes.length, entryArena);
-        return result != -1;
-    }
-
-    private long putInNewTableExtensionBucket(List<MemorySegment> newMemorySegments, byte bucketId, short tag, long entryAddress,
-                                             byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        int id = bucketId & 0xFF;
-        if (id == 0 || !extensionBucketInUse[id]) return -1;
-
-        int newBucketCount = bucketCount * 2;
-        int extensionBucketIndex = newBucketCount + (id - 1);
-        MemorySegment segment = getSegmentForBucket(newMemorySegments, extensionBucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(extensionBucketIndex, segment.size());
-
-        return putInSlots(segment, bucketOffset, tag, entryAddress, kb, klen, nb, nlen, arena);
     }
 
     @FunctionalInterface

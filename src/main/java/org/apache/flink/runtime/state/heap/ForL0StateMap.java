@@ -1,6 +1,7 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
@@ -277,12 +278,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public S putAndGetOld(K key, N namespace, S state) {
         if (key == null || namespace == null) {
-            // For compatibility, return null for null key/namespace instead of throwing exception
             return null;
         }
-        // Get old value first
         S oldValue = get(key, namespace);
-        // Put new value
         put(key, namespace, state);
 
         return oldValue;
@@ -323,20 +321,10 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (key == null || namespace == null) {
             return null;
         }
+        S oldValue = get(key, namespace);
+        remove(key, namespace);
 
-        try {
-            // Get old value first
-            S oldValue = get(key, namespace);
-
-            // Remove the entry
-            remove(key, namespace);
-
-            return oldValue;
-
-        } catch (Exception e) {
-            LOG.error("Error during removeAndGetOld operation for key={}, namespace={}", key, namespace, e);
-            throw new RuntimeException("RemoveAndGetOld operation failed", e);
-        }
+        return oldValue;
     }
 
     @Override
@@ -345,32 +333,28 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             return 0;
         }
         int[] cnt = new int[1];
-        try {
-            tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
-                try {
-                    byte[] nb = entryArena.getNamespaceBytes(entryAddress);
-                    if (nb == null) { return; }
-                    N n = deserializeNamespace(nb);
-                    if ((namespace == null && n == null) || (namespace != null && namespace.equals(n))) {
-                        cnt[0]++;
-                    }
-                } catch (Exception ignore) {
+        tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
+            try {
+                byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                if (nb == null) { return; }
+                N n = deserializeNamespace(nb);
+                if ((namespace == null && n == null) || (namespace != null && namespace.equals(n))) {
+                    cnt[0]++;
                 }
-            });
-        } catch (Exception e) {
-            // fall through
-        }
+            } catch (IOException ignore) {
+            }
+        });
         return cnt[0];
     }
 
     // 反序列化辅助：供迭代与 sizeOfNamespace 使用
     private K deserializeKey(byte[] keyBytes) throws IOException {
-        org.apache.flink.core.memory.DataInputDeserializer in = new org.apache.flink.core.memory.DataInputDeserializer(keyBytes);
+        DataInputDeserializer in = new DataInputDeserializer(keyBytes);
         return keySerializer.deserialize(in);
     }
 
     private N deserializeNamespace(byte[] namespaceBytes) throws IOException {
-        org.apache.flink.core.memory.DataInputDeserializer in = new org.apache.flink.core.memory.DataInputDeserializer(namespaceBytes);
+        DataInputDeserializer in = new DataInputDeserializer(namespaceBytes);
         return namespaceSerializer.deserialize(in);
     }
 
@@ -378,7 +362,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (valueBytes == null || valueBytes.length == 0) {
             return null;
         }
-        org.apache.flink.core.memory.DataInputDeserializer in = new org.apache.flink.core.memory.DataInputDeserializer(valueBytes);
+        DataInputDeserializer in = new DataInputDeserializer(valueBytes);
         return stateSerializer.deserialize(in);
     }
 
@@ -426,38 +410,31 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     public Iterator<StateEntry<K, N, S>> iterator() {
         // 构造一次性快照列表，避免并发修改影响
         ArrayList<StateEntry<K, N, S>> list = new ArrayList<>(Math.max(16, size));
-        try {
-            if (entryArena == null || tableCore == null) {
-                return list.iterator();
-            }
-            tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
-                try {
-                    byte[] kb = entryArena.getKeyBytes(entryAddress);
-                    byte[] nb = entryArena.getNamespaceBytes(entryAddress);
-                    byte[] vb = entryArena.getValueBytes(entryAddress);
-                    if (kb == null || nb == null) {
-                        return; // skip entries with missing key or namespace
-                    }
-                    K k = deserializeKey(kb);
-                    N n = deserializeNamespace(nb);
-                    // Handle null/empty values correctly for checkpoint compatibility
-                    S v = null;
-                    if (vb != null && vb.length > 0) {
-                        v = deserializeValue(vb);
-                    }
-                    // Only include entries with non-null values in the snapshot
-                    // This matches Flink's standard behavior for checkpoints
-                    if (v != null) {
-                        list.add(new StateEntry.SimpleStateEntry<>(k, n, v));
-                    }
-                } catch (Exception e) {
-                    // Skip broken entries but log the issue
-                    LOG.debug("Skipping corrupted entry during iteration", e);
-                }
-            });
-        } catch (Exception e) {
-            LOG.warn("Error during ForL0StateMap iteration, returning partial results", e);
+        if (entryArena == null || tableCore == null) {
+            return list.iterator();
         }
+        tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
+            try {
+                byte[] kb = entryArena.getKeyBytes(entryAddress);
+                byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                byte[] vb = entryArena.getValueBytes(entryAddress);
+                if (kb == null || nb == null) {
+                    return; // skip entries with missing key or namespace
+                }
+                K k = deserializeKey(kb);
+                N n = deserializeNamespace(nb);
+                S v = null;
+                if (vb != null && vb.length > 0) {
+                    v = deserializeValue(vb);
+                }
+                if (v != null) {
+                    list.add(new StateEntry.SimpleStateEntry<>(k, n, v));
+                }
+            } catch (Exception e) {
+                LOG.debug("Skipping corrupted entry during iteration", e);
+            }
+        });
+
         return list.iterator();
     }
 
@@ -473,25 +450,21 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             return Stream.empty();
         }
         java.util.ArrayList<K> keys = new java.util.ArrayList<>();
-        try {
-            tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
-                try {
-                    byte[] nb = entryArena.getNamespaceBytes(entryAddress);
-                    if (nb == null) { return; }
-                    N n = deserializeNamespace(nb);
-                    if (n != null && n.equals(namespace)) {
-                        byte[] kb = entryArena.getKeyBytes(entryAddress);
-                        if (kb != null) {
-                            K k = deserializeKey(kb);
-                            keys.add(k);
-                        }
+        tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
+            try {
+                byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                if (nb == null) { return; }
+                N n = deserializeNamespace(nb);
+                if (n != null && n.equals(namespace)) {
+                    byte[] kb = entryArena.getKeyBytes(entryAddress);
+                    if (kb != null) {
+                        K k = deserializeKey(kb);
+                        keys.add(k);
                     }
-                } catch (Exception ignore) {
                 }
-            });
-        } catch (Exception e) {
-            return keys.stream();
-        }
+            } catch (Exception ignore) {
+            }
+        });
         return keys.stream();
     }
 
@@ -512,16 +485,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     // ================== For testing access ==================
-
-    /**
-     * Forces a resize operation for testing purposes.
-     */
-    public void forceResize() {
-        tableCore.mainForceResize(entryArena);
-        if (l0CacheEnabled && tableCore.isL0Enabled()) {
-            tableCore.l0Clear();
-        }
-    }
 
     /**
      * Cache statistics for monitoring and debugging.

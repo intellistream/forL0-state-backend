@@ -72,10 +72,6 @@ class TableCore implements AutoCloseable {
         return mainTable.tryResize(arena);
     }
 
-    void mainForceResize(EntryArena arena) {
-        mainTable.forceResize(arena);
-    }
-
     void mainForEachEntry(MainTable.EntryVisitor visitor) {
         mainTable.forEachEntry(visitor);
     }
