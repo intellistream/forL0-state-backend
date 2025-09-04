@@ -609,11 +609,20 @@ class EntryArenaTest {
             assertTrue(updatedAddress > 0);
 
             EntryArena.ArenaStats afterUpdate = freeListArena.getStats();
-            assertEquals(1, afterUpdate.activeAllocations);
-            assertTrue(afterUpdate.freeBlocks > 0, "Should have freed the old entry");
-            assertTrue(afterUpdate.totalFreed > 0, "Should track freed memory from update");
 
-            // Verify updated entry
+            if (updatedAddress == originalAddress) {
+                // In-place update occurred
+                assertEquals(1, afterUpdate.activeAllocations, "Should still have 1 active allocation for in-place update");
+                assertEquals(0, afterUpdate.freeBlocks, "Should have no free blocks for in-place update");
+                assertEquals(0, afterUpdate.totalFreed, "Should have no freed memory for in-place update");
+            } else {
+                // Reallocation occurred
+                assertEquals(1, afterUpdate.activeAllocations, "Should still have 1 active allocation after reallocation");
+                assertTrue(afterUpdate.freeBlocks > 0, "Should have freed the old entry during reallocation");
+                assertTrue(afterUpdate.totalFreed > 0, "Should track freed memory from reallocation");
+            }
+
+            // Verify updated entry (should work in both cases)
             assertArrayEquals(keyBytes, freeListArena.getKeyBytes(updatedAddress));
             assertArrayEquals(namespaceBytes, freeListArena.getNamespaceBytes(updatedAddress));
             assertArrayEquals(newValue, freeListArena.getValueBytes(updatedAddress));

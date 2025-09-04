@@ -12,7 +12,6 @@ import java.util.List;
  * Entry Arena manages the actual storage of key-value entries.
  * Stores serialized key/namespace/value byte arrays directly in off-heap memory.
  * Entry format: [keyLen(4B)][namespaceLen(4B)][valueLen(4B)][key][namespace][value]
- *
  * Simplified to single allocation strategy: FREE_LIST with size classes for reuse.
  * Safe implementation: uses Flink MemorySegment instead of Unsafe operations.
  */
@@ -192,13 +191,21 @@ public class EntryArena implements AutoCloseable {
 
     /**
      * Updates an existing entry's value.
-     * Always allocates new entry and frees the old one into free list.
+     * First attempts in-place update if the new value fits in existing space,
+     * otherwise allocates new entry and frees the old one into free list.
      */
     public long updateEntry(long address, byte[] valueBytes) {
         if (closed || address == 0 || valueBytes == null) {
             return 0;
         }
 
+        // First try in-place update
+        if (updateValueInPlace(address, valueBytes)) {
+            // In-place update succeeded, return the same address
+            return address;
+        }
+
+        // In-place update failed, fall back to traditional approach
         byte[] keyBytes = getKeyBytes(address);
         byte[] namespaceBytes = getNamespaceBytes(address);
 
@@ -206,7 +213,7 @@ public class EntryArena implements AutoCloseable {
             return 0;
         }
 
-        // Always allocate new entry
+        // Allocate new entry
         long newAddress = putEntry(keyBytes, namespaceBytes, valueBytes);
 
         if (newAddress != 0) {
@@ -220,6 +227,39 @@ public class EntryArena implements AutoCloseable {
         }
 
         return newAddress;
+    }
+
+    /**
+     * Attempts to update the value in place if the new value fits in the existing space.
+     * Returns true if successful, false if a new allocation is needed.
+     */
+    public boolean updateValueInPlace(long address, byte[] newValueBytes) {
+        if (closed || address == 0 || newValueBytes == null) {
+            return false;
+        }
+
+        AddressInfo info = resolveAddress(address);
+        if (info == null) {
+            return false;
+        }
+
+        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
+        int namespaceLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
+        int currentValueLen = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
+
+        // Check if new value fits in available space
+        if (newValueBytes.length <= currentValueLen) {
+            // Update value length
+            info.segment.putInt(info.offset + VALUE_LEN_OFFSET, newValueBytes.length);
+
+            // Update value data
+            int valueOffset = info.offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen;
+            info.segment.put(valueOffset, newValueBytes, 0, newValueBytes.length);
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -286,16 +326,17 @@ public class EntryArena implements AutoCloseable {
 
     /**
      * Checks if key and namespace match for given entry.
+     *
+     * @deprecated Use {@link #matchesKey(long, byte[], int, byte[], int)} instead for better performance.
+     *             This method creates temporary arrays which impacts performance.
      */
+    @Deprecated
     public boolean matchesKey(long address, byte[] keyBytes, byte[] namespaceBytes) {
         if (address == 0 || keyBytes == null || namespaceBytes == null) {
             return false;
         }
-        byte[] entryKey = getKeyBytes(address);
-        byte[] entryNamespace = getNamespaceBytes(address);
-
-        return java.util.Arrays.equals(keyBytes, entryKey) &&
-               java.util.Arrays.equals(namespaceBytes, entryNamespace);
+        // Delegate to the zero-copy version for better performance
+        return matchesKey(address, keyBytes, keyBytes.length, namespaceBytes, namespaceBytes.length);
     }
 
     /**
@@ -314,34 +355,34 @@ public class EntryArena implements AutoCloseable {
         }
         int dataOffset = info.offset + ENTRY_HEADER_SIZE;
         // compare key
-        if (!equalsSegmentBytes(info.segment, dataOffset, keyBuffer, 0, keyLen)) {
+        if (!equalsSegmentBytes(info.segment, dataOffset, keyBuffer, keyLen)) {
             return false;
         }
         dataOffset += storedKeyLen;
         // compare namespace
-        return equalsSegmentBytes(info.segment, dataOffset, namespaceBuffer, 0, namespaceLen);
+        return equalsSegmentBytes(info.segment, dataOffset, namespaceBuffer, namespaceLen);
     }
 
-    private static boolean equalsSegmentBytes(MemorySegment seg, int segOffset, byte[] arr, int arrOff, int len) {
+    private static boolean equalsSegmentBytes(MemorySegment seg, int segOffset, byte[] arr, int len) {
         int i = 0;
         // compare 8 bytes at a time when possible
         int limit8 = len & ~7;
         for (; i < limit8; i += 8) {
             long a = seg.getLong(segOffset + i);
-            long b = (((long)arr[arrOff + i] & 0xFF)      ) |
-                     (((long)arr[arrOff + i + 1] & 0xFF) << 8) |
-                     (((long)arr[arrOff + i + 2] & 0xFF) << 16) |
-                     (((long)arr[arrOff + i + 3] & 0xFF) << 24) |
-                     (((long)arr[arrOff + i + 4] & 0xFF) << 32) |
-                     (((long)arr[arrOff + i + 5] & 0xFF) << 40) |
-                     (((long)arr[arrOff + i + 6] & 0xFF) << 48) |
-                     (((long)arr[arrOff + i + 7] & 0xFF) << 56);
+            long b = (((long)arr[i] & 0xFF)      ) |
+                     (((long)arr[i + 1] & 0xFF) << 8) |
+                     (((long)arr[i + 2] & 0xFF) << 16) |
+                     (((long)arr[i + 3] & 0xFF) << 24) |
+                     (((long)arr[i + 4] & 0xFF) << 32) |
+                     (((long)arr[i + 5] & 0xFF) << 40) |
+                     (((long)arr[i + 6] & 0xFF) << 48) |
+                     (((long)arr[i + 7] & 0xFF) << 56);
             if (a != b) {
                 return false;
             }
         }
         for (; i < len; i++) {
-            if (seg.get(segOffset + i) != arr[arrOff + i]) {
+            if (seg.get(segOffset + i) != arr[i]) {
                 return false;
             }
         }

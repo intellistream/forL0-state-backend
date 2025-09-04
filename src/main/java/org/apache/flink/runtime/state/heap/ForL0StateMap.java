@@ -29,8 +29,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // Core storage components
     private final MemoryManagerAllocator allocator;
     private final EntryArena entryArena;
-    // 统一通过 TableCore 访问表
-    private final TableCore tableCore;
+    // 直接管理表实例，移除 TableCore 中间层
+    private final MainTable mainTable;
+    private final L0Table l0Table; // nullable，仅在启用L0缓存时创建
 
     // 统一序列化打包器
     private final SerializerPack<K, N, S> serializerPack;
@@ -90,14 +91,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         this.stateSerializer = stateSerializer;
         this.l0CacheEnabled = l0CacheEnabled;
         this.entryArena = new EntryArena(allocator);
-        this.tableCore = new TableCore(
-                allocator,
-                mainTableInitPow2,
-                1.5, // 负载因子阈值语义：entries / bucketCount
-                l0CacheEnabled,
-                l0CacheSizePow2,
-                l0Policy == null ? L0Table.ReplacementPolicy.RANDOM : l0Policy
-        );
+        // 分别创建 MainTable 和 L0Table，移除 TableCore 中间层
+        this.mainTable = new MainTable(allocator, mainTableInitPow2, 1.5); // 负载因子阈值
+        this.l0Table = l0CacheEnabled ? new L0Table(allocator, l0CacheSizePow2, l0Policy) : null;
         this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
 
         LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}",
@@ -107,8 +103,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public void close() throws Exception {
         LOG.debug("Closing ForL0StateMap");
-        if (tableCore != null) {
-            tableCore.close();
+        if (mainTable != null) {
+            mainTable.close();
+        }
+        if (l0Table != null) {
+            l0Table.close();
         }
         if (entryArena != null) {
             entryArena.close();
@@ -124,29 +123,22 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public S get(K key, N namespace) {
         if (key == null || namespace == null) { return null; }
-        if (allocator == null || entryArena == null || tableCore == null) { return null; }
+        if (allocator == null || entryArena == null || mainTable == null) { return null; }
         totalAccesses++;
 
         try {
-            serializerPack.writeKey(key);
-            serializerPack.writeNamespace(namespace);
-            byte[] kb = serializerPack.keyBuffer();
-            int klen = serializerPack.keyLength();
-            byte[] nb = serializerPack.namespaceBuffer();
-            int nlen = serializerPack.namespaceLength();
-            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
-            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
+            KeyNamespaceHash knh = serializeKeyNamespace(key, namespace);
 
             long addr;
-            if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                addr = tableCore.l0Get(hash, tag, kb, klen, nb, nlen, entryArena);
+            if (l0CacheEnabled && l0Table != null) {
+                addr = l0Table.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
                 if (addr > 0) { l0Hits++; return deserializeValueFromArena(addr); }
             }
-            addr = tableCore.mainGet(hash, tag, kb, klen, nb, nlen, entryArena);
+            addr = mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
             if (addr > 0) {
                 mainTableHits++;
-                if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                    tableCore.l0Put(hash, tag, addr, kb, klen, nb, nlen, entryArena);
+                if (l0CacheEnabled && l0Table != null) {
+                    l0Table.put(knh.hash, knh.tag, addr, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
                 }
                 return deserializeValueFromArena(addr);
             }
@@ -186,23 +178,16 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public boolean containsKey(K key, N namespace) {
         if (key == null || namespace == null) { return false; }
-        if (allocator == null || entryArena == null || tableCore == null) { return false; }
+        if (allocator == null || entryArena == null || mainTable == null) { return false; }
         try {
-            serializerPack.writeKey(key);
-            serializerPack.writeNamespace(namespace);
-            byte[] kb = serializerPack.keyBuffer();
-            int klen = serializerPack.keyLength();
-            byte[] nb = serializerPack.namespaceBuffer();
-            int nlen = serializerPack.namespaceLength();
-            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
-            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
+            KeyNamespaceHash knh = serializeKeyNamespace(key, namespace);
 
-            if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                if (tableCore.l0Get(hash, tag, kb, klen, nb, nlen, entryArena) > 0)
+            if (l0CacheEnabled && l0Table != null) {
+                if (l0Table.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena) > 0)
                     return true;
             }
 
-            return tableCore.mainGet(hash, tag, kb, klen, nb, nlen, entryArena) > 0;
+            return mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena) > 0;
         } catch (IOException e) {
             LOG.error("Error during containsKey operation for key={}, namespace={}", key, namespace, e);
             return false;
@@ -212,43 +197,33 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public void put(K key, N namespace, S state) {
         if (key == null || namespace == null) { return; }
-        if (allocator == null || entryArena == null || tableCore == null) { return; }
+        if (allocator == null || entryArena == null || mainTable == null) { return; }
 
         try {
             // 检查是否需要全局扩容
-            if (tableCore.mainNeedsResize() && !resizeInProgress) {
+            if (mainTable.needsResize() && !resizeInProgress) {
                 performResize();
             }
 
-            serializerPack.writeKey(key);
-            serializerPack.writeNamespace(namespace);
+            KeyNamespaceHash knh = serializeKeyNamespace(key, namespace);
             serializerPack.writeState(state);
-            byte[] kb = serializerPack.keyBuffer();
-            int klen = serializerPack.keyLength();
-            byte[] nb = serializerPack.namespaceBuffer();
-            int nlen = serializerPack.namespaceLength();
             byte[] vb = serializerPack.stateBuffer();
             int vlen = serializerPack.stateLength();
-            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
-            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
-            long newAddr = entryArena.putEntry(kb, klen, nb, nlen, vb, vlen);
 
-            long oldAddr = tableCore.mainPut(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
-
-            // 如果返回 -1 表示插入失败（扩展桶池满），强制执行扩容并重试
-            if (oldAddr == -1) {
-                performResize();
-                oldAddr = tableCore.mainPut(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
-            }
+            long oldAddr = performEntryInsertion(knh, vb, vlen);
 
             if (oldAddr == 0) {
                 size++;
-            } else if (oldAddr > 0 && oldAddr != newAddr) {
+            } else if (oldAddr > 0) {
                 entryArena.removeEntry(oldAddr);
             }
 
-            if (l0CacheEnabled && tableCore.isL0Enabled() && !resizeInProgress) {
-                tableCore.l0Put(hash, tag, newAddr, kb, klen, nb, nlen, entryArena);
+            if (l0CacheEnabled && l0Table != null && !resizeInProgress) {
+                // 获取新插入的地址用于L0缓存
+                long newAddr = mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+                if (newAddr > 0) {
+                    l0Table.put(knh.hash, knh.tag, newAddr, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+                }
             }
 
         } catch (IOException e) {
@@ -261,16 +236,16 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * Performs the main table resize with L0 cache coordination.
      */
     private synchronized void performResize() {
-        if (resizeInProgress || !tableCore.mainNeedsResize()) {
+        if (resizeInProgress || !mainTable.needsResize()) {
             return;
         }
         resizeInProgress = true;
-        if (l0CacheEnabled && tableCore.isL0Enabled()) {
-            tableCore.l0Clear();
+        if (l0CacheEnabled && l0Table != null) {
+            l0Table.clear();
         }
-        tableCore.mainTryResize(entryArena);
-        if (l0CacheEnabled && tableCore.isL0Enabled()) {
-            tableCore.l0Clear();
+        mainTable.tryResize(entryArena);
+        if (l0CacheEnabled && l0Table != null) {
+            l0Table.clear();
         }
         resizeInProgress = false;
     }
@@ -289,26 +264,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public void remove(K key, N namespace) {
         if (key == null || namespace == null) { return; }
-        if (allocator == null || entryArena == null || tableCore == null) { return; }
+        if (allocator == null || entryArena == null || mainTable == null) { return; }
 
         try {
-            serializerPack.writeKey(key);
-            serializerPack.writeNamespace(namespace);
-            byte[] kb = serializerPack.keyBuffer();
-            int klen = serializerPack.keyLength();
-            byte[] nb = serializerPack.namespaceBuffer();
-            int nlen = serializerPack.namespaceLength();
-            int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
-            short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
-            long removed = tableCore.mainRemove(hash, tag, kb, klen, nb, nlen, entryArena);
-
-            if (removed > 0) {
-                size--;
-                if (l0CacheEnabled && tableCore.isL0Enabled()) {
-                    tableCore.l0Remove(hash, tag, kb, klen, nb, nlen, entryArena);
-                }
-                entryArena.removeEntry(removed);
-            }
+            KeyNamespaceHash knh = serializeKeyNamespace(key, namespace);
+            performEntryRemoval(knh);
 
         } catch (IOException e) {
             LOG.error("Serialization error during remove operation for key={}, namespace={}", key, namespace, e);
@@ -329,11 +289,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public int sizeOfNamespace(Object namespace) {
-        if (entryArena == null || tableCore == null) {
+        if (entryArena == null || mainTable == null) {
             return 0;
         }
         int[] cnt = new int[1];
-        tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
+        mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
             try {
                 byte[] nb = entryArena.getNamespaceBytes(entryAddress);
                 if (nb == null) { return; }
@@ -410,10 +370,10 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     public Iterator<StateEntry<K, N, S>> iterator() {
         // 构造一次性快照列表，避免并发修改影响
         ArrayList<StateEntry<K, N, S>> list = new ArrayList<>(Math.max(16, size));
-        if (entryArena == null || tableCore == null) {
+        if (entryArena == null || mainTable == null) {
             return list.iterator();
         }
-        tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
+        mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
             try {
                 byte[] kb = entryArena.getKeyBytes(entryAddress);
                 byte[] nb = entryArena.getNamespaceBytes(entryAddress);
@@ -446,11 +406,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public Stream<K> getKeys(N namespace) {
-        if (namespace == null || entryArena == null || tableCore == null) {
+        if (namespace == null || entryArena == null || mainTable == null) {
             return Stream.empty();
         }
         java.util.ArrayList<K> keys = new java.util.ArrayList<>();
-        tableCore.mainForEachEntry((entryAddress, keyHash, tag) -> {
+        mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
             try {
                 byte[] nb = entryArena.getNamespaceBytes(entryAddress);
                 if (nb == null) { return; }
@@ -473,14 +433,178 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (key == null || namespace == null || transformation == null) {
             return;
         }
-        S previous = get(key, namespace);
-        S updated = transformation.apply(previous, value);
-        if (updated == null) {
-            if (previous != null) {
-                remove(key, namespace);
+        putEntryAndTransform(key, namespace, value, transformation);
+    }
+
+    /**
+     * Optimized method that combines entry lookup, transformation, and update in a single operation.
+     * This avoids the overhead of separate get() and put() operations by reusing serialization
+     * results and hash calculations.
+     */
+    private <T> void putEntryAndTransform(K key, N namespace, T value, StateTransformationFunction<S, T> transformation) throws Exception {
+        if (allocator == null || entryArena == null || mainTable == null) {
+            return;
+        }
+
+        // 检查是否需要全局扩容
+        if (mainTable.needsResize() && !resizeInProgress) {
+            performResize();
+        }
+
+        // 一次性序列化key/namespace并计算hash - 避免重复计算
+        KeyNamespaceHash knh = serializeKeyNamespace(key, namespace);
+
+        totalAccesses++;
+
+        // 首先尝试从L0缓存查找现有条目
+        long existingAddr = 0;
+        S previousState = null;
+        boolean foundInL0 = false;
+
+        if (l0CacheEnabled && l0Table != null) {
+            existingAddr = l0Table.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+            if (existingAddr > 0) {
+                l0Hits++;
+                previousState = deserializeValueFromArena(existingAddr);
+                foundInL0 = true;
+            }
+        }
+
+        // 如果L0缓存中没有找到，则在主表中查找
+        if (!foundInL0) {
+            existingAddr = mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+            if (existingAddr > 0) {
+                mainTableHits++;
+                previousState = deserializeValueFromArena(existingAddr);
+            }
+        }
+
+        // 执行状态转换
+        S updatedState = transformation.apply(previousState, value);
+
+        // 根据转换结果决定操作
+        if (updatedState == null) {
+            // 转换结果为null，需要删除条目（如果存在）
+            if (existingAddr > 0) {
+                performEntryRemoval(knh);
             }
         } else {
-            put(key, namespace, updated);
+            // 转换结果不为null，需要更新或创建条目
+            serializerPack.writeState(updatedState);
+            byte[] vb = serializerPack.stateBuffer();
+            int vlen = serializerPack.stateLength();
+
+            if (existingAddr > 0) {
+                // 更新现有条目，updateEntry会自动尝试原地更新
+                long newAddr = entryArena.updateEntry(existingAddr, vb);
+
+                // 如果地址改变了，说明进行了重新分配，需要更新哈希表
+                if (newAddr != existingAddr) {
+                    mainTable.put(knh.hash, knh.tag, newAddr, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+                    // 更新L0缓存
+                    if (l0CacheEnabled && l0Table != null && !resizeInProgress) {
+                        l0Table.put(knh.hash, knh.tag, newAddr, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+                    }
+                }
+                // 如果地址相同，说明是原地更新，L0缓存中的条目自动有效
+            } else {
+                // 新条目，使用内联函数
+                long oldAddr = performEntryInsertion(knh, vb, vlen);
+
+                if (oldAddr == 0) {
+                    // 新插入的条目
+                    size++;
+                }
+
+                // 更新L0缓存
+                if (l0CacheEnabled && l0Table != null && !resizeInProgress) {
+                    long newAddr = mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+                    if (newAddr > 0) {
+                        l0Table.put(knh.hash, knh.tag, newAddr, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+                    }
+                }
+            }
+        }
+    }
+
+    // ================== Private helper methods ==================
+
+    /**
+     * 内联函数：执行条目插入操作，包括主表插入和扩容重试逻辑
+     *
+     * @param knh 键命名空间哈希信息
+     * @param valueBytes 值的字节数组
+     * @param valueLength 值的长度
+     * @return 被替换的旧地址，0表示新插入，-1表示插入失败
+     */
+    private long performEntryInsertion(KeyNamespaceHash knh, byte[] valueBytes, int valueLength) {
+        long newAddr = entryArena.putEntry(knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, valueBytes, valueLength);
+
+        long oldAddr = mainTable.put(knh.hash, knh.tag, newAddr, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+
+        // 如果返回 -1 表示插入失败（扩展桶池满），强制执行扩容并重试
+        if (oldAddr == -1) {
+            performResize();
+            oldAddr = mainTable.put(knh.hash, knh.tag, newAddr, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+        }
+
+        return oldAddr;
+    }
+
+    /**
+     * 内联函数：执行条目删除操作，包括主表删除、L0缓存清理和内存释放
+     *
+     * @param knh 键命名空间哈希信息
+     */
+    private void performEntryRemoval(KeyNamespaceHash knh) {
+        long removedAddr = mainTable.remove(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+        if (removedAddr > 0) {
+            size--;
+            if (l0CacheEnabled && l0Table != null) {
+                l0Table.remove(knh.hash, knh.tag, knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength, entryArena);
+            }
+            entryArena.removeEntry(removedAddr);
+        }
+    }
+
+    /**
+     * Serializes key and namespace, computes hash and tag.
+     * Returns a KeyNamespaceHash object containing all computed values.
+     * This is a performance-critical method that should be inlined by JIT.
+     */
+    private KeyNamespaceHash serializeKeyNamespace(K key, N namespace) throws IOException {
+        serializerPack.writeKey(key);
+        serializerPack.writeNamespace(namespace);
+        byte[] kb = serializerPack.keyBuffer();
+        int klen = serializerPack.keyLength();
+        byte[] nb = serializerPack.namespaceBuffer();
+        int nlen = serializerPack.namespaceLength();
+        int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
+        short tag = HashFunctions.murmur16(kb, klen, nb, nlen);
+
+        return new KeyNamespaceHash(kb, klen, nb, nlen, hash, tag);
+    }
+
+    /**
+     * Immutable data class for key/namespace serialization results.
+     * All fields are final to enable JIT optimizations.
+     */
+    private static final class KeyNamespaceHash {
+        final byte[] keyBytes;
+        final int keyLength;
+        final byte[] namespaceBytes;
+        final int namespaceLength;
+        final int hash;
+        final short tag;
+
+        KeyNamespaceHash(byte[] keyBytes, int keyLength, byte[] namespaceBytes,
+                        int namespaceLength, int hash, short tag) {
+            this.keyBytes = keyBytes;
+            this.keyLength = keyLength;
+            this.namespaceBytes = namespaceBytes;
+            this.namespaceLength = namespaceLength;
+            this.hash = hash;
+            this.tag = tag;
         }
     }
 
@@ -526,7 +650,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * Gets cache statistics for monitoring and debugging.
      */
     public CacheStats getCacheStats() {
-        L0Table.L0TableStats l0Stats = l0CacheEnabled && tableCore != null && tableCore.isL0Enabled() ? tableCore.l0Stats() : null;
+        L0Table.L0TableStats l0Stats = l0CacheEnabled && l0Table != null ? l0Table.getStats() : null;
         return new CacheStats(
                 totalAccesses,
                 l0Hits,
@@ -540,8 +664,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * Gets detailed statistics about the state map including resize information.
      */
     public DetailedStats getDetailedStats() {
-        MainTable.TableStats mainStats = tableCore.mainStats();
-        L0Table.L0TableStats l0Stats = l0CacheEnabled && tableCore.isL0Enabled() ? tableCore.l0Stats() : null;
+        MainTable.TableStats mainStats = mainTable.getStats();
+        L0Table.L0TableStats l0Stats = l0CacheEnabled && l0Table != null ? l0Table.getStats() : null;
 
         return new DetailedStats(
                 totalAccesses,

@@ -376,7 +376,7 @@ public class ForL0StateMapStressTest {
                 stateMap.put(i + hotKeys, "ns", "cold-value-" + i);
             }
 
-            // 插入热数��
+            // 插入热数据
             for (int i = 0; i < hotKeys; i++) {
                 stateMap.put(i, "ns", "hot-value-" + i);
             }
@@ -584,7 +584,7 @@ public class ForL0StateMapStressTest {
             // bucket 序列应严格递增且为2的幂
             int prev = -1;
             for (int b : bucketHistory) {
-                assertTrue((b & (b - 1)) == 0, "bucketCount 应为2次幂: " + b);
+                assertEquals(0, (b & (b - 1)), "bucketCount 应为2次幂: " + b);
                 if (prev != -1) {
                     assertTrue(b > prev, "bucketCount 应递增: " + prev + "->" + b);
                 }
@@ -624,6 +624,337 @@ public class ForL0StateMapStressTest {
             }
             // 确认已经至少扩容一次
             assertTrue(smallMap.getDetailedStats().mainTableStats.bucketCount > 2);
+        }
+    }
+
+    @Nested
+    @DisplayName("Transform方法压力测试")
+    class TransformStressTests {
+
+        @Test
+        @Timeout(value = 60, unit = TimeUnit.SECONDS)
+        @DisplayName("Transform vs Get+Put性能对比测试")
+        void testTransformPerformanceComparison() throws Exception {
+            final int operationsCount = 10_000_000;
+            final int dataSize = 1_000_000;
+
+            // 准备测试数据
+            LOG.info("准备 {} 条测试数据", dataSize);
+            for (int i = 0; i < dataSize; i++) {
+                String namespace = "ns" + (i % 100);
+                stateMap.put(i, namespace, "initial-value-" + i);
+            }
+
+            Random random = new Random(42);
+
+            // 测试Transform方法性能
+            LOG.info("开始Transform方法性能测试: {} 次操作", operationsCount);
+            long transformStartTime = System.nanoTime();
+            long transformOpsCompleted = 0;
+
+            for (int i = 0; i < operationsCount; i++) {
+                int key = random.nextInt(dataSize);
+                String namespace = "ns" + (key % 10);
+
+                stateMap.transform(key, namespace, "_transformed", (previous, value) -> {
+                    if (previous == null) {
+                        return "new" + value;
+                    }
+                    return previous + value;
+                });
+                transformOpsCompleted++;
+            }
+
+            long transformEndTime = System.nanoTime();
+            double transformDuration = (transformEndTime - transformStartTime) / 1_000_000_000.0;
+
+            // 重置状态，重新准备数据用于Get+Put测试
+            stateMap.close();
+            stateMap = new ForL0StateMap<>(
+                    allocator,
+                    16, 10,
+                    IntSerializer.INSTANCE,
+                    StringSerializer.INSTANCE,
+                    StringSerializer.INSTANCE,
+                    true
+            );
+
+            for (int i = 0; i < dataSize; i++) {
+                String namespace = "ns" + (i % 10);
+                stateMap.put(i, namespace, "initial-value-" + i);
+            }
+
+            // 测试Get+Put方法性能（重置Random确保相同的操作序列）
+            random = new Random(42);
+            LOG.info("开始Get+Put方法性能测试: {} 次操作", operationsCount);
+            long getPutStartTime = System.nanoTime();
+            long getPutOpsCompleted = 0;
+
+            for (int i = 0; i < operationsCount; i++) {
+                int key = random.nextInt(dataSize);
+                String namespace = "ns" + (key % 10);
+
+                String previous = stateMap.get(key, namespace);
+                String newValue;
+                if (previous == null) {
+                    newValue = "new_transformed";
+                } else {
+                    newValue = previous + "_transformed";
+                }
+                stateMap.put(key, namespace, newValue);
+                getPutOpsCompleted++;
+            }
+
+            long getPutEndTime = System.nanoTime();
+            double getPutDuration = (getPutEndTime - getPutStartTime) / 1_000_000_000.0;
+
+            // 输出性能对比结果
+            LOG.info("Transform vs Get+Put性能对比结果:");
+            LOG.info("  Transform方法:");
+            LOG.info("    完成操作数: {}", transformOpsCompleted);
+            LOG.info("    耗时: {}秒", String.format("%.3f", transformDuration));
+            LOG.info("    QPS: {}", String.format("%.0f", transformOpsCompleted / transformDuration));
+            LOG.info("    平均每次操作: {}微秒", String.format("%.3f", (transformDuration * 1_000_000) / transformOpsCompleted));
+
+            LOG.info("  Get+Put方法:");
+            LOG.info("    完成操作数: {}", getPutOpsCompleted);
+            LOG.info("    耗时: {}秒", String.format("%.3f", getPutDuration));
+            LOG.info("    QPS: {}", String.format("%.0f", getPutOpsCompleted / getPutDuration));
+            LOG.info("    平均每次操作: {}微秒", String.format("%.3f", (getPutDuration * 1_000_000) / getPutOpsCompleted));
+
+            double performanceImprovement = (getPutDuration - transformDuration) / getPutDuration * 100;
+            LOG.info("  性能提升: {}%", String.format("%.1f", performanceImprovement));
+
+            // 验证两种方法都成功完成了操作
+            assertEquals(operationsCount, transformOpsCompleted);
+            assertEquals(operationsCount, getPutOpsCompleted);
+        }
+
+        @Test
+        @Timeout(value = 45, unit = TimeUnit.SECONDS)
+        @DisplayName("Transform大量操作压力测试")
+        void testMassiveTransformOperations() throws Exception {
+            final int totalOperations = 1_000_000;
+            final int keyRange = 50_000;
+
+            LOG.info("Transform大量操作压力测试: {} 次操作", totalOperations);
+
+            Random random = new Random(42);
+            long startTime = System.currentTimeMillis();
+            long transformOpsCompleted = 0;
+            int newEntries = 0;
+            int updatedEntries = 0;
+            int deletedEntries = 0;
+
+            try {
+                for (int i = 0; i < totalOperations; i++) {
+                    int key = random.nextInt(keyRange);
+                    double operation = random.nextDouble();
+
+                    if (operation < 0.6) {
+                        // 60% - 新增或更新操作（使用string namespace）
+                        String namespace = "str_ns" + (key % 20);
+                        boolean wasPresent = stateMap.containsKey(key, namespace);
+                        stateMap.transform(key, namespace, "_update_" + i, (previous, value) -> {
+                            if (previous == null) {
+                                return "new" + value;
+                            } else {
+                                return previous + value;
+                            }
+                        });
+                        if (wasPresent) {
+                            updatedEntries++;
+                        } else {
+                            newEntries++;
+                        }
+                    } else if (operation < 0.8) {
+                        // 20% - 计数器操作（使用count namespace）
+                        String namespace = "count_ns" + (key % 20);
+                        stateMap.transform(key, namespace, 1, (previous, increment) -> {
+                            int currentValue = 0;
+                            if (previous != null && previous.startsWith("count:")) {
+                                currentValue = Integer.parseInt(previous.substring(6));
+                            }
+                            return "count:" + (currentValue + increment);
+                        });
+                    } else {
+                        // 20% - 删除操作（使用delete namespace）
+                        String namespace = "del_ns" + (key % 20);
+                        boolean wasPresent = stateMap.containsKey(key, namespace);
+                        stateMap.transform(key, namespace, "delete", (previous, value) -> null);
+                        if (wasPresent) {
+                            deletedEntries++;
+                        }
+                    }
+
+                    transformOpsCompleted++;
+
+                    if (i % 200_000 == 0 && i > 0) {
+                        LOG.info("已完成 {} 次Transform操作, 当前状态数: {}, 内存: {} MB",
+                                i, stateMap.size(), allocator.getUsedBytes() / 1024 / 1024);
+                    }
+                }
+            } catch (Exception e) {
+                LOG.error("Transform压力测试出现异常", e);
+                throw e;
+            }
+
+            long endTime = System.currentTimeMillis();
+            double duration = (endTime - startTime) / 1000.0;
+
+            LOG.info("Transform大量操作压力测试结果:");
+            LOG.info("  总操作数: {}", transformOpsCompleted);
+            LOG.info("  新增条目: {}", newEntries);
+            LOG.info("  更新条目: {}", updatedEntries);
+            LOG.info("  删除条目: {}", deletedEntries);
+            LOG.info("  最终状态数量: {}", stateMap.size());
+            LOG.info("  耗时: {}秒", duration);
+            LOG.info("  平均Transform QPS: {}", transformOpsCompleted / duration);
+            LOG.info("  内存使用: {} MB", allocator.getUsedBytes() / 1024 / 1024);
+
+            assertEquals(totalOperations, transformOpsCompleted);
+            // 注意：由于删除操作，最终状态可能为空
+            assertTrue(stateMap.size() >= 0, "状态数量应该非负");
+        }
+
+        @Test
+        @Timeout(value = 30, unit = TimeUnit.SECONDS)
+        @DisplayName("Transform复杂转换逻辑测试")
+        void testComplexTransformLogic() throws Exception {
+            final int operationsCount = 100_000;
+            final int keyRange = 1_000;
+
+            LOG.info("Transform复杂转换逻辑测试: {} 次操作", operationsCount);
+
+            Random random = new Random(42);
+            long startTime = System.currentTimeMillis();
+            int jsonOperations = 0;
+            int aggregationOperations = 0;
+            int conditionalOperations = 0;
+
+            for (int i = 0; i < operationsCount; i++) {
+                int key = random.nextInt(keyRange);
+                double opType = random.nextDouble();
+
+                try {
+                    if (opType < 0.33) {
+                        // 模拟JSON聚合操作（使用json namespace）
+                        String namespace = "json_ns" + (key % 5);
+                        stateMap.transform(key, namespace, "item_" + i, (previous, newItem) -> {
+                            if (previous == null) {
+                                return "[\"" + newItem + "\"]";
+                            } else {
+                                // 简单的JSON数组追加
+                                String withoutBracket = previous.substring(0, previous.length() - 1);
+                                return withoutBracket + ",\"" + newItem + "\"]";
+                            }
+                        });
+                        jsonOperations++;
+
+                    } else if (opType < 0.66) {
+                        // 模拟数值聚合操作（使用sum namespace）
+                        String namespace = "sum_ns" + (key % 5);
+                        int value = random.nextInt(100);
+                        stateMap.transform(key, namespace, value, (previous, newValue) -> {
+                            if (previous == null) {
+                                return "sum:" + newValue + ",count:1";
+                            } else {
+                                try {
+                                    String[] parts = previous.split(",");
+                                    int sum = Integer.parseInt(parts[0].split(":")[1]);
+                                    int count = Integer.parseInt(parts[1].split(":")[1]);
+                                    return "sum:" + (sum + newValue) + ",count:" + (count + 1);
+                                } catch (Exception e) {
+                                    // 如果解析失败，重新开始计算
+                                    return "sum:" + newValue + ",count:1";
+                                }
+                            }
+                        });
+                        aggregationOperations++;
+
+                    } else {
+                        // 模拟条件更新操作（使用status namespace）
+                        String namespace = "status_ns" + (key % 5);
+                        String status = random.nextBoolean() ? "active" : "inactive";
+                        stateMap.transform(key, namespace, status, (previous, newStatus) -> {
+                            if (previous == null) {
+                                return "status:" + newStatus + ",timestamp:" + System.currentTimeMillis();
+                            } else {
+                                try {
+                                    // 只有状态改变时才更新
+                                    String currentStatus = previous.split(",")[0].split(":")[1];
+                                    if (!currentStatus.equals(newStatus)) {
+                                        return "status:" + newStatus + ",timestamp:" + System.currentTimeMillis();
+                                    }
+                                    return previous; // 状态未改变，保持原值
+                                } catch (Exception e) {
+                                    // 如果解析失败，创建新的状态记录
+                                    return "status:" + newStatus + ",timestamp:" + System.currentTimeMillis();
+                                }
+                            }
+                        });
+                        conditionalOperations++;
+                    }
+
+                    if (i % 20_000 == 0 && i > 0) {
+                        LOG.info("已完成 {} 次复杂Transform操作, 当前状态数: {}",
+                                i, stateMap.size());
+                    }
+
+                } catch (Exception e) {
+                    LOG.error("复杂Transform操作失败 at iteration {}", i, e);
+                    throw e;
+                }
+            }
+
+            long endTime = System.currentTimeMillis();
+            double duration = (endTime - startTime) / 1000.0;
+
+            LOG.info("Transform复杂转换逻辑测试结果:");
+            LOG.info("  总操作数: {}", operationsCount);
+            LOG.info("  JSON聚合操作: {}", jsonOperations);
+            LOG.info("  数值聚合操作: {}", aggregationOperations);
+            LOG.info("  条件更新操作: {}", conditionalOperations);
+            LOG.info("  最终状态数量: {}", stateMap.size());
+            LOG.info("  耗时: {}秒", duration);
+            LOG.info("  平均QPS: {}", operationsCount / duration);
+
+            assertEquals(operationsCount, jsonOperations + aggregationOperations + conditionalOperations);
+            assertTrue(stateMap.size() <= keyRange * 3, "状态数量不应超过key范围 * namespace数量");
+
+            // 验证部分数据的正确性
+            int verificationCount = 0;
+            for (int key = 0; key < Math.min(keyRange, 100); key += 10) {
+                for (int ns = 0; ns < 5; ns++) {
+                    // 验证JSON数据
+                    String jsonNamespace = "json_ns" + ns;
+                    String jsonValue = stateMap.get(key, jsonNamespace);
+                    if (jsonValue != null) {
+                        assertTrue(jsonValue.startsWith("[") && jsonValue.endsWith("]"),
+                                "JSON格式应该正确: " + jsonValue);
+                        verificationCount++;
+                    }
+
+                    // 验证聚合数据
+                    String sumNamespace = "sum_ns" + ns;
+                    String sumValue = stateMap.get(key, sumNamespace);
+                    if (sumValue != null) {
+                        assertTrue(sumValue.startsWith("sum:") && sumValue.contains(",count:"),
+                                "聚合格式应该正确: " + sumValue);
+                        verificationCount++;
+                    }
+
+                    // 验证状态数据
+                    String statusNamespace = "status_ns" + ns;
+                    String statusValue = stateMap.get(key, statusNamespace);
+                    if (statusValue != null) {
+                        assertTrue(statusValue.startsWith("status:") && statusValue.contains(",timestamp:"),
+                                "状态格式应该正确: " + statusValue);
+                        verificationCount++;
+                    }
+                }
+            }
+            LOG.info("数据格式验证: {} 个条目验证通过", verificationCount);
         }
     }
 

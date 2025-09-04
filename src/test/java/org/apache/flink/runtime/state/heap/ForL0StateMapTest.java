@@ -521,7 +521,7 @@ class ForL0StateMapTest {
             int total = 0;
             while (vis.hasNext()) {
                 java.util.Collection<org.apache.flink.runtime.state.StateEntry<String, Integer, String>> batch = vis.nextEntries();
-                assertTrue(batch.size() > 0);
+                assertFalse(batch.isEmpty());
                 assertTrue(batch.size() <= batchSize);
                 for (org.apache.flink.runtime.state.StateEntry<String, Integer, String> e : batch) {
                     assertNotNull(e.getKey());
@@ -535,6 +535,238 @@ class ForL0StateMapTest {
 
             assertEquals(7, total);
             assertEquals(7, seen.size());
+        }
+    }
+
+    @Nested
+    class TransformTests {
+
+        @Test
+        void testTransformNewEntry() throws Exception {
+            String key = "transformNewKey";
+            Integer namespace = 1000;
+            String suffix = "_transformed";
+
+            // Transform on non-existent entry (previous state should be null)
+            stateMap.transform(key, namespace, suffix, (previous, value) -> {
+                assertNull(previous, "Previous state should be null for new entry");
+                return "new" + value;
+            });
+
+            // Verify the entry was created with transformed value
+            assertEquals(1, stateMap.size());
+            assertEquals("new_transformed", stateMap.get(key, namespace));
+            assertTrue(stateMap.containsKey(key, namespace));
+        }
+
+        @Test
+        void testTransformExistingEntry() throws Exception {
+            String key = "transformExistingKey";
+            Integer namespace = 1001;
+            String initialValue = "initial";
+            String transformValue = "_updated";
+
+            // Put initial value
+            stateMap.put(key, namespace, initialValue);
+            assertEquals(1, stateMap.size());
+
+            // Transform existing entry
+            stateMap.transform(key, namespace, transformValue, (previous, value) -> {
+                assertEquals(initialValue, previous, "Previous state should match initial value");
+                return previous + value;
+            });
+
+            // Verify the entry was updated
+            assertEquals(1, stateMap.size()); // Size should remain the same
+            assertEquals("initial_updated", stateMap.get(key, namespace));
+        }
+
+        @Test
+        void testTransformToNull() throws Exception {
+            String key = "transformToNullKey";
+            Integer namespace = 1002;
+            String initialValue = "toBeDeleted";
+
+            // Put initial value
+            stateMap.put(key, namespace, initialValue);
+            assertEquals(1, stateMap.size());
+            assertTrue(stateMap.containsKey(key, namespace));
+
+            // Transform to null (should delete the entry)
+            stateMap.transform(key, namespace, "deleteMe", (previous, value) -> {
+                assertEquals(initialValue, previous);
+                return null; // Delete entry
+            });
+
+            // Verify the entry was deleted
+            assertEquals(0, stateMap.size());
+            assertFalse(stateMap.containsKey(key, namespace));
+            assertNull(stateMap.get(key, namespace));
+        }
+
+        @Test
+        void testTransformFromNullToNull() throws Exception {
+            String key = "transformNullToNullKey";
+            Integer namespace = 1003;
+
+            // Transform non-existent entry to null (should remain non-existent)
+            stateMap.transform(key, namespace, "ignored", (previous, value) -> {
+                assertNull(previous);
+                return null; // Keep it null
+            });
+
+            // Verify no entry was created
+            assertEquals(0, stateMap.size());
+            assertFalse(stateMap.containsKey(key, namespace));
+            assertNull(stateMap.get(key, namespace));
+        }
+
+        @Test
+        void testTransformMultipleEntries() throws Exception {
+            // Setup multiple entries
+            for (int i = 0; i < 5; i++) {
+                stateMap.put("key" + i, i, "value" + i);
+            }
+            assertEquals(5, stateMap.size());
+
+            // Transform all entries
+            for (int i = 0; i < 5; i++) {
+                final int index = i;
+                stateMap.transform("key" + i, i, "_transformed", (previous, value) -> {
+                    assertEquals("value" + index, previous);
+                    return previous + value;
+                });
+            }
+
+            // Verify all transformations
+            assertEquals(5, stateMap.size());
+            for (int i = 0; i < 5; i++) {
+                assertEquals("value" + i + "_transformed", stateMap.get("key" + i, i));
+            }
+        }
+
+        @Test
+        void testTransformWithException() {
+            String key = "transformExceptionKey";
+            Integer namespace = 1004;
+
+            // Test that exceptions from transformation function are propagated
+            assertThrows(RuntimeException.class, () -> {
+                stateMap.transform(key, namespace, "error", (previous, value) -> {
+                    throw new RuntimeException("Transform error");
+                });
+            });
+
+            // Verify state map remains unchanged after exception
+            assertEquals(0, stateMap.size());
+            assertNull(stateMap.get(key, namespace));
+        }
+
+        @Test
+        void testTransformWithNullParameters() throws Exception {
+            // Test null key
+            assertDoesNotThrow(() -> {
+                stateMap.transform(null, 1, "value", (prev, val) -> "result");
+            });
+
+            // Test null namespace
+            assertDoesNotThrow(() -> {
+                stateMap.transform("key", null, "value", (prev, val) -> "result");
+            });
+
+            // Test null transformation function
+            assertDoesNotThrow(() -> {
+                stateMap.transform("key", 1, "value", null);
+            });
+
+            // Verify no entries were created
+            assertEquals(0, stateMap.size());
+        }
+
+        @Test
+        void testTransformCacheConsistency() throws Exception {
+            String key = "transformCacheKey";
+            Integer namespace = 1005;
+            String initialValue = "cache_test";
+
+            // Put initial value (should be in L0 cache)
+            stateMap.put(key, namespace, initialValue);
+
+            // Get statistics before transform
+            ForL0StateMap.CacheStats statsBefore = stateMap.getCacheStats();
+
+            // Transform the entry
+            stateMap.transform(key, namespace, "_cached", (previous, value) -> {
+                assertEquals(initialValue, previous);
+                return previous + value;
+            });
+
+            // Verify the transformation worked
+            assertEquals("cache_test_cached", stateMap.get(key, namespace));
+
+            // Get statistics after transform and get
+            ForL0StateMap.CacheStats statsAfter = stateMap.getCacheStats();
+
+            // Verify cache statistics updated appropriately
+            assertTrue(statsAfter.totalAccesses > statsBefore.totalAccesses);
+        }
+
+        @Test
+        void testTransformCorrectness() throws Exception {
+            String key = "correctnessKey";
+            Integer namespace = 1006;
+            String initialValue = "performance";
+
+            // Put initial value
+            stateMap.put(key, namespace, initialValue);
+
+            // Test transform method correctness
+            stateMap.transform(key, namespace, "_fast", (prev, val) -> prev + val);
+
+            // Verify transform result
+            assertEquals("performance_fast", stateMap.get(key, namespace));
+
+            // Use a different key for get+put comparison to verify same behavior
+            String key2 = "correctnessKey2";
+            stateMap.put(key2, namespace, initialValue);
+
+            // Equivalent get+put operation
+            String oldValue = stateMap.get(key2, namespace);
+            stateMap.put(key2, namespace, oldValue + "_slow");
+
+            // Verify both approaches produce equivalent results (different suffixes but same logic)
+            assertEquals("performance_slow", stateMap.get(key2, namespace));
+
+            // Both entries should exist with correct values
+            assertEquals(2, stateMap.size());
+        }
+
+        @Test
+        void testTransformNamespaceIsolation() throws Exception {
+            String key = "isolationKey";
+            String baseValue = "base";
+
+            // Transform same key in different namespaces
+            stateMap.transform(key, 1, "_ns1", (prev, val) -> {
+                assertNull(prev);
+                return baseValue + val;
+            });
+
+            stateMap.transform(key, 2, "_ns2", (prev, val) -> {
+                assertNull(prev);
+                return baseValue + val;
+            });
+
+            // Verify namespace isolation
+            assertEquals(2, stateMap.size());
+            assertEquals("base_ns1", stateMap.get(key, 1));
+            assertEquals("base_ns2", stateMap.get(key, 2));
+
+            // Transform one namespace should not affect the other
+            stateMap.transform(key, 1, "_updated", (prev, val) -> prev + val);
+
+            assertEquals("base_ns1_updated", stateMap.get(key, 1));
+            assertEquals("base_ns2", stateMap.get(key, 2)); // Should remain unchanged
         }
     }
 }
