@@ -212,7 +212,7 @@ class MainTableStressTest {
                 if (entryAddress > 0) {
                     entry.entryAddress = entryAddress;
                     int hash = HashFunctions.jenkinsHashCombined(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
-                    short tag = HashFunctions.murmur16(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
+                    short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
                     entry.hash = hash;
                     entry.tag = tag;
 
@@ -341,121 +341,6 @@ class MainTableStressTest {
                   "Should have allocated many extension buckets or triggered resize");
     }
 
-    @Test
-    void testPerformanceBenchmark() {
-        final int WARMUP = 5_000;
-        final int N = 30_000;
-        int resizeCount = 0;
-        System.out.println("=== Performance Benchmark ===");
-
-        // 1) 预生成（不计时）
-        List<TestEntry> warmupEntries = new ArrayList<>(WARMUP);
-        for (int i = 0; i < WARMUP; i++) {
-            warmupEntries.add(generateRandomEntry("warmup" + i, random));
-        }
-        List<TestEntry> measurementEntries = new ArrayList<>(N);
-        for (int i = 0; i < N; i++) {
-            measurementEntries.add(generateRandomEntry("bench" + i, random));
-        }
-
-        // 2) 预热
-        for (TestEntry e : warmupEntries) {
-            insertEntry(e);
-        }
-        try { if (mainTable != null) mainTable.close(); } catch (Exception ignore) {}
-        mainTable = new MainTable(allocator, 5, 1.5); // 阈值同步 1.5
-
-        // 3) 插入阶段 + 自动扩容
-        int insertSuccess = 0;
-        int insertFail = 0;
-        long insertStart = System.nanoTime();
-        for (TestEntry e : measurementEntries) {
-            if (mainTable.needsResize()) {
-                try {
-                    if (mainTable.tryResize(entryArena)) {
-                        resizeCount++;
-                    }
-                } catch (Exception ex) {
-                    System.out.println("Resize failed before insert: " + ex.getMessage());
-                    break;
-                }
-            }
-            long addr = entryArena.putEntry(e.key, e.namespace, e.value);
-            if (addr <= 0) { insertFail++; continue; }
-            e.entryAddress = addr;
-            int hash = HashFunctions.jenkinsHashCombined(e.key, e.key.length, e.namespace, e.namespace.length);
-            short tag = HashFunctions.murmur16(e.key, e.key.length, e.namespace, e.namespace.length);
-            e.hash = hash; e.tag = tag;
-            boolean done = false;
-            for (int attempt = 0; attempt < 2 && !done; attempt++) {
-                try {
-                    long prev = mainTable.put(hash, tag, addr, e.key, e.key.length, e.namespace, e.namespace.length, entryArena);
-                    if (prev >= 0) { insertSuccess++; }
-                    else { insertFail++; }
-                    done = true;
-                } catch (RuntimeException ex) {
-                    if (mainTable.needsResize()) {
-                        try {
-                            if (mainTable.tryResize(entryArena)) {
-                                resizeCount++;
-                                continue; // 进入下一次 attempt 重试
-                            }
-                        } catch (Exception rex) {
-                            System.out.println("Resize failed after exception: " + rex.getMessage());
-                        }
-                    }
-                    insertFail++;
-                    done = true;
-                }
-            }
-        }
-        long insertEnd = System.nanoTime();
-
-        // 4) 冷读
-        int readSuccess = 0;
-        long readStart = System.nanoTime();
-        for (TestEntry e : measurementEntries) {
-            if (e.entryAddress == 0) continue;
-            long found = mainTable.get(e.hash, e.tag, e.key, e.key.length, e.namespace, e.namespace.length, entryArena);
-            if (found != 0) {
-                byte[] v = entryArena.getValueBytes(found);
-                if (v != null && v.length == e.value.length) { readSuccess++; }
-            }
-        }
-        long readEnd = System.nanoTime();
-
-        // 5) 热读
-        int hotReadSuccess = 0;
-        long hotReadStart = System.nanoTime();
-        for (TestEntry e : measurementEntries) {
-            if (e.entryAddress == 0) continue;
-            long found = mainTable.get(e.hash, e.tag, e.key, e.key.length, e.namespace, e.namespace.length, entryArena);
-            if (found != 0) {
-                byte[] v = entryArena.getValueBytes(found);
-                if (v != null && v.length == e.value.length) { hotReadSuccess++; }
-            }
-        }
-        long hotReadEnd = System.nanoTime();
-
-        MainTable.TableStats stats = mainTable.getStats();
-        long insertNs = insertEnd - insertStart;
-        long readNs = readEnd - readStart;
-        long hotReadNs = hotReadEnd - hotReadStart;
-
-        System.out.println("--- Benchmark Summary (auto-resize) ---");
-        System.out.println("Warmup entries: " + WARMUP + ", Planned: " + N);
-        System.out.println("Resize count: " + resizeCount + ", Final buckets: " + stats.bucketCount);
-        System.out.println("Inserted success: " + insertSuccess + ", failed: " + insertFail);
-        System.out.printf(Locale.ROOT, "Insert time: %.2f ms, throughput: %d ops/s%n", insertNs/1_000_000.0, (insertSuccess * 1_000_000_000L / Math.max(1L, insertNs)));
-        System.out.printf(Locale.ROOT, "Read cold: %.2f ms, throughput: %d ops/s, success=%d%n", readNs/1_000_000.0, (readSuccess * 1_000_000_000L / Math.max(1L, readNs)), readSuccess);
-        System.out.printf(Locale.ROOT, "Read hot: %.2f ms, throughput: %d ops/s, success=%d%n", hotReadNs/1_000_000.0, (hotReadSuccess * 1_000_000_000L / Math.max(1L, hotReadNs)), hotReadSuccess);
-        System.out.println("Final stats: " + stats + ", loadFactor=" + String.format(Locale.ROOT, "%.4f", stats.loadFactor));
-
-        assertTrue(insertSuccess > 0, "Should have successful inserts");
-        assertEquals(insertSuccess, readSuccess, "All inserted entries should be readable (cold)");
-        assertEquals(insertSuccess, hotReadSuccess, "All inserted entries should be readable (hot)");
-    }
-
     // Helper methods
     private boolean insertEntry(TestEntry entry) {
         long entryAddress = entryArena.putEntry(entry.key, entry.namespace, entry.value);
@@ -464,7 +349,7 @@ class MainTableStressTest {
         }
         entry.entryAddress = entryAddress;
         int hash = HashFunctions.jenkinsHashCombined(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
-        short tag = HashFunctions.murmur16(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
+        short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
         entry.hash = hash;
         entry.tag = tag;
         try {

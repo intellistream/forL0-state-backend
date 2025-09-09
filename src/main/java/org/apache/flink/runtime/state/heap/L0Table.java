@@ -172,10 +172,9 @@ public class L0Table implements AutoCloseable {
 
             if (slotTag == tag && arena.matchesKey(slotPointer, kb, klen, nb, nlen)) {
                 // Found existing entry, update it
-                long oldAddress = slotPointer;
                 putLong(slotAddress + SLOT_POINTER_OFFSET, entryAddress);
                 updateSlotOnAccess(slotAddress);
-                return oldAddress;
+                return slotPointer;
             }
         }
 
@@ -280,7 +279,21 @@ public class L0Table implements AutoCloseable {
         );
     }
 
-    // Helper methods for memory access
+    /**
+     * Address resolution result containing segment and offset information.
+     * Used to cache segment lookups and reduce repeated calculations.
+     */
+    private static final class SegmentInfo {
+        final MemorySegment segment;
+        final int baseOffset;
+
+        SegmentInfo(MemorySegment segment, int baseOffset) {
+            this.segment = segment;
+            this.baseOffset = baseOffset;
+        }
+    }
+
+    // Helper methods for memory access - optimized versions
 
     private long getBucketAddress(int bucketIndex) {
         long offset = (long) bucketIndex * BUCKET_SIZE;
@@ -298,52 +311,89 @@ public class L0Table implements AutoCloseable {
         return (long) segmentIndex << 32 | segmentOffset;
     }
 
-    private byte getByte(long address) {
+    /**
+     * Optimized address resolution that returns segment info for batch operations.
+     */
+    private SegmentInfo resolveAddress(long address) {
         int segmentIndex = (int) (address >>> 32);
         int offset = (int) address;
-        return memorySegments.get(segmentIndex).get(offset);
+        return new SegmentInfo(memorySegments.get(segmentIndex), offset);
+    }
+
+    /**
+     * Optimized memory access methods using SegmentInfo to reduce repeated calculations.
+     */
+    private byte getByteFromSegmentInfo(SegmentInfo info, int relativeOffset) {
+        return info.segment.get(info.baseOffset + relativeOffset);
+    }
+
+    private void putByteToSegmentInfo(SegmentInfo info, int relativeOffset, byte value) {
+        info.segment.put(info.baseOffset + relativeOffset, value);
+    }
+
+    private short getShortFromSegmentInfo(SegmentInfo info, int relativeOffset) {
+        return info.segment.getShort(info.baseOffset + relativeOffset);
+    }
+
+    private void putShortToSegmentInfo(SegmentInfo info, int relativeOffset, short value) {
+        info.segment.putShort(info.baseOffset + relativeOffset, value);
+    }
+
+    private int getIntFromSegmentInfo(SegmentInfo info, int relativeOffset) {
+        return info.segment.getInt(info.baseOffset + relativeOffset);
+    }
+
+    private void putIntToSegmentInfo(SegmentInfo info, int relativeOffset, int value) {
+        info.segment.putInt(info.baseOffset + relativeOffset, value);
+    }
+
+    private long getLongFromSegmentInfo(SegmentInfo info, int relativeOffset) {
+        return info.segment.getLong(info.baseOffset + relativeOffset);
+    }
+
+    private void putLongToSegmentInfo(SegmentInfo info, int relativeOffset, long value) {
+        info.segment.putLong(info.baseOffset + relativeOffset, value);
+    }
+
+    // Keep original methods for compatibility but optimize implementation
+    private byte getByte(long address) {
+        SegmentInfo info = resolveAddress(address);
+        return info.segment.get(info.baseOffset);
     }
 
     private void putByte(long address, byte value) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        memorySegments.get(segmentIndex).put(offset, value);
+        SegmentInfo info = resolveAddress(address);
+        info.segment.put(info.baseOffset, value);
     }
 
     private short getShort(long address) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        return memorySegments.get(segmentIndex).getShort(offset);
+        SegmentInfo info = resolveAddress(address);
+        return info.segment.getShort(info.baseOffset);
     }
 
     private void putShort(long address, short value) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        memorySegments.get(segmentIndex).putShort(offset, value);
+        SegmentInfo info = resolveAddress(address);
+        info.segment.putShort(info.baseOffset, value);
     }
 
     private int getInt(long address) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        return memorySegments.get(segmentIndex).getInt(offset);
+        SegmentInfo info = resolveAddress(address);
+        return info.segment.getInt(info.baseOffset);
     }
 
     private void putInt(long address, int value) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        memorySegments.get(segmentIndex).putInt(offset, value);
+        SegmentInfo info = resolveAddress(address);
+        info.segment.putInt(info.baseOffset, value);
     }
 
     private long getLong(long address) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        return memorySegments.get(segmentIndex).getLong(offset);
+        SegmentInfo info = resolveAddress(address);
+        return info.segment.getLong(info.baseOffset);
     }
 
     private void putLong(long address, long value) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        memorySegments.get(segmentIndex).putLong(offset, value);
+        SegmentInfo info = resolveAddress(address);
+        info.segment.putLong(info.baseOffset, value);
     }
 
     private void clearAllSlots() {

@@ -1,6 +1,7 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
@@ -170,10 +171,6 @@ public class EntryArena implements AutoCloseable {
         }
 
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
-            return 0;
-        }
-
         // header
         info.segment.putInt(info.offset + KEY_LEN_OFFSET, keyLen);
         info.segment.putInt(info.offset + NAMESPACE_LEN_OFFSET, namespaceLen);
@@ -195,12 +192,29 @@ public class EntryArena implements AutoCloseable {
      * otherwise allocates new entry and frees the old one into free list.
      */
     public long updateEntry(long address, byte[] valueBytes) {
-        if (closed || address == 0 || valueBytes == null) {
+        if (valueBytes == null) {
+            return 0;
+        }
+        // Delegate to the more efficient buffer+length version
+        return updateEntry(address, valueBytes, valueBytes.length);
+    }
+
+    /**
+     * Updates an existing entry's value using buffer+length (避免复制 DataOutputSerializer 缓冲区).
+     * First attempts in-place update if the new value fits in existing space,
+     * otherwise allocates new entry and frees the old one into free list.
+     */
+    public long updateEntry(long address, byte[] valueBuffer, int valueLen) {
+        if (address == 0 || valueBuffer == null) {
+            return 0;
+        }
+
+        if (valueLen > 256 * 1024) {
             return 0;
         }
 
         // First try in-place update
-        if (updateValueInPlace(address, valueBytes)) {
+        if (updateValueInPlace(address, valueBuffer, valueLen)) {
             // In-place update succeeded, return the same address
             return address;
         }
@@ -209,52 +223,44 @@ public class EntryArena implements AutoCloseable {
         byte[] keyBytes = getKeyBytes(address);
         byte[] namespaceBytes = getNamespaceBytes(address);
 
-        if (keyBytes == null || namespaceBytes == null) {
-            return 0;
-        }
-
-        // Allocate new entry
-        long newAddress = putEntry(keyBytes, namespaceBytes, valueBytes);
+        // Allocate new entry using buffer version
+        long newAddress = putEntry(keyBytes, keyBytes.length, namespaceBytes, namespaceBytes.length, valueBuffer, valueLen);
 
         if (newAddress != 0) {
             // Free the old entry into free list
-            int oldSize = getEntrySize(address);
-            if (oldSize > 0) {
-                addToFreeList(address, oldSize);
-            }
-            // Decrement active entries count
-            activeEntries--;
+            removeEntry(address);
         }
 
         return newAddress;
     }
 
     /**
-     * Attempts to update the value in place if the new value fits in the existing space.
+     * Attempts to update the value in place using buffer+length if the new value fits in the existing space.
      * Returns true if successful, false if a new allocation is needed.
      */
-    public boolean updateValueInPlace(long address, byte[] newValueBytes) {
-        if (closed || address == 0 || newValueBytes == null) {
+    public boolean updateValueInPlace(long address, byte[] newValueBuffer, int newValueLen) {
+        if (closed || address == 0 || newValueBuffer == null) {
+            return false;
+        }
+
+        // Validate input
+        if (newValueLen < 0 || newValueLen > newValueBuffer.length) {
             return false;
         }
 
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
-            return false;
-        }
-
         int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
         int namespaceLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
         int currentValueLen = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
 
         // Check if new value fits in available space
-        if (newValueBytes.length <= currentValueLen) {
+        if (newValueLen <= currentValueLen) {
             // Update value length
-            info.segment.putInt(info.offset + VALUE_LEN_OFFSET, newValueBytes.length);
+            info.segment.putInt(info.offset + VALUE_LEN_OFFSET, newValueLen);
 
             // Update value data
             int valueOffset = info.offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen;
-            info.segment.put(valueOffset, newValueBytes, 0, newValueBytes.length);
+            info.segment.put(valueOffset, newValueBuffer, 0, newValueLen);
 
             return true;
         }
@@ -267,9 +273,6 @@ public class EntryArena implements AutoCloseable {
      */
     public byte[] getKeyBytes(long address) {
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
-            return null;
-        }
 
         int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
         if (keyLen <= 0 || keyLen > 16 * 1024) {
@@ -286,9 +289,6 @@ public class EntryArena implements AutoCloseable {
      */
     public byte[] getNamespaceBytes(long address) {
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
-            return null;
-        }
 
         int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
         int namespaceLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
@@ -307,9 +307,6 @@ public class EntryArena implements AutoCloseable {
      */
     public byte[] getValueBytes(long address) {
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
-            return null;
-        }
 
         int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
         int namespaceLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
@@ -344,9 +341,6 @@ public class EntryArena implements AutoCloseable {
      */
     public boolean matchesKey(long address, byte[] keyBuffer, int keyLen, byte[] namespaceBuffer, int namespaceLen) {
         AddressInfo info = resolveAddress(address);
-        if (info == null || keyBuffer == null || namespaceBuffer == null) {
-            return false;
-        }
 
         int storedKeyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
         int storedNsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
@@ -364,39 +358,16 @@ public class EntryArena implements AutoCloseable {
     }
 
     private static boolean equalsSegmentBytes(MemorySegment seg, int segOffset, byte[] arr, int len) {
-        int i = 0;
-        // compare 8 bytes at a time when possible
-        int limit8 = len & ~7;
-        for (; i < limit8; i += 8) {
-            long a = seg.getLong(segOffset + i);
-            long b = (((long)arr[i] & 0xFF)      ) |
-                     (((long)arr[i + 1] & 0xFF) << 8) |
-                     (((long)arr[i + 2] & 0xFF) << 16) |
-                     (((long)arr[i + 3] & 0xFF) << 24) |
-                     (((long)arr[i + 4] & 0xFF) << 32) |
-                     (((long)arr[i + 5] & 0xFF) << 40) |
-                     (((long)arr[i + 6] & 0xFF) << 48) |
-                     (((long)arr[i + 7] & 0xFF) << 56);
-            if (a != b) {
-                return false;
-            }
-        }
-        for (; i < len; i++) {
-            if (seg.get(segOffset + i) != arr[i]) {
-                return false;
-            }
-        }
-        return true;
+        // Use Flink's optimized memory comparison instead of manual byte-by-byte comparison
+        MemorySegment arrSeg = MemorySegmentFactory.wrap(arr);
+        return seg.equalTo(arrSeg, segOffset, 0, len);
     }
 
     // ==== allocation helpers ====
     private int calculateEntrySize(int keyLen, int namespaceLen, int valueLen) {
         int dataSize = ENTRY_HEADER_SIZE + keyLen + namespaceLen + valueLen;
-        return alignSize(Math.max(dataSize, MIN_ENTRY_SIZE));
-    }
-
-    private static int alignSize(int size) {
-        return (size + ALIGNMENT - 1) & (-ALIGNMENT);
+        // Align to 8 bytes for better memory performance
+        return (Math.max(dataSize, MIN_ENTRY_SIZE) + ALIGNMENT - 1) & (-ALIGNMENT);
     }
 
     private boolean allocateNewSegment() {
@@ -428,7 +399,6 @@ public class EntryArena implements AutoCloseable {
     }
 
     private long allocateEntry(int size) {
-        if (closed || size <= 0) { return 0; }
         long reused = allocateFromFreeListBounded(size);
         if (reused != 0) { return reused; }
 
@@ -505,9 +475,6 @@ public class EntryArena implements AutoCloseable {
 
     public int getEntrySize(long address) {
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
-            return 0;
-        }
 
         int k = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
         int n = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
@@ -516,8 +483,6 @@ public class EntryArena implements AutoCloseable {
     }
 
     public void removeEntry(long address) {
-        if (closed || address == 0) { return; }
-
         int sz = getEntrySize(address);
         if (sz > 0) {
             addToFreeList(address, sz);
@@ -530,21 +495,14 @@ public class EntryArena implements AutoCloseable {
      */
     public Slice getValueSlice(long address) {
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
+        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
+        int nsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
+        int valLen = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
+        if (valLen < 0 || valLen > 256 * 1024) {
             return null;
         }
-        try {
-            int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-            int nsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
-            int valLen = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
-            if (valLen < 0 || valLen > 256 * 1024) {
-                return null;
-            }
-            int off = info.offset + ENTRY_HEADER_SIZE + keyLen + nsLen;
-            return new Slice(info.segment, off, valLen);
-        } catch (Exception e) {
-            return null;
-        }
+        int off = info.offset + ENTRY_HEADER_SIZE + keyLen + nsLen;
+        return new Slice(info.segment, off, valLen);
     }
 
     /**
@@ -552,19 +510,12 @@ public class EntryArena implements AutoCloseable {
      */
     public Slice getKeySlice(long address) {
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
+        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
+        if (keyLen < 0 || keyLen > 16 * 1024) {
             return null;
         }
-        try {
-            int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-            if (keyLen < 0 || keyLen > 16 * 1024) {
-                return null;
-            }
-            int off = info.offset + ENTRY_HEADER_SIZE;
-            return new Slice(info.segment, off, keyLen);
-        } catch (Exception e) {
-            return null;
-        }
+        int off = info.offset + ENTRY_HEADER_SIZE;
+        return new Slice(info.segment, off, keyLen);
     }
 
     /**
@@ -572,20 +523,13 @@ public class EntryArena implements AutoCloseable {
      */
     public Slice getNamespaceSlice(long address) {
         AddressInfo info = resolveAddress(address);
-        if (info == null) {
+        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
+        int nsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
+        if (nsLen < 0 || nsLen > 16 * 1024) {
             return null;
         }
-        try {
-            int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-            int nsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
-            if (nsLen < 0 || nsLen > 16 * 1024) {
-                return null;
-            }
-            int off = info.offset + ENTRY_HEADER_SIZE + keyLen;
-            return new Slice(info.segment, off, nsLen);
-        } catch (Exception e) {
-            return null;
-        }
+        int off = info.offset + ENTRY_HEADER_SIZE + keyLen;
+        return new Slice(info.segment, off, nsLen);
     }
 
     /**
@@ -603,19 +547,10 @@ public class EntryArena implements AutoCloseable {
 
     /**
      * Resolves an entry address to segment and offset.
-     * Returns null if address is invalid or out of bounds.
      */
     private AddressInfo resolveAddress(long address) {
-        if (closed || address == 0) {
-            return null;
-        }
-
         int slabIndex = (int)(address >>> 32) - 1;
         int offset = (int)(address & 0xFFFFFFFFL) - 1;
-
-        if (slabIndex < 0 || slabIndex >= segments.size()) {
-            return null;
-        }
 
         return new AddressInfo(segments.get(slabIndex), offset);
     }

@@ -67,7 +67,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     /** Factory for state that is organized as priority queue. */
     private final HeapPriorityQueuesManager priorityQueuesManager;
 
-    //** Memory manager for allocating memory for the state backend. */
+    /** Memory manager for allocating memory for the state backend. */
     private final MemoryManager memoryManager;
 
     public ForL0KeyedStateBackend (

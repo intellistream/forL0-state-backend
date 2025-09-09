@@ -1,4 +1,3 @@
-// filepath: /Users/jinyunyang/IdeaProjects/forL0-state-backend/src/main/java/org/apache/flink/runtime/state/heap/io/SerializerPack.java
 package org.apache.flink.runtime.state.heap.io;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;

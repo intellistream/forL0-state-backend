@@ -27,9 +27,9 @@ import java.util.concurrent.TimeUnit;
  */
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
-@Warmup(iterations = 1)
-@Measurement(iterations = 1)
-@Fork(0)
+@Warmup(iterations = 5, time = 10)
+@Measurement(iterations = 10, time = 10)
+@Fork(value = 1, jvmArgs = {"-Xms4g", "-Xmx4g", "-XX:+UseG1GC"})
 @State(Scope.Benchmark)
 public class KeyedStateBackendBenchmark {
 
@@ -37,11 +37,11 @@ public class KeyedStateBackendBenchmark {
     public String backend;
 
     // 新增：是否启用L0缓存，仅在 backend=forl0 时生效
-    @Param({"true","false"})
+    @Param({"true"})
     public boolean l0CacheEnabled;
 
     // 放大 key 空间
-    @Param({"100000","1000000"})
+    @Param({"1000000"})
     public int numKeys;
 
     // mixed 写入百分比（0-100）
@@ -56,7 +56,7 @@ public class KeyedStateBackendBenchmark {
     @Param({"10"})
     public int hotKeyFractionPercent;
 
-    @Param({"90"})
+    @Param({"80"})
     public int hotAccessPercent;
 
     // Zipf 分布参数：θ（幂指数）与预生成样本数

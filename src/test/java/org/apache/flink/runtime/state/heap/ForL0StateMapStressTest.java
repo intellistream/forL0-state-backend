@@ -5,6 +5,7 @@ import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -203,7 +205,7 @@ public class ForL0StateMapStressTest {
             final double removeRatio = 0.1; // 10% REMOVE
 
             LOG.info("开始混合操作压力测试: {} 次操作 (PUT:{}%, GET:{}%, REMOVE:{}%)",
-                    totalOperations, (int)(putRatio*100), (int)(getRatio*100), (int)(removeRatio*100));
+                    totalOperations, (int) (putRatio * 100), (int) (getRatio * 100), (int) (removeRatio * 100));
 
             Random random = new Random(42);
             long startTime = System.currentTimeMillis();
@@ -519,7 +521,7 @@ public class ForL0StateMapStressTest {
             LOG.info("  平均QPS: {}", operationCount / actualDuration);
             LOG.info("  错误率: {}%", (errorCount * 100.0) / operationCount);
             LOG.info("  最终状态数量: {}", stateMap.size());
-            LOG.info("  内存使用: {} KB", allocator.getUsedBytes() / 1024);
+            LOG.info("  内存使用: {} MB", allocator.getUsedBytes() / 1024 / 1024);
 
             assertTrue(operationCount > 0);
             assertTrue(errorCount < operationCount * 0.01); // 错误率应小于1%
@@ -535,13 +537,13 @@ public class ForL0StateMapStressTest {
         void initSmall() {
             // 初始仅2 buckets 便于快速触发扩容
             smallMap = new ForL0StateMap<>(
-                allocator,
-                1,   // mainTable 2 buckets
-                2,   // l0 4 buckets
-                IntSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                true
+                    allocator,
+                    1,   // mainTable 2 buckets
+                    2,   // l0 4 buckets
+                    IntSerializer.INSTANCE,
+                    StringSerializer.INSTANCE,
+                    StringSerializer.INSTANCE,
+                    true
             );
         }
 
@@ -965,5 +967,456 @@ public class ForL0StateMapStressTest {
             sb.append('x');
         }
         return sb.toString();
+    }
+
+    @Nested
+    @DisplayName("Put/Get操作性能基准测试")
+    class PutGetBenchmarkTests {
+
+        @Test
+        @DisplayName("Put/Get/Transform操作性能基准测试 - ForL0StateMap vs CopyOnWriteStateMap")
+        void benchmarkPutGetOperations() {
+            final int operationNum = 50_000_000; // 操作次数
+            final int namespaceRange = 10;
+            final int keyRange = 1_000_000;
+
+            LOG.info("=== PUT/GET/TRANSFORM操作性能基准测试对比 ===");
+            LOG.info("PUT操作数: {}, GET操作数: {}, TRANSFORM操作数: {}", operationNum, operationNum, operationNum);
+            LOG.info("Namespace范围: 0-{}, Key范围: 0-{}", namespaceRange - 1, keyRange - 1);
+
+            // ===== ForL0StateMap 基准测试 =====
+            LOG.info("\n=== ForL0StateMap 基准测试 ===");
+
+            BenchmarkResult forL0Result = runStateMapBenchmark(
+                "ForL0StateMap",
+                createForL0StateMapInteger(),
+                operationNum,
+                namespaceRange,
+                keyRange,
+                allocator::getUsedBytes
+            );
+
+            // ===== CopyOnWriteStateMap 基准测试 =====
+            LOG.info("\n=== CopyOnWriteStateMap 基准测试 ===");
+
+            // 创建CopyOnWriteStateMap实例
+            CopyOnWriteStateMap<Integer, String, Integer> copyOnWriteStateMap =
+                new CopyOnWriteStateMap<>(IntSerializer.INSTANCE);
+
+            BenchmarkResult cowResult = runStateMapBenchmark(
+                "CopyOnWriteStateMap",
+                copyOnWriteStateMap,
+                operationNum,
+                namespaceRange,
+                keyRange,
+                () -> 0L // CopyOnWriteStateMap使用堆内存，无法直接测量
+            );
+
+            // ===== 性能对比总结 =====
+            LOG.info("\n=== 性能对比总结 ===");
+
+            printPerformanceComparison("PUT", forL0Result, cowResult, "put");
+            printPerformanceComparison("GET", forL0Result, cowResult, "get");
+            printPerformanceComparison("TRANSFORM", forL0Result, cowResult, "transform");
+            printMemoryComparison(forL0Result, cowResult);
+
+            // 验证数据正确性
+            validateBenchmarkResults(forL0Result, cowResult, keyRange, namespaceRange);
+        }
+
+        /**
+         * 创建使用Integer类型value的ForL0StateMap
+         */
+        private StateMap<Integer, String, Integer> createForL0StateMapInteger() {
+            return new ForL0StateMap<>(
+                allocator,
+                16, // mainTable 64K buckets
+                10, // l0Cache 1K buckets
+                IntSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                IntSerializer.INSTANCE,
+                true // enable L0 cache
+            );
+        }
+
+        /**
+         * 运行StateMap基准测试的通用方法
+         */
+        private BenchmarkResult runStateMapBenchmark(
+                String name,
+                StateMap<Integer, String, Integer> stateMap,
+                int operationNum,
+                int namespaceRange,
+                int keyRange,
+                java.util.function.Supplier<Long> memorySupplier) {
+
+            // PUT操作基准测试
+            LOG.info("开始{} PUT操作基准测试...", name);
+            long startMemory = memorySupplier.get();
+
+            PutBenchmarkResult putResult = runPutBenchmark(
+                name, stateMap, operationNum, namespaceRange, keyRange
+            );
+
+            long endMemory = memorySupplier.get();
+            long memoryUsed = endMemory - startMemory;
+
+            logPutResults(name, putResult, stateMap.size(), memoryUsed);
+
+            // GET操作基准测试
+            LOG.info("开始{} GET操作基准测试...", name);
+
+            GetBenchmarkResult getResult = runGetBenchmark(
+                name, stateMap, operationNum, namespaceRange, keyRange
+            );
+
+            logGetResults(name, getResult);
+
+            // TRANSFORM操作基准测试
+            LOG.info("开始{} TRANSFORM操作基准测试...", name);
+
+            TransformBenchmarkResult transformResult = runTransformBenchmark(
+                name, stateMap, operationNum, namespaceRange, keyRange
+            );
+
+            logTransformResults(name, transformResult);
+
+            return new BenchmarkResult(name, putResult, getResult, transformResult, stateMap.size(), memoryUsed);
+        }
+
+        /**
+         * 执行PUT操作基准测试
+         */
+        private PutBenchmarkResult runPutBenchmark(
+                String name,
+                StateMap<Integer, String, Integer> stateMap,
+                int operationNum,
+                int namespaceRange,
+                int keyRange) {
+
+            long startTime = System.nanoTime();
+            Random putRandom = new Random(42); // 固定种子确保公平比较
+
+            for (int i = 0; i < operationNum; i++) {
+                int key = putRandom.nextInt(keyRange);
+                String namespace = "ns" + putRandom.nextInt(namespaceRange);
+                stateMap.put(key, namespace, i); // 使用Integer值
+
+                if (i % 10_000_000 == 0 && i > 0) {
+                    LOG.info("{}已完成 {} 次PUT操作", name, i);
+                }
+            }
+
+            long endTime = System.nanoTime();
+
+            long duration = (endTime - startTime) / 1_000_000; // ms
+            double qps = operationNum * 1000.0 / duration;
+            double avgLatency = (double) (endTime - startTime) / operationNum / 1000.0; // μs
+
+            return new PutBenchmarkResult(operationNum, duration, qps, avgLatency);
+        }
+
+        /**
+         * 执行GET操作基准测试
+         */
+        private GetBenchmarkResult runGetBenchmark(
+                String name,
+                StateMap<Integer, String, Integer> stateMap,
+                int operationNum,
+                int namespaceRange,
+                int keyRange) {
+
+            long startTime = System.nanoTime();
+            Random getRandom = new Random(123); // 固定种子确保公平比较
+            long hits = 0;
+
+            for (int i = 0; i < operationNum; i++) {
+                int key = getRandom.nextInt(keyRange);
+                String namespace = "ns" + getRandom.nextInt(namespaceRange);
+
+                Integer value = stateMap.get(key, namespace);
+                if (value != null) {
+                    hits++;
+                }
+
+                if (i % 10_000_000 == 0 && i > 0) {
+                    LOG.info("{}已完成 {} 次GET操作", name, i);
+                }
+            }
+
+            long endTime = System.nanoTime();
+
+            long duration = (endTime - startTime) / 1_000_000; // ms
+            double qps = operationNum * 1000.0 / duration;
+            double avgLatency = (double) (endTime - startTime) / operationNum / 1000.0; // μs
+            double hitRate = (hits * 100.0) / operationNum;
+
+            return new GetBenchmarkResult(operationNum, hits, duration, qps, avgLatency, hitRate);
+        }
+
+        /**
+         * 执行TRANSFORM操作基准测试
+         */
+        private TransformBenchmarkResult runTransformBenchmark(
+                String name,
+                StateMap<Integer, String, Integer> stateMap,
+                int operationNum,
+                int namespaceRange,
+                int keyRange) {
+
+            long startTime = System.nanoTime();
+            // 使用与PUT操作相同的随机种子，确保Transform操作相同的key序列
+            Random transformRandom = new Random(42); // 与PUT操作使用相同的种子
+            long transformations = 0;
+            AtomicLong newValues = new AtomicLong();
+
+            for (int i = 0; i < operationNum; i++) {
+                // 使用与PUT操作相同的key生成逻辑
+                int key = transformRandom.nextInt(keyRange);
+                String namespace = "ns" + transformRandom.nextInt(namespaceRange);
+                int incrementValue = transformRandom.nextInt(100) + 1; // 随机增量1-100
+
+                try {
+                    stateMap.transform(key, namespace, incrementValue, (previous, increment) -> {
+                        if (previous == null) {
+                            newValues.getAndIncrement();
+                            return increment;
+                        } else {
+                            return previous + increment;
+                        }
+                    });
+                    transformations++;
+                } catch (Exception e) {
+                    // 忽略异常，继续执行
+                    LOG.info("Transform操作异常: {}", e.getMessage());
+                }
+
+                if (i % 10_000_000 == 0 && i > 0) {
+                    LOG.info("{}已完成 {} 次TRANSFORM操作", name, i);
+                }
+            }
+
+            long endTime = System.nanoTime();
+
+            long duration = (endTime - startTime) / 1_000_000; // ms
+            double qps = transformations > 0 ? transformations * 1000.0 / duration : 0;
+            double avgLatency = transformations > 0 ? (double) (endTime - startTime) / transformations / 1000.0 : 0; // μs
+
+            return new TransformBenchmarkResult(operationNum, transformations, newValues.get(), duration, qps, avgLatency);
+        }
+
+        /**
+         * 输出PUT操作测试结果
+         */
+        private void logPutResults(String name, PutBenchmarkResult result, int recordCount, long memoryUsed) {
+            LOG.info("{} PUT操作基准测试结果:", name);
+            LOG.info("  操作数: {}", result.operationCount);
+            LOG.info("  实际记录数: {}", recordCount);
+            LOG.info("  耗时: {}ms", result.duration);
+            LOG.info("  QPS: {}", String.format("%.0f", result.qps));
+            LOG.info("  平均延迟: {}μs", String.format("%.3f", result.avgLatency));
+            if (memoryUsed > 0) {
+                LOG.info("  内存使用: {}MB", memoryUsed / 1024 / 1024);
+                LOG.info("  平均每条记录: {}bytes", recordCount > 0 ? memoryUsed / recordCount : 0);
+            }
+        }
+
+        /**
+         * 输出GET操作测试结果
+         */
+        private void logGetResults(String name, GetBenchmarkResult result) {
+            LOG.info("{} GET操作基准测试结果:", name);
+            LOG.info("  操作数: {}", result.operationCount);
+            LOG.info("  命中数: {}", result.hits);
+            LOG.info("  耗时: {}ms", result.duration);
+            LOG.info("  QPS: {}", String.format("%.0f", result.qps));
+            LOG.info("  平均延迟: {}μs", String.format("%.3f", result.avgLatency));
+            LOG.info("  命中率: {}%", String.format("%.1f", result.hitRate));
+        }
+
+        /**
+         * 输出TRANSFORM操作测试结果
+         */
+        private void logTransformResults(String name, TransformBenchmarkResult result) {
+            LOG.info("{} TRANSFORM操作基准测试结果:", name);
+            LOG.info("  总尝试操作数: {}", result.operationCount);
+            LOG.info("  实际执行转换数: {}", result.transformations);
+            LOG.info("  新值创建数: {}", result.newValues);
+            LOG.info("  耗时: {}ms", result.duration);
+            if (result.transformations > 0) {
+                LOG.info("  QPS: {}", String.format("%.0f", result.qps));
+                LOG.info("  平均延迟: {}μs", String.format("%.3f", result.avgLatency));
+                LOG.info("  有效操作比例: {}%", String.format("%.1f", (result.transformations * 100.0) / result.operationCount));
+                LOG.info("  新值比例: {}%", String.format("%.1f", (result.newValues * 100.0) / result.transformations));
+            } else {
+                LOG.info("  无有效转换操作");
+            }
+        }
+
+        /**
+         * 打印性能对比结果
+         */
+        private void printPerformanceComparison(String operation, BenchmarkResult forL0, BenchmarkResult cow, String operationType) {
+            double forL0Qps, forL0Latency, cowQps, cowLatency;
+            String additionalInfo = "";
+
+            switch (operationType) {
+                case "put":
+                    forL0Qps = forL0.putResult.qps;
+                    forL0Latency = forL0.putResult.avgLatency;
+                    cowQps = cow.putResult.qps;
+                    cowLatency = cow.putResult.avgLatency;
+                    break;
+                case "get":
+                    forL0Qps = forL0.getResult.qps;
+                    forL0Latency = forL0.getResult.avgLatency;
+                    cowQps = cow.getResult.qps;
+                    cowLatency = cow.getResult.avgLatency;
+                    additionalInfo = String.format(", %.1f%% vs %.1f%% 命中率",
+                            forL0.getResult.hitRate, cow.getResult.hitRate);
+                    break;
+                case "transform":
+                    forL0Qps = forL0.transformResult.qps;
+                    forL0Latency = forL0.transformResult.avgLatency;
+                    cowQps = cow.transformResult.qps;
+                    cowLatency = cow.transformResult.avgLatency;
+                    double forL0NewRatio = forL0.transformResult.transformations > 0 ?
+                        (forL0.transformResult.newValues * 100.0) / forL0.transformResult.transformations : 0;
+                    double cowNewRatio = cow.transformResult.transformations > 0 ?
+                        (cow.transformResult.newValues * 100.0) / cow.transformResult.transformations : 0;
+                    additionalInfo = String.format(", %.1f%% vs %.1f%% 新值比例", forL0NewRatio, cowNewRatio);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unknown operation type: " + operationType);
+            }
+
+            double qpsRatio = cowQps > 0 ? forL0Qps / cowQps : 0;
+            double latencyRatio = forL0Latency > 0 && cowLatency > 0 ? forL0Latency / cowLatency : 0;
+
+            LOG.info("{}操作性能对比:", operation);
+            String[] additionalParts = additionalInfo.split(",");
+            LOG.info("  ForL0StateMap:      {} QPS, {}μs 平均延迟{}",
+                    String.format("%.0f", forL0Qps), String.format("%.3f", forL0Latency),
+                    additionalParts.length > 0 ? additionalParts[0] : "");
+            LOG.info("  CopyOnWriteStateMap: {} QPS, {}μs 平均延迟{}",
+                    String.format("%.0f", cowQps), String.format("%.3f", cowLatency),
+                    additionalParts.length > 1 ? additionalParts[1] : "");
+
+            if (qpsRatio > 0) {
+                LOG.info("  ForL0StateMap QPS是CopyOnWriteStateMap的 {} 倍", String.format("%.2f", qpsRatio));
+            }
+            if (latencyRatio > 0) {
+                LOG.info("  ForL0StateMap延迟是CopyOnWriteStateMap的 {} 倍", String.format("%.2f", latencyRatio));
+            }
+        }
+
+        /**
+         * 打印内存使用对比
+         */
+        private void printMemoryComparison(BenchmarkResult forL0, BenchmarkResult cow) {
+            LOG.info("内存使用对比:");
+            LOG.info("  ForL0StateMap实际记录数: {}, 内存使用: {}MB, 平均每条记录: {}bytes",
+                    forL0.recordCount, forL0.memoryUsed / 1024 / 1024,
+                    forL0.recordCount > 0 ? forL0.memoryUsed / forL0.recordCount : 0);
+            LOG.info("  CopyOnWriteStateMap实际记录数: {} (使用堆内存，无法精确测量内存使用)",
+                    cow.recordCount);
+        }
+
+        /**
+         * 验证基准测试结果的正确性
+         */
+        private void validateBenchmarkResults(BenchmarkResult forL0, BenchmarkResult cow, int keyRange, int namespaceRange) {
+            assertNotEquals(0, forL0.recordCount, "ForL0StateMap应该有插入的记录");
+            assertNotEquals(0, cow.recordCount, "CopyOnWriteStateMap应该有插入的记录");
+            assertTrue(forL0.recordCount <= (long) keyRange * namespaceRange, "ForL0StateMap记录数不应超过理论最大值");
+            assertTrue(cow.recordCount <= (long) keyRange * namespaceRange, "CopyOnWriteStateMap记录数不应超过理论最大值");
+
+            // 理论上，使用相同随机种子的情况下，两个StateMap应该有相同的记录数
+            assertEquals(forL0.recordCount, cow.recordCount, "两个StateMap应该有相同的记录数");
+        }
+
+        // ===== 内部结果类 =====
+
+        /**
+         * PUT操作基准测试结果
+         */
+        private class PutBenchmarkResult {
+            final int operationCount;
+            final long duration;
+            final double qps;
+            final double avgLatency;
+
+            PutBenchmarkResult(int operationCount, long duration, double qps, double avgLatency) {
+                this.operationCount = operationCount;
+                this.duration = duration;
+                this.qps = qps;
+                this.avgLatency = avgLatency;
+            }
+        }
+
+        /**
+         * GET操作基准测试结果
+         */
+        private class GetBenchmarkResult {
+            final int operationCount;
+            final long hits;
+            final long duration;
+            final double qps;
+            final double avgLatency;
+            final double hitRate;
+
+            GetBenchmarkResult(int operationCount, long hits, long duration, double qps, double avgLatency, double hitRate) {
+                this.operationCount = operationCount;
+                this.hits = hits;
+                this.duration = duration;
+                this.qps = qps;
+                this.avgLatency = avgLatency;
+                this.hitRate = hitRate;
+            }
+        }
+
+        /**
+         * TRANSFORM操作基准测试结果
+         */
+        private class TransformBenchmarkResult {
+            final int operationCount;
+            final long transformations;
+            final long newValues;
+            final long duration;
+            final double qps;
+            final double avgLatency;
+
+            TransformBenchmarkResult(int operationCount, long transformations, long newValues,
+                                   long duration, double qps, double avgLatency) {
+                this.operationCount = operationCount;
+                this.transformations = transformations;
+                this.newValues = newValues;
+                this.duration = duration;
+                this.qps = qps;
+                this.avgLatency = avgLatency;
+            }
+        }
+
+        /**
+         * 完整的基准测试结果
+         */
+        private class BenchmarkResult {
+            final String name;
+            final PutBenchmarkResult putResult;
+            final GetBenchmarkResult getResult;
+            final TransformBenchmarkResult transformResult;
+            final int recordCount;
+            final long memoryUsed;
+
+            BenchmarkResult(String name, PutBenchmarkResult putResult, GetBenchmarkResult getResult,
+                          TransformBenchmarkResult transformResult, int recordCount, long memoryUsed) {
+                this.name = name;
+                this.putResult = putResult;
+                this.getResult = getResult;
+                this.transformResult = transformResult;
+                this.recordCount = recordCount;
+                this.memoryUsed = memoryUsed;
+            }
+        }
     }
 }

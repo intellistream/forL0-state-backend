@@ -85,48 +85,33 @@ public final class HashFunctions {
     // ================= Jenkins Hash & tag helpers =================
 
     /**
-     * Jenkins one-at-a-time hash over a byte slice.
-     */
-    public static int jenkinsHash(byte[] data, int offset, int length) {
-        if (data == null || length <= 0) { return 0; }
-        int hash = 0;
-        int end = offset + length;
-        for (int i = offset; i < end; i++) {
-            hash += (data[i] & 0xFF);
-            hash += (hash << 10);
-            hash ^= (hash >>> 6);
-        }
-        hash += (hash << 3);
-        hash ^= (hash >>> 11);
-        hash += (hash << 15);
-        return hash;
-    }
-
-    /**
      * Combined Jenkins hash for key + namespace (顺序叠加避免额外拷贝)。
+     * 优化版本：减少重复终末处理，提升性能。
      */
     public static int jenkinsHashCombined(byte[] keyBuf, int keyLen, byte[] nsBuf, int nsLen) {
         int hash = 0;
-        if (keyBuf != null && keyLen > 0) {
-            hash = mixJenkinsSequence(hash, keyBuf, keyLen);
-        }
-        if (nsBuf != null && nsLen > 0) {
-            hash = mixJenkinsSequence(hash, nsBuf, nsLen);
-        }
-        return hash;
-    }
 
-    private static int mixJenkinsSequence(int seed, byte[] data, int len) {
-        int hash = seed;
-        for (int i = 0; i < len; i++) {
-            hash += (data[i] & 0xFF);
-            hash += (hash << 10);
-            hash ^= (hash >>> 6);
-        }
-        // 终末搅动放在外层调用结束后统一做；为简单直接再做一轮终末
+        // 处理 key 数据
+        hash = jenkinsHash(keyBuf, keyLen, hash);
+
+        // 处理 namespace 数据
+        hash = jenkinsHash(nsBuf, nsLen, hash);
+
+        // 最后统一做一次终末处理
         hash += (hash << 3);
         hash ^= (hash >>> 11);
         hash += (hash << 15);
+        return hash;
+    }
+
+    private static int jenkinsHash(byte[] buf, int len, int hash) {
+        if (buf != null && len > 0) {
+            for (int i = 0; i < len; i++) {
+                hash += (buf[i] & 0xFF);
+                hash += (hash << 10);
+                hash ^= (hash >>> 6);
+            }
+        }
         return hash;
     }
 
@@ -150,13 +135,7 @@ public final class HashFunctions {
      * @return Mixed hash value
      */
     public static long mix64(int value) {
-        long x = value;
-        x ^= x >>> 33;
-        x *= 0xff51afd7ed558ccdL;
-        x ^= x >>> 33;
-        x *= 0xc4ceb9fe1a85ec53L;
-        x ^= x >>> 33;
-        return x;
+        return mix64((long) value);
     }
 
     /**
