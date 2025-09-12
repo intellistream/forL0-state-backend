@@ -22,10 +22,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMap.class);
 
-    private final TypeSerializer<K> keySerializer;
-    private final TypeSerializer<N> namespaceSerializer;
-    private final TypeSerializer<S> stateSerializer;
-
     // Core storage components
     private final MemoryManagerAllocator allocator;
     private final EntryArena entryArena;
@@ -54,7 +50,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private final MemorySegmentDataInputView segInput = new MemorySegmentDataInputView();
 
     // 复用反序列化对象，降低分配/反射开销
-    private final ThreadLocal<S> reuseHolder = new ThreadLocal<>();
+    // 在 Flink 的单线程处理模型中，直接使用成员变量即可，无需 ThreadLocal
+    private S reuseState;
 
     // Serialization cache for key and namespace to avoid repeated serialization
     private K lastKey;
@@ -91,15 +88,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          boolean l0CacheEnabled,
                          L0Table.ReplacementPolicy l0Policy) {
         this.allocator = allocator;
-        this.keySerializer = keySerializer;
-        this.namespaceSerializer = namespaceSerializer;
-        this.stateSerializer = stateSerializer;
+        // 直接使用 SerializerPack，移除冗余的序列化器引用
+        this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
         this.l0CacheEnabled = l0CacheEnabled;
         this.entryArena = new EntryArena(allocator);
         // 分别创建 MainTable 和 L0Table，移除 TableCore 中间层
         this.mainTable = new MainTable(allocator, mainTableInitPow2, 1.5); // 负载因子阈值
         this.l0Table = l0CacheEnabled ? new L0Table(allocator, l0CacheSizePow2, l0Policy) : null;
-        this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
 
         LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}",
                 1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled);
@@ -460,12 +455,12 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // 反序列化辅助：供迭代与 sizeOfNamespace 使用
     private K deserializeKey(byte[] keyBytes) throws IOException {
         DataInputDeserializer in = new DataInputDeserializer(keyBytes);
-        return keySerializer.deserialize(in);
+        return serializerPack.keySerializer().deserialize(in);
     }
 
     private N deserializeNamespace(byte[] namespaceBytes) throws IOException {
         DataInputDeserializer in = new DataInputDeserializer(namespaceBytes);
-        return namespaceSerializer.deserialize(in);
+        return serializerPack.namespaceSerializer().deserialize(in);
     }
 
     private S deserializeValue(byte[] valueBytes) throws IOException {
@@ -473,7 +468,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             return null;
         }
         DataInputDeserializer in = new DataInputDeserializer(valueBytes);
-        return stateSerializer.deserialize(in);
+        return serializerPack.stateSerializer().deserialize(in);
     }
 
     private S deserializeValueFromArena(long entryAddress) throws IOException {
@@ -484,21 +479,21 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         segInput.reset(slice.segment, slice.offset, slice.length);
 
         // 优先走复用反序列化，避免每条记录 new/反射构造
-        S reuse = reuseHolder.get();
+        S reuse = reuseState;
         if (reuse == null) {
             // 仅在首次缺少复用对象时创建一次；多数 Flink 序列化器会在 createInstance 内部用一次反射
             // 但这比每条记录一次要小得多，且后续 deserialize(reuse, ...) 可完全绕开 instantiateRaw 热点
-            reuse = stateSerializer.createInstance();
+            reuse = serializerPack.stateSerializer().createInstance();
             if (reuse != null) {
-                reuseHolder.set(reuse);
+                reuseState = reuse;
             }
         }
 
         if (reuse != null) {
-            return stateSerializer.deserialize(reuse, segInput);
+            return serializerPack.stateSerializer().deserialize(reuse, segInput);
         } else {
             // 回退路径（某些特殊序列化器可能不支持复用实例）
-            return stateSerializer.deserialize(segInput);
+            return serializerPack.stateSerializer().deserialize(segInput);
         }
     }
 

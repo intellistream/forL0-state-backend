@@ -1,7 +1,6 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
-import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
@@ -358,9 +357,46 @@ public class EntryArena implements AutoCloseable {
     }
 
     private static boolean equalsSegmentBytes(MemorySegment seg, int segOffset, byte[] arr, int len) {
-        // Use Flink's optimized memory comparison instead of manual byte-by-byte comparison
-        MemorySegment arrSeg = MemorySegmentFactory.wrap(arr);
-        return seg.equalTo(arrSeg, segOffset, 0, len);
+        int i = 0;
+        // we assume unaligned accesses are supported.
+        // Compare 8 bytes at a time.
+        while (i + 8 <= len) {
+            long v1 = seg.getLong(segOffset + i);
+            long v2 = (arr[i] & 0xFF)
+                    | ((long) (arr[i + 1] & 0xFF) << 8)
+                    | ((long) (arr[i + 2] & 0xFF) << 16)
+                    | ((long) (arr[i + 3] & 0xFF) << 24)
+                    | ((long) (arr[i + 4] & 0xFF) << 32)
+                    | ((long) (arr[i + 5] & 0xFF) << 40)
+                    | ((long) (arr[i + 6] & 0xFF) << 48)
+                    | ((long) (arr[i + 7] & 0xFF) << 56);
+            if (v1 != v2) {
+                return false;
+            }
+            i += 8;
+        }
+        // cover the last (len % 8) elements.
+        if (i + 4 <= len) {
+            int v1 = seg.getInt(segOffset + i);
+            int v2 = (arr[i] & 0xFF)
+                    | ((arr[i + 1] & 0xFF) << 8)
+                    | ((arr[i + 2] & 0xFF) << 16)
+                    | ((arr[i + 3] & 0xFF) << 24);
+            if (v1 != v2) {
+                return false;
+            }
+            i += 4;
+        }
+        if (i + 2 <= len) {
+            short v1 = seg.getShort(segOffset + i);
+            short v2 = (short) ((arr[i] & 0xFF) | ((arr[i + 1] & 0xFF) << 8));
+            if (v1 != v2) {
+                return false;
+            }
+            i += 2;
+        }
+        if (i < len) return seg.get(segOffset + i) == arr[i];
+        return true;
     }
 
     // ==== allocation helpers ====

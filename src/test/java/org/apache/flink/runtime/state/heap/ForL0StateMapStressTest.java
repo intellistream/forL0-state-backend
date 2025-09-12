@@ -5,7 +5,6 @@ import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -257,7 +256,7 @@ public class ForL0StateMapStressTest {
             LOG.info("  平均QPS: {}", totalOperations / duration);
             LOG.info("  内存使用: {} KB", allocator.getUsedBytes() / 1024);
 
-            assertEquals(putCount + getCount + removeCount, totalOperations);
+            assertEquals(totalOperations, putCount + getCount + removeCount);
         }
     }
 
@@ -984,20 +983,27 @@ public class ForL0StateMapStressTest {
             LOG.info("PUT操作数: {}, GET操作数: {}, TRANSFORM操作数: {}", operationNum, operationNum, operationNum);
             LOG.info("Namespace范围: 0-{}, Key范围: 0-{}", namespaceRange - 1, keyRange - 1);
 
+            // ===== 生成测试数据 =====
+            LOG.info("=== 生成测试数据 ===");
+            int[] keySequence = createSequence(operationNum, keyRange);
+            int[] namespaceSequence = createSequence(operationNum, namespaceRange);
+            int[] transformValues = createSequence(operationNum, 1000); // Transform增量值
+            LOG.info("=== 测试数据生成完成 ===");
+
             // ===== ForL0StateMap 基准测试 =====
-            LOG.info("\n=== ForL0StateMap 基准测试 ===");
+            LOG.info("=== ForL0StateMap 基准测试 ===");
 
             BenchmarkResult forL0Result = runStateMapBenchmark(
                 "ForL0StateMap",
                 createForL0StateMapInteger(),
-                operationNum,
-                namespaceRange,
-                keyRange,
+                keySequence,
+                namespaceSequence,
+                transformValues,
                 allocator::getUsedBytes
             );
 
             // ===== CopyOnWriteStateMap 基准测试 =====
-            LOG.info("\n=== CopyOnWriteStateMap 基准测试 ===");
+            LOG.info("=== CopyOnWriteStateMap 基准测试 ===");
 
             // 创建CopyOnWriteStateMap实例
             CopyOnWriteStateMap<Integer, String, Integer> copyOnWriteStateMap =
@@ -1006,10 +1012,10 @@ public class ForL0StateMapStressTest {
             BenchmarkResult cowResult = runStateMapBenchmark(
                 "CopyOnWriteStateMap",
                 copyOnWriteStateMap,
-                operationNum,
-                namespaceRange,
-                keyRange,
-                () -> 0L // CopyOnWriteStateMap使用堆内存，无法直接测量
+                keySequence,
+                namespaceSequence,
+                transformValues,
+                ()-> 0L // CopyOnWriteStateMap使用堆内存，无法直接测量
             );
 
             // ===== 性能对比总结 =====
@@ -1035,7 +1041,7 @@ public class ForL0StateMapStressTest {
                 IntSerializer.INSTANCE,
                 StringSerializer.INSTANCE,
                 IntSerializer.INSTANCE,
-                true // enable L0 cache
+                false // enable L0 cache
             );
         }
 
@@ -1045,9 +1051,9 @@ public class ForL0StateMapStressTest {
         private BenchmarkResult runStateMapBenchmark(
                 String name,
                 StateMap<Integer, String, Integer> stateMap,
-                int operationNum,
-                int namespaceRange,
-                int keyRange,
+                int[] keySequence,
+                int[] namespaceSequence,
+                int[] transformValues,
                 java.util.function.Supplier<Long> memorySupplier) {
 
             // PUT操作基准测试
@@ -1055,7 +1061,7 @@ public class ForL0StateMapStressTest {
             long startMemory = memorySupplier.get();
 
             PutBenchmarkResult putResult = runPutBenchmark(
-                name, stateMap, operationNum, namespaceRange, keyRange
+                name, stateMap, keySequence, namespaceSequence
             );
 
             long endMemory = memorySupplier.get();
@@ -1067,7 +1073,7 @@ public class ForL0StateMapStressTest {
             LOG.info("开始{} GET操作基准测试...", name);
 
             GetBenchmarkResult getResult = runGetBenchmark(
-                name, stateMap, operationNum, namespaceRange, keyRange
+                name, stateMap, keySequence, namespaceSequence
             );
 
             logGetResults(name, getResult);
@@ -1076,7 +1082,7 @@ public class ForL0StateMapStressTest {
             LOG.info("开始{} TRANSFORM操作基准测试...", name);
 
             TransformBenchmarkResult transformResult = runTransformBenchmark(
-                name, stateMap, operationNum, namespaceRange, keyRange
+                name, stateMap, keySequence, namespaceSequence, transformValues
             );
 
             logTransformResults(name, transformResult);
@@ -1090,16 +1096,14 @@ public class ForL0StateMapStressTest {
         private PutBenchmarkResult runPutBenchmark(
                 String name,
                 StateMap<Integer, String, Integer> stateMap,
-                int operationNum,
-                int namespaceRange,
-                int keyRange) {
-
+                int[] keySequence,
+                int[] namespaceSequence){
+            int operationNum = keySequence.length;
             long startTime = System.nanoTime();
-            Random putRandom = new Random(42); // 固定种子确保公平比较
 
             for (int i = 0; i < operationNum; i++) {
-                int key = putRandom.nextInt(keyRange);
-                String namespace = "ns" + putRandom.nextInt(namespaceRange);
+                int key = keySequence[i];
+                String namespace = "ns" + namespaceSequence[i];
                 stateMap.put(key, namespace, i); // 使用Integer值
 
                 if (i % 10_000_000 == 0 && i > 0) {
@@ -1122,17 +1126,15 @@ public class ForL0StateMapStressTest {
         private GetBenchmarkResult runGetBenchmark(
                 String name,
                 StateMap<Integer, String, Integer> stateMap,
-                int operationNum,
-                int namespaceRange,
-                int keyRange) {
-
+                int[] keySequence,
+                int[] namespaceSequence) {
+            int operationNum = keySequence.length;
             long startTime = System.nanoTime();
-            Random getRandom = new Random(123); // 固定种子确保公平比较
             long hits = 0;
 
             for (int i = 0; i < operationNum; i++) {
-                int key = getRandom.nextInt(keyRange);
-                String namespace = "ns" + getRandom.nextInt(namespaceRange);
+                int key = keySequence[i];
+                String namespace = "ns" + namespaceSequence[i];
 
                 Integer value = stateMap.get(key, namespace);
                 if (value != null) {
@@ -1160,21 +1162,20 @@ public class ForL0StateMapStressTest {
         private TransformBenchmarkResult runTransformBenchmark(
                 String name,
                 StateMap<Integer, String, Integer> stateMap,
-                int operationNum,
-                int namespaceRange,
-                int keyRange) {
+                int[] keySequence,
+                int[] namespaceSequence,
+                int[] transformValues) {
 
+            int operationNum = keySequence.length;
             long startTime = System.nanoTime();
-            // 使用与PUT操作相同的随机种子，确保Transform操作相同的key序列
-            Random transformRandom = new Random(42); // 与PUT操作使用相同的种子
             long transformations = 0;
             AtomicLong newValues = new AtomicLong();
 
             for (int i = 0; i < operationNum; i++) {
                 // 使用与PUT操作相同的key生成逻辑
-                int key = transformRandom.nextInt(keyRange);
-                String namespace = "ns" + transformRandom.nextInt(namespaceRange);
-                int incrementValue = transformRandom.nextInt(100) + 1; // 随机增量1-100
+                int key = keySequence[i];
+                String namespace = "ns" + namespaceSequence[i];
+                int incrementValue = transformValues[i];
 
                 try {
                     stateMap.transform(key, namespace, incrementValue, (previous, increment) -> {
@@ -1418,5 +1419,14 @@ public class ForL0StateMapStressTest {
                 this.memoryUsed = memoryUsed;
             }
         }
+    }
+
+    private int[] createSequence(int num, int range) {
+        Random random = new Random(42);
+        int[] sequence = new int[num];
+        for (int i = 0; i < num; i++) {
+            sequence[i] = random.nextInt(range);
+        }
+        return sequence;
     }
 }

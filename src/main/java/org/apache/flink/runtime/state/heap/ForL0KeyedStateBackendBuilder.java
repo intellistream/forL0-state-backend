@@ -66,7 +66,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.l0CacheEnabled = l0CacheEnabled;
     }
 
-    // 兼容旧签名：默认启用L0缓存
+    // 兼容旧签名：默认不启用L0缓存
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
             TypeSerializer<K> keySerializer,
@@ -99,7 +99,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 asynchronousSnapshots,
                 cancelStreamRegistry,
                 memoryManager,
-                true);
+                false);
     }
 
     @Override
