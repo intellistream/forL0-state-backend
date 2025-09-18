@@ -21,65 +21,60 @@ public final class HashFunctions {
         if (data == null || data.length == 0) {
             return 0;
         }
-        return murmurHash3(data, 0, data.length);
+        return murmurHash3(data, 0, data.length, 0x9747b28c);
     }
 
     /**
      * MurmurHash3 for a byte[] slice [offset, offset+length).
      */
-    public static int murmurHash3(byte[] data, int offset, int length) {
-        if (data == null || length <= 0) {
-            return 0;
-        }
-
+    public static int murmurHash3(byte[] data, int offset, int len, int seed) {
         final int c1 = 0xcc9e2d51;
         final int c2 = 0x1b873593;
-        final int r1 = 15;
-        final int r2 = 13;
-        final int m = 5;
-        final int n = 0xe6546b64;
 
-        int hash = 0x9747b28c; // Seed
+        int h1 = seed;
+        int roundedEnd = offset + (len & 0xfffffffc);  // 4字节对齐
 
-        int roundedEnd = offset + (length & 0xfffffffc); // Round down to 4 byte block
-
+        // 一次处理4字节
         for (int i = offset; i < roundedEnd; i += 4) {
-            int k = (data[i] & 0xff) | ((data[i + 1] & 0xff) << 8) |
-                    ((data[i + 2] & 0xff) << 16) | ((data[i + 3] & 0xff) << 24);
+            int k1 = (data[i] & 0xff)
+                    | ((data[i + 1] & 0xff) << 8)
+                    | ((data[i + 2] & 0xff) << 16)
+                    | (data[i + 3] << 24);
+            k1 *= c1;
+            k1 = Integer.rotateLeft(k1, 15);
+            k1 *= c2;
 
-            k *= c1;
-            k = rotateLeft(k, r1);
-            k *= c2;
-
-            hash ^= k;
-            hash = rotateLeft(hash, r2);
-            hash = hash * m + n;
+            h1 ^= k1;
+            h1 = Integer.rotateLeft(h1, 13);
+            h1 = h1 * 5 + 0xe6546b64;
         }
 
-        // Handle remaining bytes
-        int k = 0;
-        switch (length & 3) {
-            case 3:
-                k ^= (data[roundedEnd + 2] & 0xff) << 16;
-            case 2:
-                k ^= (data[roundedEnd + 1] & 0xff) << 8;
-            case 1:
-                k ^= (data[roundedEnd] & 0xff);
-                k *= c1;
-                k = rotateLeft(k, r1);
-                k *= c2;
-                hash ^= k;
+        // 处理尾部
+        int k1 = 0;
+        int tail = len & 0x03;
+        if (tail == 3) {
+            k1 ^= (data[roundedEnd + 2] & 0xff) << 16;
+        }
+        if (tail >= 2) {
+            k1 ^= (data[roundedEnd + 1] & 0xff) << 8;
+        }
+        if (tail >= 1) {
+            k1 ^= (data[roundedEnd] & 0xff);
+            k1 *= c1;
+            k1 = Integer.rotateLeft(k1, 15);
+            k1 *= c2;
+            h1 ^= k1;
         }
 
-        // Finalization
-        hash ^= length;
-        hash ^= (hash >>> 16);
-        hash *= 0x85ebca6b;
-        hash ^= (hash >>> 13);
-        hash *= 0xc2b2ae35;
-        hash ^= (hash >>> 16);
+        // final mix
+        h1 ^= len;
+        h1 ^= (h1 >>> 16);
+        h1 *= 0x85ebca6b;
+        h1 ^= (h1 >>> 13);
+        h1 *= 0xc2b2ae35;
+        h1 ^= (h1 >>> 16);
 
-        return hash;
+        return h1;
     }
 
     // ================= Jenkins Hash & tag helpers =================
@@ -88,20 +83,14 @@ public final class HashFunctions {
      * Combined Jenkins hash for key + namespace (顺序叠加避免额外拷贝)。
      * 优化版本：减少重复终末处理，提升性能。
      */
-    public static int jenkinsHashCombined(byte[] keyBuf, int keyLen, byte[] nsBuf, int nsLen) {
+    public static int compositeHash(byte[] keyBuf, int keyLen, byte[] nsBuf, int nsLen) {
         int hash = 0;
+        hash = murmurHash3(keyBuf, 0, keyLen, hash);
+        return murmurHash3(nsBuf, 0, nsLen, hash);
+    }
 
-        // 处理 key 数据
-        hash = jenkinsHash(keyBuf, keyLen, hash);
-
-        // 处理 namespace 数据
-        hash = jenkinsHash(nsBuf, nsLen, hash);
-
-        // 最后统一做一次终末处理
-        hash += (hash << 3);
-        hash ^= (hash >>> 11);
-        hash += (hash << 15);
-        return hash;
+    public static int compositeHash(byte[] key, byte[] namespace) {
+        return compositeHash(key, key.length, namespace, namespace.length);
     }
 
     private static int jenkinsHash(byte[] buf, int len, int hash) {
@@ -114,16 +103,6 @@ public final class HashFunctions {
         }
         return hash;
     }
-
-    /**
-     * 生成 16 位 tag：对 key 与 namespace 分别 murmur 再异或，取低 16 位。
-     */
-    public static short murmur16(byte[] keyBuf, int keyLen, byte[] nsBuf, int nsLen) {
-        int h1 = murmurHash3(keyBuf, 0, keyLen);
-        int h2 = murmurHash3(nsBuf, 0, nsLen);
-        return (short)((h1 ^ h2) & 0xFFFF);
-    }
-
 
 
     // Methods for levelhash compatibility (legacy support)

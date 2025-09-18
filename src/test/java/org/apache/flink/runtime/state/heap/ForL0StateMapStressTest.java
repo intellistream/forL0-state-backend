@@ -959,7 +959,6 @@ public class ForL0StateMapStressTest {
         }
     }
 
-    // 辅助方法：创建大字符串（替代String.repeat，兼容Java 8）
     private String createLargeString(int length) {
         StringBuilder sb = new StringBuilder(length);
         for (int i = 0; i < length; i++) {
@@ -1006,7 +1005,7 @@ public class ForL0StateMapStressTest {
             LOG.info("=== CopyOnWriteStateMap 基准测试 ===");
 
             // 创建CopyOnWriteStateMap实例
-            CopyOnWriteStateMap<Integer, String, Integer> copyOnWriteStateMap =
+            CopyOnWriteStateMap<String, String, Integer> copyOnWriteStateMap =
                 new CopyOnWriteStateMap<>(IntSerializer.INSTANCE);
 
             BenchmarkResult cowResult = runStateMapBenchmark(
@@ -1033,12 +1032,12 @@ public class ForL0StateMapStressTest {
         /**
          * 创建使用Integer类型value的ForL0StateMap
          */
-        private StateMap<Integer, String, Integer> createForL0StateMapInteger() {
+        private StateMap<String, String, Integer> createForL0StateMapInteger() {
             return new ForL0StateMap<>(
                 allocator,
                 16, // mainTable 64K buckets
                 10, // l0Cache 1K buckets
-                IntSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
                 StringSerializer.INSTANCE,
                 IntSerializer.INSTANCE,
                 false // enable L0 cache
@@ -1050,7 +1049,7 @@ public class ForL0StateMapStressTest {
          */
         private BenchmarkResult runStateMapBenchmark(
                 String name,
-                StateMap<Integer, String, Integer> stateMap,
+                StateMap<String, String, Integer> stateMap,
                 int[] keySequence,
                 int[] namespaceSequence,
                 int[] transformValues,
@@ -1095,14 +1094,15 @@ public class ForL0StateMapStressTest {
          */
         private PutBenchmarkResult runPutBenchmark(
                 String name,
-                StateMap<Integer, String, Integer> stateMap,
+                StateMap<String, String, Integer> stateMap,
                 int[] keySequence,
                 int[] namespaceSequence){
             int operationNum = keySequence.length;
             long startTime = System.nanoTime();
 
             for (int i = 0; i < operationNum; i++) {
-                int key = keySequence[i];
+                // key 使用String类型
+                String key = "key" + keySequence[i];
                 String namespace = "ns" + namespaceSequence[i];
                 stateMap.put(key, namespace, i); // 使用Integer值
 
@@ -1125,7 +1125,7 @@ public class ForL0StateMapStressTest {
          */
         private GetBenchmarkResult runGetBenchmark(
                 String name,
-                StateMap<Integer, String, Integer> stateMap,
+                StateMap<String, String, Integer> stateMap,
                 int[] keySequence,
                 int[] namespaceSequence) {
             int operationNum = keySequence.length;
@@ -1133,7 +1133,7 @@ public class ForL0StateMapStressTest {
             long hits = 0;
 
             for (int i = 0; i < operationNum; i++) {
-                int key = keySequence[i];
+                String key = "key" + keySequence[i];
                 String namespace = "ns" + namespaceSequence[i];
 
                 Integer value = stateMap.get(key, namespace);
@@ -1161,7 +1161,7 @@ public class ForL0StateMapStressTest {
          */
         private TransformBenchmarkResult runTransformBenchmark(
                 String name,
-                StateMap<Integer, String, Integer> stateMap,
+                StateMap<String, String, Integer> stateMap,
                 int[] keySequence,
                 int[] namespaceSequence,
                 int[] transformValues) {
@@ -1173,7 +1173,7 @@ public class ForL0StateMapStressTest {
 
             for (int i = 0; i < operationNum; i++) {
                 // 使用与PUT操作相同的key生成逻辑
-                int key = keySequence[i];
+                String key = "key" + keySequence[i];
                 String namespace = "ns" + namespaceSequence[i];
                 int incrementValue = transformValues[i];
 

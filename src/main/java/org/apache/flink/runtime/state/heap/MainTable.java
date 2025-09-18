@@ -444,13 +444,8 @@ public class MainTable implements AutoCloseable {
 
             short tag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
 
-            // 获取key和namespace信息用于重新哈希
-            byte[] keyBytes = entryArena.getKeyBytes(entryAddress);
-            byte[] nsBytes = entryArena.getNamespaceBytes(entryAddress);
-            if (keyBytes == null || nsBytes == null) continue;
-
-            // 重新计算哈希值并确定新桶位置
-            int fullHash = HashFunctions.jenkinsHashCombined(keyBytes, keyBytes.length, nsBytes, nsBytes.length);
+            // 直接从EntryArena读取存储的hash值，无需重新计算
+            int fullHash = entryArena.getHash(entryAddress);
             int newBucketIndex = fullHash & (newBucketCount - 1);
 
             // 复用现有的递归插入逻辑，支持多级扩展桶

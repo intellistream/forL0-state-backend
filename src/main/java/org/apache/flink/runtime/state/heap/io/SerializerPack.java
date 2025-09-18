@@ -23,6 +23,9 @@ public class SerializerPack<K, N, S> {
     // 零拷贝模式的输出视图（复用实例）
     private final MemorySegmentDataOutputView directOut = new MemorySegmentDataOutputView();
 
+    // 零拷贝模式的输入视图（复用实例）
+    private final MemorySegmentDataInputView segInput = new MemorySegmentDataInputView();
+
     public SerializerPack(TypeSerializer<K> keySer,
                           TypeSerializer<N> nsSer,
                           TypeSerializer<S> stateSer) {
@@ -99,6 +102,36 @@ public class SerializerPack<K, N, S> {
         directOut.reset(segment, offset, length, spaceAllocator);
         stateSer.serialize(state, directOut);
         return directOut.getBytesWritten();
+    }
+
+    // ========== 零拷贝输入视图访问器 ==========
+
+    /**
+     * 重置内部复用的 MemorySegmentDataInputView 到指定片段/偏移/长度。
+     * 调用者随后可以通过 getInputView() 获取已经reset好的视图用于反序列化。
+     */
+    public void resetInputView(MemorySegment segment, int offset, int length) {
+        segInput.reset(segment, offset, length);
+    }
+
+    /**
+     * 便捷方法：使用内部复用的输入视图对 state 进行反序列化（支持复用实例）。
+     * 如果 reuse 为 null，会调用不带复用参数的反序列化方法。
+     */
+    public S deserializeState(S reuse) throws IOException {
+        if (reuse != null) {
+            return stateSer.deserialize(reuse, segInput);
+        } else {
+            return stateSer.deserialize(segInput);
+        }
+    }
+
+    /**
+     * 便捷方法：先重置内部输入视图到指定片段，然后反序列化（支持复用实例）。
+     */
+    public S deserializeStateFrom(MemorySegment segment, int offset, int length, S reuse) throws IOException {
+        resetInputView(segment, offset, length);
+        return deserializeState(reuse);
     }
 
     // ========== 访问器方法 ==========

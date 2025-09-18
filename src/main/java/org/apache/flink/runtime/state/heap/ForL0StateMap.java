@@ -5,9 +5,9 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
-import org.apache.flink.runtime.state.heap.io.MemorySegmentDataInputView;
 import org.apache.flink.runtime.state.heap.io.SerializerPack;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import org.apache.flink.runtime.state.heap.space.MemorySegmentSlice;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,10 +44,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // Resize coordination
     private volatile boolean resizeInProgress = false;
     // 移除时间节流，达条件即扩容
-
-    // Serialization helpers (零拷贝)
-    // 移除分散的输出缓冲，统一通过 SerializerPack 管理
-    private final MemorySegmentDataInputView segInput = new MemorySegmentDataInputView();
 
     // 复用反序列化对象，降低分配/反射开销
     // 在 Flink 的单线程处理模型中，直接使用成员变量即可，无需 ThreadLocal
@@ -185,8 +181,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         long result = putEntry(knh);
 
         if (result == 0) { // new entry
-            long addr = entryArena.putEntry(knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength,
-                    vb, vlen);
+            long addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                    knh.namespaceBytes, knh.namespaceLength, vb, vlen);
             mainTable.setSlotPointer(addr);
             size++;
             updateL0Table(knh, addr);
@@ -368,8 +364,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             serializerPack.writeState(newState);
             byte[] vb = serializerPack.stateBuffer();
             int vlen = serializerPack.stateLength();
-            long addr = entryArena.putEntry(knh.keyBytes, knh.keyLength, knh.namespaceBytes, knh.namespaceLength,
-                    vb, vlen);
+            long addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                    knh.namespaceBytes, knh.namespaceLength, vb, vlen);
             mainTable.setSlotPointer(addr);
             size++;
             updateL0Table(knh, addr);
@@ -393,7 +389,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * @return address of existing entry if found, 0 if new entry, -1 if failed (e.g. bucket pool full)
      */
     private long putEntry(KeyNamespaceHash knh) {
-        // 检查是否需要全局扩容
         if (mainTable.needsResize() && !resizeInProgress) {
             performResize();
         }
@@ -472,29 +467,20 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     private S deserializeValueFromArena(long entryAddress) throws IOException {
-        EntryArena.Slice slice = entryArena.getValueSlice(entryAddress);
+        MemorySegmentSlice slice = entryArena.getValueSlice(entryAddress);
         if (slice == null || slice.length == 0) {
             return null;
         }
-        segInput.reset(slice.segment, slice.offset, slice.length);
-
-        // 优先走复用反序列化，避免每条记录 new/反射构造
+        // 使用 SerializerPack 提供的便捷方法：先重置输入视图再反序列化（支持复用实例）
         S reuse = reuseState;
         if (reuse == null) {
-            // 仅在首次缺少复用对象时创建一次；多数 Flink 序列化器会在 createInstance 内部用一次反射
-            // 但这比每条记录一次要小得多，且后续 deserialize(reuse, ...) 可完全绕开 instantiateRaw 热点
             reuse = serializerPack.stateSerializer().createInstance();
             if (reuse != null) {
                 reuseState = reuse;
             }
         }
 
-        if (reuse != null) {
-            return serializerPack.stateSerializer().deserialize(reuse, segInput);
-        } else {
-            // 回退路径（某些特殊序列化器可能不支持复用实例）
-            return serializerPack.stateSerializer().deserialize(segInput);
-        }
+        return serializerPack.deserializeStateFrom(slice.segment, slice.offset, slice.length, reuse);
     }
 
     /**
@@ -514,7 +500,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         int klen = serializerPack.keyLength();
         byte[] nb = serializerPack.namespaceBuffer();
         int nlen = serializerPack.namespaceLength();
-        int hash = HashFunctions.jenkinsHashCombined(kb, klen, nb, nlen);
+        int hash = HashFunctions.compositeHash(kb, klen, nb, nlen);
         short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF)); // 取混合后的低16位作为tag
 
         // Update cache

@@ -3,6 +3,8 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import org.apache.flink.runtime.state.heap.space.MemorySegmentSlice;
+import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -11,17 +13,18 @@ import java.util.List;
 /**
  * Entry Arena manages the actual storage of key-value entries.
  * Stores serialized key/namespace/value byte arrays directly in off-heap memory.
- * Entry format: [keyLen(4B)][namespaceLen(4B)][valueLen(4B)][key][namespace][value]
+ * Entry format: [hash(4B)][keyLen(4B)][namespaceLen(4B)][valueLen(4B)][key][namespace][value]
  * Simplified to single allocation strategy: FREE_LIST with size classes for reuse.
  * Safe implementation: uses Flink MemorySegment instead of Unsafe operations.
  */
 public class EntryArena implements AutoCloseable {
 
     // Entry layout constants
-    private static final int KEY_LEN_OFFSET = 0;        // 4 bytes
-    private static final int NAMESPACE_LEN_OFFSET = 4;  // 4 bytes
-    private static final int VALUE_LEN_OFFSET = 8;      // 4 bytes
-    private static final int ENTRY_HEADER_SIZE = 12;    // Total header size
+    private static final int HASH_OFFSET = 0;           // 4 bytes
+    private static final int KEY_LEN_OFFSET = 4;        // 4 bytes
+    private static final int NAMESPACE_LEN_OFFSET = 8;  // 4 bytes
+    private static final int VALUE_LEN_OFFSET = 12;     // 4 bytes
+    private static final int ENTRY_HEADER_SIZE = 16;    // Total header size
 
     // Memory alignment (8 bytes for better performance)
     private static final int ALIGNMENT = 8;
@@ -98,20 +101,6 @@ public class EntryArena implements AutoCloseable {
     private boolean closed;
 
     /**
-     * Slice view for zero-copy read of key/namespace/value in a single segment.
-     */
-    public static final class Slice {
-        public final MemorySegment segment;
-        public final int offset;
-        public final int length;
-        public Slice(MemorySegment segment, int offset, int length) {
-            this.segment = segment;
-            this.offset = offset;
-            this.length = length;
-        }
-    }
-
-    /**
      * Creates an Entry Arena (FREE_LIST allocation strategy).
      */
     public EntryArena(MemoryManagerAllocator allocator) {
@@ -135,23 +124,37 @@ public class EntryArena implements AutoCloseable {
     /**
      * Stores a new entry and returns its address.
      *
+     * @param hash Complete hash value to store in entry
      * @param keyBytes Serialized key bytes
      * @param namespaceBytes Serialized namespace bytes
      * @param valueBytes Serialized value bytes
      * @return Entry address (slab_index << 32 | offset), or 0 if allocation failed
      */
-    public long putEntry(byte[] keyBytes, byte[] namespaceBytes, byte[] valueBytes) {
+    public long putEntry(int hash, byte[] keyBytes, byte[] namespaceBytes, byte[] valueBytes) {
         if (keyBytes == null || namespaceBytes == null || valueBytes == null) {
             return 0;
         }
         // Delegate to the more efficient buffer+length version
-        return putEntry(keyBytes, keyBytes.length, namespaceBytes, namespaceBytes.length, valueBytes, valueBytes.length);
+        return putEntry(hash, keyBytes, keyBytes.length, namespaceBytes, namespaceBytes.length, valueBytes, valueBytes.length);
+    }
+
+    /**
+     * This is for EntryArena Tests only - computes hash internally.
+     * Not recommended for production use due to double hashing overhead.
+     */
+    public long putEntry(byte[] keyBytes, byte[] namespaceBytes, byte[] valueBytes) {
+        if (keyBytes == null || namespaceBytes == null || valueBytes == null) {
+            return 0;
+        }
+        int hash = HashFunctions.compositeHash(keyBytes, namespaceBytes);
+        // Delegate to the more efficient buffer+length version
+        return putEntry(hash, keyBytes, keyBytes.length, namespaceBytes, namespaceBytes.length, valueBytes, valueBytes.length);
     }
 
     /**
      * Stores a new entry and returns its address (buffer+length 重载，避免复制 DataOutputSerializer 缓冲区）。
      */
-    public long putEntry(byte[] keyBuffer, int keyLen, byte[] namespaceBuffer, int namespaceLen, byte[] valueBuffer, int valueLen) {
+    public long putEntry(int hash, byte[] keyBuffer, int keyLen, byte[] namespaceBuffer, int namespaceLen, byte[] valueBuffer, int valueLen) {
         if (closed || keyBuffer == null || namespaceBuffer == null || valueBuffer == null) {
             return 0;
         }
@@ -163,24 +166,28 @@ public class EntryArena implements AutoCloseable {
         if (keyLen > 16 * 1024 || namespaceLen > 16 * 1024 || valueLen > 256 * 1024) {
             return 0;
         }
+
         int entrySize = calculateEntrySize(keyLen, namespaceLen, valueLen);
         long address = allocateEntry(entrySize);
         if (address == 0) {
             return 0;
         }
 
-        AddressInfo info = resolveAddress(address);
-        // header
-        info.segment.putInt(info.offset + KEY_LEN_OFFSET, keyLen);
-        info.segment.putInt(info.offset + NAMESPACE_LEN_OFFSET, namespaceLen);
-        info.segment.putInt(info.offset + VALUE_LEN_OFFSET, valueLen);
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
+        // header - store as 4 separate ints to ensure correct byte order for better portability
+        segment.putInt(offset + HASH_OFFSET, hash);
+        segment.putInt(offset + KEY_LEN_OFFSET, keyLen);
+        segment.putInt(offset + NAMESPACE_LEN_OFFSET, namespaceLen);
+        segment.putInt(offset + VALUE_LEN_OFFSET, valueLen);
         // body
-        int dataOffset = info.offset + ENTRY_HEADER_SIZE;
-        info.segment.put(dataOffset, keyBuffer, 0, keyLen);
+        int dataOffset = offset + ENTRY_HEADER_SIZE;
+        segment.put(dataOffset, keyBuffer, 0, keyLen);
         dataOffset += keyLen;
-        info.segment.put(dataOffset, namespaceBuffer, 0, namespaceLen);
+        segment.put(dataOffset, namespaceBuffer, 0, namespaceLen);
         dataOffset += namespaceLen;
-        info.segment.put(dataOffset, valueBuffer, 0, valueLen);
+        segment.put(dataOffset, valueBuffer, 0, valueLen);
         activeEntries++;
         return address;
     }
@@ -219,11 +226,12 @@ public class EntryArena implements AutoCloseable {
         }
 
         // In-place update failed, fall back to traditional approach
+        int hash = getHash(address);
         byte[] keyBytes = getKeyBytes(address);
         byte[] namespaceBytes = getNamespaceBytes(address);
 
-        // Allocate new entry using buffer version
-        long newAddress = putEntry(keyBytes, keyBytes.length, namespaceBytes, namespaceBytes.length, valueBuffer, valueLen);
+        // Allocate new entry using buffer version with preserved hash
+        long newAddress = putEntry(hash, keyBytes, keyBytes.length, namespaceBytes, namespaceBytes.length, valueBuffer, valueLen);
 
         if (newAddress != 0) {
             // Free the old entry into free list
@@ -247,19 +255,21 @@ public class EntryArena implements AutoCloseable {
             return false;
         }
 
-        AddressInfo info = resolveAddress(address);
-        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-        int namespaceLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
-        int currentValueLen = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
+        int currentValueLen = segment.getInt(offset + VALUE_LEN_OFFSET);
 
         // Check if new value fits in available space
         if (newValueLen <= currentValueLen) {
             // Update value length
-            info.segment.putInt(info.offset + VALUE_LEN_OFFSET, newValueLen);
+            segment.putInt(offset + VALUE_LEN_OFFSET, newValueLen);
 
             // Update value data
-            int valueOffset = info.offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen;
-            info.segment.put(valueOffset, newValueBuffer, 0, newValueLen);
+            int valueOffset = offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen;
+            segment.put(valueOffset, newValueBuffer, 0, newValueLen);
 
             return true;
         }
@@ -271,15 +281,17 @@ public class EntryArena implements AutoCloseable {
      * Reads an entry's key bytes.
      */
     public byte[] getKeyBytes(long address) {
-        AddressInfo info = resolveAddress(address);
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
 
-        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
         if (keyLen <= 0 || keyLen > 16 * 1024) {
             return keyLen == 0 ? new byte[0] : null;
         }
 
         byte[] keyBytes = new byte[keyLen];
-        info.segment.get(info.offset + ENTRY_HEADER_SIZE, keyBytes);
+        segment.get(offset + ENTRY_HEADER_SIZE, keyBytes);
         return keyBytes;
     }
 
@@ -287,17 +299,19 @@ public class EntryArena implements AutoCloseable {
      * Reads an entry's namespace bytes.
      */
     public byte[] getNamespaceBytes(long address) {
-        AddressInfo info = resolveAddress(address);
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
 
-        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-        int namespaceLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
 
         if (namespaceLen <= 0 || namespaceLen > 16 * 1024) {
             return namespaceLen == 0 ? new byte[0] : null;
         }
 
         byte[] namespaceBytes = new byte[namespaceLen];
-        info.segment.get(info.offset + ENTRY_HEADER_SIZE + keyLen, namespaceBytes);
+        segment.get(offset + ENTRY_HEADER_SIZE + keyLen, namespaceBytes);
         return namespaceBytes;
     }
 
@@ -305,28 +319,37 @@ public class EntryArena implements AutoCloseable {
      * Reads an entry's value bytes.
      */
     public byte[] getValueBytes(long address) {
-        AddressInfo info = resolveAddress(address);
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
 
-        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-        int namespaceLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
-        int valueLen = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int namespaceLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
+        int valueLen = segment.getInt(offset + VALUE_LEN_OFFSET);
 
         if (valueLen <= 0 || valueLen > 256 * 1024) {
             return valueLen == 0 ? new byte[0] : null;
         }
 
         byte[] valueBytes = new byte[valueLen];
-        info.segment.get(info.offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen, valueBytes);
+        segment.get(offset + ENTRY_HEADER_SIZE + keyLen + namespaceLen, valueBytes);
         return valueBytes;
     }
 
     /**
-     * Checks if key and namespace match for given entry.
-     *
-     * @deprecated Use {@link #matchesKey(long, byte[], int, byte[], int)} instead for better performance.
-     *             This method creates temporary arrays which impacts performance.
+     * Reads an entry's stored hash value.
      */
-    @Deprecated
+    public int getHash(long address) {
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
+        return segment.getInt(offset + HASH_OFFSET);
+    }
+
+    /**
+     * Checks if key and namespace match for given entry.
+     * It is recommended to use the zero-copy version for better performance.
+     */
     public boolean matchesKey(long address, byte[] keyBytes, byte[] namespaceBytes) {
         if (address == 0 || keyBytes == null || namespaceBytes == null) {
             return false;
@@ -339,21 +362,23 @@ public class EntryArena implements AutoCloseable {
      * Zero-copy matches check with external buffers and explicit lengths.
      */
     public boolean matchesKey(long address, byte[] keyBuffer, int keyLen, byte[] namespaceBuffer, int namespaceLen) {
-        AddressInfo info = resolveAddress(address);
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
 
-        int storedKeyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-        int storedNsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
+        int storedKeyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int storedNsLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
         if (storedKeyLen != keyLen || storedNsLen != namespaceLen) {
             return false;
         }
-        int dataOffset = info.offset + ENTRY_HEADER_SIZE;
+        int dataOffset = offset + ENTRY_HEADER_SIZE;
         // compare key
-        if (!equalsSegmentBytes(info.segment, dataOffset, keyBuffer, keyLen)) {
+        if (!equalsSegmentBytes(segment, dataOffset, keyBuffer, keyLen)) {
             return false;
         }
         dataOffset += storedKeyLen;
         // compare namespace
-        return equalsSegmentBytes(info.segment, dataOffset, namespaceBuffer, namespaceLen);
+        return equalsSegmentBytes(segment, dataOffset, namespaceBuffer, namespaceLen);
     }
 
     private static boolean equalsSegmentBytes(MemorySegment seg, int segOffset, byte[] arr, int len) {
@@ -400,9 +425,8 @@ public class EntryArena implements AutoCloseable {
     }
 
     // ==== allocation helpers ====
-    private int calculateEntrySize(int keyLen, int namespaceLen, int valueLen) {
+    private static int calculateEntrySize(int keyLen, int namespaceLen, int valueLen) {
         int dataSize = ENTRY_HEADER_SIZE + keyLen + namespaceLen + valueLen;
-        // Align to 8 bytes for better memory performance
         return (Math.max(dataSize, MIN_ENTRY_SIZE) + ALIGNMENT - 1) & (-ALIGNMENT);
     }
 
@@ -510,11 +534,13 @@ public class EntryArena implements AutoCloseable {
     }
 
     public int getEntrySize(long address) {
-        AddressInfo info = resolveAddress(address);
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
 
-        int k = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-        int n = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
-        int v = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
+        int k = segment.getInt(offset + KEY_LEN_OFFSET);
+        int n = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
+        int v = segment.getInt(offset + VALUE_LEN_OFFSET);
         return calculateEntrySize(k, n, v);
     }
 
@@ -529,66 +555,57 @@ public class EntryArena implements AutoCloseable {
     /**
      * Returns a Slice of the value for zero-copy deserialization.
      */
-    public Slice getValueSlice(long address) {
-        AddressInfo info = resolveAddress(address);
-        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-        int nsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
-        int valLen = info.segment.getInt(info.offset + VALUE_LEN_OFFSET);
+    public MemorySegmentSlice getValueSlice(long address) {
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int nsLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
+        int valLen = segment.getInt(offset + VALUE_LEN_OFFSET);
         if (valLen < 0 || valLen > 256 * 1024) {
             return null;
         }
-        int off = info.offset + ENTRY_HEADER_SIZE + keyLen + nsLen;
-        return new Slice(info.segment, off, valLen);
+        int off = offset + ENTRY_HEADER_SIZE + keyLen + nsLen;
+        return new MemorySegmentSlice(segment, off, valLen);
     }
 
     /**
      * Returns a Slice of the key (optional helper for iterations).
      */
-    public Slice getKeySlice(long address) {
-        AddressInfo info = resolveAddress(address);
-        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
+    public MemorySegmentSlice getKeySlice(long address) {
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
         if (keyLen < 0 || keyLen > 16 * 1024) {
             return null;
         }
-        int off = info.offset + ENTRY_HEADER_SIZE;
-        return new Slice(info.segment, off, keyLen);
+        int off = offset + ENTRY_HEADER_SIZE;
+        return new MemorySegmentSlice(segment, off, keyLen);
     }
 
     /**
      * Returns a Slice of the namespace (optional helper for iterations).
      */
-    public Slice getNamespaceSlice(long address) {
-        AddressInfo info = resolveAddress(address);
-        int keyLen = info.segment.getInt(info.offset + KEY_LEN_OFFSET);
-        int nsLen = info.segment.getInt(info.offset + NAMESPACE_LEN_OFFSET);
+    public MemorySegmentSlice getNamespaceSlice(long address) {
+        int slabIndex = getSlabIndex(address);
+        int offset = getOffset(address);
+        MemorySegment segment = segments.get(slabIndex);
+        int keyLen = segment.getInt(offset + KEY_LEN_OFFSET);
+        int nsLen = segment.getInt(offset + NAMESPACE_LEN_OFFSET);
         if (nsLen < 0 || nsLen > 16 * 1024) {
             return null;
         }
-        int off = info.offset + ENTRY_HEADER_SIZE + keyLen;
-        return new Slice(info.segment, off, nsLen);
+        int off = offset + ENTRY_HEADER_SIZE + keyLen;
+        return new MemorySegmentSlice(segment, off, nsLen);
     }
 
-    /**
-     * Address resolution result containing segment and offset information.
-     */
-    private static final class AddressInfo {
-        final MemorySegment segment;
-        final int offset;
-
-        AddressInfo(MemorySegment segment, int offset) {
-            this.segment = segment;
-            this.offset = offset;
-        }
+    private static int getSlabIndex(long address) {
+        return (int) (address >>> 32) - 1;
     }
 
-    /**
-     * Resolves an entry address to segment and offset.
-     */
-    private AddressInfo resolveAddress(long address) {
-        int slabIndex = (int)(address >>> 32) - 1;
-        int offset = (int)(address & 0xFFFFFFFFL) - 1;
-
-        return new AddressInfo(segments.get(slabIndex), offset);
+    private static int getOffset(long address) {
+        return (int) (address & 0xFFFFFFFFL) - 1;
     }
 
     @Override

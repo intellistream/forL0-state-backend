@@ -22,7 +22,6 @@ class EntryArenaTest {
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
     private EntryArena arena;
-    private Object owner;
 
     @BeforeEach
     void setUp() {
@@ -30,7 +29,7 @@ class EntryArenaTest {
                 .setMemorySize(DEFAULT_MEMORY_SIZE)
                 .setPageSize(DEFAULT_PAGE_SIZE)
                 .build();
-        owner = new Object();
+        Object owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
         arena = new EntryArena(allocator);
     }

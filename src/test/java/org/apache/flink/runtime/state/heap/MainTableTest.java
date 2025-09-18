@@ -67,15 +67,13 @@ class MainTableTest {
             byte[] namespace = "testNamespace".getBytes();
             byte[] value = "testValue".getBytes();
 
-            // Store entry in EntryArena
-            long entryAddress = entryArena.putEntry(key, namespace, value);
-            assertTrue(entryAddress > 0, "Entry should be stored successfully");
-
             // Calculate hash and tag
-            int keyHash = HashFunctions.murmurHash3(key);
-            int namespaceHash = HashFunctions.murmurHash3(namespace);
-            int hash = keyHash ^ namespaceHash;
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
+
+            // Store entry in EntryArena
+            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+            assertTrue(entryAddress > 0, "Entry should be stored successfully");
 
             // Put entry into MainTable using new inline method
             long result = mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
@@ -99,17 +97,19 @@ class MainTableTest {
             byte[] value1 = "initialValue".getBytes();
             byte[] value2 = "updatedValue".getBytes();
 
-            // Store initial entry
-            long entryAddress1 = entryArena.putEntry(key, namespace, value1);
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            // Calculate hash and tag
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
+
+            // Store initial entry
+            long entryAddress1 = entryArena.putEntry(hash, key, namespace, value1);
 
             // Insert initial entry
             long result1 = mainTable.put(hash, tag, entryAddress1, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(0, result1, "Should return 0 for new insertion");
 
             // Store updated entry
-            long entryAddress2 = entryArena.putEntry(key, namespace, value2);
+            long entryAddress2 = entryArena.putEntry(hash, key, namespace, value2);
 
             // Update entry in MainTable
             long result2 = mainTable.put(hash, tag, entryAddress2, key, key.length, namespace, namespace.length, entryArena);
@@ -128,10 +128,12 @@ class MainTableTest {
             byte[] namespace = "removeNamespace".getBytes();
             byte[] value = "removeValue".getBytes();
 
-            // Store and insert entry
-            long entryAddress = entryArena.putEntry(key, namespace, value);
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            // Calculate hash and tag
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
+
+            // Store and insert entry
+            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
 
             mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
 
@@ -148,7 +150,7 @@ class MainTableTest {
         void testGetNonExistent() {
             byte[] key = "nonExistentKey".getBytes();
             byte[] namespace = "nonExistentNamespace".getBytes();
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
 
             long result = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
@@ -167,13 +169,13 @@ class MainTableTest {
                 byte[] namespace = "extNamespace".getBytes();
                 byte[] value = ("extValue" + i).getBytes();
 
-                long entryAddress = entryArena.putEntry(key, namespace, value);
-
                 // Force same bucket: use hash that always maps to bucket 0
                 // MainTable has 4 buckets (2^2), so bucket index = hash & 3
                 // Use hash values like 0x1000, 0x1004, 0x1008, etc. (all map to bucket 0)
                 int hash = 0x12340000 | (i << 2); // All these hashes will map to bucket 0
                 short tag = (short) ((0x5000 + i) & 0xFFFF); // Different tags to avoid conflicts
+
+                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
 
                 long result = mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
                 assertEquals(0, result, "Should insert successfully, using extension buckets if needed");
@@ -201,8 +203,8 @@ class MainTableTest {
             short tag1 = (short) (hash1 & 0xFFFF);
             short tag2 = (short) (hash2 & 0xFFFF);
 
-            long entryAddress1 = entryArena.putEntry(key1, namespace, value1);
-            long entryAddress2 = entryArena.putEntry(key2, namespace, value2);
+            long entryAddress1 = entryArena.putEntry(hash1, key1, namespace, value1);
+            long entryAddress2 = entryArena.putEntry(hash2, key2, namespace, value2);
 
             // Insert entries
             mainTable.put(hash1, tag1, entryAddress1, key1, key1.length, namespace, namespace.length, entryArena);
@@ -235,8 +237,8 @@ class MainTableTest {
                 byte[] namespace = "loadNamespace".getBytes();
                 byte[] value = ("loadValue" + i).getBytes();
 
-                long entryAddress = entryArena.putEntry(key, namespace, value);
-                int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+                int hash = HashFunctions.compositeHash(key, namespace);
+                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
                 short tag = (short) (hash & 0xFFFF);
 
                 mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
@@ -257,8 +259,8 @@ class MainTableTest {
                     byte[] namespace = "resizeNamespace".getBytes();
                     byte[] value = ("resizeValue" + i).getBytes();
 
-                    long entryAddress = entryArena.putEntry(key, namespace, value);
-                    int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+                    int hash = HashFunctions.compositeHash(key, namespace);
+                    long entryAddress = entryArena.putEntry(hash, key, namespace, value);
                     short tag = (short) (hash & 0xFFFF);
 
                     try {
@@ -316,14 +318,13 @@ class MainTableTest {
             byte[] emptyNamespace = new byte[0];
             byte[] value = "emptyKeyValue".getBytes();
 
-            long entryAddress = entryArena.putEntry(emptyKey, emptyNamespace, value);
-            int hash = HashFunctions.murmurHash3(emptyKey) ^ HashFunctions.murmurHash3(emptyNamespace);
-            short tag = (short) (hash & 0xFFFF);
+            long entryAddress = entryArena.putEntry(0, emptyKey, emptyNamespace, value);
+            short tag = 0;
 
-            long result = mainTable.put(hash, tag, entryAddress, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryArena);
+            long result = mainTable.put(0, tag, entryAddress, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryArena);
             assertEquals(0, result, "Should handle empty key and namespace");
 
-            long retrievedAddress = mainTable.get(hash, tag, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryArena);
+            long retrievedAddress = mainTable.get(0, tag, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryArena);
             assertEquals(entryAddress, retrievedAddress, "Should retrieve entry with empty key/namespace");
         }
 
@@ -344,9 +345,9 @@ class MainTableTest {
                 largeValue[i] = (byte) ((i + 200) % 256);
             }
 
-            long entryAddress = entryArena.putEntry(largeKey, largeNamespace, largeValue);
+            int hash = HashFunctions.compositeHash(largeKey, largeNamespace);
+            long entryAddress = entryArena.putEntry(hash, largeKey, largeNamespace, largeValue);
             if (entryAddress > 0) { // Only test if EntryArena can handle large entries
-                int hash = HashFunctions.murmurHash3(largeKey) ^ HashFunctions.murmurHash3(largeNamespace);
                 short tag = (short) (hash & 0xFFFF);
 
                 long result = mainTable.put(hash, tag, entryAddress, largeKey, largeKey.length, largeNamespace, largeNamespace.length, entryArena);
@@ -366,13 +367,13 @@ class MainTableTest {
             byte[] value1 = "value1".getBytes();
             byte[] value2 = "value2".getBytes();
 
-            long entryAddress1 = entryArena.putEntry(key1, namespace, value1);
-            long entryAddress2 = entryArena.putEntry(key2, namespace, value2);
-
             // Force same hash by using fixed hash value
             int sameHash = 0x12345678;
             short tag1 = (short) 0x1234;
             short tag2 = (short) 0x5678; // Different tags
+
+            long entryAddress1 = entryArena.putEntry(sameHash, key1, namespace, value1);
+            long entryAddress2 = entryArena.putEntry(sameHash, key2, namespace, value2);
 
             // Insert both entries with same hash
             long result1 = mainTable.put(sameHash, tag1, entryAddress1, key1, key1.length, namespace, namespace.length, entryArena);
@@ -399,8 +400,8 @@ class MainTableTest {
                 byte[] namespace = "iterNamespace".getBytes();
                 byte[] value = ("iterValue" + i).getBytes();
 
-                long entryAddress = entryArena.putEntry(key, namespace, value);
-                int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+                int hash = HashFunctions.compositeHash(key, namespace);
+                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
                 short tag = (short) (hash & 0xFFFF);
 
                 mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
@@ -419,8 +420,8 @@ class MainTableTest {
                 byte[] namespace = "expandNamespace".getBytes();
                 byte[] value = ("expandValue" + i).getBytes();
 
-                long entryAddress = entryArena.putEntry(key, namespace, value);
-                int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+                int hash = HashFunctions.compositeHash(key, namespace);
+                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
                 short tag = (short) (hash & 0xFFFF);
 
                 mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
@@ -431,7 +432,7 @@ class MainTableTest {
                 byte[] key = ("expandKey" + i).getBytes();
                 byte[] namespace = "expandNamespace".getBytes();
 
-                int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+                int hash = HashFunctions.compositeHash(key, namespace);
                 short tag = (short) (hash & 0xFFFF);
 
                 long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
@@ -453,8 +454,8 @@ class MainTableTest {
             byte[] namespace = "closeNamespace".getBytes();
             byte[] value = "closeValue".getBytes();
 
-            long entryAddress = entryArena.putEntry(key, namespace, value);
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            int hash = HashFunctions.compositeHash(key, namespace);
+            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
             short tag = (short) (hash & 0xFFFF);
 
             mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
@@ -490,8 +491,8 @@ class MainTableTest {
             byte[] namespace = "statsNamespace".getBytes();
             byte[] value = "statsValue".getBytes();
 
-            long entryAddress = entryArena.putEntry(key, namespace, value);
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            int hash = HashFunctions.compositeHash(key, namespace);
+            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
             short tag = (short) (hash & 0xFFFF);
 
             mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
@@ -515,12 +516,12 @@ class MainTableTest {
 
     // Helper method for tests
     private boolean insertTestEntry(TestEntry entry) {
-        long entryAddress = entryArena.putEntry(entry.key, entry.namespace, entry.value);
+        int hash = HashFunctions.compositeHash(entry.key, entry.namespace);
+        long entryAddress = entryArena.putEntry(hash, entry.key, entry.namespace, entry.value);
         if (entryAddress <= 0) {
             return false;
         }
 
-        int hash = HashFunctions.murmurHash3(entry.key) ^ HashFunctions.murmurHash3(entry.namespace);
         short tag = (short) (hash & 0xFFFF);
 
         try {

@@ -402,6 +402,7 @@ class EntryArenaStressTest {
     void testFreeListMemoryExhaustion() {
         try (EntryArena freeListArena = new EntryArena(allocator)) {
             List<Long> addresses = new ArrayList<>();
+            boolean hasFreed = false;
 
             // Keep allocating until we run out of memory, with periodic removals to test recycling
             for (int i = 0; i < 100000; i++) {
@@ -427,6 +428,9 @@ class EntryArenaStressTest {
                 // Check progress every 1000 allocations
                 if (i % 1000 == 0) {
                     EntryArena.ArenaStats stats = freeListArena.getStats();
+                    if (stats.totalFreed > 0) {
+                        hasFreed = true;
+                    }
                     System.out.println("FREE_LIST exhaustion test - Allocated " + i + " entries, " +
                         "active: " + stats.activeAllocations +
                         ", freed: " + stats.totalFreed +
@@ -435,13 +439,8 @@ class EntryArenaStressTest {
                 }
             }
 
-            EntryArena.ArenaStats finalStats = freeListArena.getStats();
-            System.out.println("FREE_LIST memory exhaustion test completed with " + addresses.size() +
-                " final entries, freed: " + finalStats.totalFreed +
-                " bytes, freeBlocks: " + finalStats.freeBlocks);
-
             assertTrue(addresses.size() > 1000, "Should allocate substantial number of entries");
-            assertTrue(finalStats.totalFreed > 0, "Should have recycled memory during test");
+            assertTrue(hasFreed, "Should have recycled memory during test");
         } catch (Exception e) {
             fail("FREE_LIST memory exhaustion test failed: " + e.getMessage());
         }

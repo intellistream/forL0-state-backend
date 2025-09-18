@@ -67,15 +67,13 @@ class L0TableTest {
             byte[] namespace = "testNamespace".getBytes();
             byte[] value = "testValue".getBytes();
 
-            // Store entry in EntryArena
-            long entryAddress = entryArena.putEntry(key, namespace, value);
-            assertTrue(entryAddress > 0, "Entry should be stored successfully");
-
             // Calculate hash and tag
-            int keyHash = HashFunctions.murmurHash3(key);
-            int namespaceHash = HashFunctions.murmurHash3(namespace);
-            int hash = keyHash ^ namespaceHash;
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
+            
+            // Store entry in EntryArena
+            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+            assertTrue(entryAddress > 0, "Entry should be stored successfully");
 
             // Put entry into L0Table using new inline method
             long result = l0Table.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
@@ -99,17 +97,19 @@ class L0TableTest {
             byte[] value1 = "initialValue".getBytes();
             byte[] value2 = "updatedValue".getBytes();
 
-            // Store initial entry
-            long entryAddress1 = entryArena.putEntry(key, namespace, value1);
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            // Calculate hash and tag
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
+
+            // Store initial entry
+            long entryAddress1 = entryArena.putEntry(hash, key, namespace, value1);
 
             // Insert initial entry
             long result1 = l0Table.put(hash, tag, entryAddress1, key, key.length, namespace, namespace.length, entryArena);
             assertEquals(0, result1, "Should return 0 for new insertion");
 
             // Store updated entry
-            long entryAddress2 = entryArena.putEntry(key, namespace, value2);
+            long entryAddress2 = entryArena.putEntry(hash, key, namespace, value2);
 
             // Update entry in L0Table
             long result2 = l0Table.put(hash, tag, entryAddress2, key, key.length, namespace, namespace.length, entryArena);
@@ -128,10 +128,12 @@ class L0TableTest {
             byte[] namespace = "removeNamespace".getBytes();
             byte[] value = "removeValue".getBytes();
 
-            // Store and insert entry
-            long entryAddress = entryArena.putEntry(key, namespace, value);
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            // Calculate hash and tag
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
+
+            // Store and insert entry
+            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
 
             l0Table.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
 
@@ -148,7 +150,7 @@ class L0TableTest {
         void testGetNonExistent() {
             byte[] key = "nonExistentKey".getBytes();
             byte[] namespace = "nonExistentNamespace".getBytes();
-            int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+            int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
 
             long result = l0Table.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
@@ -471,12 +473,12 @@ class L0TableTest {
             byte[] value1 = "value1".getBytes();
             byte[] value2 = "value2".getBytes();
 
-            long entryAddress1 = entryArena.putEntry(key1, namespace, value1);
-            long entryAddress2 = entryArena.putEntry(key2, namespace, value2);
-
             // Force same hash and tag
             int sameHash = 0x12345678;
             short sameTag = (short) 0x1234;
+
+            long entryAddress1 = entryArena.putEntry(sameHash, key1, namespace, value1);
+            long entryAddress2 = entryArena.putEntry(sameHash, key2, namespace, value2);
 
             // Insert both entries
             long result1 = l0Table.put(sameHash, sameTag, entryAddress1, key1, key1.length, namespace, namespace.length, entryArena);
@@ -504,7 +506,7 @@ class L0TableTest {
             // Update multiple times
             for (int i = 1; i <= 3; i++) {
                 byte[] newValue = ("updatedValue" + i).getBytes();
-                long newEntryAddress = entryArena.putEntry(entry.key, entry.namespace, newValue);
+                long newEntryAddress = entryArena.putEntry(entry.hash, entry.key, entry.namespace, newValue);
 
                 long oldAddress = l0Table.put(entry.hash, entry.tag, newEntryAddress, entry.key, entry.key.length,
                                             entry.namespace, entry.namespace.length, entryArena);
@@ -549,8 +551,8 @@ class L0TableTest {
         byte[] namespace = "testNamespace".getBytes();
         byte[] value = valueStr.getBytes();
 
-        long entryAddress = entryArena.putEntry(key, namespace, value);
-        int hash = HashFunctions.murmurHash3(key) ^ HashFunctions.murmurHash3(namespace);
+        int hash = HashFunctions.compositeHash(key, namespace);
+        long entryAddress = entryArena.putEntry(hash, key, namespace, value);
         short tag = (short) (hash & 0xFFFF);
 
         return new TestEntry(key, namespace, value, entryAddress, hash, tag);

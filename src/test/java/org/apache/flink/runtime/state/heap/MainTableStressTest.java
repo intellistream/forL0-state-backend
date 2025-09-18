@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.RepeatedTest;
 
 import java.util.*;
-import java.util.concurrent.ThreadLocalRandom;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,7 +27,6 @@ class MainTableStressTest {
     private MemoryManagerAllocator allocator;
     private EntryArena entryArena;
     private MainTable mainTable;
-    private Object owner;
     private Random random;
 
     @BeforeEach
@@ -37,7 +35,7 @@ class MainTableStressTest {
                 .setMemorySize(DEFAULT_MEMORY_SIZE)
                 .setPageSize(DEFAULT_PAGE_SIZE)
                 .build();
-        owner = new Object();
+        Object owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
         entryArena = new EntryArena(allocator);
 
@@ -208,11 +206,11 @@ class MainTableStressTest {
             for (int i = 0; i < 20000; i++) {
                 TestEntry entry = generateRandomEntry("pressure" + i, random);
 
-                long entryAddress = entryArena.putEntry(entry.key, entry.namespace, entry.value);
+                int hash = HashFunctions.compositeHash(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
+                short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
+                long entryAddress = entryArena.putEntry(hash, entry.key, entry.namespace, entry.value);
                 if (entryAddress > 0) {
                     entry.entryAddress = entryAddress;
-                    int hash = HashFunctions.jenkinsHashCombined(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
-                    short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
                     entry.hash = hash;
                     entry.tag = tag;
 
@@ -304,7 +302,7 @@ class MainTableStressTest {
             entry.hash = baseHash; // Same bucket
             entry.tag = (short) (i + 1); // Different tags
 
-            long entryAddress = entryArena.putEntry(entry.key, entry.namespace, entry.value);
+            long entryAddress = entryArena.putEntry(entry.hash, entry.key, entry.namespace, entry.value);
             if (entryAddress > 0) {
                 entry.entryAddress = entryAddress;
 
@@ -343,13 +341,13 @@ class MainTableStressTest {
 
     // Helper methods
     private boolean insertEntry(TestEntry entry) {
-        long entryAddress = entryArena.putEntry(entry.key, entry.namespace, entry.value);
+        int hash = HashFunctions.compositeHash(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
+        short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
+        long entryAddress = entryArena.putEntry(hash, entry.key, entry.namespace, entry.value);
         if (entryAddress <= 0) {
             return false;
         }
         entry.entryAddress = entryAddress;
-        int hash = HashFunctions.jenkinsHashCombined(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
-        short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
         entry.hash = hash;
         entry.tag = tag;
         try {

@@ -3,6 +3,7 @@ package org.apache.flink.runtime.state.heap.io;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.MemorySegment;
 
+import javax.annotation.Nonnull;
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -95,55 +96,57 @@ public class MemorySegmentDataInputView implements DataInputView {
     @Override
     public short readShort() throws IOException {
         ensureAvailable(2);
-        int ch1 = segment.get(position++) & 0xFF;
-        int ch2 = segment.get(position++) & 0xFF;
-        return (short) ((ch1 << 8) | ch2);
+        short value = segment.getShortBigEndian(position);
+        position += 2;
+        return value;
     }
 
     @Override
     public int readUnsignedShort() throws IOException {
         ensureAvailable(2);
-        int ch1 = segment.get(position++) & 0xFF;
-        int ch2 = segment.get(position++) & 0xFF;
-        return (ch1 << 8) | ch2;
+        int value = segment.getShortBigEndian(position) & 0xFFFF;
+        position += 2;
+        return value;
     }
 
     @Override
     public char readChar() throws IOException {
-        return (char) readUnsignedShort();
+        ensureAvailable(2);
+        char value = segment.getCharBigEndian(position);
+        position += 2;
+        return value;
     }
 
     @Override
     public int readInt() throws IOException {
         ensureAvailable(4);
-        int ch1 = segment.get(position++) & 0xFF;
-        int ch2 = segment.get(position++) & 0xFF;
-        int ch3 = segment.get(position++) & 0xFF;
-        int ch4 = segment.get(position++) & 0xFF;
-        return (ch1 << 24) | (ch2 << 16) | (ch3 << 8) | ch4;
+        int value = segment.getIntBigEndian(position);
+        position += 4;
+        return value;
     }
 
     @Override
     public long readLong() throws IOException {
         ensureAvailable(8);
-        return ((long)(segment.get(position++) & 0xFF) << 56) |
-               ((long)(segment.get(position++) & 0xFF) << 48) |
-               ((long)(segment.get(position++) & 0xFF) << 40) |
-               ((long)(segment.get(position++) & 0xFF) << 32) |
-               ((long)(segment.get(position++) & 0xFF) << 24) |
-               ((long)(segment.get(position++) & 0xFF) << 16) |
-               ((long)(segment.get(position++) & 0xFF) << 8)  |
-               ((long)(segment.get(position++) & 0xFF));
+        long value = segment.getLongBigEndian(position);
+        position += 8;
+        return value;
     }
 
     @Override
     public float readFloat() throws IOException {
-        return Float.intBitsToFloat(readInt());
+        ensureAvailable(4);
+        float value = segment.getFloatBigEndian(position);
+        position += 4;
+        return value;
     }
 
     @Override
     public double readDouble() throws IOException {
-        return Double.longBitsToDouble(readLong());
+        ensureAvailable(8);
+        double value = segment.getDoubleBigEndian(position);
+        position += 8;
+        return value;
     }
 
     @Override
@@ -159,10 +162,11 @@ public class MemorySegmentDataInputView implements DataInputView {
     }
 
     @Override
+    @Nonnull
     public String readUTF() throws IOException {
-        int utflen = readUnsignedShort();
-        byte[] buf = new byte[utflen];
-        readFully(buf, 0, utflen);
+        int utfLen = readUnsignedShort();
+        byte[] buf = new byte[utfLen];
+        readFully(buf, 0, utfLen);
         return new String(buf, StandardCharsets.UTF_8);
     }
 
