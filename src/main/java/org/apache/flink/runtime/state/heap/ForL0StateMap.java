@@ -187,12 +187,29 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             size++;
             updateL0Table(knh, addr);
         } else { // existing entry
+            updateExistingEntry(result, vb, vlen, knh);
+        }
+    }
+
+    private void updateExistingEntry(long result, byte[] vb, int vlen, KeyNamespaceHash knh) {
+        // 先尝试就地更新，避免指针切换
+        if (entryArena.updateValueInPlace(result, vb, vlen)) {
+            return;
+        }
+        // 分配新entry，先切换指针与L0，再释放旧entry，避免L0访问悬垂指针
+        long newAddr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                knh.namespaceBytes, knh.namespaceLength, vb, vlen);
+        if (newAddr != 0) {
+            mainTable.setSlotPointer(newAddr);
+            updateL0Table(knh, newAddr);
+            entryArena.removeEntry(result);
+        } else {
+            // 回退：无法分配新块，尝试使用旧逻辑（可能触发重分配+立即释放，但这是降级路径）
             long addr = entryArena.updateEntry(result, vb, vlen);
-            if (addr != result) { // reallocated
+            if (addr != result) {
                 mainTable.setSlotPointer(addr);
                 updateL0Table(knh, addr);
             }
-            // else in-place update, L0 entry remains valid
         }
     }
 
@@ -374,12 +391,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             serializerPack.writeState(state);
             byte[] vb = serializerPack.stateBuffer();
             int vlen = serializerPack.stateLength();
-            long addr = entryArena.updateEntry(result, vb, vlen);
-            if (addr != result) { // reallocated
-                mainTable.setSlotPointer(addr);
-                updateL0Table(knh, addr);
-            }
-            // else in-place update, L0 entry remains valid
+            // 先尝试就地更新
+            updateExistingEntry(result, vb, vlen, knh);
         }
     }
 

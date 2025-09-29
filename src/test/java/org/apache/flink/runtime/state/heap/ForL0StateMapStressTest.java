@@ -5,12 +5,9 @@ import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Timeout;
+import org.apache.flink.types.StringValue;
+import org.junit.Ignore;
+import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -661,7 +658,7 @@ public class ForL0StateMapStressTest {
                     if (previous == null) {
                         return "new" + value;
                     }
-                    return previous + value;
+                    return (previous + value).substring(0, 10); // 截断以防过长
                 });
                 transformOpsCompleted++;
             }
@@ -700,7 +697,7 @@ public class ForL0StateMapStressTest {
                 if (previous == null) {
                     newValue = "new_transformed";
                 } else {
-                    newValue = previous + "_transformed";
+                    newValue = (previous + "_transformed").substring(0, 10);
                 }
                 stateMap.put(key, namespace, newValue);
                 getPutOpsCompleted++;

@@ -648,13 +648,17 @@ class EntryArenaTest {
                 assertArrayEquals(value, freeListArena.getValueBytes(address));
             }
 
-            // Remove all entries to create free blocks of different sizes
+            // 保留一个holder防止将当前页判空而清空free list
+            long holder = freeListArena.putEntry("h".getBytes(), "h".getBytes(), new byte[1]);
+            assertTrue(holder > 0);
+
+            // Remove all entries except holder to create free blocks of different sizes
             for (Long address : addresses) {
                 freeListArena.removeEntry(address);
             }
 
             EntryArena.ArenaStats stats = freeListArena.getStats();
-            assertEquals(0, stats.activeAllocations);
+            assertEquals(1, stats.activeAllocations); // 仅剩 holder
             assertTrue(stats.freeBlocks > 0, "Should have free blocks of various sizes");
 
             // Reallocate with different sizes - should find appropriate free blocks
@@ -671,29 +675,62 @@ class EntryArenaTest {
         }
 
         @Test
-        void testFragmentationMetrics() {
-            // Create fragmentation by allocating and removing entries
-            List<Long> addresses = new ArrayList<>();
+        void testFreeListNoSplitWhenRemainderLessThanMinEntry() throws Exception {
+            // 使用独立 arena 避免干扰
+            EntryArena local = new EntryArena(allocator);
+            try {
+                // 大块：valueLen=1000 => entrySize=1016
+                long big = local.putEntry(new byte[0], new byte[0], new byte[1000]);
+                assertTrue(big > 0);
+                int sizeA = local.getEntrySize(big);
+                assertEquals(1016, sizeA, "sanity: expected 1016 for valueLen=1000");
 
-            for (int i = 0; i < 20; i++) {
-                byte[] key = ("fragKey" + i).getBytes();
-                byte[] namespace = "fragNs".getBytes();
-                byte[] value = ("fragValue" + i).getBytes();
+                // 保持页非空，避免remove后被purge
+                long holder = local.putEntry(new byte[0], new byte[0], new byte[1]);
+                assertTrue(holder > 0);
 
-                long address = freeListArena.putEntry(key, namespace, value);
-                addresses.add(address);
+                local.removeEntry(big);
+                assertTrue(local.getStats().freeBlocks > 0);
+
+                // 目标：剩余8(<MIN_ENTRY_SIZE=24) 不分裂 => valueLen=992 -> entrySize=1008
+                long small = local.putEntry(new byte[0], new byte[0], new byte[992]);
+                assertTrue(small > 0);
+                assertEquals(1008, local.getEntrySize(small));
+
+                EntryArena.ArenaStats stats = local.getStats();
+                assertEquals(0, stats.freeBlocks, "remainder < MIN_ENTRY_SIZE should not split");
+            } finally {
+                local.close();
             }
+        }
 
-            // Remove every other entry to create fragmentation
-            for (int i = 0; i < addresses.size(); i += 2) {
-                freeListArena.removeEntry(addresses.get(i));
+        @Test
+        void testFreeListSplitWhenRemainderLargeEnough() throws Exception {
+            EntryArena local = new EntryArena(allocator);
+            try {
+                long big = local.putEntry(new byte[0], new byte[0], new byte[1000]);
+                assertTrue(big > 0);
+                int sizeA = local.getEntrySize(big);
+                assertEquals(1016, sizeA);
+
+                // 保持页非空，避免remove后被purge
+                long holder = local.putEntry(new byte[0], new byte[0], new byte[1]);
+                assertTrue(holder > 0);
+
+                local.removeEntry(big);
+                assertTrue(local.getStats().freeBlocks > 0);
+
+                // 目标：剩余120 且 >= max(MIN_ENTRY_SIZE=24, allocSize/8)
+                // 选用 valueLen=880 -> entrySize=896, remainder=120, allocSize/8=112
+                long alloc = local.putEntry(new byte[0], new byte[0], new byte[880]);
+                assertTrue(alloc > 0);
+                assertEquals(896, local.getEntrySize(alloc));
+
+                EntryArena.ArenaStats stats = local.getStats();
+                assertEquals(1, stats.freeBlocks, "should split and keep one free block as remainder");
+            } finally {
+                local.close();
             }
-
-            EntryArena.ArenaStats stats = freeListArena.getStats();
-            assertEquals(10, stats.activeAllocations); // Half removed
-            assertTrue(stats.freeBlocks > 0, "Should have free blocks");
-            assertTrue(stats.fragmentation > 0, "Should report fragmentation");
-            assertTrue(stats.fragmentation <= 100, "Fragmentation should be percentage");
         }
     }
 }

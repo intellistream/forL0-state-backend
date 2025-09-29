@@ -6,8 +6,10 @@ import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.space.MemorySegmentSlice;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Deque;
 import java.util.List;
 
 /**
@@ -31,14 +33,23 @@ public class EntryArena implements AutoCloseable {
     private static final int MIN_ENTRY_SIZE = ENTRY_HEADER_SIZE + ALIGNMENT;
 
     // Memory segment management
-    private static final int SEGMENT_SIZE = 64 * 1024;  // 64KB per slab
+    // private static final int SEGMENT_SIZE = 64 * 1024;  // 64KB per slab (replaced by dynamic page-aligned size)
+    private final int segmentSize; // use allocator.getPageSize()
 
-    // Free list constants
-    private static final int FREE_BLOCK_HEADER_SIZE = 8;  // next_pointer(8B)
-    private static final int MIN_FREE_BLOCK_SIZE = FREE_BLOCK_HEADER_SIZE + ALIGNMENT;
+    // Avoid creating tiny tail fragments: only split when remainder is not too small.
+    private static final int REMAINDER_SPLIT_RATIO_DIVISOR = 8; // split only if remaining >= allocSize/8
 
     // Limit free list scan to avoid O(n) overhead in hot path
     private static final int MAX_FREE_LIST_SCAN = 16;
+
+    // Quarantine window: delay releasing empty slabs to avoid same-call-chain dangling access and reduce churn
+    private final Deque<Integer> pendingRelease = new ArrayDeque<>();
+    private boolean[] slabQuarantined = new boolean[16];
+
+    // ---- New tuning knobs for quarantine and scanning ----
+    private static final int DRAIN_BUDGET_PER_CALL = 2;              // drain up to N pages per safe point
+    private static final int MAX_QUARANTINE_PAGES = 64;              // threshold to trigger extra draining
+    private static final int ADAPTIVE_SCAN_UPPER_BOUND = 128;        // larger scan when about to grow memory
 
     /**
      * Size classes for free list allocation strategy.
@@ -89,6 +100,12 @@ public class EntryArena implements AutoCloseable {
     // Current allocation segment
     private MemorySegment currentSegment;
     private int currentOffset;
+    private int currentSlabIndex = -1; // 当前写入的slab索引
+
+    // Per-slab usage and index reuse structures
+    // private final List<Integer> slabUsedBytes = new ArrayList<>();
+    private int[] slabUsedBytes = new int[16];
+    private final Deque<Integer> freeSlabIndices = new ArrayDeque<>();
 
     // Free list data structures
     private final FreeBlock[] freeListHeads; // 使用数组按ordinal索引
@@ -110,6 +127,7 @@ public class EntryArena implements AutoCloseable {
         this.totalAllocated = 0;
         this.activeEntries = 0;
         this.closed = false;
+        this.segmentSize = allocator.getPageSize(); // Align slab size to page size to avoid over-allocation
 
         // Initialize free list structures
         this.freeListHeads = new FreeBlock[SizeClass.values().length];
@@ -189,6 +207,8 @@ public class EntryArena implements AutoCloseable {
         dataOffset += namespaceLen;
         segment.put(dataOffset, valueBuffer, 0, valueLen);
         activeEntries++;
+        // periodic/quarantine threshold based draining
+        maybeDrainAfterOp();
         return address;
     }
 
@@ -222,6 +242,7 @@ public class EntryArena implements AutoCloseable {
         // First try in-place update
         if (updateValueInPlace(address, valueBuffer, valueLen)) {
             // In-place update succeeded, return the same address
+            maybeDrainAfterOp();
             return address;
         }
 
@@ -430,28 +451,51 @@ public class EntryArena implements AutoCloseable {
         return (Math.max(dataSize, MIN_ENTRY_SIZE) + ALIGNMENT - 1) & (-ALIGNMENT);
     }
 
+    private void ensureSlabCapacity(int index) {
+        if (index < slabUsedBytes.length && index < slabQuarantined.length) return;
+        int newLen = Math.max(slabUsedBytes.length, slabQuarantined.length);
+        while (newLen <= index) { newLen <<= 1; }
+        slabUsedBytes = Arrays.copyOf(slabUsedBytes, newLen);
+        slabQuarantined = Arrays.copyOf(slabQuarantined, newLen);
+    }
+
     private boolean allocateNewSegment() {
         if (closed) {
             return false;
         }
         try {
-            List<MemorySegment> newSegments = allocator.allocate(SEGMENT_SIZE);
+            // release quarantined pages at a safe point
+            tryDrainQuarantine();
+
+            // request exactly one page-aligned slab
+            List<MemorySegment> newSegments = allocator.allocate(segmentSize);
             if (newSegments.isEmpty()) {
                 return false;
             }
-            originalAllocations.add(new ArrayList<>(newSegments));
-            long totalSize = 0;
-            for (MemorySegment seg : newSegments) { totalSize += seg.size(); }
-            if (totalSize < SEGMENT_SIZE) {
-                allocator.release(newSegments);
-                originalAllocations.remove(originalAllocations.size() - 1);
-                return false;
+            // track the allocation handle for precise release later
+            int index;
+            if (!freeSlabIndices.isEmpty()) {
+                index = freeSlabIndices.pollFirst();
+                // ensure capacity for aligned lists
+                while (originalAllocations.size() <= index) originalAllocations.add(null);
+                while (segments.size() <= index) segments.add(null);
+                ensureSlabCapacity(index);
+                originalAllocations.set(index, new ArrayList<>(newSegments));
+                segments.set(index, newSegments.get(0));
+                slabUsedBytes[index] = 0;
+                slabQuarantined[index] = false;
+            } else {
+                index = segments.size();
+                segments.add(newSegments.get(0));
+                originalAllocations.add(new ArrayList<>(newSegments));
+                ensureSlabCapacity(index);
+                slabUsedBytes[index] = 0;
+                slabQuarantined[index] = false;
             }
-            MemorySegment largest = newSegments.get(0);
-            for (MemorySegment seg : newSegments) { if (seg.size() > largest.size()) largest = seg; }
-            segments.add(largest);
-            currentSegment = largest;
+
+            currentSegment = segments.get(index);
             currentOffset = 0;
+            currentSlabIndex = index;
             return true;
         } catch (MemoryAllocationException e) {
             return false;
@@ -459,7 +503,10 @@ public class EntryArena implements AutoCloseable {
     }
 
     private long allocateEntry(int size) {
-        long reused = allocateFromFreeListBounded(size);
+        // drain quarantine at a safe point before new allocations (incremental)
+        tryDrainQuarantine();
+
+        long reused = allocateFromFreeListBounded(size, EntryArena.MAX_FREE_LIST_SCAN);
         if (reused != 0) { return reused; }
 
         long addr = allocateFromCurrentSegment(size);
@@ -472,8 +519,17 @@ public class EntryArena implements AutoCloseable {
         long addr = allocateFromCurrentSegment(size);
         if (addr != 0) { return addr; }
 
-        if (size > SEGMENT_SIZE) { return 0; }
-        if (!allocateNewSegment()) { return 0; }
+        if (size > segmentSize) { return 0; }
+
+        // Before growing memory, do a second-chance broader free-list scan
+        long retry = allocateFromFreeListBounded(size, ADAPTIVE_SCAN_UPPER_BOUND);
+        if (retry != 0) { return retry; }
+
+        // Try to allocate a new page; if it fails, aggressively drain quarantined pages and retry once
+        if (!allocateNewSegment()) {
+            drainAllQuarantined();
+            if (!allocateNewSegment()) { return 0; }
+        }
 
         return allocateFromCurrentSegment(size);
     }
@@ -484,20 +540,23 @@ public class EntryArena implements AutoCloseable {
      */
     private long allocateFromCurrentSegment(int size) {
         if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
-            int slabIndex = segments.size() - 1;
+            int slabIndex = currentSlabIndex;
             long addr = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
             currentOffset += size;
             totalAllocated += size;
+            // track per-slab usage
+            ensureSlabCapacity(slabIndex);
+            slabUsedBytes[slabIndex] += size;
             return addr;
         }
         return 0;
     }
 
-    private long allocateFromFreeListBounded(int size) {
+    private long allocateFromFreeListBounded(int size, int maxScan) {
         SizeClass sc = SizeClass.getSizeClass(size);
-        long addr = scanFreeList(sc, size, EntryArena.MAX_FREE_LIST_SCAN);
+        long addr = scanFreeList(sc, size, maxScan);
         if (addr != 0) { return addr; }
-        int remainProbe = Math.max(1, EntryArena.MAX_FREE_LIST_SCAN / 4);
+        int remainProbe = Math.max(1, maxScan / 4);
         for (SizeClass larger : SizeClass.values()) {
             if (larger.ordinal() > sc.ordinal()) {
                 addr = scanFreeList(larger, size, remainProbe);
@@ -515,7 +574,14 @@ public class EntryArena implements AutoCloseable {
                 if (prev == null) { freeListHeads[sc.ordinal()] = cur.next; } else { prev.next = cur.next; }
                 totalFreeBlocks--; totalFreedMemory -= cur.size;
                 int remaining = cur.size - size;
-                if (remaining >= MIN_FREE_BLOCK_SIZE) { addToFreeList(cur.address + size, remaining); }
+                // split only when remaining is large enough to hold a minimum entry and not a tiny tail
+                if (remaining >= MIN_ENTRY_SIZE && remaining >= Math.max(MIN_ENTRY_SIZE, size / REMAINDER_SPLIT_RATIO_DIVISOR)) {
+                    addToFreeList(cur.address + size, remaining);
+                }
+                // update per-slab usage for the reused block
+                int slabIndex = getSlabIndex(cur.address);
+                ensureSlabCapacity(slabIndex);
+                slabUsedBytes[slabIndex] += size;
                 return cur.address;
             }
             prev = cur; cur = cur.next; scanned++;
@@ -524,7 +590,8 @@ public class EntryArena implements AutoCloseable {
     }
 
     private void addToFreeList(long address, int size) {
-        if (size < MIN_FREE_BLOCK_SIZE) { return; }
+        // only add blocks that can at least serve a minimal entry allocation
+        if (size < MIN_ENTRY_SIZE) { return; }
         SizeClass sc = SizeClass.getSizeClass(size);
         FreeBlock nb = new FreeBlock(address, size);
         nb.next = freeListHeads[sc.ordinal()];
@@ -548,8 +615,108 @@ public class EntryArena implements AutoCloseable {
         int sz = getEntrySize(address);
         if (sz > 0) {
             addToFreeList(address, sz);
+            // decrease per-slab usage and free page if empty
+            int slabIndex = getSlabIndex(address);
+            ensureSlabCapacity(slabIndex);
+            int used = slabUsedBytes[slabIndex] - sz;
+            slabUsedBytes[slabIndex] = used;
+            if (used == 0) {
+                freeEmptySlabIfPossible(slabIndex);
+            }
         }
         activeEntries--;
+        // periodic/quarantine threshold based draining
+        maybeDrainAfterOp();
+    }
+
+    private void freeEmptySlabIfPossible(int slabIndex) {
+        // do not free current slab to avoid churn; purge its free-list blocks and reset its offset
+        if (slabIndex == currentSlabIndex) {
+            // ensure no stale blocks from this slab remain in free lists
+            purgeFreeListForSlab(slabIndex);
+            currentOffset = 0;
+            return;
+        }
+        // purge free-list blocks from this slab to avoid handing out invalid addresses
+        purgeFreeListForSlab(slabIndex);
+        // delay actual release: keep segment readable for a short window
+        ensureSlabCapacity(slabIndex);
+        if (!slabQuarantined[slabIndex]) {
+            slabQuarantined[slabIndex] = true;
+            pendingRelease.addLast(slabIndex);
+        }
+        // After enqueueing, if quarantine exceeds threshold, drain a few immediately
+        if (pendingRelease.size() > MAX_QUARANTINE_PAGES) {
+            int excess = pendingRelease.size() - MAX_QUARANTINE_PAGES;
+            drainQuarantineBudgeted(Math.min(excess, DRAIN_BUDGET_PER_CALL));
+        }
+        // slabUsedBytes[slabIndex] already 0; segment remains until drained
+    }
+
+    // Replace previous full-drain with incremental draining at safe points
+    private void tryDrainQuarantine() {
+        drainQuarantineBudgeted(DRAIN_BUDGET_PER_CALL);
+    }
+
+    private void drainQuarantineBudgeted(int budget) {
+        int drained = 0;
+        while (!pendingRelease.isEmpty() && drained < budget) {
+            drainOneQuarantined();
+            drained++;
+        }
+    }
+
+    private void drainAllQuarantined() {
+        while (!pendingRelease.isEmpty()) {
+            drainOneQuarantined();
+        }
+    }
+
+    private void maybeDrainAfterOp() {
+        // only threshold-driven draining; no periodic draining by op counter
+        if (pendingRelease.size() > MAX_QUARANTINE_PAGES) {
+            int excess = pendingRelease.size() - MAX_QUARANTINE_PAGES;
+            drainQuarantineBudgeted(Math.min(excess, DRAIN_BUDGET_PER_CALL));
+        }
+    }
+
+    private void drainOneQuarantined() {
+        Integer idx = pendingRelease.pollFirst();
+        if (idx == null) return;
+        List<MemorySegment> handle = (idx < originalAllocations.size()) ? originalAllocations.get(idx) : null;
+        if (handle != null) {
+            allocator.release(handle);
+        }
+        if (idx < segments.size()) {
+            segments.set(idx, null);
+        }
+        if (idx < originalAllocations.size()) {
+            originalAllocations.set(idx, null);
+        }
+        ensureSlabCapacity(idx);
+        slabQuarantined[idx] = false;
+        slabUsedBytes[idx] = 0;
+        freeSlabIndices.addLast(idx);
+    }
+
+    private void purgeFreeListForSlab(int slabIndex) {
+        for (int i = 0; i < freeListHeads.length; i++) {
+            FreeBlock newHead = null;
+            FreeBlock tail = null;
+            FreeBlock cur = freeListHeads[i];
+            while (cur != null) {
+                FreeBlock next = cur.next;
+                if (getSlabIndex(cur.address) == slabIndex) {
+                    // drop this block, update stats
+                    totalFreeBlocks--; totalFreedMemory -= cur.size;
+                } else {
+                    if (newHead == null) { newHead = cur; tail = cur; tail.next = null; }
+                    else { tail.next = cur; tail = cur; tail.next = null; }
+                }
+                cur = next;
+            }
+            freeListHeads[i] = newHead;
+        }
     }
 
     /**
@@ -621,6 +788,11 @@ public class EntryArena implements AutoCloseable {
         totalFreedMemory = 0;
         totalFreeBlocks = 0;
 
+        // drain all quarantined pages first
+        while (!pendingRelease.isEmpty()) {
+            drainOneQuarantined();
+        }
+
         // Free all original allocations - this ensures proper memory accounting
         for (List<MemorySegment> allocation : originalAllocations) {
             try {
@@ -644,7 +816,9 @@ public class EntryArena implements AutoCloseable {
      * Gets memory usage statistics.
      */
     public ArenaStats getStats() {
-        long systemMemory = (long) segments.size() * SEGMENT_SIZE;
+        long slabs = 0;
+        for (MemorySegment seg : segments) { if (seg != null) slabs++; }
+        long systemMemory = slabs * segmentSize;
         return new ArenaStats(
             systemMemory,
             totalAllocated,
@@ -659,7 +833,9 @@ public class EntryArena implements AutoCloseable {
      * Calculates memory efficiency as a percentage.
      */
     private double calculateMemoryEfficiency() {
-        long systemMemory = (long) segments.size() * SEGMENT_SIZE;
+        long slabs = 0;
+        for (MemorySegment seg : segments) { if (seg != null) slabs++; }
+        long systemMemory = slabs * segmentSize;
         if (systemMemory == 0) {
             return 0.0;
         }

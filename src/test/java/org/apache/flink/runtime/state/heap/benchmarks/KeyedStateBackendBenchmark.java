@@ -36,20 +36,16 @@ public class KeyedStateBackendBenchmark {
     @Param({"forl0","heap"})
     public String backend;
 
-    // 新增：是否启用L0缓存，仅在 backend=forl0 时生效
-    @Param({"true"})
-    public boolean l0CacheEnabled;
-
     // 放大 key 空间
     @Param({"1000000"})
     public int numKeys;
 
     // mixed 写入百分比（0-100）
-    @Param({"20"})
+    @Param({"50"})
     public int mixedWritePercent;
 
     // 键分布：uniform 均匀；hot 热点（按热集/冷集概率）
-    @Param({"uniform","hot","zipf"})
+    @Param({"uniform", "zipf"})
     public String keyDistribution;
 
     // 热点分布参数：热集占比（百分比）与访问概率（百分比），仅在 keyDistribution=hot 时生效
@@ -67,7 +63,7 @@ public class KeyedStateBackendBenchmark {
     public int zipfPregen;
 
     // 值大小（字节）。为 0 则使用 int 值；>0 则使用 byte[] 值并按该大小构造
-    @Param({"0","512"})
+    @Param({"0","256", "512"})
     public int valueBytes;
 
     private AbstractKeyedStateBackend<Integer> keyedBackend;
@@ -132,7 +128,7 @@ public class KeyedStateBackendBenchmark {
                     true,
                     cancelRegistry,
                     forL0MemoryManager,
-                    l0CacheEnabled // 将开关传入构造
+                    false // 将开关传入构造
             ).build();
         } else {
             keyedBackend = new HeapKeyedStateBackendBuilder<Integer>(
