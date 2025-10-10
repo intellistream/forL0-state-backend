@@ -1,763 +1,413 @@
-ForL0 State Backend设计说明书
+# ForL0 State Backend设计说明书
 
-# 1.  整体架构设计
+## 整体架构设计
 
-ForL0 StateBackend设计的目标是充分利用鲲鹏CPU服务器提供的L0 Cache特性，优化Flink状态访问的性能与效率。整体采用两级索引结构，其中顶层索引存放于L0 Cache中，实现高频访问的快速响应；主索引位于传统DRAM中，负责管理全量状态数据与解决冲突。此架构配备专门的Checkpoint接口模块，确保状态数据的一致性与快速恢复能力。此外，还设计了专门的容错机制适配层，使得本方案能对接Flink原生的Checkpoint和Savepoint机制，达到高兼容性与易部署性。
+ForL0 StateBackend设计的目标是充分利用鲲鹏CPU服务器提供的L0 Cache特性，通过缓存友好的数据布局与分层索引，将Flink状态访问延迟降到最低并提升吞吐与效率。如下所述，整体采用两级索引和键值分离的架构：顶层为**L0 Table（Cache 加速区）**，针对高频访问做极低延迟响应；底层为**Main Table（主状态表）**，负责存放全量索引并通过扩展桶机制解决冲突与扩展需求。索引指针指向堆外的**Entry Store**（Entry数据块），实现索引与数据的分离以减少缓存抖动并优化内存布局。该架构配备专门的Checkpoint接口模块，确保状态数据的一致性与快速恢复能力。此外，还设计了专门的容错机制适配层，使得本方案能对接Flink原生的Checkpoint和故障恢复机制，达到高兼容性与易部署性。
 
-系统架构采用分层设计，分为 L0 Table（Cache加速区）和 Main Table（主状态表）两大核心部分，并配合内存分配管理与负载管理等辅助组件。其结构如图1所示：
+> 图 1 整体架构图
 
+本系统采用分层设计，分为 L0 Table 和 Main Table 两大核心部分，并配合内存分配管理与负载管理等辅助组件。主要具有以下特点：
 
-## 1.1 L0 Table
+- **缓存友好的数据布局**：64 字节缓存行对齐的桶结构，降低缓存行读取开销；键值分离存储，增强空间局部性；
+- **双层索引**：先查 L0 Table（快速命中），未命中再落到 Main Table，查到后可将热点回填 L0 以提升后续访问命中率；
+- **多种替换策略**：支持 LRU、LFU、FIFO、RANDOM 等基础替换策略以及热点感知的替换策略，便于根据工作负载选择最优策略；
+- **堆外内存管理**：使用基于 Flink 内置的 MemoryManager 进行统一内存分配与回收；
+- **检查点与容错**：内置适用于堆外内存的 Checkpoint 接口模块、Snapshot 策略与本地恢复配置，并提供容错适配层以对接 Flink 的容错机制，保证一致性与快速恢复；
+- **易集成与部署**：面向 Flink 1.19+，Java8+ 构建，将生成 JAR 放入 Flink lib 目录或通过代码方式设置 StateBackend 即可集成，而无需对用户代码做任何修改。
 
-L0 Table用于缓存热点key的索引信息，其常驻于L0 Cache，大小受用户可配置的L0容量预算限制，使热点状态能以极低的延迟访问。L0 Table由多个哈希桶组成，每个桶为一个Cache行大小（64B）并包含4个slot，每个slot存储以下字段：
+**ForL0StateBackend** 通过分层设计、缓存对齐的数据结构与统一内存管理，在保持与 Flink 原生接口兼容的同时，显著提升热点状态访问的延迟和整体状态访问效率，并为未来更加充分地利用鲲鹏 L0 硬件能力留出扩展路径。
 
-**Tag**（2B）：对应key的摘要，用于快速比对；
+### L0 Table
 
-**Valid**（1B）：用于标记该slot信息是否有效；
+L0 Table 为顶层热点索引层，面向极低延迟的读写路径设计，常驻于 L0 Cache 可用的内存预算内（由 L0 Memory Manager 管控）。主要职责是承载高频访问键的索引元信息，实现快速命中、快速回填与最小化对主表访问。
 
-**Extension**（5B）：用于对齐16B，也可留作扩展字段使用（如LRU位等）；
+其物理布局由若干哈希桶组成，桶大小按 CPU 缓存行对齐（64B），每桶包含 4 个紧凑 slot，以减少缓存行抖动与跨行读取。其结构如下：
 
-**Pointer**（8B）：指向实际键值对的地址；
+> 图 2 L0 Table
 
-L0 Table 所占用的内存由专用的 L0 Memory Manager 管理，负载和热点感知由 L0 Load Manager 实现，动态提升热点Key。
+**Slot 字段说明：**
 
-## 1.2 Main Table
+- **Tag（2B）**：对应 key 的摘要，用于快速比对；
+- **Valid（1B）**：用于标记该 slot 信息是否有效；
+- **Extension（5B）**：用于对齐 16B，也可留作扩展字段使用（如 LRU 位等）；
+- **Pointer（8B）**：指向实际键值对的地址。
 
-Main Table是经过缓存友好设计的哈希结构，其存储全量状态数据的索引，支持大容量、高负载因子的键值存储。其每个桶为64B对齐的Pointer Set，支持局部子桶分裂。键值分离设计，索引指向堆外的Entry数据块。Main Table的每个哈希桶包含6个slot，拥有以下字段：
+L0 Table 所占用的内存由专用的 **L0 Memory Manager** 管理，其使用 JNI 封装了 L0 内存分配接口，而负载和热点感知由 **L0 Load Manager** 实现，动态提升热点 Key。
 
-**Pointer**（8B）：指向实际键值对的地址；
+### Main Table
 
-**Tag**（2B）：对应key的摘要，用于快速比对；
+Main Table 为全量索引层，承担完整状态索引的长期存储与冲突解决，设计以缓存友好为目标，并通过局部扩展机制尽可能减少全表重哈希次数。
 
-**Extension Pointer**（4B）：4个用于树型扩展的指针，每个指针为扩展桶的下标，最多支持扩展255个桶；
+其物理布局同样由若干哈希桶组成，每个桶为 64B 对齐的 Pointer Set，通过扩展指针字段支持局部树型扩展。Main Table 的每个哈希桶包含 6 个 slot 和一个扩展指针，其结构如下：
 
-Main Table所使用的堆外内存由运行时注入的Flink Memory Manager进行分配。
+> 图 3 Main Table
 
-## 1.3内存负载与管理
+- **Pointer（8B）**：指向实际键值对的地址；
+- **Tag（2B）**：对应 key 的摘要，用于快速比对；
+- **Expansion Pointer（4B）**：4 个用于树型扩展的指针，每个指针为扩展桶的下标，最多支持扩展 255 个桶；
 
-L0 Table和 Main Table分别有独立的内存管理组件，其中Main Table使用的普通堆外内存采用Flink Memory Manager进行分配和资源约束，并使用Unsafe进行读写；而L0 Table使用的L0映射区内存采用JNI封装后的系统调用接口进行分配和管理。Entry Arena 管理所有key-value对的物理存储，采用大块分配与空闲列表等机制高效利用堆外内存。
+Main Table 所使用的堆外内存由运行时注入的 Flink Memory Manager 进行分配。当发生冲突时，默认使用树型局部扩展策略，通过 Tag 的低 2 位确定扩展桶并进行扩展，只有当达到全局扩容条件（扩展桶满或达到负载因子阈值）时才进行全局扩容。
 
-## 1.4组件解偶与集成
+### 1.3 内存负载与管理
 
-L0 Table作为Main Table的缓存和主表逻辑解耦，负载和cache管理由独立Manager负责，因此L0 Table可以作为一个可选的性能优化配置项向用户提供。而整个ForL0 State Backend则以插件方式对接Flink，导入Jar包后只需在配置文件中修改配置即可，无需修改用户代码。
+L0 Table 与 Main Table 各自由独立的内存管理组件负责其内存生命周期、配额控制与回收策略。
 
- 
+- **Main Table** 使用运行时注入的 Flink MemoryManager 分配的堆外内存区域，采用 **MemoryManagerAllocator** 做统一记账与配额约束，针对堆外读写使用 Unsafe 或等效低开销 API 以减少复制和序列化开销；
+- **L0 映射区** 的内存由专用的 **L0 Memory Manager** 通过 JNI 封装的系统调用接口分配与管理，负责映射区的分配/释放以及 pin/unpin 语义。
 
-# 2.  架构实现细节
+**Entry Store** 作为键值对的物理存储层，采用大块（chunk/slab）分配、分级空闲列表与位图等高效数据结构来减少碎片并加速空闲查找。所有关键内存操作均暴露可观测指标（内存占用、分配/释放速率、碎片率、pin 数量、驱逐次数等），并提供可配置阈值用于自动触发回收或降级行为，便于运维调优与故障定位。
 
-ForL0 State Backend基于Flink原生HashMapStateBackend架构，在保留原有核心接口和部分可复用组件的基础上，引入了多个新增组件，以支持L0 Table热点缓存与分层哈希索引结构。这些新增组件与原有Flink StateBackend紧密协作，既保持了API兼容性，又实现了存储结构和缓存策略的深度优化。其组件关系如图2所示。
+### 1.4 组件解偶与集成
 
+L0Table 与 MainTable 在代码层面是独立实现的模块（L0Table、MainTable），二者与 Entry Store 在上层的 **ForL0StateMap** 中进行组装并协同工作。设计上 MainTable 是一致性与持久化的权威来源，所有写入、删除与扩容操作最终以 MainTable 为准；L0Table 仅承担热点索引的缓存职责，索引回填、驱逐与命中逻辑由可替换的替换策略模块与 L0 管理组件驱动，因此 L0 Table 可以作为一个可选的性能优化配置项向用户提供。
 
-## 2.1 可复用组件与须修改组件
+在与 Flink 的集成方面，**ForL0KeyedStateBackend** 承担组件的组装与生命周期管理，插件化接入通过 **StateBackendFactory** 注册点完成。运行时以插件形式与 Flink 对接，导入 Jar 包后通过构造参数或配置文件（config.yaml）启用或配置 ForL0 后端，L0 层为可选开关，对 Flink 内核源码以及上层用户代码透明无侵入。
 
-在ForL0 State Backend中，以下 Flink 原生组件可直接复用。
+---
 
-### 2.1.2 StateTable / StateMap
+## 架构实现细节
 
-提供 StateBackend 对外的统一接口，封装底层索引实现，支持 Checkpoint/Restore 流程。
+ForL0 State Backend 基于 Flink 原生 HashMapStateBackend 架构进行改造，在保留原有核心接口和部分可复用组件的基础上，引入了多个新增组件以支持上述架构设计。这些新增组件与原有 Flink StateBackend 紧密协作，既保持了 API 兼容性，又实现了存储结构和缓存策略的深度优化。其组件关系如下：
 
-### 2.1.3 PriorityQueueManager
+> 图 4 ForL0StateBackend 组件图
 
-用于管理定时器状态，保持原有功能，不影响 L0 Table 设计。
+### 2.1 可复用组件与扩展组件
 
-### 2.1.4 Snapshot & Restore
+在 ForL0 State Backend 中，以下 Flink 原生组件可直接复用。
 
-负责状态快照与恢复，ForL0 在此流程中接入自定义的 StateMap 数据结构进行持久化。
+#### 2.1.2 StateTable / StateMap
 
-### 2.1.5 ForL0KeyedStateBackend
+ForL0 在接口层面复用 Flink 的 StateTable/StateMap 抽象，但用 ForL0 专用实现替换了原有的 CopyOnWriteStateMap。**ForL0StateTable / ForL0StateMap** 承担对外统一状态表接口（增删改查、迭代、快照/恢复等），对上层 KeyedStateBackend 保持 API 兼容，同时在内部组合 L0Table、MainTable 与 Entry Store 完成双层索引与键值分离的实现。StateTable 抽象仍作为外部契约，便于与 Flink 的 Snapshot/Restore 流程对接。
 
-在 Flink 原有 KeyedStateBackend 基础上扩展，负责初始化 ForL0StateTable、分配 L0 Table 内存、启动 L0 管理器等。同时在 Snapshot/Restore 流程中对接 ForL0 特有的索引结构序列化逻辑。
+#### 2.1.3 PriorityQueueManager / HeapPriorityQueue
 
-### 2.1.5 ForL0State Implementations
+定时器/优先队列相关功能直接复用或兼容 Flink 自身的堆实现（HeapPriorityQueue 等），ForL0 不改变定时器语义，PriorityQueue 的管理器按原有接口工作，保证与现有事件时间/处理时间定时器逻辑兼容。
 
-在原有 State 接口基础上提供 ForL0 版本的实现类，使得 Flink State API 能调用到 L0 Table 加速的底层实现。
+#### 2.1.4 ForL0KeyedStateBackend
 
-以上这些组件无需大幅修改，只需在调用链中接入ForL0特有的相关实现。
+**ForL0KeyedStateBackend** 是与 Flink KeyedStateBackend 的适配扩展点，负责在任务初始化时组装 ForL0StateTable、分配后端所需内存、初始化所需管理组件等，并在 Snapshot/Restore 路径中插入 ForL0StateMap 的序列化/反序列化逻辑。该类承担生命周期管理、checkpoints 的协调以及把 ForL0 的内部结构映射到 Flink 的 KeyedState 接口上。
 
-## 2.2 新增组件
+#### 2.1.5 MemoryManager
 
-### 2.2.3 ForL0StateMap
+ForL0StateBackend 通过 **MemoryManagerAllocator** 向 Flink 的 MemoryManager 请求大块堆外内存，并依赖其配额、回收与异常上报机制。MemoryManager 负责提供统一的资源管理功能，分配失败或超额时由 Flink 的内存治理链路处理。
 
-ForL0StateMap是ForL0 State Backend的核心数据结构，替代了原有的 CopyOnWriteStateMap，实现了双层索引表结构。上层L0 Table，用于缓存热点key 的索引信息，保证 CPU Cache 命中率；下层是基于 缓存友好性设计的主表（分层哈希 + 树型扩展），存储所有状态的权威索引。所有数据均存储于堆外内存，索引部分使用固定大小的bucket结构，KV数据使用变长布局存储。具体实现见第三章
+### 2.2 关键新增组件
 
-该组件负责所有状态的增删改查逻辑，并与 L0 Table 保持最终一致性。
+#### 2.2.3 ForL0StateMap
 
-### 2.3 Memory Allocator
+**ForL0StateMap** 是本后端的核心数据结构，实现了双层索引：L0Table 为热点索引缓存，MainTable 为权威索引并支持局部树型扩展。ForL0StateMap 负责所有状态的增删改查逻辑、冲突解决、扩展桶递归插入/查找、以及与 Entry Store 的 KV 读写交互。该组件封装了 L0 回填、驱逐与一致性失效逻辑，确保写操作以 MainTable 为准且能在查询时提升热点至 L0。
 
-专用的堆外内存分配器，负责为主表、扩展bucket 池以及 KV 存储区分配和释放内存块。所有内存均通过Flink的MemoryManager进行大块分配，并保证64B对齐。该组件为 ForL0StateMap提供统一的内存管理接口，在扩容、回收以及写时复制阶段协调不同内存区域的生命周期。
+#### 2.2.4 Memory Allocator
 
-### 2.4 Level Hash Table
+专用的堆外内存分配器，负责为主表、扩展桶池以及 Entry Store 分配和释放内存块。所有内存均通过 Flink 的 MemoryManager 进行大块分配，并保证 64B 对齐。该组件为 ForL0StateMap 提供统一的内存管理接口。
 
-ForL0StateMap所使用的索引结构与KV存储所对应的具体实现，该模块直接服务于 ForL0StateMap 的查找、插入和删除等操作。
+#### 2.2.5 MainTable
 
-### 2.5 L0 Manager
+**MainTable** 实现了缓存友好的主索引结构，每个主桶为 64B 对齐、包含固定 slot 与用于局部扩展的字段。MainTable 负责全量索引的存储、扩展桶分配与回收、全表重分配（resize）以及与 Entry Store 的地址绑定，并采用局部子桶扩展与递归插入来减少全量迁移的次数。
 
-L0 Table 内存分配与管理模块，负责根据总的 L0 内存配额（由配置文件指定）为 L0 Table 分配内存。在运行中，L0 Manager负责控制L0 Table 的容量、桶数等，确保热点索引能够在分配的内存限额内高效存储，并与State Estimator进行协作。
+#### 2.2.6 L0Table
 
-### 2.6 State Estimator
+**L0Table** 提供顶层的热点索引缓存，实现了包含多种替换策略的元数据支撑（LRU/LFU/FIFO/RANDOM 等），并通过 ForL0StateMap 的回填/驱逐逻辑与 MainTable 保持最终一致性，且其内容为可失效的缓存，可在恢复后按需重建。
 
-状态大小预测模块，主要用于辅助L0 Manager制定内存分配策略。
+#### 2.2.7 Entry Store
 
-该模块会结合key的访问频率、状态大小等信息，预估未来一段时间内L0 Table的容量需求，并向L0 Manager提供参考。这样可以在不超出总内存限额的前提下，使更多的热点状态驻留于L0 Table，从而提升缓存命中率。
+**Entry Store** 即 State Map 所管理的 KVNode 空间，用于存放序列化后的 key、namespace、value 等变长数据。KVNode 布局保存必要的元信息（长度、标记、指针等），支持快速定位与重用。Entry Store 负责实际条目的增删改操作，并在全表迁移或 checkpoint 恢复时保证物理地址不变以简化索引重建。
 
-### 2.7 L0 Table Evictor
+#### 2.2.8 ForL0State
 
-L0 Table淘汰策略执行模块，实现具体的slot替换算法。
+在 State 层面，为不同类型的 State 提供了对应的 ForL0 实现（如 ValueState、ListState、MapState、ReducingState 等），这些类在 ForL0KeyedStateBackend 中注册被调用创建与更新。每个 ForL0State 实现将状态操作翻译为对 ForL0StateMap 的具体增删改查操作，从而向上层暴露与 Flink API 完全兼容的行为。
 
-该模块根据 L0 Manager 的指令，选择要淘汰的缓存条目，并在 O(1) 或近似常数时间内完成替换。可支持 LRU、LFU 或混合等替换策略，确保热点数据优先保留，减少性能波动。
+#### 2.2.9 Snapshot & Restore
 
-# 3.  State Map设计
+快照与恢复流程沿用 Flink HashMapStateBackend 的 Snapshot/Restore 语义：MainTable 与 Entry Store 为快照的数据来源，快照过程序列化主索引与 KV 存储，并在恢复时重建 MainTable 索引及 KV 区。Snapshot 路径上插入了必要的序列化逻辑以持久化 MainTable 与 Entry Store 的元信息。
 
-ForL0 State Backend 的核心在于其分层索引结构——ForL0StateMap。ForL0StateMap以极致 cache 友好为目标，分为 L0 Table（热点缓存层）和 Main Table（主表）两层。所有索引结构和 key-value 数据均存储于堆外内存，并以 64 字节 cache line 对齐设计，实现极低延迟和高吞吐。
+#### 2.2.10 Serializer Pack
 
-## 3.1 结构概述
+**SerializerPack** 是用于集中管理序列化逻辑的模块，负责持有并复用由 Flink 运行时注入的 TypeSerializer 实例，并对 ForL0StateBackend 中的二进制布局提供统一的序列化/反序列化方法。该组件为 Snapshot/Restore 路径、EntryArena 的持久化与重建、以及 MainTable 索引序列化提供一致的编码/解码接口，同时通过缓存序列化实例和复用缓冲区来降低序列化开销。
 
-State Map由 L0 Table、 Main Table以及Entry Arena组成：
+### 2.3 State Map 实现
 
-**L0 Table**：负责缓存最活跃的热点 key，保证极低延迟访问。其容量、对齐和结构可动态调优，全部存储于一块连续的堆外内存中。
+ForL0StateMap 是 ForL0 State Backend 的核心实现，围绕 L0 Table + Main Table 的双层索引与键值分离思想实现具体的索引与存储逻辑。为控制内存布局和减少 GC，所有索引结构与 KV 存储均分配在堆外内存上并以 64 字节缓存行对齐，索引结构采用固定大小的桶布局以减少缓存抖动，KV 区（Entry Store）则使用变长布局以节省空间并支持任意序列化后的 key/namespace/value。
 
-**Main Table**：负责存储全部 key 的权威索引，采用 Cavast 提出的多 slot + 局部树型扩展结构，实现高负载、高冲突情况下的稳定高性能。
+#### 2.3.1 结构组成
 
-**KV****存储区（Entry Arena****）**：所有实际的 key-value 数据存储于专门的堆外内存池中，支持变长/定长 KV 对。
+如图所示，ForL0StateMap 由 L0 Table、Main Table 以及 Entry Store 组成：
 
-## 3.2 L0 Table 设计
+- **L0 Table**：负责缓存最活跃的热点 key，保证极低延迟访问。其容量与替换策略可配置，连续存储于一块连续的堆外内存中。
+- **Main Table**：负责存储全量索引，采用每桶多 slot 和局部树型扩展的缓存友好结构，实现高负载、高冲突情况下的稳定高性能。
+- **Entry Store**：所有实际的 key-value 数据存储于专门的堆外内存池中，采用键值分离设计提高缓存友好性。
 
+> 图 5 ForL0StateMap 结构
 
-如图3所示，L0 Table 是热点 key 的高速缓存层。其实现和内存布局如下：
+#### 2.3.2 L0 Table 实现
 
-l **桶结构**：每个bucket为 64 字节，包含4个slot，每个slot包含tag、有效位、主表指针、以及预留扩展字段（如 LRU/LFU/版本等）；
+L0 Table 的实现和内存布局如下：
 
-l **物理分布**：所有 L0 Table 内存块一次性分配，64B 对齐，便于批量加载；
+- **桶结构**：每个 bucket 为 64 字节，包含 4 个 slot，每个 slot 包含 tag、有效位、条目指针、以及预留扩展字段（如 LRU/LFU/版本等）。
+- **物理分布**：所有 L0 Table 内存块一次性分配，64B 对齐，占用一块连续内存便于批量加载；
+- **管理策略**：热点 key 会被动态提升至 L0 Table。插入、更新、查询均会刷新 L0 Table，对应 slot 的选择和替换由可配置的替换算法决定；
+- **一致性维护**：L0 Table 仅作缓存，主表持有全量状态索引，写入或扩容等变更后，相关 L0 条目会自动失效或被刷新。
 
-l **管理策略**：热点key会被动态提升至L0 Table。插入、更新、查询均会刷新L0 Table，对应slot的选择和替换由可配置的替换算法决定；
-
-l **一致性维护**：L0 Table 仅作缓存，主表持有全量状态索引，写入或扩容等变更后，相关 L0 条目会自动失效或被刷新。
-
-
-
-表 1 L0 Table Slot数据结构
+**表 1 L0 Table Slot 数据结构**
 
 | 字段      | 说明                     | 字节数(Byte) |
-| --------- | ------------------------ | ------------ |
-| Tag       | Key的哈希摘要            | 2            |
-| Valid     | 有效位                   | 1            |
-| Extension | 扩展位/LRU/版本/字节对齐 | 5            |
-| Pointer   | 指向KV项的指针           | 8            |
+| --------- | ------------------------ | -----------: |
+| Tag       | Key 的哈希摘要           |            2 |
+| Valid     | 有效位                   |            1 |
+| Extension | 扩展位/LRU/版本/字节对齐 |            5 |
+| Pointer   | 指向 KV 项的指针         |            8 |
 
-L0 Table为L0区域的桶数组，每个L0桶为64B，包含4个slot，扩展字段部分可灵活利用。
+> 图 6 L0 Table slot 布局
 
-## 3.3 Main Table 设计
+L0 Table 为 L0 区域的桶数组，每个桶包含 4 个 slot，如上图所示，扩展字段部分可灵活利用。
 
+#### 2.3.3 Main Table 设计
 
-如图4所示，Main Table采用缓存友好设计的分层扩展哈希表：
+Main Table 采用缓存友好设计的树型扩展哈希表，其实现和内存布局如下：
 
-l 每个主表桶（bucket）为64字节，包含6个slot和4个子桶指针（subPtr）。
+- **桶结构**：每个主表桶（bucket）为 64 字节，包含 6 个 slot 和 4 个子桶指针；slot 保存 key、namespace 的 tag 及指向实际存储条目的指针，所有 slot 均 64B 缓存行对齐；
+- **局部扩展**：当主表桶满时，根据 tag 低两位选择一个扩展指针，分配新的子 bucket 并递归插入，实现局部树型扩展，有效减少全量迁移和重哈希次数；
+- **全局扩容**：当某个桶的扩展桶达到 255 个（超过 8bit 限制）或主表负载因子达到设定的阈值（默认为 1.5）时发生全局扩容，容量翻倍。
 
-l slot保存 key 的 tag 及指向 KV 区的指针，所有 slot 均 cache line 对齐。
+**表 2 Main Table Slot 数据结构**
 
-l 当主表桶满时，根据 tag 低两位选择一个扩展指针（subPtr），分配新的子 bucket 并递归插入，实现局部树型扩展，有效避免全表链表冲突问题。
+| 字段    | 说明             | 字节数(Byte) |
+| ------- | ---------------- | -----------: |
+| Tag     | Key 的哈希摘要   |            2 |
+| Pointer | 指向 KV 项的指针 |            8 |
 
-l 扩展池管理每主表最多支持255个子 bucket，下标存储于4B的 subPtr 字段，最大化空间利用；
+**表 3 Main Table Bucket 数据结构**
 
-其具体数据结构由表2和表3给出：
+| 字段           | 说明                            | 字节数(Byte) |
+| -------------- | ------------------------------- | -----------: |
+| slot[]         | Main Table Slot 数组，共 6 个   |           60 |
+| expansionPtr[] | 用于解决冲突的扩展指针，共 4 个 |            4 |
 
+> 图 7 Main Table 桶布局
 
+#### 2.3.4 Entry Store
 
-表 2 Main Table Slot数据结构
+Entry Store 负责所有状态条目的实际存储，采用如下的键值分离设计。使用 slab 大块分配，其中值存储区采用空闲链表管理，键存储区采用写追加。既保证大吞吐分配，也降低碎片化。
 
-| 字段    | 说明           | 字节数(Byte) |
-| ------- | -------------- | ------------ |
-| Tag     | Key的哈希摘要  | 2            |
-| Pointer | 指向KV项的指针 | 8            |
+- **结构设计**：每个键 Entry 包含 hash、keyLen、namespaceLen、valueHandle 等元信息，支持变长 key/namespace/value；每个值 Entry 包含 valueLen 和序列化后的 value；
+- **分配策略**：按大块分配，写入新值时按空闲链表分配，写入新键时追加写；删除时，值空间回收，支持快速重用，而键空间不做操作；
+- **对齐和效率**：分配、释放均采用 8B 对齐，提升内存访问效率；
+- **内存池**：所有数据均在 Flink MemoryManager 分配的大块堆外内存中，无需频繁 native 调用。
 
+> 图 8 Entry Store 实现结构
 
+**表 4 键 Entry 数据结构**
 
-表 3 Main Table Bucket数据结构
+| 字段         | 说明                        |   字节数(Byte) |
+| ------------ | --------------------------- | -------------: |
+| hash         | key 与 namespace 的 hash 值 |              4 |
+| keyLen       | key 长度                    |              4 |
+| namespaceLen | namespace 长度              |              4 |
+| valueHandle  | value 指针                  |              8 |
+| key          | 序列化后的 key              |       `keyLen` |
+| namespace    | 序列化后的 namespace        | `namespaceLen` |
 
-| 字段     | 说明                          | 字节数(Byte) |
-| -------- | ----------------------------- | ------------ |
-| slot[]   | Main Table Slot数组，共6个    | 60           |
-| subPtr[] | 用于解决冲突的扩展指针，共4个 | 4            |
+**表 5 值 Entry 数据结构**
 
+| 字段     | 说明             | 字节数(Byte) |
+| -------- | ---------------- | -----------: |
+| valueLen | value 长度       |            2 |
+| value    | 序列化后的 value |            8 |
 
-
-## 3.4 KV 存储区（Entry Arena）
-
-Entry Arena负责所有key-value对的实际存储。采用slab大块分配与空闲链表管理，既保证大吞吐分配，也降低碎片化。
-
-l 结构设计：每个 KVNode 包含 keyLen、valueLen、key数据、value数据等元信息。支持变长 key/value；
-
-l 分配策略：按大块分配，写入新 KVNode 时顺序分配；删除时，KVNode 空间回收到 freelist，支持快速重用；
-
-l 对齐和效率：分配、释放均采用 8B 或16B 对齐，提升内存访问效率；
-
-l 内存池：所有数据均在 Flink MemoryManager 分配的大块堆外内存中，无需频繁native调用。
-
-KVNode结构由表4所示。
-
-表 4 KVNode数据结构
-
-| 字段         | 说明                | 字节数(Byte) |
-| ------------ | ------------------- | ------------ |
-| keyLen       | key长度             | 4B           |
-| namespaceLen | namespace长度       | 4B           |
-| valueLen     | value长度           | 4B           |
-| key          | 序列化后的key       | keyLen       |
-| namespace    | 序列化后的namespace | namespaceLen |
-| value        | 序列化后的value     | valueLen     |
-
-
-
-## 3.5 主要操作流程
+#### 2.3.5 主要操作流程
 
 **插入（Put）**
 
-写入流程总是先写主表，再同步到L0 Table（由可配置替换算法决定）。其流程如下：
+> 图 9 State Map 插入流程
 
-1. 计算key的tag和主表bucket下标。
-2. 读取主表bucket，遍历每个slot：
+写入流程总是先写主表，再同步到 L0 Table（由可配置替换算法决定）。其流程如下：
 
-a)    若slot有效且tag匹配，取指针指向的KVNode，比较key数据是否一致；
-
-​               i.      若一致，直接覆盖value数据，提升该slot到L0 Table，流程结束；
-
-​               ii.      若不一致，继续遍历。
-
-b)    若slot空闲，则：
-
-​               i.      分配新的KVNode内存，写入key/value；
-
-​               ii.      将slot的tag、指针等信息设置为新值；
-
-​              iii.      将该key/tag/ptr插入到L0 Table，流程结束。
-
-3. 若所有slot已占用，计算扩展bucket下标（tag & 0x3）：
-
-a)    若当前subPtr未分配扩展bucket，则在扩展池中分配新bucket，并写入subPtr；
-
-b)    递归步骤2对该扩展bucket进行插入操作。
-
-4. 插入/更新后可按策略将key提升为 L0 热点。
-
-
-
-
+1. 计算 key 的 tag 和主表 bucket 下标。
+2. 读取主表 bucket，遍历每个 slot：
+   - 若 slot 有效且 tag 匹配，取指针指向的条目，比较 key/namespace 是否一致；
+   - 若一致，直接更新 value 数据，提升该 slot 到 L0 Table，流程结束；
+   - 若不一致，继续遍历。
+3. 若 slot 空闲，则：
+   - 在 Entry Store 分配新的条目，写入键值；
+   - 将 slot 的 tag、指针等信息设置为新值；
+   - 更新 L0 Table，流程结束。
+4. 若所有 slot 已占用，计算扩展 bucket 下标（`tag & 0x3`）：
+   - 若当前 `subPtr` 未分配扩展 bucket，则在扩展池中分配新 bucket，并写入 `expansionPtr`；
+   - 递归步骤 2 对该扩展 bucket 进行插入操作。
+5. 插入/更新后可按策略将 key 提升为 L0 热点。
 
 **查询（Get）**
 
+> 图 10 State Map 查询流程
+
 查询流程总是优先查 L0 Table，未命中则回落主表。其流程如下：
 
-1. 计算key的tag（hash 高位）和L0 bucket下标。
-2. 读取L0 Table中对应bucket，遍历其中每个slot：
+1. 计算 key 的 tag（hash 高位）和 L0 bucket 下标。
+2. 读取 L0 Table 中对应 bucket，遍历其中每个 slot：
+   - 若 slot 有效且 tag 匹配，则取出 slot 指针指向的 Entry Store 条目；
+   - 比较 key/namespace 数据是否与查询完全一致；
+   - 若一致，直接返回该条目的 value 数据，流程结束；
+   - 若不一致，继续检查下一个 slot。
+3. 若 L0 Table 未命中，则计算 Main Table 的 bucket 下标。
+4. 读取主表对应 bucket，遍历 bucket 的每个 slot：
+   - 若 slot 有效且 tag 匹配，则取出 slot 指针指向的 Entry Store 条目，比较 key/namespace 数据是否一致；
+   - 若一致，将该项目插入或提升到 L0 Table，并返回 value 数据，流程结束；
+   - 若不一致，继续遍历。
+5. 若主表 bucket 所有 slot 均未命中，计算扩展 bucket 下标（`tag & 0x3`），
+   - 如果对应下标存在扩展 bucket，则递归步骤 4 对扩展 bucket 重复上述操作。
+6. 若所有主表与扩展 bucket 均未命中，返回未找到。
 
-a)    若slot有效且tag匹配，则取出slot指针指向的KVNode；
+**变换（Transform）**
 
-b)    比较KVNode的key数据是否与查询key完全一致；
+变换操作语义与 HeapState 保持一致，其流程如下：
 
-​               i.      若一致，直接返回该KVNode的value数据，流程结束；
+1. 计算 key 的 tag 和主表 bucket 下标。
+2. 同 Put 流程在主表中找到插入位置或更新位置。
+3. 若为更新（值已存在），则直接从 Entry Store 获取值，应用变换方法后更新；
+4. 若为插入（值不存在），则对空值应用变换方法后插入 Entry Store；
+5. 若条目地址发生变化或为新条目，则回填主表 slot；
+6. 更新 L0 Table。
 
-​               ii.      若不一致，继续检查下一个slot。
+**删除（Remove）**
 
-3. 若L0 Table未命中，则计算Main Table的bucket下标。
-4. 读取主表对应bucket，遍历bucket的每个slot：
+删除流程同样以主表为准，流程如下：
 
-a)    若slot有效且tag匹配，则取出slot指针指向的KVNode，比较key数据是否一致；
-
-​               i.      若一致，将该项目插入或提升到L0 Table，并返回value数据，流程结束；
-
-​               ii.      若不一致，继续遍历。
-
-5. 若主表bucket所有slot均未命中，计算扩展bucket下标（tag & 0x3），
-
-a)    如果对应subPtr存在扩展bucket，则递归步骤4对扩展bucket重复上述操作。
-
-6. 若所有主表与扩展bucket均未命中，返回未找到。
-
-
-
-**删除（Delete）**
-
-删除流程同样以主表为准，其流程如下：
-
-1. 计算key的tag和主表bucket下标。
-2. 读取主表bucket，遍历每个slot：
-
-a)    若slot有效且tag匹配，取指针指向的KVNode，比较key数据是否一致；
-
-​               i.      若一致，将slot有效位和指针清零（置为无效），并将对应KVNode地址加入freelist回收，流程继续；
-
-​               ii.      若不一致，继续遍历。
-
-3. 若主表bucket所有slot均未命中，计算扩展bucket下标（tag & 0x3），如有扩展bucket，递归步骤2。
-4. 最后，找到L0 Table中slot指针指向该KVNode地址的条目，将其有效位清零。
+1. 计算 key 的 tag 和主表 bucket 下标。
+2. 读取主表 bucket，遍历每个 slot：
+   - 若 slot 有效且 tag 匹配，取指针指向的条目，比较 key/namespace 数据是否一致；
+   - 若一致，将 slot 有效位和指针清零（置为无效），并将对应条目地址加入空闲链表回收，流程继续；
+   - 若不一致，继续遍历。
+3. 若主表 bucket 所有 slot 均未命中，计算扩展 bucket 下标（`tag & 0x3`），如有扩展 bucket，递归步骤 2。
+4. 最后，找到 L0 Table 中 slot 指针指向该地址的条目，将其有效位清零。
 5. 删除操作结束。
 
-
-
 **全局扩容（Resize）**
+
+调用 Put 或 Transform 方法时会首先检查是否需要扩容，全局扩容流程如下：
 
 1. 检查当前主表全局负载因子或单 bucket 扩展池数量，若超过阈值，则触发扩容。
 2. 分配新主表 bucket 数组（容量为原表 2 倍），分配新的扩展 bucket 池和内存区域。
 3. 递归遍历当前主表所有 bucket 及扩展 bucket：
-   - 对于每个有效 slot，重新计算在新表中的 hash 下标和 tag，并插入新表。
-   - 迁移过程中，所有 KVNode 物理地址保持不变，仅重建索引结构。
-4. 完成后，用新表和新扩展池替换旧主表和旧扩展池，释放旧内存。
-5. L0 Table 整体清空，待后续访问自动重建热点 key 缓存。
-6. 扩容过程可与 Checkpoint 一致性机制配合，采用写时复制等手段保证数据一致性。
-
-
-
-## 3.6 一致性与容错保障
-
-
-
-l L0 Table 与 Main Table 保持最终一致性，所有写入、删除和扩容操作均以主表为准，L0 仅为 cache，可随时失效重建。
-
-l 内存分配、回收和生命周期受 Flink MemoryManager 和 StateBackend 管控，保证资源安全和系统容错能力。
-
-l 所有操作流程兼容 Flink 的 Checkpoint/快照，支持高可用和任务自动恢复。
-
-# 5. 当前实现细节分析
-
-## 5.1 实现架构现状
-
-### 5.1.1 核心组件实现
-当前ForL0 State Backend实现了设计规范中的核心架构，主要包括：
-
-**主要实现类**：
-- `ForL0StateTable<K, N, S>`: 状态表顶层抽象，继承自Flink的StateTable
-- `L0Table`: L0缓存表的完整实现，支持多种替换策略
-- `MainTable`: 主表实现，支持局部扩展机制
-- `ExtensionBucketPool`: 扩展桶池，管理MainTable的局部扩展
-- `ForL0StateMap<K, N, S>`: 状态映射实现，整合L0和Main表逻辑
-
-**内存管理组件**：
-- `HybridMemoryAllocator`: 混合内存分配器接口
-- `MemoryManagerAllocator`: 基于Flink MemoryManager的实现
-- `EntryArena`: 键值对物理存储管理
-
-### 5.1.2 数据结构实现
-
-**L0Table结构**：
-```java
-// L0 bucket和slot布局常量
-private static final int BUCKET_SIZE = 64;  // 64字节对齐
-private static final int SLOTS_PER_BUCKET = 4;  // 每桶4个slot
-private static final int SLOT_SIZE = 16;  // 每slot 16字节
-
-// Slot字段偏移
-private static final int SLOT_TAG_OFFSET = 0;      // Tag(2B)
-private static final int SLOT_VALID_OFFSET = 2;    // Valid(1B)
-private static final int SLOT_EXTENSION_OFFSET = 3; // Extension(5B)
-private static final int SLOT_POINTER_OFFSET = 8;  // Pointer(8B)
-```
-
-**MainTable结构**：
-```java
-private static final int BUCKET_SIZE = 64;  // 64字节对齐
-private static final int SLOTS_PER_BUCKET = 6;  // 每桶6个slot
-private static final int SLOT_SIZE = 10;  // Tag(2B) + Pointer(8B)
-private static final int EXTENSION_POINTERS = 4;  // 4个扩展指针
-```
-
-### 5.1.3 替换策略实现
-实现了完整的多策略支持：
-```java
-public enum ReplacementPolicy {
-    LRU,    // 最近最少使用
-    LFU,    // 最少使用频率
-    FIFO,   // 先进先出
-    RANDOM  // 随机替换
-}
-```
-
-每种策略都有相应的时间戳或计数器机制支持。
-
-## 5.2 核心算法实现
-
-### 5.2.1 查找算法实现
-当前实现的查找流程：
-```java
-public long get(int keyHash, short tag, EntryMatcher entryMatcher) {
-    // 1. 计算桶索引
-    int bucketIndex = keyHash & (bucketCount - 1);
-
-    // 2. 遍历桶内slot
-    for (int slotIndex = 0; slotIndex < SLOTS_PER_BUCKET; slotIndex++) {
-        // 检查tag匹配和有效位
-        if (isSlotValid(bucketAddress, slotIndex) &&
-            getSlotTag(bucketAddress, slotIndex) == tag) {
-            // 3. 调用EntryMatcher验证完整键
-            long pointer = getSlotPointer(bucketAddress, slotIndex);
-            if (entryMatcher.matches(pointer)) {
-                updateAccessInfo(bucketAddress, slotIndex); // 更新LRU/LFU信息
-                return pointer;
-            }
-        }
-    }
-    return 0; // 未找到
-}
-```
-
-### 5.2.2 插入算法实现
-MainTable的插入包含扩展桶逻辑：
-```java
-public boolean put(int keyHash, short tag, long entryPointer) {
-    int bucketIndex = keyHash & (bucketCount - 1);
-
-    // 1. 尝试在主桶插入
-    if (insertIntoMainBucket(bucketIndex, tag, entryPointer)) {
-        return true;
-    }
-
-    // 2. 查找或分配扩展桶
-    byte extensionId = findOrAllocateExtensionBucket(bucketIndex);
-    if (extensionId != 0) {
-        return insertIntoExtensionBucket(extensionId, tag, entryPointer);
-    }
-
-    // 3. 触发全局扩容
-    triggerGlobalResize();
-    return false; // 需要重试
-}
-```
-
-### 5.2.3 扩展桶池管理
-```java
-public class ExtensionBucketPool {
-    private byte nextFreeBucketId = 1;
-    private final boolean[] bucketInUse;
-
-    public byte allocateBucket() {
-        if (nextFreeBucketId > maxBuckets) {
-            return NULL_BUCKET_ID; // 池已满
-        }
-        byte bucketId = nextFreeBucketId++;
-        bucketInUse[bucketId] = true;
-        return bucketId;
-    }
-}
-```
-
-### 5.2.4 自动扩容（Resize）算法实现
-本节描述 ForL0StateMap 当前已实现的主表自动扩容流程，与第3章“全局扩容”设计对应。
-
-#### 触发条件
-- 预检测：在写路径 `put()` 入口调用 `checkAndTriggerResize()`，若 `mainTable.needsResize()` 为 true 则进入扩容。
-- 兜底触发：`mainTable.put()` 过程中若抛出包含字符串 "Table is full - resize needed" 的异常，`putWithResizeHandling()` 捕获后立即调用 `performResize()` 并重试插入。
-- `needsResize()` 判定依据（内部封装）：全局负载因子阈值、局部扩展深度、或失败插入信号。
-
-#### 并发假设与控制
-- Flink task 的状态读写单线程；Checkpoint 线程不与写路径并发修改。
-- 使用 `volatile boolean resizeInProgress` + `synchronized performResize()` 防止重入。
-
-#### 扩容步骤（performResize）
-1. Guard：若已在扩容或当前不再需要扩容直接返回。
-2. 标记：`resizeInProgress = true`。
-3. L0 协同预清理：若启用 L0，`l0Table.clear()`。
-4. 主表重建：调用 `mainTable.tryResize(entryArena)` 完成重散列与结构替换。
-5. 二次 L0 清理：再次 `clear()`（简化一致性保证）。
-6. 结束：`resizeInProgress = false`。
-7. 失败处理：异常直接抛出，旧结构仍保持完整。
-
-#### 关键方法伪代码
-```java
-// 写路径入口
-put(key, ns, val) {
-    checkAndTriggerResize();
-    addr = arena.putEntry(...);
-    old = putWithResizeHandling(hash, tag, addr, matcher);
-    if (l0Enabled && !resizeInProgress) l0Table.put(...);
-}
-
-checkAndTriggerResize() {
-    if (mainTable.needsResize() && !resizeInProgress) {
-        performResize();
-    }
-}
-
-putWithResizeHandling(...) {
-    try { return mainTable.put(...); }
-    catch (RuntimeException e) {
-        if (e.getMessage().contains("Table is full - resize needed")) {
-            performResize();
-            return mainTable.put(...); // 重试
-        }
-        throw e;
-    }
-}
-```
-
-#### 监控指标
-- `DetailedStats`: totalAccesses / l0Hits / mainTableHits / totalEntries / resizeInProgress / mainTableStats(含负载因子、扩展桶使用)。
-
-## 5.3 内存管理实现
-
-### 5.3.1 内存分配策略
-```java
-public class MemoryManagerAllocator implements HybridMemoryAllocator {
-    public List<MemorySegment> allocate(int bytes) throws MemoryAllocationException {
-        // 使用Flink MemoryManager分配页面
-        int pagesNeeded = (bytes + pageSize - 1) / pageSize;
-        return memoryManager.allocatePages(owner, pagesNeeded);
-    }
-
-    public long allocateAligned(long size, int alignment) throws MemoryAllocationException {
-        // 为L0 Cache预留的对齐内存分配接口
-        // 当前实现返回普通内存，未来可扩展为真正的L0映射
-        List<MemorySegment> segments = allocate((int)size);
-        return segments.get(0).getAddress();
-    }
-}
-```
-
-### 5.3.2 Entry Arena实现
-```java
-public class EntryArena {
-    private static final int HEADER_SIZE = 12; // keyHash + lenK + lenV
-
-    public long put(byte[] keySer, byte[] valSer) {
-        int totalSize = HEADER_SIZE + keySer.length + valSer.length;
-
-        // 确保有足够空间
-        ensureCapacity(totalSize);
-
-        // 写入header
-        long addr = writeCursor;
-        writeInt(addr, computeHash(keySer));
-        writeInt(addr + 4, keySer.length);
-        writeInt(addr + 8, valSer.length);
-
-        // 写入数据
-        copyBytes(keySer, addr + HEADER_SIZE);
-        copyBytes(valSer, addr + HEADER_SIZE + keySer.length);
-
-        writeCursor += totalSize;
-        return addr;
-    }
-}
-```
-
-## 5.4 状态管理集成
-
-### 5.4.1 Flink StateBackend集成
-```java
-public class ForL0StateBackend implements ConfigurableStateBackend {
-    @Override
-    public <K> CheckpointableKeyedStateBackend<K> createKeyedStateBackend(...) {
-        return new ForL0KeyedStateBackend<>(
-            env,
-            jobID,
-            operatorIdentifier,
-            keySerializer,
-            numberOfKeyGroups,
-            keyGroupRange,
-            kvStateRegistry,
-            ttlTimeProvider,
-            metricGroup,
-            stateHandles,
-            cancelStreamRegistry
-        );
-    }
-}
-```
-
-### 5.4.2 状态类型支持
-当前实现支持Flink的主要状态类型：
-- `ForL0ValueState<T>`: 值状态
-- `ForL0ListState<T>`: 列表状态
-- `ForL0MapState<UK, UV>`: 映射状态
-- `ForL0AggregatingState<IN, ACC, OUT>`: 聚合状态
-- `ForL0ReducingState<T>`: 归约状态
-
-## 5.5 性能监控与统计
-
-### 5.5.1 L0Table统计
-```java
-public static class L0TableStats {
-    private final long accessCount;
-    private final long hitCount;
-    private final long missCount;
-    private final long evictionCount;
-
-    public double getHitRate() {
-        return accessCount > 0 ? (double) hitCount / accessCount : 0.0;
-    }
-
-    public double getEvictionRate() {
-        return accessCount > 0 ? (double) evictionCount / accessCount : 0.0;
-    }
-}
-```
-
-### 5.5.2 MainTable和扩展池统计
-```java
-public class ExtensionBucketPool {
-    public PoolStats getStats() {
-        return new PoolStats(
-            nextFreeBucketId - 1,  // 已分配桶数
-            maxBuckets - (nextFreeBucketId - 1), // 剩余桶数
-            calculateFragmentation()  // 碎片率
-        );
-    }
-}
-```
-
-# 6. 实现与设计的差距分析
-
-## 6.1 架构层面差距
-
-### 6.1.1 L0 Cache集成状态
-**设计预期**：L0Table应该直接映射到鲲鹏CPU的L0 Cache硬件特性
-**当前实现**：L0Table使用普通DRAM内存，通过普通的MemoryManagerAllocator分配
-
-**差距分析**：
-- 当前实现完全没有预留L0 Cache硬件集成接口
-- HybridMemoryAllocator接口中的`allocateAligned()`方法是通用的内存对齐分配功能，与L0 Cache无关
-- `allocateAligned()`的实现是通过分配额外空间并进行位运算对齐，仅在测试中使用
-- L0Table的内存分配通过标准的`allocate()`方法完成，返回普通MemorySegment
-- 缺少JNI层面的L0 Cache映射实现
-- 未实现真正的L0 Cache内存区域管理
-- 没有为L0 Cache硬件特性预留任何专门的接口或抽象层
-
-**影响评估**：
-- 性能提升完全来自算法优化和缓存友好的数据结构设计
-- L0 Cache的超低延迟硬件优势完全未利用
-- 当前架构在L0 Cache集成方面与设计目标存在显著差距
-- 需要重新设计内存分配接口才能支持真正的L0 Cache集成
-
-### 6.1.2 内存管理机制现状
-**设计预期**：L0Memory Manager和普通MemoryManager分离管理
-**当前实现**：统一使用Flink MemoryManager，EntryArena支持双策略内存分配
-
-**EntryArena实现现状**：
-- **LINEAR策略**：采用简单的写入指针线性分配，性能最优但无内存回收
-- **FREE_LIST策略**：基于Size Class的Free List内存管理，支持内存回收和重用
-- 支持运行时策略选择，提供`AllocationStrategy`枚举配置
-- 实现了五个大小类别：TINY(≤32B)、SMALL(33-128B)、MEDIUM(129-512B)、LARGE(513-2048B)、XLARGE(>2048B)
-- 支持块分割和跨级查找优化
-- 提供详细的内存使用统计，包括效率和碎片率指标
-
-**内存回收机制**：
-- 删除操作将内存块加入对应大小类别的空闲链表
-- 更新操作自动回收旧内存块
-- 智能块分割：大块可分割满足小请求，剩余部分重新加入空闲链表
-
-### 6.1.3 L0接口预留现状
-**设计预期**：为未来L0 Cache集成预留完整接口体系
-**当前实现**：已在关键组件中预留L0专用分配接口
-
-**接口预留情况**：
-- 在`HybridMemoryAllocator`接口中新增`allocateL0(int bytes)`方法
-- `MemoryManagerAllocator`实现了L0预留接口，目前通过委托给`allocate()`实现
-- `L0Table`已全面使用`allocateL0()`接口进行内存分配，实现接口隔离
-- 为后续真正的L0 Cache集成奠定了架构基础
-
-**接口实现示例**：
-```java
-public interface HybridMemoryAllocator {
-    // 通用内存分配
-    List<MemorySegment> allocate(int bytes) throws MemoryAllocationException;
-    
-    // L0专用分配接口（预留）
-    List<MemorySegment> allocateL0(int bytes) throws MemoryAllocationException;
-}
-```
-
-### 6.1.4 ForL0StateMap组件集成现状
-**设计预期**：ForL0StateMap作为核心状态映射组件
-**当前实现**：完整实现并支持可配置的EntryArena分配策略
-
-**组件集成状况**：
-- `ForL0StateMap` 完整实现 L0 + Main 两层索引；EntryArena 采用单一 FREE_LIST 分配实现。
-- 支持通过构造函数注入 L0Table 替换策略（ReplacementPolicy），默认 RANDOM；目前不对外暴露用户配置。
-
-**构造函数设计**：
-```java
-// 默认策略（RANDOM）
-public ForL0StateMap(MemoryManagerAllocator allocator, int mainTableInitPow2,
-                     int l0CacheSizePow2, TypeSerializer<K> keySerializer,
-                     TypeSerializer<N> namespaceSerializer, TypeSerializer<S> stateSerializer,
-                     boolean l0CacheEnabled)
-
-// 可注入 L0 替换策略的构造函数
-public ForL0StateMap(MemoryManagerAllocator allocator, int mainTableInitPow2,
-                     int l0CacheSizePow2, TypeSerializer<K> keySerializer,
-                     TypeSerializer<N> namespaceSerializer, TypeSerializer<S> stateSerializer,
-                     boolean l0CacheEnabled, L0Table.ReplacementPolicy l0Policy)
-```
-
-
-## 6.2 功能层面差距
-
-### 6.2.1 替换策略丰富化
-**设计预期**：主要支持LRU策略
-**当前实现**：支持LRU、LFU、FIFO、RANDOM四种策略
-
-**增强价值**：
-- 适应不同工作负载特征
-- 提供更灵活的缓存管理选项
-- 支持运行时策略切换
-
-### 6.2.2 监控统计完善
-**设计预期**：基本的性能监控
-**当前实现**：完整的多维度统计体系
-
-**统计维度**：
-- L0缓存命中率、缺失率、驱逐率
-- 主表负载因子、扩展桶使用率
-- 内存使用量、分配频率、碎片率
-- 各操作的延迟分布
-
-### 6.2.3 配置系统实现现状
-**设计声称**：丰富的配置参数体系
-**当前实际**：配置文件为空，配置系统尚未实现
-
-**实际情况**：
-- `config.properties`文件为空
-- 代码中未发现配置参数的读取和使用逻辑
-- 文档中提到的配置项（如`forl0.l0table.bucket.count.pow2`等）未在代码中找到对应实现
-- 当前主要通过构造函数参数进行配置
-
-**配置方式现状**：
-```java
-// 当前的配置方式是通过构造函数参数
-new L0Table(allocator, bucketCountPow2, ReplacementPolicy.LRU);
-new MainTable(allocator, bucketCountPow2, DEFAULT_LOAD_FACTOR_THRESHOLD);
-```
-
-### 6.2.4 自动扩容功能实现现状
-**设计预期**：支持基于负载因子及局部冲突的自动扩容、在线重散列与缓存协同失效。
-**当前实现**：已完成全流程（触发、节流、重散列、L0 协同、统计暴露）。
-
-**已具备能力**：
-- 负载因子与结构压力检测：`mainTable.needsResize()`（含装载阈值 / 扩展深度 / 失败插入信号）。
-- 双触发通路：预检测 + 异常兜底（插入失败提示）。
-- 在线重散列：`tryResize()` 分配 2x bucket，遍历旧主桶 + 扩展桶重插入；KV 地址保持不变，仅重建索引结构；
-- 迁移完成后用新引用替换旧结构并释放旧索引内存。
-- 二次 L0 清理：再次 `clear()`（原因：扩容窗口内可能发生少量访问导致新热点写入旧 L0 数据结构；双清简化一致性保证）。
-- 统计：更新 `lastResizeTime`，从 `mainTable.getStats()` 抓取最新装载指标，对外通过 `DetailedStats` 暴露。
-- 结束：`resizeInProgress = false`。
-- 失败处理：异常直接抛出，旧结构仍保持完整；调用方插入操作回滚或重试。
-
-
-#### 正确性与一致性
-- 迁移过程中只读旧索引、写新索引，不修改 KV 数据，避免值层复制成本。
-- L0 视为非权威缓存，双清保证无陈旧指针；扩容后热点将按访问反馈自然回升。
-- 单线程写 + 短暂同步块确保不会出现同时两次扩容导致的资源浪费或指针错乱。
-
-#### 复杂度分析
-- 时间：O(E)（E=有效 entry 数），每个 entry 重新 hash + 写入一次；均摊至多次写操作后，整体仍保持稳定吞吐。
-- 空间：扩容瞬时需要旧表 + 新表两份索引（≈ 2x 主表索引区），KV 区域不复制。
-- 暂停影响：取决于 E；当前未做分段迁移，后续可按阈值引入增量策略。
-
-#### 监控指标
-- `DetailedStats`: totalAccesses / l0Hits / mainTableHits / totalEntries / resizeInProgress / mainTableStats(含负载因子、扩展桶使用)。
-- 可在上层暴露为指标：扩容次数、单次扩容耗时（后续新增）。
-
-#### 未来优化方向
-- 参数外部化（阈值、间隔、倍增系数）。
-- 自适应倍增或按需扩容（基于增长斜率 / 冲突分布）。
-- 增量/分阶段迁移（降低大表停顿）。
-- 热点预热：保留上一轮热点统计用于扩容后快速回填 L0。
-- 扩容耗时与迁移条目计数指标完善。
+   - 对于每个有效 slot，从 Entry Store 读取 hash 字段计算在新表中的下标，并插入新表。
+4. 迁移过程中，所有条目物理地址保持不变，仅重建索引结构。
+5. 完成后，用新表和新扩展池替换旧主表和旧扩展池，释放旧内存。
+6. L0 Table 整体清空，待后续访问自动重建热点 key 缓存。
+
+### 2.4 ForL0State 实现
+
+ForL0StateBackend 提供与 Flink State API 一致的五类状态实现：**ForL0ValueState、ForL0ListState、ForL0MapState、ForL0ReducingState 和 ForL0AggregatingState**。
+
+#### 2.4.1 ForL0ValueState
+
+表示每个 key/namespace 下的单一值。其主要操作与 State Map 映射关系如下：
+
+- `value()`：调用底层 `ForL0StateMap.get` 读取当前 key/namespace 下的值；如果为 `null` 则返回默认值。  
+- `update(value)`：当 value 不为 `null` 时调用 `ForL0StateMap.put` 写回；当 value 为 `null` 时底层调用 `ForL0StateMap.remove`。
+
+#### 2.4.2 ForL0ListState
+
+表示可追加/枚举的序列集合。其主要操作与 State Map 映射关系如下：
+
+- `get()`：通过 `ForL0StateMap.get` 读取当前 key/namespace 下的 List 值，若为 `null` 则返回空或默认值。  
+- `add(value)`：先 `get` 取出当前 List；若为 `null` 则新建 List，向 List 添加元素后显式调用 `ForL0StateMap.put` 写回，确保底层可见。  
+- `update(values)`：将新的 List 完整序列化后通过 `ForL0StateMap.put` 覆盖写入；当 values 为空时调用 `ForL0StateMap.remove`。  
+- `addAll(values)`：使用 `ForL0StateMap.transform` 将传入集合合并到已有状态，底层由 transform 操作实现 read-modify-write 并处理可能的内存重分配。
+
+#### 2.4.3 ForL0MapState
+
+表示键值映射集合。其主要操作与 State Map 映射关系如下：
+
+- `get(userKey)`：通过 `ForL0StateMap.get` 获取 Map 对象，再在该 Map 上查询 `userKey` 并返回结果。  
+- `put(userKey, userValue)` / `putAll(map)`：先 `get` 当前 Map（若 `null` 则新建），在内存上修改后通过 `ForL0StateMap.put` 显式写回以持久化变更。  
+- `remove(userKey)`：读取并修改 Map；若修改后 Map 为空则调用 `ForL0StateMap.remove` 整条条目，否则显式 `put` 回写以保持一致性。  
+- `contains(userKey)` / `entries()` / `keys()` / `values()`：均基于 `ForL0StateMap.get` 返回的 Map 在用户程序中进行判断或迭代。
+
+#### 2.4.4 ForL0ReducingState
+
+用于增量合并的聚合状态（reduce 聚合函数）。其主要操作与 State Map 映射关系如下：
+
+- `get()`：通过 `ForL0StateMap.get` 读取当前累积值。  
+- `add(value)`：调用 `ForL0StateMap.transform`，将新增值与已有状态通过用户提供的聚合函数合并；transform 负责读取旧值、执行聚合转换、并将结果序列化写回。  
+- `merge()`：合并逻辑由聚合函数提供，最终写回仍通过 `put/transform` 完成。
+
+#### 2.4.5 ForL0AggregatingState
+
+支持更复杂的聚合语义（带 accumulator 的聚合）。其主要操作与 State Map 映射关系如下：
+
+- `get()`：通过 `ForL0StateMap.get` 读取累加器，若非 `null` 则调用累加器的 `getResult()` 得到输出值并返回。  
+- `add(value)`：通过 `ForL0StateMap.transform` 将输入值通过累加器的 `add` 方法添加到累加器中；底层通过一次 read-modify-write 完成序列化与堆外存管理。  
+- `merge()`：由累加器的 `merge` 方法定义合并语义，底层负责将合并后的累加器持久化回 Entry Store 并更新索引。
+
+---
+
+## 容错机制设计
+
+ForL0StateBackend 的容错设计基于 Flink 原生的快照和恢复框架，确保与 HeapStateBackend 格式的兼容性，并在实现上实现低干扰与高效序列化。主表（Main Table）用于存储全量索引，而 L0 Table 仅作为运行时的热点索引缓存，不参与持久化数据存储。所有实际的键值数据存储在堆外的 Entry Store 中，主表中保存的是指向这些数据字节的指针。
+
+在写操作（如 put、transform、update）中，数据会写入 Entry Store，并且在新增或重分配时更新主表中的指针；如果是原地更新，则主表中的指针保持不变，但底层字节数据会被更新。因此，在快照和恢复流程中，直接以主表为基础进行序列化即可保证数据一致性。由于 ForL0StateBackend 完全使用堆外存储，快照时能够省去大部分的序列化开销，只需序列化关键元数据（如状态条目的相关信息等），大大提高快照过程效率并减轻系统负担。
+
+### 快照与恢复流程
+
+**快照发起**  
+
+在 Flink 调 `snapshot` 方法后，快照操作交由 `SnapshotStrategyRunner` 执行，具体同步或异步执行由配置的 `SnapshotExecutionType` 控制。已注册的快照策略会处理整个快照流程，默认采用与 HeapStateBackend 兼容的实现。
+
+之后，`stateSnapshot` 方法为每个 key-group 生成状态快照，并收集对应 key-group 下的 StateMap 快照列表。每个 `ForL0StateMap` 快照会以与 HeapStateBackend 相同的格式提供序列化接口，确保与 Flink 的 Checkpoint 和 Savepoint 格式兼容。
+
+**3.1.2 快照采集**  
+
+`ForL0StateMapSnapshot` 通过遍历 Main Table 的条目，从 Entry Store 读取 key、namespace 和对应的 value 字节，构建有效条目列表。随后，快照数据按 Flink 要求的顺序被写入到 Checkpoint 输出流中，包括条目数及每条记录的格式（namespace、key、state）。
+
+该实现将遍历与实际序列化写入分为两步：第一步快速收集有效条目，第二步再进行序列化写入，从而减少对正常读写的影响。在此过程中，可选的 `StateSnapshotTransformer` 可以应用于写入前，以支持状态转换和裁剪。
+
+**Savepoint 与恢复（Restore）**  
+
+`ForL0KeyedStateBackend` 中的 `savepoint` 方法通过与 `HeapKeyedStateBackend` 后端相同的 `HeapSnapshotResources` 生成保存点资源，并按照标准 Flink Savepoint 格式输出，便于手动触发的状态迁移或升级操作。
+
+而 `ForL0RestoreOperation` 继承并复用了 `HeapRestoreOperation` 的恢复逻辑，它们使用相同的数据格式。在恢复过程中，系统会按 key-group 重建相关堆外数据结构。恢复后，L0 Cache 为空，运行时会根据访问情况自动回填热点索引。
+
+**3.3 资源回收与异常处理**  
+
+`ForL0StateMapSnapshot` 和 `ForL0StateTableSnapshot` 提供 `release` 方法，在快照完成或取消后清理临时引用，帮助垃圾回收释放堆外和堆内资源。
+
+对于快照写入过程中发生的序列化或 IO 异常，快照逻辑会根据 Flink 约定向上抛出异常，上层调用者会负责重试或失败处理。在写入前，系统会做必要的序列化器复制和输入校验，以尽早发现不兼容问题。
+
+---
+
+## 插件式集成设计
+
+为确保易用性与兼容性，ForL0StateBackend 采用插件化实现方式，通过 Flink 的 `StateBackendFactory` 接口进行适配。该设计满足以下目标：
+
+- **无侵入接入**：无需修改 Flink 内核源码与用户算子代码；
+- **配置可控**：通过集群配置（config.yaml / flink-conf.yaml）或用户代码显式设置启用；
+- **与现有作业兼容**：对 Flink 状态 API 保持透明。
+
+### 加载机制
+
+ForL0StateBackend 采用与 Flink 官方 RocksDBStateBackend 相同的加载机制，通过工厂接口解析配置并创建 ForL0StateBackend 实例，其运行时的动态流程如下：
+
+> 图 11 Flink 运行时 StateBackend 动态加载流程
+
+随后，Flink 会基于该后端为各算子构建 KeyedStateBackend 与 OperatorStateBackend 并创建和初始化相应状态。
+
+### 打包与部署
+
+编译 ForL0StateBackend 项目后获得产物 `forl0-statebackend-<version>.jar`，其包含上述设计中所有组件的实现，将生成 Jar 包放入 Flink 指定库目录下后即可配置使用。
+
+- **通过配置文件**：由于本后端基于 HeapKeyedStateBackend 进行改造，需要保持与之相同的路径以获得相同的访问权限。因此，需在集群或作业的配置文件中指定：  
+
+  ```yaml
+  state.backend: org.apache.runtime.state.heap.ForL0StateBackendFactory
+  ```
+
+  这是推荐的使用方式，因为放置 JAR 后仅通过配置即可启用，无需变更用户代码。
+
+- **通过用户代码**：当以依赖方式引入本状态后端时，可以在作业中设置 ForL0StateBackend 为状态后端，使用方法与其它后端相同，具体设置方式请参阅 Flink 官方文档。
+
+---
+
+## 总结
+
+**ForL0StateBackend** 以两层索引结构最大化利用鲲鹏 CPU L0 缓存特性，显著降低状态访问延迟并提升吞吐为设计目标。系统由 **L0 Table（热点索引缓存层）** 与 **Main Table（全量索引层）** 及 **Entry Store（堆外 KV 存储）** 构成：L0 Table 常驻 L0 缓存区域、用于加速高频访问；Main Table 保存全部键的指针并采用缓存友好的哈希与局部扩展策略；实际键值字节保存在 Entry Store，堆外内存通过利用 Flink 的 MemoryManager 实现的自定义分配器统一分配与管理。
+
+容错方面与 Flink 原生快照机制兼容：快照基于 Main Table 与 Entry Store 的条目遍历与标准序列化格式生成状态快照，支持 Savepoint/Restore 功能，并通过快速收集条目与延后序列化的策略将对在线读写的影响降到最低。总体上，设计在保持与 Flink 快照格式和运行时集成兼容性的同时，实现了充分利用 L0 缓存的、硬件亲和的 **低延迟、高吞吐** 的堆外状态后端。

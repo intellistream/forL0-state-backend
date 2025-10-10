@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,7 +28,9 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
     private boolean closed = false;
 
     // Track allocated segments and aligned memory blocks
-    private final Map<List<MemorySegment>, Long> allocatedSegments = new HashMap<>();
+    // Use IdentityHashMap to track List objects by reference, not content
+    // This is critical because we may modify List contents (via addAll) after allocation
+    private final Map<List<MemorySegment>, Long> allocatedSegments = new IdentityHashMap<>();
     private final Map<Long, AlignedAllocation> alignedAllocations = new HashMap<>();
 
     /**

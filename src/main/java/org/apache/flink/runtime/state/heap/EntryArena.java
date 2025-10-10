@@ -480,14 +480,16 @@ public class EntryArena implements AutoCloseable {
                 while (originalAllocations.size() <= index) originalAllocations.add(null);
                 while (segments.size() <= index) segments.add(null);
                 ensureSlabCapacity(index);
-                originalAllocations.set(index, new ArrayList<>(newSegments));
+                // Store the original List object for proper release tracking with IdentityHashMap
+                originalAllocations.set(index, newSegments);
                 segments.set(index, newSegments.get(0));
                 slabUsedBytes[index] = 0;
                 slabQuarantined[index] = false;
             } else {
                 index = segments.size();
                 segments.add(newSegments.get(0));
-                originalAllocations.add(new ArrayList<>(newSegments));
+                // Store the original List object for proper release tracking with IdentityHashMap
+                originalAllocations.add(newSegments);
                 ensureSlabCapacity(index);
                 slabUsedBytes[index] = 0;
                 slabQuarantined[index] = false;

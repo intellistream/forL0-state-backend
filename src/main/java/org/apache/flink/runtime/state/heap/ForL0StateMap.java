@@ -46,7 +46,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // 移除时间节流，达条件即扩容
 
     // 复用反序列化对象，降低分配/反射开销
-    // 在 Flink 的单线程处理模型中，直接使用成员变量即可，无需 ThreadLocal
     private S reuseState;
 
     // Serialization cache for key and namespace to avoid repeated serialization
