@@ -61,7 +61,8 @@ public class EntryArena implements AutoCloseable {
         LARGE(512, 2048),      // 513-2048 bytes
         XLARGE(2048, Integer.MAX_VALUE);  // > 2048 bytes
 
-        final int minSize;
+        @SuppressWarnings("unused")
+        final int minSize;  // Reserved for future size range validation
         final int maxSize;
 
         SizeClass(int minSize, int maxSize) {
@@ -701,6 +702,7 @@ public class EntryArena implements AutoCloseable {
         freeSlabIndices.addLast(idx);
     }
 
+    @SuppressWarnings("null")  // tail is guaranteed non-null when newHead is non-null
     private void purgeFreeListForSlab(int slabIndex) {
         for (int i = 0; i < freeListHeads.length; i++) {
             FreeBlock newHead = null;
@@ -713,7 +715,9 @@ public class EntryArena implements AutoCloseable {
                     totalFreeBlocks--; totalFreedMemory -= cur.size;
                 } else {
                     if (newHead == null) { newHead = cur; tail = cur; tail.next = null; }
-                    else { tail.next = cur; tail = cur; tail.next = null; }
+                    else { 
+                        tail.next = cur; tail = cur; tail.next = null; 
+                    }
                 }
                 cur = next;
             }

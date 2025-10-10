@@ -11,12 +11,14 @@ import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.stream.Stream;
 
 public class LevelHashStateMap<K, N, S> extends StateMap<K, N, S> implements AutoCloseable {
 
+    @SuppressWarnings("unused")
     private static final Logger LOG = LoggerFactory.getLogger(LevelHashStateMap.class);
 
     private final TypeSerializer<K> keySerializer;
@@ -144,9 +146,10 @@ public class LevelHashStateMap<K, N, S> extends StateMap<K, N, S> implements Aut
         return null;
     }
 
+    @Nonnull
     @Override
     public ForL0StateMapSnapshot<K, N, S> stateSnapshot() {
-        return null;
+        throw new UnsupportedOperationException("LevelHashStateMap is a legacy implementation - snapshot not supported");
     }
 
     @Override
@@ -163,7 +166,7 @@ public class LevelHashStateMap<K, N, S> extends StateMap<K, N, S> implements Aut
     //  Serialization helpers
     // ---------------------------------------------------------------------
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private byte[] serialize(TypeSerializer<?> ser, Object obj) {
         if (obj == null) { return new byte[0]; }
         org.apache.flink.core.memory.DataOutputSerializer out =
@@ -208,6 +211,11 @@ public class LevelHashStateMap<K, N, S> extends StateMap<K, N, S> implements Aut
         return hash;
     }
 
+    /**
+     * Murmur16 hash function - kept for potential future use.
+     * Currently unused but may be needed for alternative hashing strategies.
+     */
+    @SuppressWarnings("unused")
     private static int murmur16(byte[] key) {
         int hash = 0;
         for (byte b : key) {

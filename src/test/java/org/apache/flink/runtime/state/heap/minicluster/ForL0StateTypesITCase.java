@@ -21,7 +21,9 @@ import java.util.*;
 /**
  * 覆盖五种 KeyedState（Value/List/Reducing/Aggregating/Map）的端到端正确性测试，
  * 通过 SPI 加载 ForL0StateBackend。
+ * Note: Uses some deprecated Flink APIs for compatibility testing.
  */
+@SuppressWarnings("deprecation")
 public class ForL0StateTypesITCase {
 
     private StreamExecutionEnvironment setupEnv() {
@@ -88,7 +90,7 @@ public class ForL0StateTypesITCase {
                     public void flatMap(String value, Collector<Tuple2<String, Integer>> out) throws Exception {
                         list.add(value);
                         int size = 0;
-                        for (String ignored : list.get()) size++;
+                        for (@SuppressWarnings("unused") String ignored : list.get()) size++;
                         out.collect(Tuple2.of(value, size));
                     }
                 });

@@ -322,35 +322,45 @@ public class L0Table implements AutoCloseable {
 
     /**
      * Optimized memory access methods using SegmentInfo to reduce repeated calculations.
+     * Helper methods for reading/writing primitives from SegmentInfo.
+     * These are kept for potential future optimizations.
      */
+    @SuppressWarnings("unused")
     private byte getByteFromSegmentInfo(SegmentInfo info, int relativeOffset) {
         return info.segment.get(info.baseOffset + relativeOffset);
     }
 
+    @SuppressWarnings("unused")
     private void putByteToSegmentInfo(SegmentInfo info, int relativeOffset, byte value) {
         info.segment.put(info.baseOffset + relativeOffset, value);
     }
 
+    @SuppressWarnings("unused")
     private short getShortFromSegmentInfo(SegmentInfo info, int relativeOffset) {
         return info.segment.getShort(info.baseOffset + relativeOffset);
     }
 
+    @SuppressWarnings("unused")
     private void putShortToSegmentInfo(SegmentInfo info, int relativeOffset, short value) {
         info.segment.putShort(info.baseOffset + relativeOffset, value);
     }
 
+    @SuppressWarnings("unused")
     private int getIntFromSegmentInfo(SegmentInfo info, int relativeOffset) {
         return info.segment.getInt(info.baseOffset + relativeOffset);
     }
 
+    @SuppressWarnings("unused")
     private void putIntToSegmentInfo(SegmentInfo info, int relativeOffset, int value) {
         info.segment.putInt(info.baseOffset + relativeOffset, value);
     }
 
+    @SuppressWarnings("unused")
     private long getLongFromSegmentInfo(SegmentInfo info, int relativeOffset) {
         return info.segment.getLong(info.baseOffset + relativeOffset);
     }
 
+    @SuppressWarnings("unused")
     private void putLongToSegmentInfo(SegmentInfo info, int relativeOffset, long value) {
         info.segment.putLong(info.baseOffset + relativeOffset, value);
     }

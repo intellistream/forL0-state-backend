@@ -4,7 +4,7 @@ public class Hash {
     private int prime32Num;
 
     // C++ 中定义的最大素数列表长度
-    private static final int MAX_PRIME32 = 1229;
+    // private static final int MAX_PRIME32 = 1229; // Unused field - commented out
 
     private static final int[] prime32 = new int[] {
             2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,

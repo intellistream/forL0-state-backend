@@ -9,12 +9,18 @@ import sun.misc.Unsafe;
 
 import java.util.List;
 
+/**
+ * Legacy implementation using sun.misc.Unsafe.
+ * This is intentional for the LevelHash legacy backend.
+ */
+@SuppressWarnings("restriction")
 public final class LevelHashIndex implements AutoCloseable {
 
     private static final Unsafe U = UnsafeUtils.unsafe();
 
     private final MemoryManagerAllocator allocator;
-    private final long pageSize;
+    @SuppressWarnings("unused")
+    private final long pageSize;  // May be used for future optimizations
 
     // table metadata
     private long topBase;         // address of first top‑level bucket

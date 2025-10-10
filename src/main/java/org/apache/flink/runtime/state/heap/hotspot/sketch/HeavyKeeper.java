@@ -10,7 +10,8 @@ public class HeavyKeeper implements Sketch {
     private final int D;
     private final double B;
     private final int M2;
-    private final int K;
+    @SuppressWarnings("unused")
+    private final int K;  // May be used for future extensions
     private final int FP_LEN;
 
     private final int[] bucketSize;

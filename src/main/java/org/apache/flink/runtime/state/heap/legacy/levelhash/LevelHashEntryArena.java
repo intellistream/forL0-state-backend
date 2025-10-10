@@ -10,6 +10,11 @@ import sun.misc.Unsafe;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Legacy implementation using sun.misc.Unsafe.
+ * This is intentional for the LevelHash legacy backend.
+ */
+@SuppressWarnings("restriction")
 final class LevelHashEntryArena implements AutoCloseable {
     private static final Unsafe U = UnsafeUtils.unsafe();
     private static final int HEADER_SIZE = 12; // keyHash (4) + lenK (4) + lenV (4)
@@ -70,7 +75,8 @@ final class LevelHashEntryArena implements AutoCloseable {
     }
 
     private void allocateNewPage(int minBytes) throws MemoryAllocationException {
-        int pagesNeeded = 1;
+        @SuppressWarnings("unused")
+        int pagesNeeded = 1;  // Reserved for future multi-page allocation logic
         List<MemorySegment> segs = allocator.allocate(minBytes);
         pages.addAll(segs);
         writeCursor = pages.get(pages.size() - 1).getAddress();

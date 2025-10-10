@@ -55,7 +55,8 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     private final Map<String, StateTable<K, ?, ?>> registeredKVStates;
 
     /** The configuration for local recovery. */
-    private final LocalRecoveryConfig localRecoveryConfig;
+    @SuppressWarnings("unused")
+    private final LocalRecoveryConfig localRecoveryConfig;  // Reserved for future local recovery support
 
     /** The snapshot strategy for this backend. */
     private final SnapshotStrategy<KeyedStateHandle, ?> checkpointStrategy;
@@ -68,7 +69,8 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     private final HeapPriorityQueuesManager priorityQueuesManager;
 
     /** Memory manager for allocating memory for the state backend. */
-    private final MemoryManager memoryManager;
+    @SuppressWarnings("unused")
+    private final MemoryManager memoryManager;  // Actually this is used by reflection
 
     public ForL0KeyedStateBackend (
             TaskKvStateRegistry kvStateRegistry,
@@ -141,6 +143,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             @Nonnull StateSnapshotTransformer.StateSnapshotTransformFactory<V> snapshotTransformFactory,
             boolean allowFutureMetadataUpdates)
             throws StateMigrationException {
+        @SuppressWarnings("unchecked")
         StateTable<K, N, V> stateTable =
                 (StateTable<K, N, V>) registeredKVStates.get(stateDesc.getName());
 

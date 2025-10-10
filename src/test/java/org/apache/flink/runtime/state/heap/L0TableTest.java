@@ -562,7 +562,8 @@ class L0TableTest {
     private static class TestEntry {
         final byte[] key;
         final byte[] namespace;
-        final byte[] value;
+        @SuppressWarnings("unused")
+        final byte[] value;  // Kept for debugging purposes
         final long entryAddress;
         int hash;
         short tag;

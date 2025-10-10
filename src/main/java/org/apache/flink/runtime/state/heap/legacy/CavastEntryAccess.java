@@ -4,8 +4,10 @@ import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import sun.misc.Unsafe;
 
 /**
- * **Deprecated** A util class for convenient off-heap state map entry access
+ * **Deprecated** A util class for convenient off-heap state map entry access.
+ * Legacy implementation using sun.misc.Unsafe (intentional for Cavast backend).
  */
+@SuppressWarnings("restriction")
 final class CavastEntryAccess {
     private static final Unsafe UNSAFE = UnsafeUtils.unsafe();
 

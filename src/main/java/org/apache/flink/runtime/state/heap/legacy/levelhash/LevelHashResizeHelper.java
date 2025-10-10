@@ -3,6 +3,11 @@ package org.apache.flink.runtime.state.heap.legacy.levelhash;
 import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import sun.misc.Unsafe;
 
+/**
+ * Legacy implementation using sun.misc.Unsafe.
+ * This is intentional for the LevelHash legacy backend.
+ */
+@SuppressWarnings("restriction")
 final class LevelHashResizeHelper {
     private LevelHashResizeHelper() {}
 

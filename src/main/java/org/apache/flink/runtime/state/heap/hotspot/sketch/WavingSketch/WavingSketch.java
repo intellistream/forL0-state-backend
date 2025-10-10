@@ -6,7 +6,8 @@ import org.apache.flink.runtime.state.heap.hotspot.sketch.Sketch;
 import org.apache.flink.runtime.state.heap.hotspot.utils.Config;
 
 public class WavingSketch implements Sketch {
-    private final int SLOT_NUM;
+    @SuppressWarnings("unused")
+    private final int SLOT_NUM;  // May be used for debugging or future extensions
     private final int BUCKET_NUM;
     private final Bucket[] buckets;
     private static final int[] count = {1, -1};

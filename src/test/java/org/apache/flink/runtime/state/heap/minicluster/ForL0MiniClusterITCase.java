@@ -39,7 +39,9 @@ import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
 
 /**
  * MiniCluster 集成测试：使用 SPI 加载 ForL0StateBackend，验证 ValueState 读写。
+ * Note: Uses some deprecated Flink APIs for compatibility testing.
  */
+@SuppressWarnings("deprecation")
 public class ForL0MiniClusterITCase {
 
     // 压测参数（直接改这里即可）
@@ -320,7 +322,7 @@ public class ForL0MiniClusterITCase {
                                       Iterable<Tuple2<String, Long>> input,
                                       Collector<org.apache.flink.api.java.tuple.Tuple3<String, Long, Integer>> out) {
                         int cnt = 0;
-                        for (Tuple2<String, Long> ignored : input) { cnt++; }
+                        for (@SuppressWarnings("unused") Tuple2<String, Long> ignored : input) { cnt++; }
                         out.collect(org.apache.flink.api.java.tuple.Tuple3.of(key, window.getEnd(), cnt));
                     }
                 })
@@ -397,7 +399,7 @@ public class ForL0MiniClusterITCase {
                                       Iterable<Tuple2<String, Long>> input,
                                       Collector<org.apache.flink.api.java.tuple.Tuple3<String, Long, Integer>> out) {
                         int cnt = 0;
-                        for (Tuple2<String, Long> ignored : input) { cnt++; }
+                        for (@SuppressWarnings("unused") Tuple2<String, Long> ignored : input) { cnt++; }
                         out.collect(org.apache.flink.api.java.tuple.Tuple3.of(key, window.getEnd(), cnt));
                     }
                 })

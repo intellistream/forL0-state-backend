@@ -118,7 +118,8 @@ public class Simulator {
             List<byte[]> list = new ArrayList<>();
             try (FileInputStream fis = new FileInputStream(filename)) {
                 byte[] buf = new byte[KEY_LEN];
-                int r;
+                @SuppressWarnings("unused")
+                int r;  // Result of read operation - kept for potential error checking
                 while ((r = fis.read(buf)) == KEY_LEN) {
                     list.add(Arrays.copyOf(buf, KEY_LEN));
                 }

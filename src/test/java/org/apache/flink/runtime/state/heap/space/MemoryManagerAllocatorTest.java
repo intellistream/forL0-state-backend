@@ -141,6 +141,7 @@ class MemoryManagerAllocatorTest {
             int alignment = 64;
 
             long alignedAddress = allocator.allocateAligned(size, alignment);
+            @SuppressWarnings("unused")
             long usedBytesAfterAllocation = allocator.getUsedBytes();
 
             allocator.deallocate(alignedAddress, size);
@@ -287,10 +288,13 @@ class MemoryManagerAllocatorTest {
         @Test
         void testClose() throws MemoryAllocationException {
             // Allocate some regular memory
+            @SuppressWarnings("unused")
             List<MemorySegment> segments1 = allocator.allocate(DEFAULT_PAGE_SIZE);
+            @SuppressWarnings("unused")
             List<MemorySegment> segments2 = allocator.allocate(DEFAULT_PAGE_SIZE * 2);
 
             // Allocate some aligned memory
+            @SuppressWarnings("unused")
             long alignedAddress = allocator.allocateAligned(1024, 64);
 
             assertTrue(allocator.getUsedBytes() > 0);
@@ -612,7 +616,9 @@ class MemoryManagerAllocatorTest {
             try (MemoryManagerAllocator allocator1 = new MemoryManagerAllocator(memoryManager, owner1);
                  MemoryManagerAllocator allocator2 = new MemoryManagerAllocator(memoryManager, owner2)) {
 
+                @SuppressWarnings("unused")
                 List<MemorySegment> segments1 = allocator1.allocate(DEFAULT_PAGE_SIZE);
+                @SuppressWarnings("unused")
                 List<MemorySegment> segments2 = allocator2.allocate(DEFAULT_PAGE_SIZE);
 
                 assertEquals(DEFAULT_PAGE_SIZE, allocator1.getUsedBytes());

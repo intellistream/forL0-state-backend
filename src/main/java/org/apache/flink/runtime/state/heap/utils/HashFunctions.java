@@ -93,6 +93,11 @@ public final class HashFunctions {
         return compositeHash(key, key.length, namespace, namespace.length);
     }
 
+    /**
+     * Jenkins hash function - kept for potential future use.
+     * Currently unused but may be needed for alternative hashing strategies.
+     */
+    @SuppressWarnings("unused")
     private static int jenkinsHash(byte[] buf, int len, int hash) {
         if (buf != null && len > 0) {
             for (int i = 0; i < len; i++) {
@@ -144,6 +149,11 @@ public final class HashFunctions {
         return (byte) (hash >>> 56);
     }
 
+    /**
+     * Rotate left operation - kept for potential future use.
+     * Currently unused but may be needed for alternative hashing strategies.
+     */
+    @SuppressWarnings("unused")
     private static int rotateLeft(int value, int shift) {
         return (value << shift) | (value >>> (32 - shift));
     }

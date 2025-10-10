@@ -279,16 +279,10 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
      */
     private static class AlignedAllocation {
         final List<MemorySegment> segments;
-        final long baseAddress;
-        final long alignedAddress;
-        final int size;
         final long allocatedBytes;
 
         AlignedAllocation(List<MemorySegment> segments, long baseAddress, long alignedAddress, int size, long allocatedBytes) {
             this.segments = segments;
-            this.baseAddress = baseAddress;
-            this.alignedAddress = alignedAddress;
-            this.size = size;
             this.allocatedBytes = allocatedBytes;
         }
     }

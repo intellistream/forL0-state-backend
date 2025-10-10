@@ -5,8 +5,6 @@ import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.apache.flink.types.StringValue;
-import org.junit.Ignore;
 import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -271,7 +269,8 @@ public class ForL0StateMapStressTest {
             LOG.info("插入 {} 个大对象 (每个约300字符)...", targetSize);
 
             long startTime = System.currentTimeMillis();
-            long startMemory = allocator.getUsedBytes();
+            @SuppressWarnings("unused")
+            long startMemory = allocator.getUsedBytes();  // Reserved for future memory profiling
 
             // 插入大量数据
             for (int i = 0; i < targetSize; i++) {
@@ -401,7 +400,8 @@ public class ForL0StateMapStressTest {
         @Test
         @DisplayName("缓存替换策略测试")
         void testCacheReplacementPolicy() throws Exception {
-            final int cacheSize = 1 << 12; // 4K buckets
+            @SuppressWarnings("unused")
+            final int cacheSize = 1 << 12; // 4K buckets - Reserved for future cache size configuration
             final int testKeys = 1000; // 适中的键数量
 
             // 顺序插入数据，这会导致缓存替换
@@ -594,7 +594,8 @@ public class ForL0StateMapStressTest {
         @DisplayName("扩容过程中混合读写一致性验证")
         void testMixedOpsDuringResize() {
             java.util.Random rnd = new java.util.Random(123);
-            int writes = 0;
+            @SuppressWarnings("unused")
+            int writes = 0;  // Reserved for future write operation counting
             for (int i = 0; i < 5000; i++) {
                 int op = rnd.nextInt(100);
                 if (op < 60) { // 写
@@ -1399,7 +1400,8 @@ public class ForL0StateMapStressTest {
          * 完整的基准测试结果
          */
         private class BenchmarkResult {
-            final String name;
+            @SuppressWarnings("unused")
+            final String name;  // Reserved for future result reporting
             final PutBenchmarkResult putResult;
             final GetBenchmarkResult getResult;
             final TransformBenchmarkResult transformResult;

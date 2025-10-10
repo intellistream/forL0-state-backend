@@ -12,7 +12,8 @@ import java.util.List;
 
 public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
-    private static final MemoryManager currentMemoryManager = new ThreadLocal<MemoryManager>().get();
+    @SuppressWarnings("unused")
+    private static final MemoryManager currentMemoryManager = new ThreadLocal<MemoryManager>().get();  // Actually this is used by reflection
     private static final ThreadLocal<MemoryManager> MEMORY_MANAGER_HOLDER = new ThreadLocal<>();
     // 新增：通过ThreadLocal在构造阶段传递是否启用L0缓存
     private static final ThreadLocal<Boolean> L0_CACHE_ENABLED_HOLDER = new ThreadLocal<>();

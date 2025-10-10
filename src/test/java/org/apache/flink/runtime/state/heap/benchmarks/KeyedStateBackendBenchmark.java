@@ -150,6 +150,7 @@ public class KeyedStateBackendBenchmark {
         }
 
         if (useBytes) {
+            @SuppressWarnings("deprecation")
             ValueStateDescriptor<byte[]> d = new ValueStateDescriptor<>(
                     "vsBytes", BytePrimitiveArraySerializer.INSTANCE, new byte[0]);
             vsBytes = keyedBackend.getPartitionedState(
@@ -157,6 +158,7 @@ public class KeyedStateBackendBenchmark {
                     VoidNamespaceSerializer.INSTANCE,
                     d);
         } else {
+            @SuppressWarnings("deprecation")
             ValueStateDescriptor<Integer> d = new ValueStateDescriptor<>(
                     "vsInt", IntSerializer.INSTANCE, 0);
             vsInt = keyedBackend.getPartitionedState(

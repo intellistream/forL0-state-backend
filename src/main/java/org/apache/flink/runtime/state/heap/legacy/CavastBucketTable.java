@@ -8,8 +8,10 @@ import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import sun.misc.Unsafe;
 
 /**
- * **Deprecated**
+ * **Deprecated** Legacy implementation using sun.misc.Unsafe.
+ * This is intentional for the Cavast legacy backend.
  */
+@SuppressWarnings("restriction")
 public class CavastBucketTable implements AutoCloseable {
 
     private MemorySegment slab; // 64B * bucketCap

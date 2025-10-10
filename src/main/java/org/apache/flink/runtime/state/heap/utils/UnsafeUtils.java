@@ -4,6 +4,11 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
 
+/**
+ * Utility class to access sun.misc.Unsafe.
+ * This is intentionally used for off-heap memory operations in ForL0 backend.
+ */
+@SuppressWarnings("restriction")
 final public class UnsafeUtils {
 
     private static final Unsafe UNSAFE;

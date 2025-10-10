@@ -534,7 +534,8 @@ class MainTableTest {
 
     // Test entry helper class
     private static class TestEntry {
-        final String keyString;
+        @SuppressWarnings("unused")
+        final String keyString;  // Kept for debugging purposes
         final byte[] key;
         final byte[] namespace;
         final byte[] value;

@@ -4,7 +4,6 @@ import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
-import org.apache.flink.runtime.state.heap.legacy.CavastEntryAccess;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.UnsafeUtils;
 import org.junit.jupiter.api.*;
@@ -28,7 +27,9 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>The helper methods intentionally bypass higher‑level serializers and operate
  * directly on the entry layout to keep the tests deterministic and fast.
+ * Legacy test using sun.misc.Unsafe (intentional for Cavast backend testing).
  */
+@SuppressWarnings("restriction")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CavastBucketTableTest {
 

@@ -32,7 +32,9 @@ import java.util.stream.Stream;
 
 /**
  * 针对 ForL0StateBackend 的 checkpoint 与 savepoint/restore 功能测试。
+ * Note: Uses some deprecated Flink APIs for compatibility testing.
  */
+@SuppressWarnings("deprecation")
 public class ForL0CheckpointSavepointITCase {
 
     private static final Configuration CLUSTER_CONF = new Configuration();
@@ -111,6 +113,7 @@ public class ForL0CheckpointSavepointITCase {
                 i++;
             }
             // 发送完成信号（若测试端有等待）
+            @SuppressWarnings("unused")
             CountDownLatch latch = STATEFUL_PROCESSED_N_LATCH; // 仅为可见性，实际由算子完成
             // 进入空转等待，保持作业 RUNNING
             while (running) { Thread.sleep(50L); }

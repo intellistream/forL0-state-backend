@@ -380,7 +380,8 @@ class MainTableStressTest {
         final byte[] key;
         final byte[] namespace;
         final byte[] value;
-        long entryAddress = 0;
+        @SuppressWarnings("unused")
+        long entryAddress = 0; // May be used for debugging or future extensions
         int hash;
         short tag;
 
