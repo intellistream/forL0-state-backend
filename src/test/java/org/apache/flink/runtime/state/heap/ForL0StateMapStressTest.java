@@ -1038,7 +1038,7 @@ public class ForL0StateMapStressTest {
                 StringSerializer.INSTANCE,
                 StringSerializer.INSTANCE,
                 IntSerializer.INSTANCE,
-                false // enable L0 cache
+                true // enable L0 cache
             );
         }
 

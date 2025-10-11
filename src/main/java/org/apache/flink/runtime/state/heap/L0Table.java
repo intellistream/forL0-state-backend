@@ -27,37 +27,46 @@ public class L0Table implements AutoCloseable {
     private static final int SLOT_EXTENSION_OFFSET = 3; // 5 bytes (for LRU/LFU data)
     private static final int SLOT_POINTER_OFFSET = 8;  // 8 bytes
 
+    // Valid field bit masks for CLOCK algorithm
+    private static final byte VALID_MASK = 0x01;       // bit 0: validity
+    private static final byte ACCESSED_MASK = 0x02;     // bit 1: accessed flag (for CLOCK)
+    
+    // LFU constants
+    private static final int MAX_FREQUENCY = 15;        // Max frequency for LFU/TinyLFU
+    private static final long TINY_LFU_DECAY_INTERVAL = 10000; // Decay every 10K accesses
+
     // Replacement algorithm types
     public enum ReplacementPolicy {
-        LRU,    // Least Recently Used
-        LFU,    // Least Frequently Used
-        FIFO,   // First In First Out
-        RANDOM  // Random replacement
+        LRU,         // Least Recently Used (fixed with relative timestamp)
+        LFU,         // Least Frequently Used (with saturation at 15)
+        CLOCK,       // Clock algorithm (1-bit accessed flag, recommended default)
+        TINY_LFU,    // Window TinyLFU with decay mechanism
+        SAMPLED_LRU  // Random sampling + LRU (lightweight)
     }
 
     private final MemoryManagerAllocator allocator;
     private final int bucketCount;
     private final List<MemorySegment> memorySegments;
     private final ReplacementPolicy replacementPolicy;
-    private final Random random;
+    private final Random random;  // For SAMPLED_LRU
 
     // Statistics and metrics
     private long accessCount = 0;
     private long hitCount = 0;
     private long missCount = 0;
     private long evictionCount = 0;
-
-    // Global counter for LRU/FIFO ordering
-    private int globalCounter = 0;
+    
+    // TinyLFU decay tracking
+    private long tinyLfuAccessCount = 0;
 
     /**
-     * Creates an L0 Table with specified number of buckets and LRU replacement policy.
+     * Creates an L0 Table with specified number of buckets and CLOCK replacement policy.
      *
      * @param allocator Memory allocator for L0 region
      * @param bucketCountPow2 Number of buckets as power of 2
      */
     public L0Table(MemoryManagerAllocator allocator, int bucketCountPow2) {
-        this(allocator, bucketCountPow2, ReplacementPolicy.LRU);
+        this(allocator, bucketCountPow2, ReplacementPolicy.CLOCK);
     }
 
     /**
@@ -71,7 +80,7 @@ public class L0Table implements AutoCloseable {
         this.allocator = allocator;
         this.bucketCount = 1 << bucketCountPow2;
         this.replacementPolicy = replacementPolicy;
-        this.random = (replacementPolicy == ReplacementPolicy.RANDOM) ? new Random() : null;
+        this.random = (replacementPolicy == ReplacementPolicy.SAMPLED_LRU) ? new Random() : null;
 
         try {
             // Allocate memory segments for L0 table using the dedicated L0 allocation interface
@@ -96,18 +105,20 @@ public class L0Table implements AutoCloseable {
         if (entryAddress == 0) return;
 
         for (int bucket = 0; bucket < bucketCount; bucket++) {
-            long bucketAddress = getBucketAddress(bucket);
+            // MainTable style: resolve once per bucket
+            MemorySegment segment = getSegmentForBucket(bucket);
+            int bucketOffset = getBucketOffsetInSegment(bucket);
 
             for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-                long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
+                int slotOffset = bucketOffset + slot * SLOT_SIZE;
 
-                byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
+                byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
                 if (valid == 0) continue;
 
-                long pointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
+                long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
                 if (pointer == entryAddress) {
                     // Mark slot as invalid
-                    putByte(slotAddress + SLOT_VALID_OFFSET, (byte) 0);
+                    segment.put(slotOffset + SLOT_VALID_OFFSET, (byte) 0);
                     return;
                 }
             }
@@ -119,26 +130,29 @@ public class L0Table implements AutoCloseable {
                     byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         accessCount++;
         int bucketIndex = keyHash & (bucketCount - 1);
-        long bucketAddress = getBucketAddress(bucketIndex);
+        
+        // MainTable style: resolve once per bucket, zero object allocation
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
         // Check all 4 slots in the bucket
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
 
-            // Read slot fields
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
+            // Read slot fields directly from segment
+            byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
             if (valid == 0) continue;  // Skip invalid slots
 
-            short slotTag = getShort(slotAddress + SLOT_TAG_OFFSET);
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
             if (slotTag != tag) continue;  // Tag mismatch
 
-            long pointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
+            long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
 
             // Verify actual entry match using arena directly
             if (arena.matchesKey(pointer, kb, klen, nb, nlen)) {
                 hitCount++;
                 // Update access information for replacement policy
-                updateSlotOnAccess(slotAddress);
+                updateSlotOnAccess(segment, slotOffset);
                 return pointer;
             }
         }
@@ -151,14 +165,17 @@ public class L0Table implements AutoCloseable {
     public long put(int keyHash, short tag, long entryAddress,
                     byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
-        long bucketAddress = getBucketAddress(bucketIndex);
+        
+        // MainTable style: resolve once per bucket
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
         // First, try to find an empty slot or update existing entry
         int emptySlot = -1;
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
 
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
+            byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
             if (valid == 0) {
                 // Found empty slot, remember it but continue checking for updates
                 if (emptySlot == -1) {
@@ -167,32 +184,32 @@ public class L0Table implements AutoCloseable {
                 continue;
             }
 
-            short slotTag = getShort(slotAddress + SLOT_TAG_OFFSET);
-            long slotPointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
 
             if (slotTag == tag && arena.matchesKey(slotPointer, kb, klen, nb, nlen)) {
                 // Found existing entry, update it
-                putLong(slotAddress + SLOT_POINTER_OFFSET, entryAddress);
-                updateSlotOnAccess(slotAddress);
+                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
+                updateSlotOnAccess(segment, slotOffset);
                 return slotPointer;
             }
         }
 
         // No existing entry found, use empty slot if available
         if (emptySlot != -1) {
-            long slotAddress = bucketAddress + (long) emptySlot * SLOT_SIZE;
-            writeSlot(slotAddress, tag, entryAddress);
+            int slotOffset = bucketOffset + emptySlot * SLOT_SIZE;
+            writeSlot(segment, slotOffset, tag, entryAddress);
             return 0;  // New insertion
         }
 
         // No empty slot found, need eviction
-        int victimSlot = selectVictimSlot(bucketAddress);
-        long victimAddress = bucketAddress + (long) victimSlot * SLOT_SIZE;
+        int victimSlot = selectVictimSlot(segment, bucketOffset);
+        int victimOffset = bucketOffset + victimSlot * SLOT_SIZE;
 
         // Get old entry address before overwriting
-        long oldEntryAddress = getLong(victimAddress + SLOT_POINTER_OFFSET);
+        long oldEntryAddress = segment.getLong(victimOffset + SLOT_POINTER_OFFSET);
 
-        writeSlot(victimAddress, tag, entryAddress);
+        writeSlot(segment, victimOffset, tag, entryAddress);
         evictionCount++;
 
         return oldEntryAddress;  // Return evicted entry address
@@ -202,24 +219,27 @@ public class L0Table implements AutoCloseable {
     public long remove(int keyHash, short tag,
                        byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int bucketIndex = keyHash & (bucketCount - 1);
-        long bucketAddress = getBucketAddress(bucketIndex);
+        
+        // MainTable style: resolve once per bucket
+        MemorySegment segment = getSegmentForBucket(bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
         // Check all 4 slots in the bucket
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
 
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
+            byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
             if (valid == 0) continue;  // Skip invalid slots
 
-            short slotTag = getShort(slotAddress + SLOT_TAG_OFFSET);
+            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
             if (slotTag != tag) continue;  // Tag mismatch
 
-            long pointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
+            long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
 
             // Verify actual entry match using arena directly
             if (arena.matchesKey(pointer, kb, klen, nb, nlen)) {
                 // Mark slot as invalid
-                putByte(slotAddress + SLOT_VALID_OFFSET, (byte) 0);
+                segment.put(slotOffset + SLOT_VALID_OFFSET, (byte) 0);
                 return pointer;
             }
         }
@@ -236,7 +256,7 @@ public class L0Table implements AutoCloseable {
         hitCount = 0;
         missCount = 0;
         evictionCount = 0;
-        globalCounter = 0;
+        tinyLfuAccessCount = 0;
     }
 
     /**
@@ -248,18 +268,20 @@ public class L0Table implements AutoCloseable {
      */
     public void invalidateRange(long minAddress, long maxAddress) {
         for (int bucket = 0; bucket < bucketCount; bucket++) {
-            long bucketAddress = getBucketAddress(bucket);
+            // MainTable style: resolve once per bucket
+            MemorySegment segment = getSegmentForBucket(bucket);
+            int bucketOffset = getBucketOffsetInSegment(bucket);
 
             for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-                long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
+                int slotOffset = bucketOffset + slot * SLOT_SIZE;
 
-                byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
+                byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
                 if (valid == 0) continue;
 
-                long pointer = getLong(slotAddress + SLOT_POINTER_OFFSET);
+                long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
                 if (pointer >= minAddress && pointer < maxAddress) {
                     // Mark slot as invalid
-                    putByte(slotAddress + SLOT_VALID_OFFSET, (byte) 0);
+                    segment.put(slotOffset + SLOT_VALID_OFFSET, (byte) 0);
                 }
             }
         }
@@ -279,254 +301,228 @@ public class L0Table implements AutoCloseable {
         );
     }
 
-    /**
-     * Address resolution result containing segment and offset information.
-     * Used to cache segment lookups and reduce repeated calculations.
-     */
-    private static final class SegmentInfo {
-        final MemorySegment segment;
-        final int baseOffset;
+    // Helper methods for memory access - MainTable style (zero object allocation)
 
-        SegmentInfo(MemorySegment segment, int baseOffset) {
-            this.segment = segment;
-            this.baseOffset = baseOffset;
+    /**
+     * Gets the MemorySegment containing the specified bucket.
+     * Following MainTable's implementation pattern.
+     */
+    private MemorySegment getSegmentForBucket(int bucketIndex) {
+        if (memorySegments.isEmpty()) {
+            throw new IllegalStateException("No memory segments available");
         }
-    }
-
-    // Helper methods for memory access - optimized versions
-
-    private long getBucketAddress(int bucketIndex) {
-        long offset = (long) bucketIndex * BUCKET_SIZE;
-        int pageSize = allocator.getPageSize();
-        int segmentIndex = (int) (offset / pageSize);
-        int segmentOffset = (int) (offset % pageSize);
-
-        // 确保segmentIndex不超出memorySegments的范围
-        if (segmentIndex >= memorySegments.size()) {
-            throw new IllegalStateException("Segment index " + segmentIndex +
-                " exceeds allocated segments " + memorySegments.size() +
-                " for bucket " + bucketIndex + ", offset " + offset);
-        }
-
-        return (long) segmentIndex << 32 | segmentOffset;
+        int segmentIndex = (bucketIndex * BUCKET_SIZE) / memorySegments.get(0).size();
+        return memorySegments.get(Math.min(segmentIndex, memorySegments.size() - 1));
     }
 
     /**
-     * Optimized address resolution that returns segment info for batch operations.
+     * Gets the offset within the segment for the specified bucket.
+     * Following MainTable's implementation pattern.
      */
-    private SegmentInfo resolveAddress(long address) {
-        int segmentIndex = (int) (address >>> 32);
-        int offset = (int) address;
-        return new SegmentInfo(memorySegments.get(segmentIndex), offset);
-    }
-
-    /**
-     * Optimized memory access methods using SegmentInfo to reduce repeated calculations.
-     * Helper methods for reading/writing primitives from SegmentInfo.
-     * These are kept for potential future optimizations.
-     */
-    @SuppressWarnings("unused")
-    private byte getByteFromSegmentInfo(SegmentInfo info, int relativeOffset) {
-        return info.segment.get(info.baseOffset + relativeOffset);
-    }
-
-    @SuppressWarnings("unused")
-    private void putByteToSegmentInfo(SegmentInfo info, int relativeOffset, byte value) {
-        info.segment.put(info.baseOffset + relativeOffset, value);
-    }
-
-    @SuppressWarnings("unused")
-    private short getShortFromSegmentInfo(SegmentInfo info, int relativeOffset) {
-        return info.segment.getShort(info.baseOffset + relativeOffset);
-    }
-
-    @SuppressWarnings("unused")
-    private void putShortToSegmentInfo(SegmentInfo info, int relativeOffset, short value) {
-        info.segment.putShort(info.baseOffset + relativeOffset, value);
-    }
-
-    @SuppressWarnings("unused")
-    private int getIntFromSegmentInfo(SegmentInfo info, int relativeOffset) {
-        return info.segment.getInt(info.baseOffset + relativeOffset);
-    }
-
-    @SuppressWarnings("unused")
-    private void putIntToSegmentInfo(SegmentInfo info, int relativeOffset, int value) {
-        info.segment.putInt(info.baseOffset + relativeOffset, value);
-    }
-
-    @SuppressWarnings("unused")
-    private long getLongFromSegmentInfo(SegmentInfo info, int relativeOffset) {
-        return info.segment.getLong(info.baseOffset + relativeOffset);
-    }
-
-    @SuppressWarnings("unused")
-    private void putLongToSegmentInfo(SegmentInfo info, int relativeOffset, long value) {
-        info.segment.putLong(info.baseOffset + relativeOffset, value);
-    }
-
-    // Keep original methods for compatibility but optimize implementation
-    private byte getByte(long address) {
-        SegmentInfo info = resolveAddress(address);
-        return info.segment.get(info.baseOffset);
-    }
-
-    private void putByte(long address, byte value) {
-        SegmentInfo info = resolveAddress(address);
-        info.segment.put(info.baseOffset, value);
-    }
-
-    private short getShort(long address) {
-        SegmentInfo info = resolveAddress(address);
-        return info.segment.getShort(info.baseOffset);
-    }
-
-    private void putShort(long address, short value) {
-        SegmentInfo info = resolveAddress(address);
-        info.segment.putShort(info.baseOffset, value);
-    }
-
-    private int getInt(long address) {
-        SegmentInfo info = resolveAddress(address);
-        return info.segment.getInt(info.baseOffset);
-    }
-
-    private void putInt(long address, int value) {
-        SegmentInfo info = resolveAddress(address);
-        info.segment.putInt(info.baseOffset, value);
-    }
-
-    private long getLong(long address) {
-        SegmentInfo info = resolveAddress(address);
-        return info.segment.getLong(info.baseOffset);
-    }
-
-    private void putLong(long address, long value) {
-        SegmentInfo info = resolveAddress(address);
-        info.segment.putLong(info.baseOffset, value);
+    private int getBucketOffsetInSegment(int bucketIndex) {
+        int segmentSize = memorySegments.get(0).size();
+        return ((bucketIndex * BUCKET_SIZE) % segmentSize);
     }
 
     private void clearAllSlots() {
         for (int bucket = 0; bucket < bucketCount; bucket++) {
-            long bucketAddress = getBucketAddress(bucket);
+            // MainTable style: resolve once per bucket
+            MemorySegment segment = getSegmentForBucket(bucket);
+            int bucketOffset = getBucketOffsetInSegment(bucket);
+            
             for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-                long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-                putByte(slotAddress + SLOT_VALID_OFFSET, (byte) 0);
+                int slotOffset = bucketOffset + slot * SLOT_SIZE;
+                segment.put(slotOffset + SLOT_VALID_OFFSET, (byte) 0);
             }
         }
     }
 
-    private void writeSlot(long slotAddress, short tag, long entryAddress) {
-        putShort(slotAddress + SLOT_TAG_OFFSET, tag);
-        putByte(slotAddress + SLOT_VALID_OFFSET, (byte) 1);
-        putLong(slotAddress + SLOT_POINTER_OFFSET, entryAddress);
+    private void writeSlot(MemorySegment segment, int slotOffset, short tag, long entryAddress) {
+        segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
+        segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
 
-        // Initialize extension data based on replacement policy
+        // Initialize based on replacement policy
         switch (replacementPolicy) {
             case LRU:
-            case FIFO:
-                putInt(slotAddress + SLOT_EXTENSION_OFFSET, incrementGlobalCounter());
+                segment.put(slotOffset + SLOT_VALID_OFFSET, (byte) 1);
+                segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, getRelativeTimestamp());
                 break;
             case LFU:
-                putInt(slotAddress + SLOT_EXTENSION_OFFSET, 1); // Initial frequency
+            case TINY_LFU:
+                segment.put(slotOffset + SLOT_VALID_OFFSET, (byte) 1);
+                segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, 1); // Initial frequency
                 break;
-            case RANDOM:
-                // No extension data needed for random
+            case CLOCK:
+            case SAMPLED_LRU:
+                // For CLOCK: valid=1, accessed=0 (not yet accessed after insertion)
+                // For SAMPLED_LRU: same as CLOCK, use accessed bit
+                segment.put(slotOffset + SLOT_VALID_OFFSET, VALID_MASK);
+                break;
+            default:
+                segment.put(slotOffset + SLOT_VALID_OFFSET, (byte) 1);
                 break;
         }
     }
 
-    private void updateSlotOnAccess(long slotAddress) {
+    private void updateSlotOnAccess(MemorySegment segment, int slotOffset) {
         switch (replacementPolicy) {
             case LRU:
-                putInt(slotAddress + SLOT_EXTENSION_OFFSET, incrementGlobalCounter());
+                segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, getRelativeTimestamp());
                 break;
             case LFU:
-                int freq = getInt(slotAddress + SLOT_EXTENSION_OFFSET);
-                putInt(slotAddress + SLOT_EXTENSION_OFFSET, freq + 1);
+                int freq = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
+                if (freq < MAX_FREQUENCY) {
+                    segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, freq + 1);
+                }
                 break;
-            case FIFO:
-            case RANDOM:
-                // No update needed for FIFO and RANDOM
+            case TINY_LFU:
+                int tinyFreq = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
+                if (tinyFreq < MAX_FREQUENCY) {
+                    segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, tinyFreq + 1);
+                }
+                // Check if we need to decay
+                if (++tinyLfuAccessCount >= TINY_LFU_DECAY_INTERVAL) {
+                    decayAllFrequencies();
+                    tinyLfuAccessCount = 0;
+                }
+                break;
+            case CLOCK:
+            case SAMPLED_LRU:
+                // Set accessed bit
+                byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
+                segment.put(slotOffset + SLOT_VALID_OFFSET, (byte)(valid | ACCESSED_MASK));
+                break;
+            default:
+                // No update needed
                 break;
         }
     }
 
-    private int incrementGlobalCounter() {
-        return ++globalCounter;
+    /**
+     * Get relative timestamp to avoid overflow issues.
+     * Uses lower 31 bits of nanoTime to ensure positive values.
+     */
+    private int getRelativeTimestamp() {
+        return (int)(System.nanoTime() & 0x7FFFFFFF);
     }
 
-    private int selectVictimSlot(long bucketAddress) {
+    /**
+     * Decay all frequencies in the table (for TinyLFU).
+     * Divides all frequency counters by 2.
+     */
+    private void decayAllFrequencies() {
+        for (int bucket = 0; bucket < bucketCount; bucket++) {
+            MemorySegment segment = getSegmentForBucket(bucket);
+            int bucketOffset = getBucketOffsetInSegment(bucket);
+            
+            for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
+                int slotOffset = bucketOffset + slot * SLOT_SIZE;
+                byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
+                if ((valid & VALID_MASK) != 0) {
+                    int freq = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
+                    segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, freq >> 1); // Divide by 2
+                }
+            }
+        }
+    }
+
+    private int selectVictimSlot(MemorySegment segment, int bucketOffset) {
         switch (replacementPolicy) {
             case LRU:
-                return selectLRUVictim(bucketAddress);
             case LFU:
-                return selectLFUVictim(bucketAddress);
-            case FIFO:
-                return selectFIFOVictim(bucketAddress);
-            case RANDOM:
-                return selectRandomVictim();
+            case TINY_LFU:
+                // LRU, LFU, TinyLFU都使用extension字段存储时间戳或频率
+                // 都是选择最小值的slot，逻辑相同
+                return selectMinExtensionVictim(segment, bucketOffset);
+            case CLOCK:
+                return selectClockVictim(segment, bucketOffset);
+            case SAMPLED_LRU:
+                return selectSampledLRUVictim(segment, bucketOffset);
             default:
                 return 0; // Default to first slot
         }
     }
 
-    private int selectLRUVictim(long bucketAddress) {
+    /**
+     * 通用的victim选择方法：选择extension字段值最小的slot
+     * 适用于LRU（时间戳）、LFU（频率）、TinyLFU（频率）
+     */
+    private int selectMinExtensionVictim(MemorySegment segment, int bucketOffset) {
         int victimSlot = 0;
-        int minCounter = Integer.MAX_VALUE;
+        int minValue = Integer.MAX_VALUE;
 
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            
+            byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
             if (valid == 0) return slot; // Use empty slot first
 
-            int counter = getInt(slotAddress + SLOT_EXTENSION_OFFSET);
-            if (counter < minCounter) {
-                minCounter = counter;
+            int value = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
+            if (value < minValue) {
+                minValue = value;
                 victimSlot = slot;
             }
         }
         return victimSlot;
     }
 
-    private int selectLFUVictim(long bucketAddress) {
-        int victimSlot = 0;
-        int minFreq = Integer.MAX_VALUE;
-
+    /**
+     * CLOCK algorithm: uses a single bit to approximate LRU.
+     * Two-pass algorithm:
+     * 1. First pass: find a slot with accessed=0
+     * 2. Second pass: clear all accessed bits and return slot 0
+     */
+    private int selectClockVictim(MemorySegment segment, int bucketOffset) {
+        // First pass: look for unaccessed slot
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
-            if (valid == 0) return slot; // Use empty slot first
-
-            int freq = getInt(slotAddress + SLOT_EXTENSION_OFFSET);
-            if (freq < minFreq) {
-                minFreq = freq;
-                victimSlot = slot;
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
+            
+            if ((valid & VALID_MASK) == 0) return slot; // Empty slot
+            
+            if ((valid & ACCESSED_MASK) == 0) {
+                // Found unaccessed slot, evict it
+                return slot;
             }
         }
-        return victimSlot;
-    }
-
-    private int selectFIFOVictim(long bucketAddress) {
-        int victimSlot = 0;
-        int minCounter = Integer.MAX_VALUE;
-
+        
+        // Second pass: all slots accessed, clear accessed bits and evict first
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-            byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
-            if (valid == 0) return slot; // Use empty slot first
-
-            int counter = getInt(slotAddress + SLOT_EXTENSION_OFFSET);
-            if (counter < minCounter) {
-                minCounter = counter;
-                victimSlot = slot;
-            }
+            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+            byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
+            segment.put(slotOffset + SLOT_VALID_OFFSET, (byte)(valid & ~ACCESSED_MASK));
         }
-        return victimSlot;
+        return 0;
     }
 
-    private int selectRandomVictim() {
-        return random.nextInt(SLOTS_PER_BUCKET);
+    /**
+     * Sampled LRU: randomly sample 2 slots and pick the less recently accessed one.
+     * Provides ~80% of LRU performance with minimal overhead.
+     */
+    private int selectSampledLRUVictim(MemorySegment segment, int bucketOffset) {
+        // Sample two random slots
+        int sample1 = random.nextInt(SLOTS_PER_BUCKET);
+        int sample2 = random.nextInt(SLOTS_PER_BUCKET);
+        
+        int offset1 = bucketOffset + sample1 * SLOT_SIZE;
+        int offset2 = bucketOffset + sample2 * SLOT_SIZE;
+        
+        byte valid1 = segment.get(offset1 + SLOT_VALID_OFFSET);
+        byte valid2 = segment.get(offset2 + SLOT_VALID_OFFSET);
+        
+        // Prefer empty slots
+        if ((valid1 & VALID_MASK) == 0) return sample1;
+        if ((valid2 & VALID_MASK) == 0) return sample2;
+        
+        // Compare accessed bits
+        boolean accessed1 = (valid1 & ACCESSED_MASK) != 0;
+        boolean accessed2 = (valid2 & ACCESSED_MASK) != 0;
+        
+        // Pick the unaccessed one, or the first if both are same
+        if (!accessed1 && accessed2) return sample1;
+        if (accessed1 && !accessed2) return sample2;
+        
+        return sample1; // Both same, pick first
     }
 
     // Statistics and metrics methods
@@ -569,10 +565,13 @@ public class L0Table implements AutoCloseable {
     public int getEntryCount() {
         int count = 0;
         for (int bucket = 0; bucket < bucketCount; bucket++) {
-            long bucketAddress = getBucketAddress(bucket);
+            // MainTable style: resolve once per bucket
+            MemorySegment segment = getSegmentForBucket(bucket);
+            int bucketOffset = getBucketOffsetInSegment(bucket);
+            
             for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-                long slotAddress = bucketAddress + (long) slot * SLOT_SIZE;
-                byte valid = getByte(slotAddress + SLOT_VALID_OFFSET);
+                int slotOffset = bucketOffset + slot * SLOT_SIZE;
+                byte valid = segment.get(slotOffset + SLOT_VALID_OFFSET);
                 if (valid != 0) {
                     count++;
                 }

@@ -99,7 +99,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 asynchronousSnapshots,
                 cancelStreamRegistry,
                 memoryManager,
-                false);
+                true); // For now the L0 cache is enabled here
     }
 
     @Override

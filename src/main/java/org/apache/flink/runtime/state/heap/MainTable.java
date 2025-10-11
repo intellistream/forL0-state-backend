@@ -119,7 +119,7 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 递归搜索桶树，体现桶的统一结构
+     * 递归搜索桶树
      * @param bucketIndex 当前桶的全局索引
      * @param mainBucketIndex 当前桶所属的主桶索引
      */

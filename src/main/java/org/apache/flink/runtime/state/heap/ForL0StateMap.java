@@ -60,7 +60,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          TypeSerializer<N> namespaceSerializer,
                          TypeSerializer<S> stateSerializer,
                          boolean l0CacheEnabled) {
-        // 委托到带策略参数的构造函数，默认使用 RANDOM 策略
+        // 委托到带策略参数的构造函数，默认使用 CLOCK 策略（推荐）
         this(
             allocator,
             mainTableInitPow2,
@@ -69,7 +69,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             namespaceSerializer,
             stateSerializer,
             l0CacheEnabled,
-            L0Table.ReplacementPolicy.RANDOM
+            L0Table.ReplacementPolicy.CLOCK // CLOCK 策略：低开销、高性能的近似LRU
         );
     }
 
@@ -406,12 +406,16 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         }
         long result = mainTable.put(knh.hash, knh.tag, 0, knh.keyBytes, knh.keyLength,
                 knh.namespaceBytes, knh.namespaceLength, entryArena);
-        // TODO: 这时扩展桶池不应该满，需要改进扩容逻辑
+        
+        // 经过 MainTable 优化后，put 返回 -1 表示严重错误（扩容逻辑失效）
+        // 正常情况下 needsResize 标志应该在达到扩展桶上限前就被设置
         if (result == -1) {
-            // 扩展桶池满，强制扩容并重试
-            performResize();
-            result = mainTable.put(knh.hash, knh.tag, 0, knh.keyBytes, knh.keyLength,
-                    knh.namespaceBytes, knh.namespaceLength, entryArena);
+            throw new IllegalStateException(
+                "MainTable.put() returned -1 after resize check. " +
+                "This indicates a critical failure in the resize mechanism. " +
+                "LoadFactor=" + mainTable.getLoadFactor() + 
+                ", MaxExtensionBuckets=" + mainTable.getMaxExtensionBucketsUsed() +
+                ", NeedsResize=" + mainTable.needsResize());
         }
         return result;
     }

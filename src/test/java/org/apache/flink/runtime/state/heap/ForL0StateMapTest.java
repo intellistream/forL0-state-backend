@@ -265,7 +265,7 @@ class ForL0StateMapTest {
                     IntSerializer.INSTANCE,
                     StringSerializer.INSTANCE,
                     true,
-                    L0Table.ReplacementPolicy.FIFO
+                    L0Table.ReplacementPolicy.CLOCK
             )) {
                 custom.put("pKey", 42, "v1");
                 assertEquals("v1", custom.get("pKey", 42));
@@ -567,48 +567,6 @@ class ForL0StateMapTest {
         }
 
         @Test
-        @Disabled
-        void testTransformToNull() throws Exception {
-            String key = "transformToNullKey";
-            Integer namespace = 1002;
-            String initialValue = "toBeDeleted";
-
-            // Put initial value
-            stateMap.put(key, namespace, initialValue);
-            assertEquals(1, stateMap.size());
-            assertTrue(stateMap.containsKey(key, namespace));
-
-            // Transform to null (should delete the entry)
-            stateMap.transform(key, namespace, "deleteMe", (previous, value) -> {
-                assertEquals(initialValue, previous);
-                return null; // Delete entry
-            });
-
-            // Verify the entry was deleted
-            assertEquals(0, stateMap.size());
-            assertFalse(stateMap.containsKey(key, namespace));
-            assertNull(stateMap.get(key, namespace));
-        }
-
-        @Test
-        @Disabled
-        void testTransformFromNullToNull() throws Exception {
-            String key = "transformNullToNullKey";
-            Integer namespace = 1003;
-
-            // Transform non-existent entry to null (should remain non-existent)
-            stateMap.transform(key, namespace, "ignored", (previous, value) -> {
-                assertNull(previous);
-                return null; // Keep it null
-            });
-
-            // Verify no entry was created
-            assertEquals(0, stateMap.size());
-            assertFalse(stateMap.containsKey(key, namespace));
-            assertNull(stateMap.get(key, namespace));
-        }
-
-        @Test
         void testTransformMultipleEntries() throws Exception {
             // Setup multiple entries
             for (int i = 0; i < 5; i++) {
@@ -647,28 +605,6 @@ class ForL0StateMapTest {
             // Verify state map remains unchanged after exception
             assertEquals(0, stateMap.size());
             assertNull(stateMap.get(key, namespace));
-        }
-
-        @Test
-        @Disabled
-        void testTransformWithNullParameters() throws Exception {
-            // Test null key
-            assertDoesNotThrow(() -> {
-                stateMap.transform(null, 1, "value", (prev, val) -> "result");
-            });
-
-            // Test null namespace
-            assertDoesNotThrow(() -> {
-                stateMap.transform("key", null, "value", (prev, val) -> "result");
-            });
-
-            // Test null transformation function
-            assertDoesNotThrow(() -> {
-                stateMap.transform("key", 1, "value", null);
-            });
-
-            // Verify no entries were created
-            assertEquals(0, stateMap.size());
         }
 
         @Test

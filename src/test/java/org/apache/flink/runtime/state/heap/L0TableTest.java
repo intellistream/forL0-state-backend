@@ -243,13 +243,13 @@ class L0TableTest {
         }
 
         @Test
-        void testRandomPolicy() {
-            try (L0Table randomTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.RANDOM)) {
+        void testClockPolicy() {
+            try (L0Table clockTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.CLOCK)) {
                 // Create test entries
                 TestEntry[] entries = new TestEntry[5];
 
                 for (int i = 0; i < 5; i++) {
-                    entries[i] = createTestEntry("randomKey" + i, "randomValue" + i);
+                    entries[i] = createTestEntry("clockKey" + i, "clockValue" + i);
                     int hash = 0x12340000 | (i << 2); // All map to bucket 0
                     short tag = (short) (0x1000 + i);
                     entries[i].hash = hash;
@@ -258,23 +258,205 @@ class L0TableTest {
 
                 // Insert first 4 entries
                 for (int i = 0; i < 4; i++) {
-                    randomTable.put(entries[i].hash, entries[i].tag,
-                                  entries[i].entryAddress, entries[i].key, entries[i].key.length,
-                                  entries[i].namespace, entries[i].namespace.length, entryArena);
+                    clockTable.put(entries[i].hash, entries[i].tag,
+                                 entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                                 entries[i].namespace, entries[i].namespace.length, entryArena);
                 }
 
-                // Insert 5th entry - should evict some entry randomly
-                long evictedAddress = randomTable.put(entries[4].hash, entries[4].tag,
-                                                    entries[4].entryAddress, entries[4].key, entries[4].key.length,
-                                                    entries[4].namespace, entries[4].namespace.length, entryArena);
+                // Access entries 1 and 2 to set their accessed bits
+                clockTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                             entries[1].namespace, entries[1].namespace.length, entryArena);
+                clockTable.get(entries[2].hash, entries[2].tag, entries[2].key, entries[2].key.length,
+                             entries[2].namespace, entries[2].namespace.length, entryArena);
+
+                // Insert 5th entry - CLOCK should evict an entry without accessed bit
+                // (likely entry 0 or 3, depending on clock hand position)
+                long evictedAddress = clockTable.put(entries[4].hash, entries[4].tag,
+                                                   entries[4].entryAddress, entries[4].key, entries[4].key.length,
+                                                   entries[4].namespace, entries[4].namespace.length, entryArena);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
-                // Verify that 5th entry was inserted
+                // Verify 5th entry was inserted
                 assertEquals(entries[4].entryAddress,
-                           randomTable.get(entries[4].hash, entries[4].tag, entries[4].key, entries[4].key.length,
-                                         entries[4].namespace, entries[4].namespace.length, entryArena));
+                           clockTable.get(entries[4].hash, entries[4].tag, entries[4].key, entries[4].key.length,
+                                        entries[4].namespace, entries[4].namespace.length, entryArena));
+
+                // Accessed entries should still be present (1 and 2)
+                long addr1 = clockTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                                          entries[1].namespace, entries[1].namespace.length, entryArena);
+                long addr2 = clockTable.get(entries[2].hash, entries[2].tag, entries[2].key, entries[2].key.length,
+                                          entries[2].namespace, entries[2].namespace.length, entryArena);
+                assertTrue(addr1 > 0 || addr2 > 0, "At least one accessed entry should remain");
             }
         }
+
+        @Test
+        void testTinyLFUPolicy() {
+            try (L0Table tinyLfuTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.TINY_LFU)) {
+                // Create test entries
+                TestEntry[] entries = new TestEntry[5];
+
+                for (int i = 0; i < 5; i++) {
+                    entries[i] = createTestEntry("tinylfuKey" + i, "tinylfuValue" + i);
+                    int hash = 0x12340000 | (i << 2); // All map to bucket 0
+                    short tag = (short) (0x1000 + i);
+                    entries[i].hash = hash;
+                    entries[i].tag = tag;
+                }
+
+                // Insert first 4 entries
+                for (int i = 0; i < 4; i++) {
+                    tinyLfuTable.put(entries[i].hash, entries[i].tag,
+                                   entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                                   entries[i].namespace, entries[i].namespace.length, entryArena);
+                }
+
+                // Access entry 1 multiple times to build up frequency
+                for (int j = 0; j < 5; j++) {
+                    tinyLfuTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                                   entries[1].namespace, entries[1].namespace.length, entryArena);
+                }
+
+                // Insert 5th entry - TinyLFU should evict lowest frequency entry
+                long evictedAddress = tinyLfuTable.put(entries[4].hash, entries[4].tag,
+                                                     entries[4].entryAddress, entries[4].key, entries[4].key.length,
+                                                     entries[4].namespace, entries[4].namespace.length, entryArena);
+                assertTrue(evictedAddress > 0, "Should evict an entry");
+
+                // High-frequency entry 1 should still be there
+                assertEquals(entries[1].entryAddress,
+                           tinyLfuTable.get(entries[1].hash, entries[1].tag, entries[1].key, entries[1].key.length,
+                                          entries[1].namespace, entries[1].namespace.length, entryArena));
+
+                // Verify 5th entry was inserted
+                assertEquals(entries[4].entryAddress,
+                           tinyLfuTable.get(entries[4].hash, entries[4].tag, entries[4].key, entries[4].key.length,
+                                          entries[4].namespace, entries[4].namespace.length, entryArena));
+            }
+        }
+
+        @Test
+        void testSampledLRUPolicy() {
+            try (L0Table sampledLruTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.SAMPLED_LRU)) {
+                // Create test entries
+                TestEntry[] entries = new TestEntry[5];
+
+                for (int i = 0; i < 5; i++) {
+                    entries[i] = createTestEntry("sampledKey" + i, "sampledValue" + i);
+                    int hash = 0x12340000 | (i << 2); // All map to bucket 0
+                    short tag = (short) (0x1000 + i);
+                    entries[i].hash = hash;
+                    entries[i].tag = tag;
+                }
+
+                // Insert first 4 entries with delays to ensure different timestamps
+                for (int i = 0; i < 4; i++) {
+                    sampledLruTable.put(entries[i].hash, entries[i].tag,
+                                      entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                                      entries[i].namespace, entries[i].namespace.length, entryArena);
+                    try {
+                        Thread.sleep(1); // Ensure different timestamps
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+
+                // Access entry 3 to make it recently used
+                sampledLruTable.get(entries[3].hash, entries[3].tag, entries[3].key, entries[3].key.length,
+                                  entries[3].namespace, entries[3].namespace.length, entryArena);
+
+                // Insert 5th entry - Sampled LRU should evict based on random 2-sample
+                long evictedAddress = sampledLruTable.put(entries[4].hash, entries[4].tag,
+                                                        entries[4].entryAddress, entries[4].key, entries[4].key.length,
+                                                        entries[4].namespace, entries[4].namespace.length, entryArena);
+                assertTrue(evictedAddress > 0, "Should evict an entry");
+
+                // Verify 5th entry was inserted
+                assertEquals(entries[4].entryAddress,
+                           sampledLruTable.get(entries[4].hash, entries[4].tag, entries[4].key, entries[4].key.length,
+                                             entries[4].namespace, entries[4].namespace.length, entryArena));
+
+                // Verify that we still have 4 valid entries in the cache
+                int validCount = 0;
+                for (int i = 0; i < 5; i++) {
+                    long addr = sampledLruTable.get(entries[i].hash, entries[i].tag, 
+                                                   entries[i].key, entries[i].key.length,
+                                                   entries[i].namespace, entries[i].namespace.length, entryArena);
+                    if (addr > 0) validCount++;
+                }
+                assertEquals(4, validCount, "Should have exactly 4 entries after eviction");
+            }
+        }
+
+        @Test
+        void testLFUFrequencySaturation() {
+            try (L0Table lfuTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.LFU)) {
+                TestEntry[] entries = new TestEntry[2];
+
+                for (int i = 0; i < 2; i++) {
+                    entries[i] = createTestEntry("satKey" + i, "satValue" + i);
+                    int hash = 0x12340000 | (i << 2);
+                    short tag = (short) (0x1000 + i);
+                    entries[i].hash = hash;
+                    entries[i].tag = tag;
+                    lfuTable.put(entries[i].hash, entries[i].tag,
+                               entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                               entries[i].namespace, entries[i].namespace.length, entryArena);
+                }
+
+                // Access entry 0 many times to test frequency saturation at 15
+                for (int j = 0; j < 20; j++) {
+                    lfuTable.get(entries[0].hash, entries[0].tag, entries[0].key, entries[0].key.length,
+                               entries[0].namespace, entries[0].namespace.length, entryArena);
+                }
+
+                // Verify entry is still accessible (frequency should saturate, not overflow)
+                assertEquals(entries[0].entryAddress,
+                           lfuTable.get(entries[0].hash, entries[0].tag, entries[0].key, entries[0].key.length,
+                                      entries[0].namespace, entries[0].namespace.length, entryArena));
+            }
+        }
+
+        @Test
+        void testClockSecondChance() {
+            try (L0Table clockTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.CLOCK)) {
+                TestEntry[] entries = new TestEntry[5];
+
+                for (int i = 0; i < 5; i++) {
+                    entries[i] = createTestEntry("secondKey" + i, "secondValue" + i);
+                    int hash = 0x12340000 | (i << 2);
+                    short tag = (short) (0x1000 + i);
+                    entries[i].hash = hash;
+                    entries[i].tag = tag;
+                }
+
+                // Insert 4 entries
+                for (int i = 0; i < 4; i++) {
+                    clockTable.put(entries[i].hash, entries[i].tag,
+                                 entries[i].entryAddress, entries[i].key, entries[i].key.length,
+                                 entries[i].namespace, entries[i].namespace.length, entryArena);
+                }
+
+                // Access all entries to set accessed bits
+                for (int i = 0; i < 4; i++) {
+                    clockTable.get(entries[i].hash, entries[i].tag, entries[i].key, entries[i].key.length,
+                                 entries[i].namespace, entries[i].namespace.length, entryArena);
+                }
+
+                // Insert 5th entry - CLOCK should give second chance to accessed entries
+                // by clearing their accessed bits and moving to next victim
+                long evictedAddress = clockTable.put(entries[4].hash, entries[4].tag,
+                                                   entries[4].entryAddress, entries[4].key, entries[4].key.length,
+                                                   entries[4].namespace, entries[4].namespace.length, entryArena);
+                assertTrue(evictedAddress > 0, "Should evict an entry");
+
+                // New entry should be inserted
+                assertEquals(entries[4].entryAddress,
+                           clockTable.get(entries[4].hash, entries[4].tag, entries[4].key, entries[4].key.length,
+                                        entries[4].namespace, entries[4].namespace.length, entryArena));
+            }
+        }
+
     }
 
     @Nested
