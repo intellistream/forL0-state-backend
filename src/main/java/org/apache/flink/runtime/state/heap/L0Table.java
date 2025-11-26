@@ -1,7 +1,7 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
-import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 
 import java.util.List;
 import java.util.Random;
@@ -12,7 +12,11 @@ import java.util.Random;
  * Each slot contains: tag(2B) + valid(1B) + extension(5B) + pointer(8B) = 16B
  * Supports configurable replacement algorithms (LRU, LFU, etc.) for cache management.
  *
- * Uses MemorySegment operations instead of Unsafe for better safety and compatibility.
+ * <p>Uses L0MemoryAllocator for memory allocation, which is separate from the
+ * MemoryManager-managed memory used by MainTable and EntryArena. L0 memory
+ * may be backed by specialized hardware (CXL memory, PMEM) via JNI native methods.
+ *
+ * <p>Uses MemorySegment operations instead of Unsafe for better safety and compatibility.
  */
 public class L0Table implements AutoCloseable {
 
@@ -44,7 +48,7 @@ public class L0Table implements AutoCloseable {
         SAMPLED_LRU  // Random sampling + LRU (lightweight)
     }
 
-    private final MemoryManagerAllocator allocator;
+    private final L0MemoryAllocator l0Allocator;
     private final int bucketCount;
     private final List<MemorySegment> memorySegments;
     private final ReplacementPolicy replacementPolicy;
@@ -62,31 +66,30 @@ public class L0Table implements AutoCloseable {
     /**
      * Creates an L0 Table with specified number of buckets and CLOCK replacement policy.
      *
-     * @param allocator Memory allocator for L0 region
+     * @param l0Allocator L0 memory allocator for L0 region
      * @param bucketCountPow2 Number of buckets as power of 2
      */
-    public L0Table(MemoryManagerAllocator allocator, int bucketCountPow2) {
-        this(allocator, bucketCountPow2, ReplacementPolicy.CLOCK);
+    public L0Table(L0MemoryAllocator l0Allocator, int bucketCountPow2) {
+        this(l0Allocator, bucketCountPow2, ReplacementPolicy.CLOCK);
     }
 
     /**
      * Creates an L0 Table with specified number of buckets and replacement policy.
      *
-     * @param allocator Memory allocator for L0 region
+     * @param l0Allocator L0 memory allocator for L0 region
      * @param bucketCountPow2 Number of buckets as power of 2
      * @param replacementPolicy Replacement algorithm to use
      */
-    public L0Table(MemoryManagerAllocator allocator, int bucketCountPow2, ReplacementPolicy replacementPolicy) {
-        this.allocator = allocator;
+    public L0Table(L0MemoryAllocator l0Allocator, int bucketCountPow2, ReplacementPolicy replacementPolicy) {
+        this.l0Allocator = l0Allocator;
         this.bucketCount = 1 << bucketCountPow2;
         this.replacementPolicy = replacementPolicy;
         this.random = (replacementPolicy == ReplacementPolicy.SAMPLED_LRU) ? new Random() : null;
 
         try {
-            // Allocate memory segments for L0 table using the dedicated L0 allocation interface
+            // Allocate memory segments for L0 table using L0 memory allocator
             long totalSize = (long) bucketCount * BUCKET_SIZE;
-            // Use allocateL0 instead of allocate for L0-specific memory allocation
-            this.memorySegments = allocator.allocateL0((int) totalSize);
+            this.memorySegments = l0Allocator.allocate((int) totalSize);
 
             // Initialize all slots as invalid
             clearAllSlots();
@@ -590,7 +593,7 @@ public class L0Table implements AutoCloseable {
     @Override
     public void close() {
         if (memorySegments != null) {
-            allocator.release(memorySegments);
+            l0Allocator.release(memorySegments);
         }
     }
 

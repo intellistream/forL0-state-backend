@@ -6,6 +6,7 @@ import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.apache.flink.runtime.state.heap.io.SerializerPack;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.space.MemorySegmentSlice;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
@@ -23,7 +24,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMap.class);
 
     // Core storage components
-    private final MemoryManagerAllocator allocator;
+    private final MemoryManagerAllocator allocator;  // For MainTable and EntryArena
+    private final L0MemoryAllocator l0Allocator;     // For L0Table (nullable)
     private final EntryArena entryArena;
     // 直接管理表实例，移除 TableCore 中间层
     private final MainTable mainTable;
@@ -54,6 +56,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private KeyNamespaceHash lastKeyNamespaceHash;
 
     public ForL0StateMap(MemoryManagerAllocator allocator,
+                         L0MemoryAllocator l0Allocator,
                          int mainTableInitPow2,
                          int l0CacheSizePow2,
                          TypeSerializer<K> keySerializer,
@@ -63,6 +66,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         // 委托到带策略参数的构造函数，默认使用 CLOCK 策略（推荐）
         this(
             allocator,
+            l0Allocator,
             mainTableInitPow2,
             l0CacheSizePow2,
             keySerializer,
@@ -75,6 +79,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     // 允许注入 L0 替换策略的构造函数
     public ForL0StateMap(MemoryManagerAllocator allocator,
+                         L0MemoryAllocator l0Allocator,
                          int mainTableInitPow2,
                          int l0CacheSizePow2,
                          TypeSerializer<K> keySerializer,
@@ -83,13 +88,16 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          boolean l0CacheEnabled,
                          L0Table.ReplacementPolicy l0Policy) {
         this.allocator = allocator;
+        this.l0Allocator = l0Allocator;
         // 直接使用 SerializerPack，移除冗余的序列化器引用
         this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
         this.l0CacheEnabled = l0CacheEnabled;
         this.entryArena = new EntryArena(allocator);
-        // 分别创建 MainTable 和 L0Table，移除 TableCore 中间层
+        // MainTable 使用 MemoryManagerAllocator，L0Table 使用 L0MemoryAllocator
         this.mainTable = new MainTable(allocator, mainTableInitPow2, 1.5); // 负载因子阈值
-        this.l0Table = l0CacheEnabled ? new L0Table(allocator, l0CacheSizePow2, l0Policy) : null;
+        this.l0Table = (l0CacheEnabled && l0Allocator != null) 
+            ? new L0Table(l0Allocator, l0CacheSizePow2, l0Policy) 
+            : null;
 
         LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}",
                 1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled);

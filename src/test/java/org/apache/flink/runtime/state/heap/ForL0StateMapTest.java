@@ -4,6 +4,8 @@ import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.junit.jupiter.api.*;
@@ -21,6 +23,7 @@ class ForL0StateMapTest {
 
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
+    private L0MemoryAllocator l0Allocator;
     private ForL0StateMap<String, Integer, String> stateMap;
     private Object owner;
 
@@ -32,10 +35,12 @@ class ForL0StateMapTest {
                 .build();
         owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
+        l0Allocator = new HeapL0MemoryAllocator();
 
         // Create ForL0StateMap with L0 cache enabled
         stateMap = new ForL0StateMap<>(
             allocator,
+            l0Allocator,
             4, // MainTable: 16 buckets
             3, // L0Table: 8 buckets
             StringSerializer.INSTANCE,
@@ -49,6 +54,9 @@ class ForL0StateMapTest {
     void tearDown() throws Exception {
         if (stateMap != null) {
             stateMap.close();
+        }
+        if (l0Allocator != null && !l0Allocator.isClosed()) {
+            l0Allocator.close();
         }
         if (allocator != null && !allocator.isClosed()) {
             allocator.close();
@@ -227,7 +235,7 @@ class ForL0StateMapTest {
         void testMainTableHitWithL0Promotion() {
             // Create a state map without L0 cache first
             try (ForL0StateMap<String, Integer, String> noCacheMap = new ForL0StateMap<>(
-                    allocator, 4, 3, StringSerializer.INSTANCE, IntSerializer.INSTANCE, StringSerializer.INSTANCE, false)) {
+                    allocator, null, 4, 3, StringSerializer.INSTANCE, IntSerializer.INSTANCE, StringSerializer.INSTANCE, false)) {
 
                 String key = "promotionKey";
                 Integer namespace = 700;
@@ -259,6 +267,7 @@ class ForL0StateMapTest {
         void testConstructWithCustomL0Policy() throws Exception {
             try (ForL0StateMap<String, Integer, String> custom = new ForL0StateMap<>(
                     allocator,
+                    l0Allocator,
                     4,
                     3,
                     StringSerializer.INSTANCE,
@@ -380,6 +389,7 @@ class ForL0StateMapTest {
             // 使用极小的主表容量以快速触发扩容：2 buckets (pow2=1)
             smallMap = new ForL0StateMap<>(
                 allocator,
+                l0Allocator,
                 1, // 2 buckets; 新负载因子阈值 1.5 * 2 = 3 entries 即标记需扩容（旧注释: 0.75 * 12=9 已废弃）
                 2, // L0 4 buckets
                 StringSerializer.INSTANCE,

@@ -14,10 +14,11 @@ import java.util.Map;
 
 /**
  * A memory allocator that uses Flink's MemoryManager to allocate and manage off-heap memory segments.
+ * This allocator is used for MainTable and EntryArena.
  * This allocator is single-threaded as Flink Task state access is single-threaded.
  * Supports both regular segment allocation and aligned memory allocation.
  */
-public final class MemoryManagerAllocator implements HybridMemoryAllocator {
+public final class MemoryManagerAllocator implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(MemoryManagerAllocator.class);
 
@@ -54,7 +55,6 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
         LOG.debug("Created MemoryManagerAllocator with page size: {} bytes", pageSize);
     }
 
-    @Override
     public List<MemorySegment> allocate(int bytes) throws MemoryAllocationException {
         ensureOpen();
 
@@ -85,7 +85,6 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
         }
     }
 
-    @Override
     public long allocateAligned(long size, int alignment) throws MemoryAllocationException {
         ensureOpen();
 
@@ -140,17 +139,6 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
         }
     }
 
-    @Override
-    public List<MemorySegment> allocateL0(int bytes) throws MemoryAllocationException {
-        ensureOpen();
-
-        // Currently, this is a reserved interface for future L0 integration
-        // For now, we simply delegate to the regular allocate method
-        LOG.debug("Allocating L0 memory using regular allocation (reserved interface), bytes: {}", bytes);
-        return allocate(bytes);
-    }
-
-    @Override
     public void release(List<MemorySegment> segments) {
         if (segments == null || segments.isEmpty()) {
             return;
@@ -176,7 +164,6 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
         }
     }
 
-    @Override
     public void deallocate(long address, long size) {
         // 忽略无效地址的释放请求（常见于测试用例），避免产生误导性告警
         if (address == 0L) {
@@ -201,12 +188,10 @@ public final class MemoryManagerAllocator implements HybridMemoryAllocator {
         }
     }
 
-    @Override
     public int getPageSize() {
         return pageSize;
     }
 
-    @Override
     public boolean isClosed() {
         return closed;
     }

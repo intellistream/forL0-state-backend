@@ -4,6 +4,8 @@ import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
@@ -29,6 +31,7 @@ public class ForL0StateMapStressTest {
 
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
+    private L0MemoryAllocator l0Allocator;
     private ForL0StateMap<Integer, String, String> stateMap;
     private Object owner;
 
@@ -40,8 +43,10 @@ public class ForL0StateMapStressTest {
                 .build();
         owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
+        l0Allocator = new HeapL0MemoryAllocator();
         stateMap = new ForL0StateMap<>(
                 allocator,
+                l0Allocator,
                 16, // mainTable 64K buckets - 恢复到合理大小
                 10, // l0Cache 1K buckets
                 IntSerializer.INSTANCE,
@@ -55,6 +60,9 @@ public class ForL0StateMapStressTest {
     void tearDown() throws Exception {
         if (stateMap != null) {
             stateMap.close();
+        }
+        if (l0Allocator != null && !l0Allocator.isClosed()) {
+            l0Allocator.close();
         }
         if (allocator != null) {
             allocator.close();
@@ -534,6 +542,7 @@ public class ForL0StateMapStressTest {
             // 初始仅2 buckets 便于快速触发扩容
             smallMap = new ForL0StateMap<>(
                     allocator,
+                    l0Allocator,
                     1,   // mainTable 2 buckets
                     2,   // l0 4 buckets
                     IntSerializer.INSTANCE,
@@ -671,6 +680,7 @@ public class ForL0StateMapStressTest {
             stateMap.close();
             stateMap = new ForL0StateMap<>(
                     allocator,
+                    l0Allocator,
                     16, 10,
                     IntSerializer.INSTANCE,
                     StringSerializer.INSTANCE,
@@ -1033,6 +1043,7 @@ public class ForL0StateMapStressTest {
         private StateMap<String, String, Integer> createForL0StateMapInteger() {
             return new ForL0StateMap<>(
                 allocator,
+                l0Allocator,
                 16, // mainTable 64K buckets
                 10, // l0Cache 1K buckets
                 StringSerializer.INSTANCE,

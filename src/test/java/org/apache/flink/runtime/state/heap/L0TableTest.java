@@ -2,6 +2,8 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 import org.junit.jupiter.api.AfterEach;
@@ -23,6 +25,7 @@ class L0TableTest {
 
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
+    private L0MemoryAllocator l0Allocator;
     private EntryArena entryArena;
     private L0Table l0Table;
     private Object owner;
@@ -35,10 +38,11 @@ class L0TableTest {
                 .build();
         owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
+        l0Allocator = new HeapL0MemoryAllocator();
         entryArena = new EntryArena(allocator);
 
         // Create L0Table with 4 buckets (2^2) and 4 slots per bucket = 16 total slots
-        l0Table = new L0Table(allocator, 2);
+        l0Table = new L0Table(l0Allocator, 2);
     }
 
     @AfterEach
@@ -48,6 +52,9 @@ class L0TableTest {
         }
         if (entryArena != null) {
             entryArena.close();
+        }
+        if (l0Allocator != null && !l0Allocator.isClosed()) {
+            l0Allocator.close();
         }
         if (allocator != null && !allocator.isClosed()) {
             allocator.close();
@@ -163,7 +170,7 @@ class L0TableTest {
 
         @Test
         void testLRUPolicy() {
-            try (L0Table lruTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.LRU)) {
+            try (L0Table lruTable = new L0Table(l0Allocator, 2, L0Table.ReplacementPolicy.LRU)) {
                 // Fill all 4 slots in bucket 0 (force same bucket using hash & 3 = 0)
                 TestEntry[] entries = new TestEntry[5];  // 5 entries, 4 slots
 
@@ -204,7 +211,7 @@ class L0TableTest {
 
         @Test
         void testLFUPolicy() {
-            try (L0Table lfuTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.LFU)) {
+            try (L0Table lfuTable = new L0Table(l0Allocator, 2, L0Table.ReplacementPolicy.LFU)) {
                 // Create test entries
                 TestEntry[] entries = new TestEntry[5];
 
@@ -244,7 +251,7 @@ class L0TableTest {
 
         @Test
         void testClockPolicy() {
-            try (L0Table clockTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.CLOCK)) {
+            try (L0Table clockTable = new L0Table(l0Allocator, 2, L0Table.ReplacementPolicy.CLOCK)) {
                 // Create test entries
                 TestEntry[] entries = new TestEntry[5];
 
@@ -292,7 +299,7 @@ class L0TableTest {
 
         @Test
         void testTinyLFUPolicy() {
-            try (L0Table tinyLfuTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.TINY_LFU)) {
+            try (L0Table tinyLfuTable = new L0Table(l0Allocator, 2, L0Table.ReplacementPolicy.TINY_LFU)) {
                 // Create test entries
                 TestEntry[] entries = new TestEntry[5];
 
@@ -337,7 +344,7 @@ class L0TableTest {
 
         @Test
         void testSampledLRUPolicy() {
-            try (L0Table sampledLruTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.SAMPLED_LRU)) {
+            try (L0Table sampledLruTable = new L0Table(l0Allocator, 2, L0Table.ReplacementPolicy.SAMPLED_LRU)) {
                 // Create test entries
                 TestEntry[] entries = new TestEntry[5];
 
@@ -390,7 +397,7 @@ class L0TableTest {
 
         @Test
         void testLFUFrequencySaturation() {
-            try (L0Table lfuTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.LFU)) {
+            try (L0Table lfuTable = new L0Table(l0Allocator, 2, L0Table.ReplacementPolicy.LFU)) {
                 TestEntry[] entries = new TestEntry[2];
 
                 for (int i = 0; i < 2; i++) {
@@ -419,7 +426,7 @@ class L0TableTest {
 
         @Test
         void testClockSecondChance() {
-            try (L0Table clockTable = new L0Table(allocator, 2, L0Table.ReplacementPolicy.CLOCK)) {
+            try (L0Table clockTable = new L0Table(l0Allocator, 2, L0Table.ReplacementPolicy.CLOCK)) {
                 TestEntry[] entries = new TestEntry[5];
 
                 for (int i = 0; i < 5; i++) {

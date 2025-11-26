@@ -4,6 +4,8 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
+import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import javax.annotation.Nonnull;
@@ -15,11 +17,11 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
     @SuppressWarnings("unused")
     private static final MemoryManager currentMemoryManager = new ThreadLocal<MemoryManager>().get();  // Actually this is used by reflection
     private static final ThreadLocal<MemoryManager> MEMORY_MANAGER_HOLDER = new ThreadLocal<>();
-    // 新增：通过ThreadLocal在构造阶段传递是否启用L0缓存
+    // 通过ThreadLocal在构造阶段传递是否启用L0缓存
     private static final ThreadLocal<Boolean> L0_CACHE_ENABLED_HOLDER = new ThreadLocal<>();
 
     private final MemoryManager memoryManager;
-    // 新增：记录是否启用L0缓存
+    // 记录是否启用L0缓存
     private final boolean l0CacheEnabled;
 
     // Private constructor that uses the pre-stored MemoryManager
@@ -56,7 +58,7 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         }
     }
 
-    // 新增：可显式指定是否启用L0缓存
+    // 可显式指定是否启用L0缓存
     public static <K, N, S> ForL0StateTable<K, N, S> create(
             InternalKeyContext<K> keyContext,
             RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
@@ -86,8 +88,13 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
             throw new IllegalStateException("MemoryManager is not available in createStateMap()");
         }
 
+        // L0MemoryAllocator 是我们自己创建的，不需要通过 ThreadLocal 传递
+        // 仅在启用 L0 缓存时创建
+        L0MemoryAllocator l0Allocator = this.l0CacheEnabled ? new HeapL0MemoryAllocator() : null;
+
         return new ForL0StateMap<>(
                 new MemoryManagerAllocator(mm, this),
+                l0Allocator,  // L0 memory allocator (null if L0 disabled)
                 10, // MainTable
                 10, // L0Table
                 getKeySerializer(),

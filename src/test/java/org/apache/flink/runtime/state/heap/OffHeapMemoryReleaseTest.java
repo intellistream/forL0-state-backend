@@ -2,6 +2,8 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
@@ -23,6 +25,7 @@ public class OffHeapMemoryReleaseTest {
 
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
+    private L0MemoryAllocator l0Allocator;
 
     @BeforeEach
     void setup() {
@@ -31,10 +34,14 @@ public class OffHeapMemoryReleaseTest {
                 .setMemorySize(TOTAL_MEMORY)
                 .build();
         allocator = new MemoryManagerAllocator(memoryManager, this);
+        l0Allocator = new HeapL0MemoryAllocator();
     }
 
     @AfterEach
-    void teardown() {
+    void teardown() throws Exception {
+        if (l0Allocator != null && !l0Allocator.isClosed()) {
+            l0Allocator.close();
+        }
         if (allocator != null && !allocator.isClosed()) {
             allocator.close();
         }
@@ -48,6 +55,7 @@ public class OffHeapMemoryReleaseTest {
         // Build a ForL0StateMap with default FREE_LIST Arena
         ForL0StateMap<Integer, String, Integer> map = new ForL0StateMap<>(
                 allocator,
+                l0Allocator,
                 10, // main table buckets: 1<<10
                 10, // l0 cache buckets: 1<<10
                 IntSerializer.INSTANCE,
