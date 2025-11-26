@@ -3,6 +3,12 @@ package org.apache.flink.runtime.state.heap.space;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+
 /**
  * JNI bridge for native L0 memory allocation.
  * This class provides native methods for allocating and freeing memory
@@ -41,17 +47,85 @@ public final class NativeL0Memory {
 
     /**
      * Attempts to load the native library.
+     * First tries System.loadLibrary (for java.library.path),
+     * then tries to extract from JAR resources.
      */
     private static void loadNativeLibrary() {
+        // First try standard library path
         try {
             System.loadLibrary(LIBRARY_NAME);
             nativeAvailable = true;
-            LOG.info("Successfully loaded native L0 memory library: {}", LIBRARY_NAME);
+            LOG.info("Successfully loaded native L0 memory library from system path: {}", LIBRARY_NAME);
+            return;
         } catch (UnsatisfiedLinkError e) {
-            loadError = e.getMessage();
-            nativeAvailable = false;
-            LOG.warn("Failed to load native L0 memory library '{}': {}. " +
-                     "L0Table will not be available.", LIBRARY_NAME, e.getMessage());
+            LOG.debug("Native library not found in system path, trying to extract from JAR: {}", e.getMessage());
+        }
+
+        // Try to extract from JAR
+        try {
+            File extractedLib = extractNativeLibraryFromJar();
+            if (extractedLib != null) {
+                System.load(extractedLib.getAbsolutePath());
+                nativeAvailable = true;
+                LOG.info("Successfully loaded native L0 memory library from JAR: {}", extractedLib.getAbsolutePath());
+                return;
+            }
+        } catch (Exception e) {
+            LOG.debug("Failed to extract native library from JAR: {}", e.getMessage());
+        }
+
+        loadError = "Native library '" + LIBRARY_NAME + "' not found in java.library.path or JAR resources";
+        nativeAvailable = false;
+        LOG.warn("Failed to load native L0 memory library '{}': {}. L0Table will not be available.", 
+                 LIBRARY_NAME, loadError);
+    }
+
+    /**
+     * Extracts the native library from JAR resources to a temporary file.
+     *
+     * @return the extracted library file, or null if not found
+     */
+    private static File extractNativeLibraryFromJar() throws IOException {
+        String osName = System.getProperty("os.name").toLowerCase();
+        String libExtension;
+        String libPrefix = "lib";
+
+        if (osName.contains("mac") || osName.contains("darwin")) {
+            libExtension = ".dylib";
+        } else if (osName.contains("win")) {
+            libExtension = ".dll";
+            libPrefix = "";
+        } else {
+            // Linux and others
+            libExtension = ".so";
+        }
+
+        String libFileName = libPrefix + LIBRARY_NAME + libExtension;
+        String resourcePath = "/native/" + libFileName;
+
+        try (InputStream is = NativeL0Memory.class.getResourceAsStream(resourcePath)) {
+            if (is == null) {
+                LOG.debug("Native library resource not found: {}", resourcePath);
+                return null;
+            }
+
+            // Create temp file with proper extension
+            File tempDir = Files.createTempDirectory("forl0_native").toFile();
+            tempDir.deleteOnExit();
+            File tempFile = new File(tempDir, libFileName);
+            tempFile.deleteOnExit();
+
+            // Copy library to temp file
+            try (FileOutputStream fos = new FileOutputStream(tempFile)) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = is.read(buffer)) != -1) {
+                    fos.write(buffer, 0, bytesRead);
+                }
+            }
+
+            LOG.debug("Extracted native library to: {}", tempFile.getAbsolutePath());
+            return tempFile;
         }
     }
 
