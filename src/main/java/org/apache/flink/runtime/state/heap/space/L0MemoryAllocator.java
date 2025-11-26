@@ -17,11 +17,7 @@ import java.util.List;
  *     <li>Allocated and managed by native code via JNI</li>
  * </ul>
  *
- * <p>Implementations:
- * <ul>
- *     <li>{@link HeapL0MemoryAllocator} - Temporary implementation using heap memory for development/testing</li>
- *     <li>NativeL0MemoryAllocator - Future implementation using JNI native methods (TODO)</li>
- * </ul>
+ * @see NativeL0MemoryAllocator
  */
 public interface L0MemoryAllocator extends AutoCloseable {
 

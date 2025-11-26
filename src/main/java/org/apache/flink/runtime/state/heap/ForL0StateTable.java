@@ -4,9 +4,9 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
-import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
+import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
@@ -32,7 +32,7 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         this.memoryManager = MEMORY_MANAGER_HOLDER.get();
         // 读取并清理开关的ThreadLocal；默认启用
         Boolean enabled = L0_CACHE_ENABLED_HOLDER.get();
-        this.l0CacheEnabled = enabled == null ? true : enabled;
+        this.l0CacheEnabled = enabled == null || enabled;
         L0_CACHE_ENABLED_HOLDER.remove();
         MEMORY_MANAGER_HOLDER.remove(); // Clean up after use
 
@@ -89,8 +89,8 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         }
 
         // L0MemoryAllocator 是我们自己创建的，不需要通过 ThreadLocal 传递
-        // 仅在启用 L0 缓存时创建
-        L0MemoryAllocator l0Allocator = this.l0CacheEnabled ? new HeapL0MemoryAllocator() : null;
+        // 仅在启用 L0 缓存时创建，使用 JNI native 内存
+        L0MemoryAllocator l0Allocator = this.l0CacheEnabled ? new NativeL0MemoryAllocator() : null;
 
         return new ForL0StateMap<>(
                 new MemoryManagerAllocator(mm, this),

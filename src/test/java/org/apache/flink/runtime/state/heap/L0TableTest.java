@@ -2,7 +2,7 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
-import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
@@ -38,7 +38,7 @@ class L0TableTest {
                 .build();
         owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
-        l0Allocator = new HeapL0MemoryAllocator();
+        l0Allocator = new NativeL0MemoryAllocator();
         entryArena = new EntryArena(allocator);
 
         // Create L0Table with 4 buckets (2^2) and 4 slots per bucket = 16 total slots

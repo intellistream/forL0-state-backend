@@ -4,7 +4,7 @@ import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
-import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.internal.InternalKvState;
@@ -35,7 +35,7 @@ class ForL0StateMapTest {
                 .build();
         owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
-        l0Allocator = new HeapL0MemoryAllocator();
+        l0Allocator = new NativeL0MemoryAllocator();
 
         // Create ForL0StateMap with L0 cache enabled
         stateMap = new ForL0StateMap<>(

@@ -2,7 +2,7 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
-import org.apache.flink.runtime.state.heap.space.HeapL0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.api.common.typeutils.base.IntSerializer;
@@ -34,7 +34,7 @@ public class OffHeapMemoryReleaseTest {
                 .setMemorySize(TOTAL_MEMORY)
                 .build();
         allocator = new MemoryManagerAllocator(memoryManager, this);
-        l0Allocator = new HeapL0MemoryAllocator();
+        l0Allocator = new NativeL0MemoryAllocator();
     }
 
     @AfterEach
