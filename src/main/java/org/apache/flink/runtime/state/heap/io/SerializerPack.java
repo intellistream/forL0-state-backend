@@ -20,9 +20,6 @@ public class SerializerPack<K, N, S> {
     private final ReusableBufferDataOutputView nsOut = new ReusableBufferDataOutputView(128);
     private final ReusableBufferDataOutputView valOut = new ReusableBufferDataOutputView(128);
 
-    // 零拷贝模式的输出视图（复用实例）
-    private final MemorySegmentDataOutputView directOut = new MemorySegmentDataOutputView();
-
     // 零拷贝模式的输入视图（复用实例）
     private final MemorySegmentDataInputView segInput = new MemorySegmentDataInputView();
 
@@ -61,48 +58,6 @@ public class SerializerPack<K, N, S> {
 
     public byte[] stateBuffer() { return valOut.getBuffer(); }
     public int stateLength() { return valOut.getLength(); }
-
-    // ========== 零拷贝模式方法 ==========
-
-    /**
-     * 直接将key序列化到指定的MemorySegment区域
-     * @param key 要序列化的key
-     * @param segment 目标MemorySegment
-     * @param offset 写入偏移量
-     * @param length 可用空间大小
-     * @param spaceAllocator 当空间不足时的分配器（可选）
-     * @return 实际写入的字节数
-     */
-    public int writeKeyDirect(K key, MemorySegment segment, int offset, int length,
-                             MemorySegmentDataOutputView.SpaceAllocator spaceAllocator) throws IOException {
-        directOut.reset(segment, offset, length, spaceAllocator);
-        keySer.serialize(key, directOut);
-        return directOut.getBytesWritten();
-    }
-
-    /**
-     * 直接将namespace序列化到指定的MemorySegment区域
-     */
-    public int writeNamespaceDirect(N namespace, MemorySegment segment, int offset, int length,
-                                   MemorySegmentDataOutputView.SpaceAllocator spaceAllocator) throws IOException {
-        directOut.reset(segment, offset, length, spaceAllocator);
-        nsSer.serialize(namespace, directOut);
-        return directOut.getBytesWritten();
-    }
-
-    /**
-     * 直接将state序列化到指定的MemorySegment区域
-     */
-    public int writeStateDirect(S state, MemorySegment segment, int offset, int length,
-                               MemorySegmentDataOutputView.SpaceAllocator spaceAllocator) throws IOException {
-        if (state == null) {
-            return 0;
-        }
-
-        directOut.reset(segment, offset, length, spaceAllocator);
-        stateSer.serialize(state, directOut);
-        return directOut.getBytesWritten();
-    }
 
     // ========== 零拷贝输入视图访问器 ==========
 
