@@ -2,7 +2,15 @@
 
 ## 概述
 
-L0Table 是 ForL0StateBackend 中用于热键缓存的组件，其内存分配独立于 Flink MemoryManager 管理的内存。L0 内存通过 JNI 调用 C 语言的 `malloc/free` 进行分配和释放，为将来支持 CXL 内存、PMEM 等特殊内存类型预留了扩展接口。
+L0Table 是 ForL0StateBackend 中用于热键缓存的组件，其内存分配独立于 Flink MemoryManager 管理的内存。
+
+**支持两种运行模式：**
+1. **L0 模式**：使用 L0 内存池库 (`libl0mempool.so`) 分配 L0 设备内存（需要 L0 硬件）
+2. **模拟模式**：使用标准 C `malloc/free`（用于开发测试和无 L0 硬件的环境）
+
+**模式自动检测：**
+- 如果 `/dev/hisi_l0` 存在且 `libl0mempool.so` 可加载 → L0 模式
+- 否则 → 模拟模式
 
 ## 架构设计
 
@@ -16,8 +24,26 @@ L0Table 是 ForL0StateBackend 中用于热键缓存的组件，其内存分配�
 │    (MemoryManagerAllocator)    │    (NativeL0MemoryAllocator)   │
 ├────────────────────────────────┼────────────────────────────────┤
 │    Flink MemoryManager         │        JNI Native Memory       │
-│    (Off-heap managed memory)   │      (C malloc/free)           │
+│    (Off-heap managed memory)   │  (L0 mode / Simulation mode)   │
 └────────────────────────────────┴────────────────────────────────┘
+```
+
+### L0 模式 vs 模拟模式
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                       NativeL0Memory (JNI)                          │
+├─────────────────────────────────┬────────────────────────────────────┤
+│          L0 模式                │          模拟模式                   │
+│   (检测到 /dev/hisi_l0)         │   (无 L0 硬件)                      │
+├─────────────────────────────────┼────────────────────────────────────┤
+│   dlopen("libl0mempool.so")     │                                    │
+│            │                    │                                    │
+│   cache_tuner_init()            │                                    │
+│            │                    │                                    │
+│   l0_mem_alloc(tuner, size)     │       malloc(size)                 │
+│   l0_mem_free(tuner, ptr)       │       free(ptr)                    │
+└─────────────────────────────────┴────────────────────────────────────┘
 ```
 
 ### 核心类
@@ -26,7 +52,7 @@ L0Table 是 ForL0StateBackend 中用于热键缓存的组件，其内存分配�
 |------|------|
 | `L0MemoryAllocator` | L0 内存分配器接口 |
 | `NativeL0MemoryAllocator` | JNI 实现，使用 native 内存 |
-| `NativeL0Memory` | JNI 桥接类，声明 native 方法 |
+| `NativeL0Memory` | JNI 桥接类，声明 native 方法，提供模式检测 |
 | `MemoryManagerAllocator` | MainTable 使用，由 Flink MemoryManager 管理 |
 
 ### 设计要点
@@ -34,6 +60,7 @@ L0Table 是 ForL0StateBackend 中用于热键缓存的组件，其内存分配�
 1. **单线程设计**：Flink 状态访问是单线程的，allocator 不需要并发支持
 2. **无降级选项**：L0Allocator 必须使用 native 内存，如果 native 库不可用会抛出异常
 3. **自动提取加载**：native 库可以从 JAR 中自动提取到临时目录加载
+4. **运行时模式检测**：自动检测是否有 L0 硬件，选择合适的分配策略
 
 ## 文件结构
 
@@ -42,14 +69,19 @@ src/main/
 ├── java/org/apache/flink/runtime/state/heap/space/
 │   ├── L0MemoryAllocator.java          # 接口定义
 │   ├── NativeL0MemoryAllocator.java    # JNI 实现
-│   ├── NativeL0Memory.java             # JNI 桥接类
+│   ├── NativeL0Memory.java             # JNI 桥接类（含模式检测 API）
 │   └── MemoryManagerAllocator.java     # MainTable 用
 ├── native/
-│   ├── forl0_native.c                  # C 实现
+│   ├── forl0_native.c                  # C 实现（L0 模式 + 模拟模式）
 │   └── Makefile                        # 构建脚本
 └── resources/native/
-    ├── libforl0_native.dylib           # macOS 动态库
-    └── libforl0_native.so              # Linux 动态库（需在 Linux 上编译）
+    ├── libforl0_native.dylib           # macOS 动态库（仅模拟模式）
+    └── libforl0_native.so              # Linux 动态库
+
+reference/l0_docs/                       # L0 内存库 API 文档
+├── l0_lib_api(2025).md                 # 主要 API 说明
+├── l0_mmap_api.md                      # mmap 方式 API
+└── README.md                           # 安装说明
 ```
 
 ## Native 库加载流程
@@ -73,6 +105,60 @@ NativeL0Memory 类加载
                  └─ 失败 → 抛出异常，L0Table 不可用
 ```
 
+## 模式检测流程
+
+```
+首次调用 malloc/free/getMode 等方法
+        │
+        ▼
+   init_mode() (仅执行一次)
+        │
+        ▼
+  检查 /dev/hisi_l0 是否存在？
+        │
+        ├─ 否 → 设置为模拟模式
+        │
+        └─ 是 ─┐
+               ▼
+      dlopen("libl0mempool.so")
+               │
+               ├─ 失败 → 设置为模拟模式
+               │
+               └─ 成功 ─┐
+                        ▼
+              解析函数指针（cache_tuner_init, l0_mem_alloc 等）
+                        │
+                        ├─ 失败 → 设置为模拟模式
+                        │
+                        └─ 成功 ─┐
+                                 ▼
+                       cache_tuner_init(&tuner, max_capacity)
+                                 │
+                                 ├─ 失败 → 设置为模拟模式
+                                 │
+                                 └─ 成功 → 设置为 L0 模式
+```
+
+## Java API
+
+```java
+// 检查是否为 L0 模式
+boolean isL0 = NativeL0Memory.isL0Mode();
+
+// 获取详细模式信息
+int mode = NativeL0Memory.getMode();
+// MODE_NOT_INITIALIZED = 0
+// MODE_SIMULATION = 1
+// MODE_L0 = 2
+
+// 获取模式描述
+String desc = NativeL0Memory.getModeDescription();
+// "Simulation mode (malloc/free)" 或 "L0 mode (libl0mempool.so)"
+
+// 设置 L0 内存池最大容量（必须在首次分配前调用）
+NativeL0Memory.setMaxCapacity(2L * 1024 * 1024 * 1024); // 2GB
+```
+
 ---
 
 # 跨平台开发与部署教程
@@ -83,11 +169,15 @@ NativeL0Memory 类加载
 - JDK 8+
 - Maven 3.6+
 - Xcode Command Line Tools（包含 gcc/clang）
+- **注意**：Mac 上仅支持模拟模式（无 L0 硬件）
 
 ### Linux 服务器环境
 - JDK 8+（需要 JDK，不是 JRE，因为需要 JNI 头文件）
 - gcc
 - make
+- **L0 模式额外要求**：
+  - L0 设备驱动（`/dev/hisi_l0`）
+  - L0 内存池库（`libl0mempool.so`）
 
 ## 部署方式
 
@@ -236,10 +326,54 @@ ls $JAVA_HOME/include/jni.h
 
 ## 未来扩展
 
-当前实现使用标准 C `malloc/free`，未来可替换为：
+~~当前实现使用标准 C `malloc/free`，未来可替换为：~~
+
+当前实现已支持 L0 内存库 (`libl0mempool.so`)，同时保留模拟模式用于开发测试。
+
+如需添加其他内存类型支持，可在 `forl0_native.c` 中的模式检测逻辑中添加：
 
 1. **CXL 内存**：使用 libcxl 分配 CXL 设备内存
 2. **PMEM**：使用 libpmem 分配持久内存
 3. **自定义内存池**：实现更高效的内存分配策略
 
-只需修改 `forl0_native.c` 中的 `Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_malloc` 等函数实现即可。
+修改步骤：
+1. 添加新的模式常量（如 `MODE_CXL = 3`）
+2. 在 `init_mode()` 中添加检测逻辑
+3. 在 `do_malloc()` / `do_free()` 中添加新模式的分配/释放实现
+4. 更新 `NativeL0Memory.java` 中的模式常量和描述
+
+## L0 内存库 API 参考
+
+详见 `reference/l0_docs/` 目录下的文档：
+
+### 初始化
+```c
+#include "l0_api.h"
+
+cache_tuner *tuner = NULL;
+int ret = cache_tuner_init(&tuner, 1024UL * 1024UL * 1024UL); // 1GB 容量
+if (ret != RET_SUCCESS) {
+    // 初始化失败
+}
+```
+
+### 内存分配
+```c
+void *ptr = l0_mem_alloc(tuner, size);
+if (!ptr) {
+    // 分配失败
+}
+```
+
+### 内存释放
+```c
+int ret = l0_mem_free(tuner, ptr);
+if (ret != RET_SUCCESS) {
+    // 释放失败
+}
+```
+
+### 清理
+```c
+cache_tuner_destroy(tuner);
+```

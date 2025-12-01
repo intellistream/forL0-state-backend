@@ -20,11 +20,32 @@ class NativeL0MemoryTest {
         if (!nativeAvailable) {
             System.out.println("Native library not available: " + NativeL0Memory.getLoadError());
             System.out.println("Skipping native memory tests.");
+        } else {
+            System.out.println("Native library loaded. Mode: " + NativeL0Memory.getModeDescription());
         }
     }
 
     static boolean isNativeAvailable() {
         return nativeAvailable;
+    }
+
+    @Test
+    @EnabledIf("isNativeAvailable")
+    void testModeDetection() {
+        // On macOS or Linux without L0 hardware, we should be in simulation mode
+        int mode = NativeL0Memory.getMode();
+        assertTrue(mode == NativeL0Memory.MODE_SIMULATION || mode == NativeL0Memory.MODE_L0,
+                "Mode should be SIMULATION or L0, but was: " + mode);
+
+        // On macOS, L0 mode should not be available (no dlopen)
+        String osName = System.getProperty("os.name").toLowerCase();
+        if (osName.contains("mac") || osName.contains("darwin")) {
+            assertFalse(NativeL0Memory.isL0Mode(), "L0 mode should not be available on macOS");
+            assertEquals(NativeL0Memory.MODE_SIMULATION, mode);
+        }
+
+        // Print mode description
+        System.out.println("Current mode: " + NativeL0Memory.getModeDescription());
     }
 
     @Test

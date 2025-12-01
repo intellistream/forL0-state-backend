@@ -11,18 +11,22 @@ import java.nio.file.Files;
 
 /**
  * JNI bridge for native L0 memory allocation.
- * This class provides native methods for allocating and freeing memory
- * using C malloc/free functions.
+ * This class provides native methods for allocating and freeing memory.
+ *
+ * <p>Two modes are supported:
+ * <ul>
+ *     <li><b>L0 Mode:</b> Uses L0 memory pool library (libl0mempool.so) on L0-enabled servers</li>
+ *     <li><b>Simulation Mode:</b> Uses standard malloc/free for development/testing</li>
+ * </ul>
+ *
+ * <p>The mode is automatically detected at runtime:
+ * <ul>
+ *     <li>If /dev/hisi_l0 exists and libl0mempool.so can be loaded -> L0 Mode</li>
+ *     <li>Otherwise -> Simulation Mode</li>
+ * </ul>
  *
  * <p>The native library must be loaded before using any native methods.
  * Use {@link #isAvailable()} to check if the native library is loaded.
- *
- * <p>Future versions may replace malloc/free with:
- * <ul>
- *     <li>CXL memory allocation via libcxl</li>
- *     <li>PMEM allocation via libpmem</li>
- *     <li>Custom memory pool allocators</li>
- * </ul>
  */
 public final class NativeL0Memory {
 
@@ -149,8 +153,65 @@ public final class NativeL0Memory {
 
     // ==================== Native Methods ====================
 
+    // -------------------- Mode Detection --------------------
+
+    /** Mode constant: not initialized */
+    public static final int MODE_NOT_INITIALIZED = 0;
+    /** Mode constant: simulation mode (malloc/free) */
+    public static final int MODE_SIMULATION = 1;
+    /** Mode constant: L0 mode (libl0mempool.so) */
+    public static final int MODE_L0 = 2;
+
     /**
-     * Allocates a block of memory using native malloc.
+     * Gets the current memory allocation mode.
+     *
+     * @return One of {@link #MODE_NOT_INITIALIZED}, {@link #MODE_SIMULATION}, or {@link #MODE_L0}
+     */
+    public static native int getMode();
+
+    /**
+     * Checks if running in L0 mode.
+     *
+     * @return true if using L0 memory pool library, false if using simulation mode
+     */
+    public static native boolean isL0Mode();
+
+    /**
+     * Sets the maximum capacity for L0 memory pool.
+     * This must be called BEFORE any allocation if custom capacity is needed.
+     * Once mode is initialized, capacity cannot be changed.
+     *
+     * @param capacity Maximum capacity in bytes
+     */
+    public static native void setMaxCapacity(long capacity);
+
+    /**
+     * Gets a human-readable description of the current mode.
+     *
+     * @return Mode description string
+     */
+    public static String getModeDescription() {
+        if (!nativeAvailable) {
+            return "Native library not available";
+        }
+        int mode = getMode();
+        switch (mode) {
+            case MODE_NOT_INITIALIZED:
+                return "Not initialized";
+            case MODE_SIMULATION:
+                return "Simulation mode (malloc/free)";
+            case MODE_L0:
+                return "L0 mode (libl0mempool.so)";
+            default:
+                return "Unknown mode: " + mode;
+        }
+    }
+
+    // -------------------- Memory Allocation --------------------
+
+    /**
+     * Allocates a block of memory.
+     * In L0 mode, uses L0 memory pool; in simulation mode, uses malloc.
      *
      * @param size Number of bytes to allocate
      * @return Native memory address, or 0 if allocation failed
@@ -159,13 +220,15 @@ public final class NativeL0Memory {
 
     /**
      * Frees a previously allocated block of memory.
+     * In L0 mode, uses L0 memory pool; in simulation mode, uses free.
      *
      * @param address Native memory address returned by malloc
      */
     public static native void free(long address);
 
     /**
-     * Allocates aligned memory using native posix_memalign or aligned_alloc.
+     * Allocates aligned memory.
+     * In L0 mode, uses L0 memory pool (already aligned); in simulation mode, uses posix_memalign.
      *
      * @param size Number of bytes to allocate
      * @param alignment Alignment boundary (must be power of 2)
