@@ -27,9 +27,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     
     private static final Logger LOG = LoggerFactory.getLogger(ForL0KeyedStateBackendBuilder.class);
     
-    /** Default L0 memory capacity in bytes (64 MB). */
-    private static final long DEFAULT_L0_MEMORY_CAPACITY = 64 * 1024 * 1024;
-    
     /** The configuration of local recovery. */
     private final LocalRecoveryConfig localRecoveryConfig;
     /** Factory for state that is organized as priority queue. */
@@ -38,10 +35,53 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     private final boolean asynchronousSnapshots;
     /** Memory manager for allocating memory for the state backend. */
     private final MemoryManager memoryManager;
-    /** Whether L0 cache is enabled for ForL0StateMap. */
-    private final boolean l0CacheEnabled;
+    /** ForL0 StateBackend configuration. */
+    private final ForL0StateBackendConfig forl0Config;
 
-    // 主构造器：显式指定是否启用L0缓存
+    /**
+     * Main constructor with ForL0StateBackendConfig.
+     * This is the recommended constructor for new code.
+     */
+    public ForL0KeyedStateBackendBuilder(
+            TaskKvStateRegistry kvStateRegistry,
+            TypeSerializer<K> keySerializer,
+            ClassLoader userCodeClassLoader,
+            int numberOfKeyGroups,
+            KeyGroupRange keyGroupRange,
+            ExecutionConfig executionConfig,
+            TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
+            @Nonnull Collection<KeyedStateHandle> stateHandles,
+            StreamCompressionDecorator keyGroupCompressionDecorator,
+            LocalRecoveryConfig localRecoveryConfig,
+            HeapPriorityQueueSetFactory priorityQueueSetFactory,
+            boolean asynchronousSnapshots,
+            CloseableRegistry cancelStreamRegistry,
+            MemoryManager memoryManager,
+            ForL0StateBackendConfig forl0Config) {
+        super(
+                kvStateRegistry,
+                keySerializer,
+                userCodeClassLoader,
+                numberOfKeyGroups,
+                keyGroupRange,
+                executionConfig,
+                ttlTimeProvider,
+                latencyTrackingStateConfig,
+                stateHandles,
+                keyGroupCompressionDecorator,
+                cancelStreamRegistry);
+        this.localRecoveryConfig = localRecoveryConfig;
+        this.priorityQueueSetFactory = priorityQueueSetFactory;
+        this.asynchronousSnapshots = asynchronousSnapshots;
+        this.memoryManager = memoryManager;
+        this.forl0Config = forl0Config;
+    }
+
+    /**
+     * Constructor with explicit l0CacheEnabled flag.
+     * Kept for backward compatibility.
+     */
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
             TypeSerializer<K> keySerializer,
@@ -59,7 +99,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             CloseableRegistry cancelStreamRegistry,
             MemoryManager memoryManager,
             boolean l0CacheEnabled) {
-        super(
+        this(
                 kvStateRegistry,
                 keySerializer,
                 userCodeClassLoader,
@@ -70,15 +110,20 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 latencyTrackingStateConfig,
                 stateHandles,
                 keyGroupCompressionDecorator,
-                cancelStreamRegistry);
-        this.localRecoveryConfig = localRecoveryConfig;
-        this.priorityQueueSetFactory = priorityQueueSetFactory;
-        this.asynchronousSnapshots = asynchronousSnapshots;
-        this.memoryManager = memoryManager;
-        this.l0CacheEnabled = l0CacheEnabled;
+                localRecoveryConfig,
+                priorityQueueSetFactory,
+                asynchronousSnapshots,
+                cancelStreamRegistry,
+                memoryManager,
+                l0CacheEnabled 
+                    ? new ForL0StateBackendConfig() 
+                    : new ForL0StateBackendConfig().withL0CacheDisabled());
     }
 
-    // 兼容旧签名：默认不启用L0缓存
+    /**
+     * Constructor with default configuration (L0 cache enabled).
+     * Kept for backward compatibility.
+     */
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
             TypeSerializer<K> keySerializer,
@@ -111,7 +156,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 asynchronousSnapshots,
                 cancelStreamRegistry,
                 memoryManager,
-                true); // For now the L0 cache is enabled here
+                new ForL0StateBackendConfig()); // default config with L0 enabled
     }
 
     @Override
@@ -125,14 +170,18 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         InternalKeyContext<K> keyContext =
                 new InternalKeyContextImpl<>(keyGroupRange, numberOfKeyGroups);
 
+        // Extract configuration values
+        final boolean l0CacheEnabled = forl0Config.isL0CacheEnabled();
+        final long l0MemoryMaxBytes = forl0Config.getL0MemoryMaxBytes();
+
         // Create shared L0Allocator for the entire backend (if L0 cache is enabled)
         @Nullable
         final L0MemoryAllocator sharedL0Allocator;
         if (l0CacheEnabled) {
             try {
-                sharedL0Allocator = new NativeL0MemoryAllocator(DEFAULT_L0_MEMORY_CAPACITY);
-                LOG.info("Created shared L0Allocator with capacity {} bytes for ForL0KeyedStateBackend",
-                        DEFAULT_L0_MEMORY_CAPACITY);
+                sharedL0Allocator = new NativeL0MemoryAllocator(l0MemoryMaxBytes);
+                LOG.info("Created shared L0Allocator with capacity {} for ForL0KeyedStateBackend",
+                        l0MemoryMaxBytes == -1 ? "unlimited" : l0MemoryMaxBytes + " bytes");
             } catch (Exception e) {
                 throw new BackendBuildingException("Failed to create L0MemoryAllocator", e);
             }
@@ -141,8 +190,10 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             LOG.info("L0 cache is disabled, ForL0KeyedStateBackend will not use L0 memory");
         }
 
-        // Capture the shared L0Allocator so that each StateTable uses the same allocator
+        // Capture configuration for StateTableFactory
         final L0MemoryAllocator capturedL0Allocator = sharedL0Allocator;
+        final ForL0StateBackendConfig capturedConfig = this.forl0Config;
+        
         final StateTableFactory<K> stateTableFactory = new StateTableFactory<K>() {
             @Override
             public <N, V> StateTable<K, N, V> newStateTable(InternalKeyContext<K> keyContext,
@@ -155,7 +206,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                         "This indicates that the MemoryManager was not properly passed from the Environment.");
                 }
                 return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, mm, 
-                        l0CacheEnabled, capturedL0Allocator);
+                        capturedConfig, capturedL0Allocator);
             }
         };
 

@@ -92,20 +92,66 @@ sudo ldconfig
 
 **配置文件方式（推荐）：**
 
-在 `flink-conf.yaml` 中添加：
+在 `config.yaml` 中添加：
 
 ```yaml
 state.backend: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
+
+# ========== ForL0 StateBackend 可选配置 ==========
+
+# L0 缓存开关（默认 true）
+state.backend.forl0.l0-cache.enabled: true
+
+# 单个 L0Table 大小（2的幂次，默认10 = 1024 buckets = 64KB）
+state.backend.forl0.l0-cache.size: 10
+
+# L0 缓存替换策略：CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU（默认 CLOCK）
+state.backend.forl0.l0-cache.replacement-policy: CLOCK
+
+# L0 内存池总容量（所有 L0Table 共享，默认 0 = 无限制）
+state.backend.forl0.l0-memory.max-size: 256mb
+
+# MainTable 初始大小（2的幂次，默认10 = 1024 buckets）
+state.backend.forl0.main-table.initial-size: 10
+
+# MainTable 负载因子阈值（默认 1.5）
+state.backend.forl0.main-table.load-factor-threshold: 1.5
 ```
 
 **编程方式配置：**
 
 ```java
 import org.apache.flink.runtime.state.heap.ForL0StateBackend;
+import org.apache.flink.runtime.state.heap.ForL0StateBackendConfig;
+import org.apache.flink.runtime.state.heap.L0Table;
 
+// 使用默认配置
 ForL0StateBackend stateBackend = new ForL0StateBackend();
+
+// 或使用自定义配置
+ForL0StateBackendConfig config = ForL0StateBackendConfig.builder()
+    .setL0CacheEnabled(true)
+    .setL0CacheSize(12)  // 4096 buckets
+    .setL0ReplacementPolicy(L0Table.ReplacementPolicy.CLOCK)
+    .setL0MemoryMaxBytes(256 * 1024 * 1024L)  // 256MB
+    .setMainTableInitialSize(10)
+    .setMainTableLoadFactorThreshold(1.5)
+    .build();
+ForL0StateBackend stateBackend = new ForL0StateBackend(config);
+
 env.setStateBackend(stateBackend);
 ```
+
+#### 配置项说明
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `state.backend.forl0.l0-cache.enabled` | Boolean | `true` | 是否启用 L0 热点缓存 |
+| `state.backend.forl0.l0-cache.size` | Integer | `10` | 单个 L0Table 大小（2的幂次，范围 1-20） |
+| `state.backend.forl0.l0-cache.replacement-policy` | String | `CLOCK` | 缓存替换策略 |
+| `state.backend.forl0.l0-memory.max-size` | MemorySize | `0` (无限制) | L0 内存池总容量 |
+| `state.backend.forl0.main-table.initial-size` | Integer | `10` | MainTable 初始大小（2的幂次） |
+| `state.backend.forl0.main-table.load-factor-threshold` | Double | `1.5` | MainTable 扩容负载因子 |
 
 #### 3. 验证部署
 
@@ -256,16 +302,6 @@ mvn test -Dtest=L0TableTest
 
 # 运行 Native 内存测试
 mvn test -Dtest=NativeL0MemoryTest
-```
-
-### 运行性能基准测试
-
-```bash
-# 打包 benchmark JAR
-mvn package -Pbench -DskipTests
-
-# 运行基准测试
-java -jar target/benchmarks.jar
 ```
 
 ## 项目状态

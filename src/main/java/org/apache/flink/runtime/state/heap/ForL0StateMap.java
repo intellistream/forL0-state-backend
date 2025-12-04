@@ -55,6 +55,10 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private N lastNamespace;
     private KeyNamespaceHash lastKeyNamespaceHash;
 
+    /**
+     * Constructor with basic parameters (backward compatible).
+     * Uses default CLOCK replacement policy and 1.5 load factor threshold.
+     */
     public ForL0StateMap(MemoryManagerAllocator allocator,
                          L0MemoryAllocator l0Allocator,
                          int mainTableInitPow2,
@@ -63,7 +67,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          TypeSerializer<N> namespaceSerializer,
                          TypeSerializer<S> stateSerializer,
                          boolean l0CacheEnabled) {
-        // 委托到带策略参数的构造函数，默认使用 CLOCK 策略（推荐）
         this(
             allocator,
             l0Allocator,
@@ -73,11 +76,15 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             namespaceSerializer,
             stateSerializer,
             l0CacheEnabled,
-            L0Table.ReplacementPolicy.CLOCK // CLOCK 策略：低开销、高性能的近似LRU
+            L0Table.ReplacementPolicy.CLOCK,
+            1.5  // default load factor threshold
         );
     }
 
-    // 允许注入 L0 替换策略的构造函数
+    /**
+     * Constructor with replacement policy parameter (backward compatible).
+     * Uses default 1.5 load factor threshold.
+     */
     public ForL0StateMap(MemoryManagerAllocator allocator,
                          L0MemoryAllocator l0Allocator,
                          int mainTableInitPow2,
@@ -87,20 +94,60 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          TypeSerializer<S> stateSerializer,
                          boolean l0CacheEnabled,
                          L0Table.ReplacementPolicy l0Policy) {
+        this(
+            allocator,
+            l0Allocator,
+            mainTableInitPow2,
+            l0CacheSizePow2,
+            keySerializer,
+            namespaceSerializer,
+            stateSerializer,
+            l0CacheEnabled,
+            l0Policy,
+            1.5  // default load factor threshold
+        );
+    }
+
+    /**
+     * Full constructor with all configurable parameters.
+     *
+     * @param allocator Memory manager allocator for MainTable and EntryArena
+     * @param l0Allocator L0 memory allocator for L0Table (can be null if L0 disabled)
+     * @param mainTableInitPow2 MainTable initial bucket count as power of 2
+     * @param l0CacheSizePow2 L0Table bucket count as power of 2
+     * @param keySerializer Key serializer
+     * @param namespaceSerializer Namespace serializer
+     * @param stateSerializer State serializer
+     * @param l0CacheEnabled Whether L0 cache is enabled
+     * @param l0Policy L0 cache replacement policy
+     * @param loadFactorThreshold MainTable load factor threshold for resize
+     */
+    public ForL0StateMap(MemoryManagerAllocator allocator,
+                         L0MemoryAllocator l0Allocator,
+                         int mainTableInitPow2,
+                         int l0CacheSizePow2,
+                         TypeSerializer<K> keySerializer,
+                         TypeSerializer<N> namespaceSerializer,
+                         TypeSerializer<S> stateSerializer,
+                         boolean l0CacheEnabled,
+                         L0Table.ReplacementPolicy l0Policy,
+                         double loadFactorThreshold) {
         this.allocator = allocator;
         this.l0Allocator = l0Allocator;
         // 直接使用 SerializerPack，移除冗余的序列化器引用
         this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
         this.l0CacheEnabled = l0CacheEnabled;
         this.entryArena = new EntryArena(allocator);
-        // MainTable 使用 MemoryManagerAllocator，L0Table 使用 L0MemoryAllocator
-        this.mainTable = new MainTable(allocator, mainTableInitPow2, 1.5); // 负载因子阈值
+        // MainTable 使用 MemoryManagerAllocator，使用配置的负载因子阈值
+        this.mainTable = new MainTable(allocator, mainTableInitPow2, loadFactorThreshold);
         this.l0Table = (l0CacheEnabled && l0Allocator != null) 
             ? new L0Table(l0Allocator, l0CacheSizePow2, l0Policy) 
             : null;
 
-        LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), cache={}",
-                1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, l0CacheEnabled);
+        LOG.debug("ForL0StateMap initialized with mainTable={} buckets (expandable), l0Cache={} buckets (fixed), " +
+                  "cache={}, policy={}, loadFactor={}",
+                1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, 
+                l0CacheEnabled, l0Policy, loadFactorThreshold);
     }
 
     @Override

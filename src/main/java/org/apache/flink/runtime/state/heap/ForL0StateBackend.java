@@ -9,7 +9,6 @@ import org.apache.flink.runtime.state.*;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 
 public class ForL0StateBackend extends AbstractStateBackend implements ConfigurableStateBackend {
@@ -18,19 +17,39 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
 
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateBackend.class);
 
+    /** Configuration for ForL0StateBackend. */
+    private final ForL0StateBackendConfig forl0Config;
+
     // ---------------------------------------------------------------------------------------------
 
-    public ForL0StateBackend() {}
+    /** Creates a ForL0StateBackend with default configuration. */
+    public ForL0StateBackend() {
+        this.forl0Config = new ForL0StateBackendConfig();
+    }
+
+    /** Creates a ForL0StateBackend with the specified configuration. */
+    public ForL0StateBackend(ForL0StateBackendConfig config) {
+        this.forl0Config = config;
+    }
 
     private ForL0StateBackend(ForL0StateBackend original, ReadableConfig config) {
         // configure latency tracking
         latencyTrackingConfigBuilder = original.latencyTrackingConfigBuilder.configure(config);
+        // parse ForL0 specific configuration
+        this.forl0Config = new ForL0StateBackendConfig(config);
     }
 
     @Override
     public ForL0StateBackend configure(ReadableConfig config, ClassLoader classLoader)
             throws IllegalConfigurationException {
         return new ForL0StateBackend(this, config);
+    }
+
+    /**
+     * Gets the ForL0 configuration.
+     */
+    public ForL0StateBackendConfig getForL0Config() {
+        return forl0Config;
     }
 
     @Override
@@ -80,6 +99,8 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
 
         LOG.info("MemoryManager successfully obtained: pageSize={}, class={}",
                 memoryManager.getPageSize(), memoryManager.getClass().getName());
+        
+        LOG.info("Using ForL0StateBackend configuration: {}", forl0Config);
 
         return new ForL0KeyedStateBackendBuilder<>(
                         parameters.getKvStateRegistry(),
@@ -96,7 +117,8 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                         priorityQueueSetFactory,
                         true,
                         parameters.getCancelStreamRegistry(),
-                        memoryManager)
+                        memoryManager,
+                        forl0Config)
                 .build();
     }
 
