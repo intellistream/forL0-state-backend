@@ -6,9 +6,9 @@ import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
-import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,10 +19,15 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
     private static final ThreadLocal<MemoryManager> MEMORY_MANAGER_HOLDER = new ThreadLocal<>();
     // 通过ThreadLocal在构造阶段传递是否启用L0缓存
     private static final ThreadLocal<Boolean> L0_CACHE_ENABLED_HOLDER = new ThreadLocal<>();
+    // 通过ThreadLocal传递共享的L0Allocator
+    private static final ThreadLocal<L0MemoryAllocator> L0_ALLOCATOR_HOLDER = new ThreadLocal<>();
 
     private final MemoryManager memoryManager;
     // 记录是否启用L0缓存
     private final boolean l0CacheEnabled;
+    // 共享的L0Allocator（由Backend提供，所有StateTable共享）
+    @Nullable
+    private final L0MemoryAllocator sharedL0Allocator;
 
     // Private constructor that uses the pre-stored MemoryManager
     private ForL0StateTable(InternalKeyContext<K> keyContext,
@@ -33,8 +38,13 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         // 读取并清理开关的ThreadLocal；默认启用
         Boolean enabled = L0_CACHE_ENABLED_HOLDER.get();
         this.l0CacheEnabled = enabled == null || enabled;
+        // 读取共享的L0Allocator
+        this.sharedL0Allocator = L0_ALLOCATOR_HOLDER.get();
+        
+        // Clean up ThreadLocals
         L0_CACHE_ENABLED_HOLDER.remove();
-        MEMORY_MANAGER_HOLDER.remove(); // Clean up after use
+        L0_ALLOCATOR_HOLDER.remove();
+        MEMORY_MANAGER_HOLDER.remove();
 
         if (this.memoryManager == null) {
             throw new IllegalStateException("MemoryManager not found in ThreadLocal. This is a programming error.");
@@ -75,6 +85,38 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
             throw e;
         }
     }
+    
+    /**
+     * Factory method with shared L0Allocator.
+     * This is the preferred method when L0 cache is enabled at Backend level.
+     * All StateTables created by the same Backend should share the same L0Allocator.
+     *
+     * @param keyContext Key context
+     * @param metaInfo Metadata info
+     * @param keySerializer Key serializer
+     * @param memoryManager Flink memory manager for MainTable
+     * @param l0CacheEnabled Whether L0 cache is enabled
+     * @param sharedL0Allocator The shared L0 allocator (may be null if L0 disabled)
+     */
+    public static <K, N, S> ForL0StateTable<K, N, S> create(
+            InternalKeyContext<K> keyContext,
+            RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
+            TypeSerializer<K> keySerializer,
+            MemoryManager memoryManager,
+            boolean l0CacheEnabled,
+            @Nullable L0MemoryAllocator sharedL0Allocator) {
+        MEMORY_MANAGER_HOLDER.set(memoryManager);
+        L0_CACHE_ENABLED_HOLDER.set(l0CacheEnabled);
+        L0_ALLOCATOR_HOLDER.set(sharedL0Allocator);
+        try {
+            return new ForL0StateTable<>(keyContext, metaInfo, keySerializer);
+        } catch (Exception e) {
+            MEMORY_MANAGER_HOLDER.remove();
+            L0_CACHE_ENABLED_HOLDER.remove();
+            L0_ALLOCATOR_HOLDER.remove();
+            throw e;
+        }
+    }
 
     @Override
     protected ForL0StateMap<K, N, S> createStateMap() {
@@ -88,9 +130,9 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
             throw new IllegalStateException("MemoryManager is not available in createStateMap()");
         }
 
-        // L0MemoryAllocator 是我们自己创建的，不需要通过 ThreadLocal 传递
-        // 仅在启用 L0 缓存时创建，使用 JNI native 内存
-        L0MemoryAllocator l0Allocator = this.l0CacheEnabled ? new NativeL0MemoryAllocator() : null;
+        // Use the shared L0Allocator from Backend level
+        // sharedL0Allocator is null if L0 cache is disabled
+        L0MemoryAllocator l0Allocator = this.l0CacheEnabled ? this.sharedL0Allocator : null;
 
         return new ForL0StateMap<>(
                 new MemoryManagerAllocator(mm, this),

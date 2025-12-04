@@ -6,10 +6,16 @@ import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.*;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -18,6 +24,12 @@ import static org.apache.flink.runtime.state.SnapshotExecutionType.ASYNCHRONOUS;
 import static org.apache.flink.runtime.state.SnapshotExecutionType.SYNCHRONOUS;
 
 public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendBuilder<K> {
+    
+    private static final Logger LOG = LoggerFactory.getLogger(ForL0KeyedStateBackendBuilder.class);
+    
+    /** Default L0 memory capacity in bytes (64 MB). */
+    private static final long DEFAULT_L0_MEMORY_CAPACITY = 64 * 1024 * 1024;
+    
     /** The configuration of local recovery. */
     private final LocalRecoveryConfig localRecoveryConfig;
     /** Factory for state that is organized as priority queue. */
@@ -113,7 +125,24 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         InternalKeyContext<K> keyContext =
                 new InternalKeyContextImpl<>(keyGroupRange, numberOfKeyGroups);
 
-        // capture the memoryManager so that each StateTable gets its own allocator
+        // Create shared L0Allocator for the entire backend (if L0 cache is enabled)
+        @Nullable
+        final L0MemoryAllocator sharedL0Allocator;
+        if (l0CacheEnabled) {
+            try {
+                sharedL0Allocator = new NativeL0MemoryAllocator(DEFAULT_L0_MEMORY_CAPACITY);
+                LOG.info("Created shared L0Allocator with capacity {} bytes for ForL0KeyedStateBackend",
+                        DEFAULT_L0_MEMORY_CAPACITY);
+            } catch (Exception e) {
+                throw new BackendBuildingException("Failed to create L0MemoryAllocator", e);
+            }
+        } else {
+            sharedL0Allocator = null;
+            LOG.info("L0 cache is disabled, ForL0KeyedStateBackend will not use L0 memory");
+        }
+
+        // Capture the shared L0Allocator so that each StateTable uses the same allocator
+        final L0MemoryAllocator capturedL0Allocator = sharedL0Allocator;
         final StateTableFactory<K> stateTableFactory = new StateTableFactory<K>() {
             @Override
             public <N, V> StateTable<K, N, V> newStateTable(InternalKeyContext<K> keyContext,
@@ -125,7 +154,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                     throw new IllegalStateException("MemoryManager is null in ForL0KeyedStateBackendBuilder. " +
                         "This indicates that the MemoryManager was not properly passed from the Environment.");
                 }
-                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, mm, l0CacheEnabled);
+                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, mm, 
+                        l0CacheEnabled, capturedL0Allocator);
             }
         };
 
@@ -147,7 +177,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 asynchronousSnapshots ? ASYNCHRONOUS : SYNCHRONOUS,
                 stateTableFactory,
                 keyContext,
-                memoryManager);
+                memoryManager,
+                sharedL0Allocator);
     }
 
     // Below methods are copied from heap state, may need to be modified

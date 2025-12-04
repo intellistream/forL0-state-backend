@@ -61,6 +61,44 @@ L0Table 是 ForL0StateBackend 中用于热键缓存的组件，其内存分配�
 2. **无降级选项**：L0Allocator 必须使用 native 内存，如果 native 库不可用会抛出异常
 3. **自动提取加载**：native 库可以从 JAR 中自动提取到临时目录加载
 4. **运行时模式检测**：自动检测是否有 L0 硬件，选择合适的分配策略
+5. **Backend 级别共享**：L0Allocator 在 KeyedStateBackend 级别创建和共享，所有 StateTable/StateMap 使用同一个 allocator
+
+### L0Allocator 共享机制
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   ForL0KeyedStateBackend (每个算子子任务一个)           │
+│                                                                          │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │            sharedL0Allocator (NativeL0MemoryAllocator)          │   │
+│   │                    容量: 64MB (可配置)                           │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│          │                        │                        │            │
+│          ▼                        ▼                        ▼            │
+│   ┌──────────────┐         ┌──────────────┐         ┌──────────────┐   │
+│   │ StateTable A │         │ StateTable B │         │ StateTable C │   │
+│   │  (ValueState)│         │  (ListState) │         │  (MapState)  │   │
+│   └──────────────┘         └──────────────┘         └──────────────┘   │
+│          │                        │                        │            │
+│    KeyGroup 0~41           KeyGroup 0~41           KeyGroup 0~41       │
+│          │                        │                        │            │
+│   ┌──────────────┐         ┌──────────────┐         ┌──────────────┐   │
+│   │ ForL0StateMap│ ×42     │ ForL0StateMap│ ×42     │ ForL0StateMap│ ×42│
+│   │  ┌─────────┐ │         │  ┌─────────┐ │         │  ┌─────────┐ │   │
+│   │  │ L0Table │←┼─────────┼──┼─────────┼─┼─────────┼──┼─────────┼─┤   │
+│   │  └─────────┘ │ 共享     │  └─────────┘ │ 共享     │  └─────────┘ │   │
+│   │  │MainTable│ │ L0      │  │MainTable│ │ L0      │  │MainTable│ │   │
+│   │  └─────────┘ │ Allocator│  └─────────┘ │ Allocator│  └─────────┘ │   │
+│   └──────────────┘         └──────────────┘         └──────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**关键点：**
+- 每个 Flink 算子子任务（operator subtask）对应一个 `ForL0KeyedStateBackend`
+- Backend 创建时创建一个共享的 `NativeL0MemoryAllocator`
+- 该 Backend 下的所有 StateTable 和 StateMap 共享这个 allocator
+- Backend 关闭时（dispose）自动释放 L0Allocator
+- 这样实现了资源隔离（subtask 间隔离）和资源共享（subtask 内共享）
 
 ## 文件结构
 

@@ -14,12 +14,17 @@ import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.*;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.StateMigrationException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +33,9 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ForL0KeyedStateBackend.class);
+
     private static final Map<StateDescriptor.Type, StateCreateFactory> STATE_CREATE_FACTORIES =
             Stream.of(
                             Tuple2.of(StateDescriptor.Type.VALUE, (StateCreateFactory) ForL0ValueState::create),
@@ -72,6 +80,10 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     @SuppressWarnings("unused")
     private final MemoryManager memoryManager;  // Actually this is used by reflection
 
+    /** Shared L0 memory allocator for all StateTables/StateMaps in this backend. May be null if L0 cache is disabled. */
+    @Nullable
+    private final L0MemoryAllocator sharedL0Allocator;
+
     public ForL0KeyedStateBackend (
             TaskKvStateRegistry kvStateRegistry,
             TypeSerializer<K> keySerializer,
@@ -89,7 +101,8 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             SnapshotExecutionType snapshotExecutionType,
             StateTableFactory<K> stateTableFactory,
             InternalKeyContext<K> keyContext,
-            MemoryManager memoryManager) {
+            MemoryManager memoryManager,
+            @Nullable L0MemoryAllocator sharedL0Allocator) {
         super(
                 kvStateRegistry,
                 keySerializer,
@@ -113,6 +126,21 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                         keyContext.getKeyGroupRange(),
                         keyContext.getNumberOfKeyGroups());
         this.memoryManager = memoryManager;
+        this.sharedL0Allocator = sharedL0Allocator;
+        
+        if (sharedL0Allocator != null) {
+            LOG.info("ForL0KeyedStateBackend initialized with shared L0Allocator (capacity: {} bytes)", 
+                    sharedL0Allocator.getTotalCapacity());
+        }
+    }
+    
+    /**
+     * Returns the shared L0 memory allocator for this backend.
+     * @return the shared L0Allocator, or null if L0 cache is disabled
+     */
+    @Nullable
+    public L0MemoryAllocator getSharedL0Allocator() {
+        return sharedL0Allocator;
     }
 
     // ------------------------------------------------------------------------
@@ -408,5 +436,20 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                 StateTable<K, N, SV> stateTable,
                 IS existingState)
                 throws Exception;
+    }
+
+    @Override
+    public void dispose() {
+        super.dispose();
+        
+        // Close the shared L0 allocator to release L0 memory
+        if (sharedL0Allocator != null) {
+            try {
+                sharedL0Allocator.close();
+                LOG.info("ForL0KeyedStateBackend disposed: closed shared L0Allocator");
+            } catch (Exception e) {
+                LOG.warn("Error closing shared L0Allocator", e);
+            }
+        }
     }
 }
