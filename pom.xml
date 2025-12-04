@@ -16,11 +16,8 @@
         <scala.binary.version>2.12</scala.binary.version>
         <flink.version>1.20.0</flink.version>
         <junit.jupiter.version>5.10.1</junit.jupiter.version>
-        <jmh.version>1.37</jmh.version>
-        <!-- 默认将 Flink 放入 provided，bench profile 会覆盖为 compile -->
+        <!-- 默认将 Flink 放入 provided -->
         <flink.scope>provided</flink.scope>
-        <!-- 默认JMH为test作用域，bench profile覆盖为compile以支持fork运行 -->
-        <jmh.scope>test</jmh.scope>
     </properties>
 
     <dependencies>
@@ -97,20 +94,6 @@
             <version>${junit.jupiter.version}</version>
             <scope>test</scope>
         </dependency>
-
-        <!-- JMH: bench 需要在 fork 场景下可用，因此 scope 由 ${jmh.scope} 控制 -->
-        <dependency>
-            <groupId>org.openjdk.jmh</groupId>
-            <artifactId>jmh-core</artifactId>
-            <version>${jmh.version}</version>
-            <scope>${jmh.scope}</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.openjdk.jmh</groupId>
-            <artifactId>jmh-generator-annprocess</artifactId>
-            <version>${jmh.version}</version>
-            <scope>${jmh.scope}</scope>
-        </dependency>
     </dependencies>
 
     <build>
@@ -128,119 +111,6 @@
                     </includes>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.1.0</version>
-                <configuration>
-                    <cleanupDaemonThreads>true</cleanupDaemonThreads>
-                    <includeProjectDependencies>true</includeProjectDependencies>
-                    <includePluginDependencies>true</includePluginDependencies>
-                    <!-- 关键：让JMH在fork时生成独立的classpath JAR，避免java.class.path缺失问题 -->
-                    <systemProperties>
-                        <systemProperty>
-                            <key>jmh.separateClasspathJAR</key>
-                            <value>true</value>
-                        </systemProperty>
-                    </systemProperties>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>run-jmh</id>
-                        <phase>none</phase>
-                        <goals>
-                            <goal>java</goal>
-                        </goals>
-                        <configuration>
-                            <mainClass>org.openjdk.jmh.Main</mainClass>
-                            <classpathScope>test</classpathScope>
-                            <arguments>
-                                <argument>${benchmarks}</argument>
-                                <!-- 启用 fork 并拉长时长（可被 -Dexec.args 覆盖） -->
-                                <argument>-f</argument><argument>1</argument>
-                                <argument>-wi</argument><argument>3</argument>
-                                <argument>-w</argument><argument>5s</argument>
-                                <argument>-i</argument><argument>8</argument>
-                                <argument>-r</argument><argument>5s</argument>
-                                <argument>-tu</argument><argument>ms</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.3</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                          <createDependencyReducedPom>false</createDependencyReducedPom>
-                          <shadedArtifactAttached>false</shadedArtifactAttached>
-                          <finalName>benchmarks</finalName>
-                          <transformers>
-                            <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                              <mainClass>org.openjdk.jmh.Main</mainClass>
-                            </transformer>
-                            <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                          </transformers>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <!-- 移除 maven-assembly-plugin 与 jmh-maven-plugin（已引发构建失败） -->
         </plugins>
     </build>
-
-    <profiles>
-        <profile>
-            <id>bench</id>
-            <properties>
-                <flink.scope>compile</flink.scope>
-                <jmh.scope>compile</jmh.scope>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>build-helper-maven-plugin</artifactId>
-                        <version>3.5.0</version>
-                        <executions>
-                            <execution>
-                                <id>add-test-source-as-main</id>
-                                <phase>generate-sources</phase>
-                                <goals>
-                                    <goal>add-source</goal>
-                                </goals>
-                                <configuration>
-                                    <sources>
-                                        <source>src/test/java/org/apache/flink/runtime/state/heap/benchmarks</source>
-                                        <source>src/test/java/org/apache/flink/runtime/memory</source>
-                                    </sources>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>add-test-resources-as-main</id>
-                                <phase>generate-resources</phase>
-                                <goals>
-                                    <goal>add-resource</goal>
-                                </goals>
-                                <configuration>
-                                    <resources>
-                                        <resource>
-                                            <directory>src/test/resources</directory>
-                                        </resource>
-                                    </resources>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
 </project>

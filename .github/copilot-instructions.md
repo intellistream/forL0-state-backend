@@ -9,7 +9,7 @@ ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实�
 - **语言**: Java 8+, C (JNI native code)
 - **框架**: Apache Flink 1.20.0
 - **构建工具**: Maven 3.6+
-- **测试框架**: JUnit 5, JMH (性能测试)
+- **测试框架**: JUnit 5
 - **平台**: 
   - 开发: macOS (模拟模式)
   - 生产: Linux with 鲲鹏 CPU (L0 模式)
@@ -75,7 +75,6 @@ ForL0StateMap
 1. **单元测试**: `src/test/java/` 下,使用 JUnit 5
 2. **命名**: `*Test.java` 或 `*ITCase.java`
 3. **Native 测试**: 需要 native 库可用,使用 `@EnabledIf("isNativeAvailable")`
-4. **性能测试**: JMH benchmarks 在 `src/test/java/.../benchmark/`
 
 ## 常见任务
 
@@ -93,13 +92,6 @@ mvn package -DskipTests     # 打包 JAR
 cd src/main/native
 make clean && make          # macOS: .dylib, Linux: .so
 make install                # 复制到 resources/native/
-```
-
-### 运行基准测试
-
-```bash
-mvn package -Pbench -DskipTests
-java -jar target/benchmarks.jar
 ```
 
 ## 重要约定
@@ -157,6 +149,5 @@ java -jar target/benchmarks.jar
 ## 贡献指南
 
 1. 修改前先理解双层索引架构
-2. 性能关键代码需要 JMH 验证
-3. Native 代码修改需要重新编译库
-4. 保持与 Flink 原生 API 的兼容性
+2. Native 代码修改需要重新编译库
+3. 保持与 Flink 原生 API 的兼容性
