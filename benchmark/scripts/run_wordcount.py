@@ -107,11 +107,40 @@ def parse_job_runtime(output: str, wc_config: dict, mode_config: dict) -> Option
     }
 
 
-def parse_taskmanager_log(flink_home: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
-    """Parse benchmark results from TaskManager log."""
+def parse_latency_file_path(output: str, flink_home: str) -> Optional[str]:
+    """Parse latency samples file path from output or TaskManager stdout."""
+    import re
     import glob
     
-    log_pattern = f"{flink_home}/log/*taskexecutor*.log"
+    # First try to find in output
+    match = re.search(r'LATENCY_SAMPLES_FILE:(.+)', output)
+    if match:
+        return match.group(1).strip()
+    
+    # Try to find in TaskManager stdout (.out file)
+    log_pattern = f"{flink_home}/log/*taskexecutor*.out"
+    log_files = glob.glob(log_pattern)
+    
+    if log_files:
+        log_file = max(log_files, key=lambda f: Path(f).stat().st_mtime)
+        try:
+            with open(log_file, 'r') as f:
+                content = f.read()
+            match = re.search(r'LATENCY_SAMPLES_FILE:(.+)', content)
+            if match:
+                return match.group(1).strip()
+        except Exception:
+            pass
+    
+    return None
+
+
+def parse_taskmanager_log(flink_home: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
+    """Parse benchmark results from TaskManager stdout (.out file)."""
+    import glob
+    
+    # Look for .out files (stdout), not .log files
+    log_pattern = f"{flink_home}/log/*taskexecutor*.out"
     log_files = glob.glob(log_pattern)
     
     if not log_files:
@@ -224,6 +253,9 @@ def run_wordcount(config: dict, backend: str) -> Optional[dict]:
     forl0_args = get_forl0_config_args(config, backend)
     cmd.extend(forl0_args)
     
+    # Set up latency samples directory
+    latency_dir = get_results_dir('latency')
+    
     # Add JAR and arguments
     cmd.extend([
         jar_path,
@@ -235,6 +267,8 @@ def run_wordcount(config: dict, backend: str) -> Optional[dict]:
         '--slideSize', str(wc_config.get('slide_size', 200)),
         '--parallelism', str(mode_config.get('parallelism', 2)),
         '--checkpointInterval', str(mode_config.get('checkpoint_interval', 10000)),
+        '--latencyDir', str(latency_dir),
+        '--backend', backend,
     ])
     
     print(f"\n=== Running WordCount Benchmark ({backend} backend) ===\n")
@@ -253,20 +287,21 @@ def run_wordcount(config: dict, backend: str) -> Optional[dict]:
         output = result.stdout + result.stderr
         print(output)
         
-        # Parse result from output - first try JSON from output
-        benchmark_result = parse_json_from_output(output)
+        # Parse result - first try from TaskManager log (has full metrics)
+        benchmark_result = parse_taskmanager_log(flink_home, wc_config, mode_config)
         
-        # If no JSON result, try to parse Job Runtime from flink run output
+        # If no result from log, try to parse Job Runtime from flink run output
         if not benchmark_result:
             benchmark_result = parse_job_runtime(output, wc_config, mode_config)
         
-        # If still no result, try to read from TaskManager log
-        if not benchmark_result:
-            benchmark_result = parse_taskmanager_log(flink_home, wc_config, mode_config)
+        # Parse latency samples file path from output
+        latency_file = parse_latency_file_path(output, flink_home)
         
         if benchmark_result:
             benchmark_result['backend'] = backend
             benchmark_result['mode'] = mode
+            if latency_file:
+                benchmark_result['latency_samples_file'] = latency_file
             return benchmark_result
         else:
             print("WARNING: Could not parse benchmark result from output")

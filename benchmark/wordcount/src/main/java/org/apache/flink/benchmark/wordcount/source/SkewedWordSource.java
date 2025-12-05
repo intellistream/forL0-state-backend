@@ -96,21 +96,19 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
         long batchSize = ratePerSubtask > 0 ? Math.max(1, ratePerSubtask / 100) : 10000;  // ~10ms batches
         long batchIntervalNanos = ratePerSubtask > 0 ? (batchSize * 1_000_000_000L) / ratePerSubtask : 0;
         
-        // Base timestamp - use processing time simulation
-        long baseTimestamp = System.currentTimeMillis();
-        long timestampIncrement = 1;  // 1ms per record for event time progression
-        
         long count = 0;
         long batchCount = 0;
         long lastBatchTime = System.nanoTime();
+        long batchTimestamp = System.currentTimeMillis();  // Timestamp for current batch
         
         while (running && count < (endRecord - startRecord)) {
             // Generate key using Zipf distribution
             int keyIndex = zipf.sample();
             String word = "word_" + keyIndex;
             
-            // Generate timestamp (simulated event time)
-            long timestamp = baseTimestamp + (count * timestampIncrement);
+            // Use batch timestamp for end-to-end latency calculation
+            // Update timestamp at the start of each batch to reduce syscall overhead
+            long timestamp = batchTimestamp;
             
             // Emit record
             synchronized (ctx.getCheckpointLock()) {
@@ -120,7 +118,7 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
             count++;
             batchCount++;
             
-            // Rate limiting
+            // Rate limiting and batch timestamp update
             if (ratePerSubtask > 0 && batchCount >= batchSize) {
                 long elapsed = System.nanoTime() - lastBatchTime;
                 long sleepNanos = batchIntervalNanos - elapsed;
@@ -132,8 +130,13 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
                         break;
                     }
                 }
-                batchCount = 0;
                 lastBatchTime = System.nanoTime();
+                batchTimestamp = System.currentTimeMillis();  // Update batch timestamp
+                batchCount = 0;
+            } else if (ratePerSubtask == 0 && batchCount >= 10000) {
+                // For unlimited rate, update timestamp every 10k records
+                batchTimestamp = System.currentTimeMillis();
+                batchCount = 0;
             }
             
             // Progress logging

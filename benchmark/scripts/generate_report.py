@@ -117,9 +117,13 @@ def plot_wordcount_comparison(results, output_dir):
     x = np.arange(len(backends))
     bars = ax.bar(x, throughputs, color=[COLORS[b] for b in backends], width=0.6)
     
+    # Set y-axis limit with extra space for labels
+    max_val = max(throughputs) if throughputs else 1
+    ax.set_ylim(0, max_val * 1.2)
+    
     # Add value labels on bars
     for bar, val in zip(bars, throughputs):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(throughputs)*0.02,
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max_val*0.02,
                 f'{val:,.0f}', ha='center', va='bottom', fontsize=11)
     
     # Calculate and show improvement
@@ -276,6 +280,79 @@ def plot_latency_comparison(results, output_dir):
     return filepath
 
 
+def plot_latency_cdf(results, output_dir):
+    """Generate latency CDF (Cumulative Distribution Function) figure."""
+    wc_results = results.get('wordcount', {})
+    latency_dir = get_results_dir('latency')
+    
+    # Collect latency data for each backend
+    latency_data = {}
+    
+    for backend in ['hashmap', 'forl0']:
+        # First try to find latency file in latency directory (most reliable)
+        import glob
+        pattern = str(latency_dir / f"latency_samples_{backend}_*.csv")
+        files = glob.glob(pattern)
+        
+        if files:
+            latest_file = max(files, key=lambda f: Path(f).stat().st_mtime)
+            try:
+                df = pd.read_csv(latest_file)
+                latency_data[backend] = df['latency_ms'].values
+            except Exception as e:
+                print(f"Warning: Could not read latency file for {backend}: {e}")
+        else:
+            # Fallback to path from result JSON
+            backend_result = wc_results.get(backend, {})
+            latency_file = backend_result.get('latency_samples_file')
+            if latency_file and Path(latency_file).exists():
+                try:
+                    df = pd.read_csv(latency_file)
+                    latency_data[backend] = df['latency_ms'].values
+                except Exception as e:
+                    print(f"Warning: Could not read latency file for {backend}: {e}")
+    
+    if not latency_data:
+        print("Warning: No latency samples found for CDF plot")
+        return None
+    
+    # Create CDF figure
+    fig, ax = plt.subplots(figsize=(8, 5))
+    
+    for backend, latencies in latency_data.items():
+        sorted_latencies = np.sort(latencies)
+        cdf = np.arange(1, len(sorted_latencies) + 1) / len(sorted_latencies)
+        
+        ax.plot(sorted_latencies, cdf * 100, 
+                label=BACKEND_LABELS.get(backend, backend),
+                color=COLORS.get(backend, 'gray'),
+                linewidth=2)
+    
+    # Add percentile markers
+    percentiles = [50, 95, 99]
+    for p in percentiles:
+        ax.axhline(y=p, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+        ax.text(ax.get_xlim()[1] * 0.98, p + 1, f'P{p}', 
+                ha='right', va='bottom', fontsize=9, color='gray')
+    
+    ax.set_xlabel('Latency (ms)')
+    ax.set_ylabel('CDF (%)')
+    ax.set_title('WordCount Benchmark: Latency CDF')
+    ax.legend(loc='lower right')
+    ax.set_ylim(0, 105)
+    ax.set_xlim(left=0)
+    
+    plt.tight_layout()
+    
+    filepath = output_dir / 'latency_cdf.pdf'
+    plt.savefig(filepath)
+    plt.savefig(output_dir / 'latency_cdf.png')
+    plt.close()
+    
+    print(f"Saved: {filepath}")
+    return filepath
+
+
 def plot_improvement_summary(results, output_dir):
     """Generate improvement summary figure."""
     improvements = []
@@ -315,6 +392,11 @@ def plot_improvement_summary(results, output_dir):
     # Add target line
     ax.axhline(y=60, color='red', linestyle='--', linewidth=2, label='Target (60%)')
     
+    # Set y-axis limit with extra space for labels
+    max_imp = max(improvements) if improvements else 60
+    min_imp = min(improvements) if improvements else 0
+    ax.set_ylim(min(min_imp - 10, -10), max(max_imp + 15, 80))
+    
     ax.set_ylabel('Improvement (%)')
     ax.set_xlabel('Benchmark')
     ax.set_title('ForL0 vs HashMapStateBackend: Throughput Improvement')
@@ -322,7 +404,8 @@ def plot_improvement_summary(results, output_dir):
     
     # Add value labels
     for bar, imp in zip(bars, improvements):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
+        y_pos = bar.get_height() + 3 if bar.get_height() >= 0 else bar.get_height() - 8
+        ax.text(bar.get_x() + bar.get_width()/2, y_pos,
                f'{imp:.1f}%', ha='center', fontsize=10, fontweight='bold')
     
     plt.tight_layout()
@@ -556,7 +639,31 @@ def generate_report(results, output_dir):
         
         .figure-container img {
             max-width: 100%;
+            width: 100%;
             height: auto;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+        
+        .figures-row {
+            display: flex;
+            gap: 1.5rem;
+            margin: 1.5rem 0;
+            align-items: stretch;
+        }
+        
+        .figures-row .figure-container {
+            flex: 1;
+            margin: 0;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .figures-row .figure-container img {
+            width: 100%;
+            flex: 1;
+            object-fit: contain;
             border-radius: 0.5rem;
             box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
         }
@@ -751,11 +858,11 @@ def generate_report(results, output_dir):
                 </div>
                 <div class="config-item">
                     <div class="label">Window Size</div>
-                    <div class="value">{{ wc_config.window_size | default('60') }}s</div>
+                    <div class="value">{{ wc_config.window_size | default('5000') }}ms</div>
                 </div>
                 <div class="config-item">
                     <div class="label">Slide Size</div>
-                    <div class="value">{{ wc_config.slide_size | default('10') }}s</div>
+                    <div class="value">{{ wc_config.slide_size | default('200') }}ms</div>
                 </div>
                 <div class="config-item">
                     <div class="label">Skew Factor</div>
@@ -786,33 +893,48 @@ def generate_report(results, output_dir):
                 </span>
             </div>
             
-            <h3>Latency (ForL0StateBackend)</h3>
-            <div class="latency-grid">
-                <div class="latency-item">
-                    <div class="percentile">P50</div>
-                    <div class="value">{{ wc_forl0_p50 }}</div>
-                    <div class="unit">ms</div>
-                </div>
-                <div class="latency-item">
-                    <div class="percentile">P95</div>
-                    <div class="value">{{ wc_forl0_p95 }}</div>
-                    <div class="unit">ms</div>
-                </div>
-                <div class="latency-item">
-                    <div class="percentile">P99</div>
-                    <div class="value">{{ wc_forl0_p99 }}</div>
-                    <div class="unit">ms</div>
-                </div>
-                <div class="latency-item">
-                    <div class="percentile">Max</div>
-                    <div class="value">{{ wc_forl0_max }}</div>
-                    <div class="unit">ms</div>
-                </div>
-            </div>
+            <h3>Latency Comparison</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Percentile</th>
+                        <th>HashMap (ms)</th>
+                        <th>ForL0 (ms)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>P50</strong></td>
+                        <td class="value-cell">{{ wc_hashmap_p50 }}</td>
+                        <td class="value-cell">{{ wc_forl0_p50 }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>P95</strong></td>
+                        <td class="value-cell">{{ wc_hashmap_p95 }}</td>
+                        <td class="value-cell">{{ wc_forl0_p95 }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>P99</strong></td>
+                        <td class="value-cell">{{ wc_hashmap_p99 }}</td>
+                        <td class="value-cell">{{ wc_forl0_p99 }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Max</strong></td>
+                        <td class="value-cell">{{ wc_hashmap_max }}</td>
+                        <td class="value-cell">{{ wc_forl0_max }}</td>
+                    </tr>
+                </tbody>
+            </table>
             
-            <div class="figure-container">
-                <img src="figures/wordcount_throughput.png" alt="WordCount Throughput Comparison">
-                <p class="figure-caption">Figure 1: WordCount Throughput Comparison</p>
+            <div class="figures-row">
+                <div class="figure-container">
+                    <img src="../figures/wordcount_throughput.png" alt="WordCount Throughput Comparison">
+                    <p class="figure-caption">Figure 1: Throughput Comparison</p>
+                </div>
+                <div class="figure-container">
+                    <img src="../figures/latency_cdf.png" alt="Latency CDF" onerror="this.parentElement.style.display='none'">
+                    <p class="figure-caption">Figure 2: Latency CDF</p>
+                </div>
             </div>
         </div>
         
@@ -858,8 +980,8 @@ def generate_report(results, output_dir):
             </table>
             
             <div class="figure-container">
-                <img src="figures/improvement_summary.png" alt="Performance Improvement Summary">
-                <p class="figure-caption">Figure 2: Performance Improvement Summary (Target: ≥60%)</p>
+                <img src="../figures/improvement_summary.png" alt="Performance Improvement Summary">
+                <p class="figure-caption">Figure 3: Performance Improvement Summary (Target: ≥60%)</p>
             </div>
         </div>
         
@@ -944,6 +1066,7 @@ def generate_report(results, output_dir):
     wc_negative_class = 'negative' if wc_tpc_imp < 0 else ''
     
     # Latency data
+    hashmap_latency = wc_hashmap.get('latency_ms', {})
     forl0_latency = wc_forl0.get('latency_ms', {})
     
     # NexMark data
@@ -1050,6 +1173,10 @@ def generate_report(results, output_dir):
         wc_badge_class=wc_badge_class,
         wc_imp_sign=wc_imp_sign,
         wc_negative_class=wc_negative_class,
+        wc_hashmap_p50=hashmap_latency.get('p50', 'N/A'),
+        wc_hashmap_p95=hashmap_latency.get('p95', 'N/A'),
+        wc_hashmap_p99=hashmap_latency.get('p99', 'N/A'),
+        wc_hashmap_max=hashmap_latency.get('max', 'N/A'),
         wc_forl0_p50=forl0_latency.get('p50', 'N/A'),
         wc_forl0_p95=forl0_latency.get('p95', 'N/A'),
         wc_forl0_p99=forl0_latency.get('p99', 'N/A'),
@@ -1091,7 +1218,7 @@ def main():
     print("\nGenerating figures...")
     plot_wordcount_comparison(results, figures_dir)
     plot_nexmark_comparison(results, figures_dir)
-    plot_latency_comparison(results, figures_dir)
+    plot_latency_cdf(results, figures_dir)
     plot_improvement_summary(results, figures_dir)
     
     # Generate report

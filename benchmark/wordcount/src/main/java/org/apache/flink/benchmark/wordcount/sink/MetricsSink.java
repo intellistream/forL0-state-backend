@@ -26,6 +26,9 @@ import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -44,6 +47,8 @@ import java.util.Map;
  *   <li>Total execution time</li>
  * </ul>
  * 
+ * <p>Latency samples are saved to a CSV file for CDF plotting.
+ * 
  * <p>At the end of execution, metrics are printed to stdout and optionally
  * saved to a JSON file.
  */
@@ -53,6 +58,8 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
     
     private final String outputPath;
     private final int parallelism;
+    private final String latencyDir;
+    private final String backend;
     
     // Metrics collection
     private transient long startTime;
@@ -63,9 +70,11 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
     private transient long lastReportTime;
     private transient long lastReportCount;
     
-    public MetricsSink(String outputPath, int parallelism) {
+    public MetricsSink(String outputPath, int parallelism, String latencyDir, String backend) {
         this.outputPath = outputPath;
         this.parallelism = parallelism;
+        this.latencyDir = latencyDir;
+        this.backend = backend;
     }
     
     @Override
@@ -82,14 +91,13 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
     public void invoke(Tuple3<String, Long, Long> value, Context context) throws Exception {
         recordCount++;
         
-        // Calculate processing latency: time from window emit to sink receive
-        // f2 is the emit time from WindowResultFunction
+        // f2 is the source emit timestamp, calculate end-to-end latency
         long currentTime = System.currentTimeMillis();
         long latency = currentTime - value.f2;
         
         // Sample latencies to avoid memory issues with large datasets
-        // Keep every 1000th latency measurement
-        if (recordCount % 1000 == 0 && latency >= 0) {
+        // Keep every 100th latency measurement for better resolution
+        if (recordCount % 100 == 0 && latency >= 0) {
             latencies.add(latency);
         }
         
@@ -124,6 +132,9 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
         long p99 = getPercentile(latencies, 99);
         long maxLatency = latencies.isEmpty() ? 0 : latencies.get(latencies.size() - 1);
         
+        // Save latency samples to CSV for CDF plotting
+        saveLatencySamples();
+        
         // Build result map
         Map<String, Object> result = new HashMap<>();
         result.put("benchmark", "wordcount");
@@ -132,6 +143,7 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
         result.put("throughput", throughput);
         result.put("throughput_per_core", throughputPerCore);
         result.put("parallelism", parallelism);
+        result.put("latency_samples_count", latencies.size());
         
         Map<String, Long> latencyMap = new HashMap<>();
         latencyMap.put("p50", p50);
@@ -174,6 +186,41 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
         }
         
         super.close();
+    }
+    
+    /**
+     * Save latency samples to CSV file for CDF plotting.
+     * File is saved to the latency samples directory with timestamp.
+     */
+    private void saveLatencySamples() {
+        if (latencies.isEmpty()) {
+            System.out.println("[Metrics] No latency samples to save");
+            return;
+        }
+        
+        try {
+            // Create directory if not exists
+            Path dir = Paths.get(latencyDir);
+            if (!Files.exists(dir)) {
+                Files.createDirectories(dir);
+            }
+            
+            String timestamp = String.valueOf(System.currentTimeMillis());
+            String filename = String.format("latency_samples_%s_%s.csv", backend, timestamp);
+            Path filepath = dir.resolve(filename);
+            
+            try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(filepath))) {
+                writer.println("latency_ms");
+                for (Long latency : latencies) {
+                    writer.println(latency);
+                }
+            }
+            
+            System.out.println("[Metrics] Latency samples saved to: " + filepath);
+            System.out.println("LATENCY_SAMPLES_FILE:" + filepath.toAbsolutePath());
+        } catch (Exception e) {
+            System.err.println("[Metrics] Failed to save latency samples: " + e.getMessage());
+        }
     }
     
     private long getPercentile(List<Long> sortedList, int percentile) {

@@ -68,10 +68,12 @@ public class WordCountBenchmark {
         long numRecords = params.getLong("numRecords", 100_000_000L);
         double skewFactor = params.getDouble("skewFactor", 1.1);
         int arrivalRate = params.getInt("arrivalRate", 230_000);  // records/s, 0 = unlimited
-        int windowSizeSeconds = params.getInt("windowSize", 5);
-        int slideSizeMillis = params.getInt("slideSize", 200);  // milliseconds
+        int windowSizeMillis = params.getInt("windowSize", 5000);  // milliseconds
+        int slideSizeMillis = params.getInt("slideSize", 200);    // milliseconds
         int parallelism = params.getInt("parallelism", 8);
         String outputPath = params.get("output", null);
+        String latencyDir = params.get("latencyDir", System.getProperty("java.io.tmpdir"));
+        String backend = params.get("backend", "unknown");
         
         // Create execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -98,7 +100,7 @@ public class WordCountBenchmark {
         DataStream<Tuple3<String, Long, Long>> result = source
             .keyBy(t -> t.f0)
             .window(SlidingEventTimeWindows.of(
-                Duration.ofSeconds(windowSizeSeconds),
+                Duration.ofMillis(windowSizeMillis),
                 Duration.ofMillis(slideSizeMillis)
             ))
             .aggregate(
@@ -108,7 +110,7 @@ public class WordCountBenchmark {
             .name("SlidingWindowCount");
         
         // Metrics sink
-        result.addSink(new MetricsSink(outputPath, parallelism))
+        result.addSink(new MetricsSink(outputPath, parallelism, latencyDir, backend))
             .name("MetricsSink")
             .setParallelism(1);
         
@@ -118,7 +120,7 @@ public class WordCountBenchmark {
         System.out.println("numRecords: " + numRecords);
         System.out.println("skewFactor: " + skewFactor);
         System.out.println("arrivalRate: " + (arrivalRate > 0 ? arrivalRate + " records/s" : "unlimited"));
-        System.out.println("windowSize: " + windowSizeSeconds + "s");
+        System.out.println("windowSize: " + windowSizeMillis + "ms");
         System.out.println("slideSize: " + slideSizeMillis + "ms");
         System.out.println("parallelism: " + parallelism);
         System.out.println("===========================");
@@ -127,47 +129,49 @@ public class WordCountBenchmark {
     }
     
     /**
-     * Aggregator that counts occurrences.
+     * Aggregator that counts occurrences and tracks the latest record timestamp.
+     * Accumulator: (count, latestTimestamp)
      */
     public static class CountAggregator 
-            implements AggregateFunction<Tuple2<String, Long>, Long, Long> {
+            implements AggregateFunction<Tuple2<String, Long>, Tuple2<Long, Long>, Tuple2<Long, Long>> {
         
         @Override
-        public Long createAccumulator() {
-            return 0L;
+        public Tuple2<Long, Long> createAccumulator() {
+            return Tuple2.of(0L, 0L);
         }
         
         @Override
-        public Long add(Tuple2<String, Long> value, Long accumulator) {
-            return accumulator + 1;
+        public Tuple2<Long, Long> add(Tuple2<String, Long> value, Tuple2<Long, Long> accumulator) {
+            // value.f1 is the processing time when the record was emitted from source
+            return Tuple2.of(accumulator.f0 + 1, Math.max(accumulator.f1, value.f1));
         }
         
         @Override
-        public Long getResult(Long accumulator) {
+        public Tuple2<Long, Long> getResult(Tuple2<Long, Long> accumulator) {
             return accumulator;
         }
         
         @Override
-        public Long merge(Long a, Long b) {
-            return a + b;
+        public Tuple2<Long, Long> merge(Tuple2<Long, Long> a, Tuple2<Long, Long> b) {
+            return Tuple2.of(a.f0 + b.f0, Math.max(a.f1, b.f1));
         }
     }
     
     /**
-     * Window function that produces (word, count, windowEnd, emitTime) tuples.
-     * emitTime is the processing time when the window result is emitted.
+     * Window function that produces (word, count, sourceTimestamp) tuples.
+     * sourceTimestamp is the latest record's emit time from source, used for end-to-end latency.
      */
     public static class WindowResultFunction 
-            extends ProcessWindowFunction<Long, Tuple3<String, Long, Long>, String, TimeWindow> {
+            extends ProcessWindowFunction<Tuple2<Long, Long>, Tuple3<String, Long, Long>, String, TimeWindow> {
         
         @Override
         public void process(String key,
                           Context context,
-                          Iterable<Long> counts,
+                          Iterable<Tuple2<Long, Long>> results,
                           Collector<Tuple3<String, Long, Long>> out) {
-            Long count = counts.iterator().next();
-            // Use current processing time as the emit time for latency calculation
-            out.collect(Tuple3.of(key, count, System.currentTimeMillis()));
+            Tuple2<Long, Long> result = results.iterator().next();
+            // result.f0 = count, result.f1 = latest source timestamp
+            out.collect(Tuple3.of(key, result.f0, result.f1));
         }
     }
 }
