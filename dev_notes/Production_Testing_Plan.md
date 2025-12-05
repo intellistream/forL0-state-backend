@@ -320,3 +320,170 @@ NexMark 是流处理系统的标准基准测试，模拟在线拍卖场景。
 - [L0 内存分配设计说明](./L0_Memory_Allocation_Design.md)
 - [Apache Flink 官方文档](https://flink.apache.org/docs/)
 - [NexMark Benchmark](https://github.com/nexmark/nexmark)
+
+---
+
+## 9. Benchmark 框架（已实现）
+
+### 9.1 框架概述
+
+已在 `benchmark/` 目录下实现完整的自动化测试框架，支持：
+- 本地开发测试（Mac）和生产集群测试双模式
+- WordCount 和 NexMark 两套基准测试
+- 自动化执行和论文级报告生成
+
+### 9.2 目录结构
+
+```
+benchmark/
+├── config/
+│   └── benchmark.yaml           # 配置文件（local/cluster 双模式）
+├── lib/
+│   └── .gitkeep                 # NexMark JAR 放置目录
+├── results/
+│   ├── raw/                     # 原始 JSON 结果
+│   ├── reports/                 # 生成的报告
+│   └── figures/                 # 生成的图表
+├── scripts/
+│   ├── run_benchmark.py         # 统一入口
+│   ├── run_wordcount.py         # WordCount 执行脚本
+│   ├── run_nexmark.py           # NexMark 执行脚本
+│   ├── generate_report.py       # 报告和图表生成
+│   └── utils/
+│       ├── config.py            # 配置工具
+│       └── flink_client.py      # Flink REST API 客户端
+├── wordcount/
+│   ├── pom.xml                  # Maven 配置
+│   └── src/main/java/org/apache/flink/benchmark/wordcount/
+│       ├── WordCountBenchmark.java   # 主程序入口
+│       ├── SkewedWordSource.java     # Zipf 分布数据源
+│       └── MetricsSink.java          # 指标收集 Sink
+└── README.md                    # 使用说明
+```
+
+### 9.3 运行模式
+
+| 模式 | 用途 | 数据量 | 运行位置 |
+|------|------|--------|----------|
+| `local` | Mac 开发测试 | 小规模 (1万 Key, 100万条) | 本地 JVM |
+| `cluster` | 生产环境测试 | 全量 (100万 Key, 1亿条) | 鲲鹏服务器 Flink 集群 |
+
+**脚本运行位置**：Python 脚本始终在本地运行，通过 Flink REST API 或 SSH 与集群交互。
+
+### 9.4 WordCount Benchmark
+
+**Java 实现特点**：
+- 支持 Zipf 分布生成倾斜数据（20-30% 热点）
+- Sliding Window (60s 窗口, 10s 滑动)
+- 内置指标收集：吞吐量、延迟 P50/P95/P99
+- 输出格式化 JSON，便于自动解析
+
+**命令行参数**：
+```
+--numKeys           Key 数量
+--numRecords        总记录数
+--skewFactor        Zipf 倾斜因子 (1.0~1.2)
+--windowSize        窗口大小（秒）
+--slideSize         滑动步长（秒）
+--parallelism       并行度
+--checkpointInterval Checkpoint 间隔（毫秒）
+```
+
+### 9.5 NexMark Benchmark
+
+使用官方 NexMark JAR，支持 8 条查询：
+- Q4, Q5, Q8, Q9, Q11, Q18, Q19, Q20
+
+每条查询的数据量在 `benchmark.yaml` 中独立配置。
+
+### 9.6 报告生成
+
+**论文级图表输出**：
+- 吞吐量对比柱状图 (PDF + PNG)
+- NexMark 多查询分组柱状图
+- 延迟分布箱线图
+- 自动计算提升百分比并标注
+
+**使用 Python 库**：
+- `matplotlib` + `seaborn`：绑定 serif 字体，300 DPI
+- `pandas`：数据处理
+- `jinja2`：HTML 报告模板
+
+### 9.7 使用步骤
+
+#### 1) 安装依赖
+```bash
+cd benchmark
+pip install -r requirements.txt
+```
+
+#### 2) 编译 WordCount JAR
+```bash
+cd wordcount
+mvn clean package
+```
+
+#### 3) 下载 NexMark JAR
+```bash
+# 下载到 benchmark/lib/nexmark-flink-*.jar
+```
+
+#### 4) 运行测试
+```bash
+# 本地快速验证
+python scripts/run_benchmark.py --mode local --test all --backend all
+
+# 生产环境测试（需配置 flink.home）
+python scripts/run_benchmark.py --mode cluster --test all --backend all
+```
+
+#### 5) 生成报告
+```bash
+python scripts/generate_report.py
+```
+
+输出：
+- `results/figures/*.pdf` - 论文图表
+- `results/reports/benchmark_report_*.html` - HTML 报告
+
+### 9.8 配置文件示例
+
+`benchmark/config/benchmark.yaml`:
+
+```yaml
+mode: local  # 或 cluster
+
+backends:
+  - name: hashmap
+    class: ""  # 默认
+  - name: forl0
+    class: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
+
+local:
+  parallelism: 2
+  checkpoint_interval: 5000
+  wordcount:
+    num_keys: 10000
+    num_records: 1000000
+    skew_factor: 1.1
+
+cluster:
+  parallelism: 8
+  checkpoint_interval: 10000
+  wordcount:
+    num_keys: 1000000
+    num_records: 100000000
+    skew_factor: 1.1
+  nexmark:
+    q4_events: 80000000
+    q5_events: 80000000
+    q8_events: 100000000
+    # ...
+```
+
+### 9.9 待办事项
+
+- [ ] 在本地 Mac 验证 WordCount JAR 编译和运行
+- [ ] 下载 NexMark 官方 JAR 到 `lib/`
+- [ ] 配置服务器 Flink 环境变量
+- [ ] 运行完整 Benchmark 并生成报告

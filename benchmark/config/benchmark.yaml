@@ -1,0 +1,98 @@
+# ForL0 StateBackend Benchmark Configuration
+
+# Run mode: local (Mac development) or cluster (production server)
+mode: local
+
+# Flink cluster settings
+flink:
+  # Flink home directory (set via environment variable or override here)
+  home: ${FLINK_HOME}
+  # REST API endpoint
+  rest_url: "http://localhost:8081"
+
+# Local mode settings (for development/testing on Mac)
+local:
+  parallelism: 2
+  checkpoint_interval: 0  # 0 = disabled, or set to 10000 for 10s
+  
+  wordcount:
+    num_keys: 1000000         # 100万 key
+    num_records: 10000000     # 1000万条
+    arrival_rate: 230000      # records/s (230k)
+    skew_factor: 1.1          # Zipf s parameter (1.0~1.2 -> 20%-30% skew)
+    window_size: 5            # seconds
+    slide_size: 200           # milliseconds (0.2s)
+  
+  nexmark:
+    events: 100000            # 10万条 (for quick test)
+
+# Cluster mode settings (for production server)
+cluster:
+  parallelism: 8              # 2 TM x 4 slots
+  checkpoint_interval: 10000  # ms (10s)
+  
+  wordcount:
+    num_keys: 1000000         # 100万 key
+    num_records: 100000000    # 1亿条
+    arrival_rate: 230000      # records/s (230k)
+    skew_factor: 1.1          # Zipf s parameter
+    window_size: 5            # seconds
+    slide_size: 200           # milliseconds (0.2s)
+  
+  nexmark:
+    # Data volume per query (as specified in test plan)
+    q4_events: 80000000       # 8000万
+    q5_events: 80000000       # 8000万
+    q8_events: 100000000      # 1亿
+    q9_events: 40000000       # 4000万
+    q11_events: 80000000      # 8000万
+    q18_events: 80000000      # 8000万
+    q19_events: 80000000      # 8000万
+    q20_events: 60000000      # 6000万
+
+# State backends to compare
+backends:
+  - name: hashmap
+    class: org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory
+    description: "Flink native HashMapStateBackend (baseline)"
+  
+  - name: forl0
+    class: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
+    description: "ForL0 StateBackend with L0 cache"
+    # ForL0 backend specific configuration
+    config:
+      # Whether L0 cache (hot key cache) is enabled
+      l0_cache_enabled: true
+      # Size of each L0Table as a power of 2 (bucket count), range 1-20
+      # Actual bucket count = 2^n, each bucket = 64 bytes
+      # Example: size=10 means 1024 buckets = 64KB per L0Table
+      l0_cache_size: 14
+      # Cache replacement policy: CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU
+      l0_cache_replacement_policy: CLOCK
+      # Maximum L0 memory pool size (0 = unlimited)
+      # Examples: 256mb, 1gb, 0
+      l0_memory_max_size: "0"
+      # Initial MainTable size as a power of 2, range 1-20
+      main_table_initial_size: 14
+      # MainTable resize load factor threshold (0.5-4.0)
+      main_table_load_factor_threshold: 1.5
+
+# Metrics collection settings
+metrics:
+  # Latency percentiles to collect
+  latency_percentiles: [50, 95, 99]
+  # Whether to collect L0 cache stats (only for ForL0 backend)
+  collect_l0_stats: true
+
+# Output settings
+output:
+  # Directory for raw results (relative to benchmark/)
+  raw_dir: "results/raw"
+  # Directory for figures (relative to benchmark/)
+  figures_dir: "results/figures"
+  # Directory for reports (relative to benchmark/)
+  reports_dir: "results/reports"
+  # Figure format
+  figure_format: "pdf"  # pdf for papers, png for preview
+  # Report format
+  report_format: "markdown"  # markdown or html

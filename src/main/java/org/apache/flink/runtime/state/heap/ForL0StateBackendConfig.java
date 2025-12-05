@@ -53,7 +53,7 @@ public class ForL0StateBackendConfig implements Serializable {
         this.mainTableInitialSize = MAIN_TABLE_INITIAL_SIZE.defaultValue();
         this.mainTableLoadFactorThreshold = MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
 
-        LOG.info("ForL0StateBackendConfig created with default values: {}", this);
+        LOG.debug("ForL0StateBackendConfig created with default values: {}", this);
     }
 
     /**
