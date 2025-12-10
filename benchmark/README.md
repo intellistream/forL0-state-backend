@@ -6,6 +6,9 @@
 - ✅ NexMark 流处理标准基准测试
 - ✅ HashMapStateBackend vs ForL0StateBackend 自动对比
 - ✅ 论文级别的图表和 HTML 报告生成
+- ✅ L0Table 内部指标采集 (命中率、淘汰率、时序图)
+- ✅ 火焰图采集 (CPU、内存分配，需 Async Profiler)
+- ✅ CPU Cache 统计 (仅 Linux，需 perf_events)
 
 ## 目录结构
 
@@ -26,7 +29,13 @@ benchmark/
 ├── results/                # 测试结果 (自动生成)
 │   ├── raw/                # JSON 原始数据
 │   ├── figures/            # PDF/PNG 图表
-│   └── reports/            # HTML 报告
+│   ├── reports/            # HTML 报告
+│   ├── latency/            # 延迟采样数据
+│   ├── l0metrics/          # L0Table 指标数据
+│   └── profiles/           # 火焰图 HTML 文件
+├── tools/                  # 外部工具 (如 Async Profiler)
+├── docs/                   # 设计文档
+│   └── Advanced_Metrics_Design.md
 └── requirements.txt        # Python 依赖
 ```
 
@@ -47,15 +56,11 @@ pip install -r requirements.txt
 
 ```bash
 cd wordcount
-
-# 本地运行模式 (包含 Flink 依赖，用于 Mac 测试)
-mvn clean package -Plocal -DskipTests
-
-# 集群运行模式 (不包含 Flink 依赖，用于服务器部署)
-mvn clean package -Pcluster -DskipTests
-
+mvn clean package -DskipTests
 cd ..
 ```
+
+> 💡 无论本地还是服务器，都通过 `flink run` 向集群提交作业，Flink 依赖由集群提供。
 
 ### 3. 启动 Flink 集群
 
@@ -72,6 +77,10 @@ curl http://localhost:8081/overview
 ```bash
 # 运行完整对比测试 (WordCount: hashmap vs forl0)
 python scripts/run_benchmark.py --test wordcount --backend all
+
+# 运行测试并采集火焰图 (需要 Async Profiler)
+export ASYNC_PROFILER_HOME=$PWD/tools/async-profiler-4.2.1-macos  # 或 linux-x64/arm64
+python scripts/run_wordcount.py --backend all --profile
 
 # 生成报告和图表
 python scripts/generate_report.py
@@ -100,6 +109,7 @@ python scripts/run_benchmark.py [OPTIONS]
 | `--test` | `wordcount`, `nexmark`, `all` | `all` | 测试类型 |
 | `--backend` | `hashmap`, `forl0`, `all` | `all` | State Backend |
 | `--query` | `q4,q5,q8,...` | `all` | NexMark 查询 (仅 nexmark) |
+| `--profile` | 无参数 | 关闭 | 启用 Async Profiler 采集火焰图 |
 
 **示例**：
 
@@ -109,7 +119,98 @@ python scripts/run_benchmark.py --test wordcount --backend forl0
 
 # 运行 NexMark Q5 和 Q8
 python scripts/run_benchmark.py --test nexmark --query q5,q8 --backend all
+
+# 运行测试并采集火焰图
+python scripts/run_wordcount.py --backend all --profile
 ```
+
+---
+
+## 火焰图与 CPU Cache 统计
+
+### 安装 Async Profiler
+
+```bash
+cd benchmark/tools
+
+# macOS (Apple Silicon / Intel)
+curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-macos.zip
+unzip async-profiler-4.2.1-macos.zip
+
+# Linux x64
+curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-linux-x64.tar.gz
+tar xzf async-profiler-4.2.1-linux-x64.tar.gz
+
+# Linux arm64 (鲲鹏)
+curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-linux-arm64.tar.gz
+tar xzf async-profiler-4.2.1-linux-arm64.tar.gz
+```
+
+### 配置环境变量
+
+```bash
+# 添加到 ~/.zshrc 或 ~/.bashrc
+export ASYNC_PROFILER_HOME=/path/to/benchmark/tools/async-profiler-4.2.1-<platform>
+```
+
+### 平台支持
+
+| 功能 | macOS | Linux | 说明 |
+|------|-------|-------|------|
+| CPU 火焰图 | ✅ (itimer) | ✅ (perf_events) | macOS 精度略低 |
+| 内存分配火焰图 | ✅ | ✅ | alloc 事件 |
+| Wall-clock 火焰图 | ✅ | ✅ | 包含阻塞时间 |
+| cache-misses | ❌ | ✅ | 需要 perf_events |
+| L1-dcache-load-misses | ❌ | ✅ | 需要 perf_events |
+| LLC-load-misses | ❌ | ✅ | 需要 perf_events |
+
+> ⚠️ **注意**：CPU Cache 统计功能仅在 Linux 上可用，macOS 不支持 perf_events 硬件计数器。
+
+### 采集火焰图
+
+```bash
+# 运行测试时自动采集
+python scripts/run_wordcount.py --backend all --profile
+
+# 火焰图保存在 results/profiles/ 目录
+ls results/profiles/
+# flamegraph_itimer_hashmap_20251210_143000.html
+# flamegraph_itimer_forl0_20251210_143100.html
+# flamegraph_alloc_forl0_20251210_143100.html
+```
+
+---
+
+## L0Table 指标采集
+
+L0Table 指标会在使用 ForL0 StateBackend 时自动采集，无需额外配置。
+
+### 采集的指标
+
+| 指标 | 说明 |
+|------|------|
+| `hit_rate` | L0 缓存命中率 (0.0 ~ 1.0) |
+| `access_count` | 总访问次数 |
+| `hit_count` | 命中次数 |
+| `miss_count` | 未命中次数 |
+| `eviction_count` | 淘汰次数 |
+| `valid_slots` | 当前有效 slot 数 |
+
+### 输出格式
+
+指标通过 TaskManager 日志输出，格式为：
+```
+L0TABLE_METRICS|{"type":"l0table","timestamp":1702...,"backend_id":"...","hit_rate":0.92,...}
+```
+
+Python 脚本会自动解析这些日志并保存到 `results/l0metrics/`。
+
+### 报告展示
+
+生成的 HTML 报告会包含：
+1. **L0Table 统计卡片** - 命中率、访问量、淘汰量
+2. **时序图表** - 命中率随时间变化
+3. **缓存对比图** - L0 vs MainTable 命中率对比
 
 ---
 
@@ -301,7 +402,18 @@ results/
 ├── figures/                # 图表
 │   ├── wordcount_throughput.pdf    # 吞吐量对比
 │   ├── latency_comparison.pdf      # 延迟对比
-│   └── improvement_summary.pdf     # 提升汇总
+│   ├── latency_cdf.pdf             # 延迟 CDF 分布
+│   ├── improvement_summary.pdf     # 提升汇总
+│   ├── l0table_timeline.pdf        # L0Table 时序图
+│   └── cache_hit_comparison.pdf    # 缓存命中对比
+├── latency/                # 延迟采样数据
+│   └── latency_samples_forl0_*.csv
+├── l0metrics/              # L0Table 指标数据
+│   └── l0table_metrics_forl0_*.json
+├── profiles/               # 火焰图 HTML
+│   ├── flamegraph_itimer_hashmap_*.html
+│   ├── flamegraph_itimer_forl0_*.html
+│   └── flamegraph_alloc_forl0_*.html
 └── reports/
     └── benchmark_report.html       # 完整 HTML 报告
 ```
@@ -312,9 +424,11 @@ HTML 报告包含：
 
 1. **Executive Summary** - 测试概要和通过/失败状态
 2. **Quick Stats** - 关键指标卡片
-3. **WordCount Benchmark** - 配置、吞吐量对比、延迟分布
+3. **WordCount Benchmark** - 配置、吞吐量对比、延迟分布、CDF 图
 4. **NexMark Benchmark** - 各查询性能对比表格
-5. **Verification Results** - 是否达到 60% 提升目标
+5. **L0Table Metrics** - 命中率、时序图、缓存对比图 (仅 ForL0)
+6. **Performance Profiling** - 火焰图链接 (如果使用 --profile)
+7. **Verification Results** - 是否达到 60% 提升目标
 
 ---
 
@@ -323,9 +437,9 @@ HTML 报告包含：
 ### 1. 准备 JAR
 
 ```bash
-# 编译 cluster 模式 JAR (不含 Flink 依赖)
+# 编译 JAR
 cd wordcount
-mvn clean package -Pcluster -DskipTests
+mvn clean package -DskipTests
 
 # 将 JAR 上传到服务器
 scp target/wordcount-benchmark-1.0-SNAPSHOT.jar user@server:/path/to/
@@ -376,9 +490,13 @@ python scripts/generate_report.py
 
 ### Q: 本地运行报 ClassNotFoundException？
 
-确保使用 `-Plocal` 编译：
+检查 ForL0 StateBackend JAR 是否已正确编译并放置在 Flink 的 lib 目录下：
 ```bash
-mvn clean package -Plocal -DskipTests
+# 在项目根目录编译
+mvn clean package -DskipTests
+
+# 复制到 Flink lib 目录
+cp target/flink-statebackend-forl0-*.jar $FLINK_HOME/lib/
 ```
 
 ### Q: 延迟显示为 N/A？

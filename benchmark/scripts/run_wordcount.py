@@ -10,6 +10,7 @@ Usage:
     python run_wordcount.py --backend hashmap
     python run_wordcount.py --backend forl0
     python run_wordcount.py --backend all
+    python run_wordcount.py --backend all --profile  # With flame graphs
 """
 
 import argparse
@@ -29,6 +30,7 @@ from utils.config import (
     get_wordcount_jar, get_flink_home, get_results_dir,
     get_timestamp, parse_json_from_output, save_result
 )
+from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
 
 
 def check_flink_cluster(rest_url: str) -> bool:
@@ -135,6 +137,62 @@ def parse_latency_file_path(output: str, flink_home: str) -> Optional[str]:
     return None
 
 
+def parse_l0table_metrics(flink_home: str) -> Optional[list]:
+    """
+    [BENCHMARK_TEST] Parse L0TABLE_METRICS from TaskManager log.
+    
+    Returns list of metric samples, each containing:
+    - type: 'l0table', 'cache', 'l0table_final', 'cache_final'
+    - timestamp, hit_rate, access_count, etc.
+    """
+    import glob
+    import re
+    
+    # Look for TaskManager log files
+    log_pattern = f"{flink_home}/log/*taskexecutor*.log"
+    log_files = glob.glob(log_pattern)
+    
+    if not log_files:
+        return None
+    
+    # Get the most recent log file
+    log_file = max(log_files, key=lambda f: Path(f).stat().st_mtime)
+    
+    metrics = []
+    try:
+        with open(log_file, 'r') as f:
+            for line in f:
+                # Look for L0TABLE_METRICS|{json}
+                if 'L0TABLE_METRICS|' in line:
+                    match = re.search(r'L0TABLE_METRICS\|(\{.+\})', line)
+                    if match:
+                        try:
+                            json_data = json.loads(match.group(1))
+                            metrics.append(json_data)
+                        except json.JSONDecodeError:
+                            pass
+    except Exception:
+        pass
+    
+    return metrics if metrics else None
+
+
+def save_l0table_metrics(metrics: list, backend: str, results_dir: Path) -> str:
+    """Save L0TABLE metrics to JSON file."""
+    timestamp = get_timestamp()
+    filename = f"l0table_metrics_{backend}_{timestamp}.json"
+    filepath = results_dir / filename
+    
+    with open(filepath, 'w') as f:
+        json.dump({
+            'backend': backend,
+            'timestamp': timestamp,
+            'samples': metrics
+        }, f, indent=2)
+    
+    return str(filepath)
+
+
 def parse_taskmanager_log(flink_home: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
     """Parse benchmark results from TaskManager stdout (.out file)."""
     import glob
@@ -207,10 +265,13 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
                 value = 'true' if value else 'false'
             args.append(f'-D{flink_key}={value}')
     
+    # [BENCHMARK_TEST] Enable L0Table metrics collector
+    args.append('-DforL0.metricsCollector.enabled=true')
+    
     return args
 
 
-def run_wordcount(config: dict, backend: str) -> Optional[dict]:
+def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> Optional[dict]:
     """Run WordCount benchmark on Flink cluster."""
     
     mode = config.get('mode', 'local')
@@ -275,7 +336,37 @@ def run_wordcount(config: dict, backend: str) -> Optional[dict]:
     print(f"Flink cluster: {rest_url}")
     print(f"Command: {' '.join(cmd)}\n")
     
+    # [BENCHMARK_TEST] Initialize profiler if enabled
+    profiler = None
+    profiler_files = {}
+    if enable_profile:
+        profiler = AsyncProfiler()
+        if profiler.is_available():
+            print(f"  Async Profiler: {profiler.get_version()}")
+            print(f"  Supported events: {profiler.get_supported_events()}")
+        else:
+            print("  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)")
+            profiler = None
+    
     try:
+        # [BENCHMARK_TEST] Start profiling before job submission
+        tm_pids = []
+        if profiler:
+            tm_pids = find_taskmanager_pids(flink_home)
+            if tm_pids:
+                print(f"  Profiling TaskManager PIDs: {tm_pids}")
+                profiles_dir = get_results_dir('profiles')
+                # Start profiling on first TaskManager (or all)
+                for pid in tm_pids[:1]:  # Profile first TM only to reduce overhead
+                    profiler.start(
+                        pid=pid,
+                        output_dir=str(profiles_dir),
+                        backend=backend,
+                        duration=None  # Will stop after job completes
+                    )
+            else:
+                print("  WARNING: No TaskManager PIDs found for profiling")
+        
         # Submit job (blocking mode - wait for completion)
         result = subprocess.run(
             cmd,
@@ -287,6 +378,13 @@ def run_wordcount(config: dict, backend: str) -> Optional[dict]:
         output = result.stdout + result.stderr
         print(output)
         
+        # [BENCHMARK_TEST] Stop profiler and collect results
+        if profiler and tm_pids:
+            for pid in tm_pids[:1]:
+                profiler_files = profiler.stop(pid)
+            if profiler_files:
+                print(f"  Profiler output files: {list(profiler_files.keys())}")
+        
         # Parse result - first try from TaskManager log (has full metrics)
         benchmark_result = parse_taskmanager_log(flink_home, wc_config, mode_config)
         
@@ -297,11 +395,27 @@ def run_wordcount(config: dict, backend: str) -> Optional[dict]:
         # Parse latency samples file path from output
         latency_file = parse_latency_file_path(output, flink_home)
         
+        # [BENCHMARK_TEST] Parse L0TABLE metrics for ForL0 backend
+        l0_metrics = None
+        l0_metrics_file = None
+        if backend == 'forl0':
+            l0_metrics = parse_l0table_metrics(flink_home)
+            if l0_metrics:
+                l0_metrics_file = save_l0table_metrics(l0_metrics, backend, get_results_dir('l0metrics'))
+                print(f"  L0Table metrics saved to: {l0_metrics_file}")
+                print(f"  L0Table samples collected: {len(l0_metrics)}")
+        
         if benchmark_result:
             benchmark_result['backend'] = backend
             benchmark_result['mode'] = mode
             if latency_file:
                 benchmark_result['latency_samples_file'] = latency_file
+            # [BENCHMARK_TEST] Include L0 metrics file path
+            if l0_metrics_file:
+                benchmark_result['l0_metrics_file'] = l0_metrics_file
+            # [BENCHMARK_TEST] Include profiler output files
+            if profiler_files:
+                benchmark_result['profiler_files'] = profiler_files
             return benchmark_result
         else:
             print("WARNING: Could not parse benchmark result from output")
@@ -319,15 +433,29 @@ def main():
     parser = argparse.ArgumentParser(description='Run WordCount Benchmark')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='hashmap',
                        help='State backend to use (default: hashmap)')
+    parser.add_argument('--profile', action='store_true',
+                       help='Enable async-profiler for flame graphs (requires ASYNC_PROFILER_HOME)')
     
     args = parser.parse_args()
+    
+    # [BENCHMARK_TEST] Show profiler info if enabled
+    if args.profile:
+        summary = get_profiler_summary()
+        print(f"\n=== Profiler Configuration ===")
+        print(f"  Platform: {summary['platform']}")
+        print(f"  Async Profiler: {'available' if summary['async_profiler_available'] else 'NOT AVAILABLE'}")
+        if summary['async_profiler_available']:
+            print(f"  Version: {summary['async_profiler_version']}")
+            print(f"  Events: {summary['supported_events']}")
+        if not summary['cache_events_supported']:
+            print(f"  Note: CPU cache statistics not available on {summary['platform']}")
     
     config = load_config()
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
     results = {}
     
     for backend in backends:
-        result = run_wordcount(config, backend)
+        result = run_wordcount(config, backend, enable_profile=args.profile)
         if result:
             results[backend] = result
             save_result(result, 'wordcount', backend, config.get('mode', 'local'))

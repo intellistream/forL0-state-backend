@@ -22,79 +22,23 @@
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <scala.binary.version>2.12</scala.binary.version>
-        <!-- Default to provided for cluster deployment -->
-        <flink.scope>provided</flink.scope>
     </properties>
-
-    <!-- Profiles for different execution modes -->
-    <profiles>
-        <!-- Local execution profile: includes Flink dependencies -->
-        <profile>
-            <id>local</id>
-            <properties>
-                <flink.scope>compile</flink.scope>
-            </properties>
-        </profile>
-        <!-- Cluster execution profile (default): Flink provided by cluster -->
-        <profile>
-            <id>cluster</id>
-            <activation>
-                <activeByDefault>true</activeByDefault>
-            </activation>
-            <properties>
-                <flink.scope>provided</flink.scope>
-            </properties>
-        </profile>
-    </profiles>
 
     <dependencies>
         <!-- Flink Core -->
+        <!-- Flink dependencies (provided by cluster) -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-streaming-java</artifactId>
             <version>${flink.version}</version>
-            <scope>${flink.scope}</scope>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-clients</artifactId>
             <version>${flink.version}</version>
-            <scope>${flink.scope}</scope>
-        </dependency>
-
-        <!-- Flink Runtime for local execution (MiniCluster) -->
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-runtime</artifactId>
-            <version>${flink.version}</version>
-            <scope>${flink.scope}</scope>
-        </dependency>
-
-        <!-- Logging (required for local execution) -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>1.7.36</version>
-            <scope>${flink.scope}</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-slf4j-impl</artifactId>
-            <version>2.17.2</version>
-            <scope>${flink.scope}</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-api</artifactId>
-            <version>2.17.2</version>
-            <scope>${flink.scope}</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-core</artifactId>
-            <version>2.17.2</version>
-            <scope>${flink.scope}</scope>
+            <scope>provided</scope>
         </dependency>
 
         <!-- For Zipf distribution -->

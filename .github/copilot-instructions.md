@@ -129,6 +129,8 @@ make install                # 复制到 resources/native/
 | `dev_notes/` | 开发笔记和设计决策 |
 | `reference/` | 参考实现 (Flink HeapStateBackend) |
 | `reference/l0_docs/` | L0 内存库 API 文档 |
+| `benchmark/` | 性能测试框架 |
+| `benchmark/docs/Advanced_Metrics_Design.md` | 高级指标采集方案设计 |
 
 ## 调试提示
 
@@ -146,8 +148,38 @@ make install                # 复制到 resources/native/
 3. **IDEA 测试配置**:
    - VM options: `-Djava.library.path=$ProjectFileDir$/src/main/resources/native`
 
+## Benchmark 测试
+
+### 运行测试
+
+```bash
+cd benchmark/scripts
+
+# 运行 WordCount 对比测试
+python run_wordcount.py --backend all
+
+# 运行 WordCount 并采集火焰图
+export ASYNC_PROFILER_HOME=/path/to/async-profiler
+python run_wordcount.py --backend all --profile
+
+# 生成报告
+python generate_report.py
+```
+
+### 采集的指标
+
+| 指标 | 说明 | 平台支持 |
+|------|------|----------|
+| L0Table 命中率 | L0 热点缓存命中率 | macOS ✅ / Linux ✅ |
+| 吞吐量/延迟 | 性能基准指标 | macOS ✅ / Linux ✅ |
+| 火焰图 (CPU/Alloc) | Async Profiler | macOS ✅ / Linux ✅ |
+| CPU Cache 统计 | cache-misses 等 | macOS ❌ / Linux ✅ |
+
+> ⚠️ CPU Cache 统计 (cache-misses, L1-dcache-load-misses) 仅在 Linux 上可用，需要 perf_events 支持。
+
 ## 贡献指南
 
 1. 修改前先理解双层索引架构
 2. Native 代码修改需要重新编译库
 3. 保持与 Flink 原生 API 的兼容性
+4. 测试代码使用 `[BENCHMARK_TEST]` 注释标注

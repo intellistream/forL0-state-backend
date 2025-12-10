@@ -419,6 +419,221 @@ def plot_improvement_summary(results, output_dir):
     return filepath
 
 
+def load_l0table_metrics():
+    """
+    [BENCHMARK_TEST] Load L0TABLE metrics from the l0metrics results directory.
+    
+    Returns a list of metric samples sorted by elapsed_ms.
+    Aggregates metrics from all test runs (WordCount, NexMark, etc.)
+    """
+    l0metrics_dir = get_results_dir('l0metrics')
+    
+    # Find all L0 metrics files
+    metrics_files = list(l0metrics_dir.glob('l0table_metrics_*.json'))
+    
+    if not metrics_files:
+        return None
+    
+    # Group files by test type
+    all_metrics = {
+        'wordcount': None,
+        'nexmark': {}
+    }
+    
+    for filepath in metrics_files:
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            filename = filepath.name
+            samples = data.get('samples', [])
+            
+            if 'wordcount' in filename or data.get('query') is None:
+                # WordCount metrics - keep the latest
+                if all_metrics['wordcount'] is None:
+                    all_metrics['wordcount'] = {'file': str(filepath), 'data': data}
+                elif filepath.stat().st_mtime > Path(all_metrics['wordcount']['file']).stat().st_mtime:
+                    all_metrics['wordcount'] = {'file': str(filepath), 'data': data}
+            else:
+                # NexMark metrics - group by query
+                query = data.get('query', 'unknown')
+                if query not in all_metrics['nexmark']:
+                    all_metrics['nexmark'][query] = {'file': str(filepath), 'data': data}
+                elif filepath.stat().st_mtime > Path(all_metrics['nexmark'][query]['file']).stat().st_mtime:
+                    all_metrics['nexmark'][query] = {'file': str(filepath), 'data': data}
+        except Exception as e:
+            print(f"Warning: Could not load L0 metrics from {filepath}: {e}")
+    
+    # Aggregate all samples for timeline charts
+    all_samples = []
+    source_info = []
+    
+    if all_metrics['wordcount']:
+        wc_data = all_metrics['wordcount']['data']
+        all_samples.extend(wc_data.get('samples', []))
+        source_info.append('WordCount')
+    
+    for query, info in all_metrics['nexmark'].items():
+        nx_data = info['data']
+        all_samples.extend(nx_data.get('samples', []))
+        source_info.append(f'NexMark-{query}')
+    
+    if not all_samples:
+        return None
+    
+    # Separate different types
+    l0table_samples = [s for s in all_samples if s.get('type') == 'l0table']
+    cache_samples = [s for s in all_samples if s.get('type') == 'cache']
+    final_l0table = [s for s in all_samples if s.get('type') == 'l0table_final']
+    final_cache = [s for s in all_samples if s.get('type') == 'cache_final']
+    
+    return {
+        'l0table': sorted(l0table_samples, key=lambda x: x.get('elapsed_ms', 0)),
+        'cache': sorted(cache_samples, key=lambda x: x.get('elapsed_ms', 0)),
+        'final_l0table': final_l0table,
+        'final_cache': final_cache,
+        'sources': source_info,
+        'all_metrics': all_metrics
+    }
+
+
+def plot_l0table_timeline(output_dir):
+    """
+    [BENCHMARK_TEST] Generate L0Table metrics timeline charts.
+    
+    Creates:
+    - Hit rate over time
+    - Access count over time (incremental per sample)
+    - Valid slots (load factor proxy) over time
+    
+    Aggregates data from all tests (WordCount, NexMark).
+    """
+    metrics = load_l0table_metrics()
+    
+    if not metrics or not metrics.get('l0table'):
+        print("No L0Table metrics available for plotting")
+        return None
+    
+    l0table_samples = metrics['l0table']
+    cache_samples = metrics.get('cache', [])
+    sources = metrics.get('sources', [])
+    
+    if len(l0table_samples) < 2:
+        print("Not enough L0Table samples for timeline plot")
+        return None
+    
+    print(f"  Plotting L0Table metrics from: {', '.join(sources)}")
+    
+    # Prepare data for L0Table
+    times_sec = [s['elapsed_ms'] / 1000.0 for s in l0table_samples]
+    hit_rates = [s.get('hit_rate', 0) * 100 for s in l0table_samples]  # Convert to percentage
+    access_counts = [s.get('access_count', 0) for s in l0table_samples]
+    valid_slots = [s.get('valid_slots', 0) for s in l0table_samples]
+    
+    # Calculate incremental access counts (per interval)
+    incremental_access = [access_counts[0]]
+    for i in range(1, len(access_counts)):
+        incremental_access.append(access_counts[i] - access_counts[i-1])
+    
+    # Create figure with 3 subplots
+    fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+    
+    # Plot 1: Hit Rate over time
+    ax1 = axes[0]
+    ax1.plot(times_sec, hit_rates, color=COLORS['forl0'], linewidth=2, marker='o', markersize=3)
+    ax1.set_ylabel('L0 Hit Rate (%)')
+    title_suffix = f" ({', '.join(sources)})" if sources else ""
+    ax1.set_title(f'L0Table Metrics Timeline{title_suffix}')
+    ax1.set_ylim(0, 100)
+    ax1.axhline(y=50, color='orange', linestyle='--', alpha=0.5, label='50% threshold')
+    ax1.legend(loc='upper right')
+    
+    # Plot 2: Incremental Access Count (throughput proxy)
+    ax2 = axes[1]
+    ax2.bar(times_sec, incremental_access, width=0.8, color=COLORS['forl0'], alpha=0.7)
+    ax2.set_ylabel('Accesses per Interval')
+    
+    # Plot 3: Valid Slots (load factor)
+    ax3 = axes[2]
+    ax3.plot(times_sec, valid_slots, color=COLORS['hashmap'], linewidth=2, marker='s', markersize=3)
+    ax3.set_ylabel('Valid Slots')
+    ax3.set_xlabel('Time (seconds)')
+    
+    # Get max valid slots for reference line (16 for default 4-bucket L0Table)
+    max_slots = 16  # 4 buckets × 4 slots
+    ax3.axhline(y=max_slots, color='red', linestyle='--', alpha=0.5, label=f'Max Slots ({max_slots})')
+    ax3.set_ylim(0, max_slots + 2)
+    ax3.legend(loc='upper right')
+    
+    plt.tight_layout()
+    
+    filepath = output_dir / 'l0table_timeline.pdf'
+    plt.savefig(filepath)
+    plt.savefig(output_dir / 'l0table_timeline.png')
+    plt.close()
+    
+    print(f"Saved: {filepath}")
+    
+    # Generate summary stats
+    final_l0table = metrics.get('final_l0table', [])
+    if final_l0table:
+        print("\n[L0Table Final Statistics]")
+        for stat in final_l0table:
+            backend = stat.get('backend', '?')
+            print(f"  Backend {backend}, Table {stat.get('table_index', '?')}: "
+                  f"hit_rate={stat.get('hit_rate', 0):.2%}, "
+                  f"accesses={stat.get('access_count', 0):,}, "
+                  f"evictions={stat.get('eviction_count', 0):,}")
+    
+    return filepath
+
+
+def plot_cache_hit_comparison(output_dir):
+    """
+    [BENCHMARK_TEST] Generate cache hit rate comparison chart.
+    
+    Shows L0 hit rate vs overall hit rate over time.
+    """
+    metrics = load_l0table_metrics()
+    
+    if not metrics or not metrics.get('cache'):
+        print("No cache metrics available for plotting")
+        return None
+    
+    cache_samples = metrics['cache']
+    
+    if len(cache_samples) < 2:
+        print("Not enough cache samples for comparison plot")
+        return None
+    
+    times_sec = [s['elapsed_ms'] / 1000.0 for s in cache_samples]
+    l0_hit_rates = [s.get('l0_hit_rate', 0) * 100 for s in cache_samples]
+    overall_hit_rates = [s.get('overall_hit_rate', 0) * 100 for s in cache_samples]
+    
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    ax.plot(times_sec, l0_hit_rates, color=COLORS['forl0'], linewidth=2, 
+            marker='o', markersize=4, label='L0 Cache Hit Rate')
+    ax.plot(times_sec, overall_hit_rates, color=COLORS['hashmap'], linewidth=2, 
+            marker='s', markersize=4, label='Overall Hit Rate (L0 + MainTable)')
+    
+    ax.set_xlabel('Time (seconds)')
+    ax.set_ylabel('Hit Rate (%)')
+    ax.set_title('Cache Hit Rate Over Time')
+    ax.set_ylim(0, 105)
+    ax.legend(loc='lower right')
+    
+    plt.tight_layout()
+    
+    filepath = output_dir / 'cache_hit_comparison.pdf'
+    plt.savefig(filepath)
+    plt.savefig(output_dir / 'cache_hit_comparison.png')
+    plt.close()
+    
+    print(f"Saved: {filepath}")
+    return filepath
+
+
 def generate_report(results, output_dir):
     """Generate beautiful HTML report."""
     
@@ -985,6 +1200,101 @@ def generate_report(results, output_dir):
             </div>
         </div>
         
+        <!-- L0Table Metrics Section (BENCHMARK_TEST) -->
+        {% if l0_metrics_available %}
+        <div class="section">
+            <h2>🔬 L0Table Metrics Analysis</h2>
+            
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                [BENCHMARK_TEST] L0Table metrics collected from: <strong>{{ l0_sources }}</strong>
+            </p>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="value">{{ l0_final_hit_rate }}%</div>
+                    <div class="label">L0 Hit Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value">{{ l0_total_accesses }}</div>
+                    <div class="label">Total Accesses</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value">{{ l0_eviction_count }}</div>
+                    <div class="label">Evictions</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value">{{ l0_sample_count }}</div>
+                    <div class="label">Samples Collected</div>
+                </div>
+            </div>
+            
+            <div class="figures-row">
+                <div class="figure-container">
+                    <img src="../figures/l0table_timeline.png" alt="L0Table Timeline" onerror="this.parentElement.style.display='none'">
+                    <p class="figure-caption">Figure: L0Table Metrics Over Time</p>
+                </div>
+                <div class="figure-container">
+                    <img src="../figures/cache_hit_comparison.png" alt="Cache Hit Comparison" onerror="this.parentElement.style.display='none'">
+                    <p class="figure-caption">Figure: Cache Hit Rate Comparison</p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Profiler Section (BENCHMARK_TEST) - Flame Graphs -->
+        {% if profiler_files %}
+        <div class="section">
+            <h2>🔥 Performance Profiling</h2>
+            
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                [BENCHMARK_TEST] Flame graphs generated using Async Profiler. Click to open interactive HTML views.
+            </p>
+            
+            {% if not cache_supported %}
+            <div style="margin-bottom: 1rem; padding: 0.75rem; background: #fef3c7; border-radius: 0.5rem;">
+                ⚠️ Note: CPU cache statistics (cache-misses, L1-dcache-load-misses) are only available on Linux.
+                Current platform: <strong>{{ platform }}</strong>
+            </div>
+            {% endif %}
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Backend</th>
+                        <th>Event Type</th>
+                        <th>File</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for file in profiler_files %}
+                    <tr>
+                        <td><strong>{{ file.backend }}</strong></td>
+                        <td>{{ file.event }}</td>
+                        <td><code>{{ file.filename }}</code></td>
+                        <td>
+                            <a href="{{ file.path }}" target="_blank" class="status-badge pass" 
+                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
+                                Open Flame Graph
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            <div style="margin-top: 1rem; padding: 1rem; background: #f1f5f9; border-radius: 0.5rem;">
+                <strong>💡 Flame Graph Tips:</strong>
+                <ul style="margin-top: 0.5rem; margin-left: 1.5rem;">
+                    <li><strong>Width</strong> = Time spent (wider = more CPU time)</li>
+                    <li><strong>Hover</strong> over bars to see function names and percentages</li>
+                    <li><strong>Click</strong> to zoom into a specific call stack</li>
+                    <li>Look for <code>ForL0</code> methods to analyze state backend performance</li>
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+        
         <!-- Verification Section -->
         <div class="section">
             <h2>✅ Verification Results</h2>
@@ -1157,6 +1467,59 @@ def generate_report(results, output_dir):
         summary = f"Benchmarks completed. {sum(1 for r in verification_rows if r['passed'])}/{len(verification_rows)} tests passed the 60% improvement target."
         conclusion = "Further optimization or production environment testing may be needed to achieve the 60% improvement target across all benchmarks."
     
+    # [BENCHMARK_TEST] Load L0Table metrics for report
+    l0_metrics = load_l0table_metrics()
+    l0_metrics_available = l0_metrics is not None and len(l0_metrics.get('final_l0table', [])) > 0
+    l0_final_hit_rate = 'N/A'
+    l0_total_accesses = 'N/A'
+    l0_eviction_count = 'N/A'
+    l0_sources = 'None'
+    l0_sample_count = 0
+    
+    if l0_metrics_available:
+        final_stats = l0_metrics.get('final_l0table', [])
+        sources = l0_metrics.get('sources', [])
+        l0_sources = ', '.join(sources) if sources else 'Unknown'
+        l0_sample_count = len(l0_metrics.get('l0table', []))
+        
+        if final_stats:
+            # Aggregate from all tables
+            total_hits = sum(s.get('hit_count', 0) for s in final_stats)
+            total_acc = sum(s.get('access_count', 0) for s in final_stats)
+            total_evict = sum(s.get('eviction_count', 0) for s in final_stats)
+            
+            l0_final_hit_rate = f"{(total_hits / total_acc * 100):.1f}" if total_acc > 0 else '0.0'
+            l0_total_accesses = f"{total_acc:,}"
+            l0_eviction_count = f"{total_evict:,}"
+    
+    # [BENCHMARK_TEST] Scan for profiler flame graph files
+    import platform
+    profiles_dir = get_results_dir('profiles')
+    profiler_files = []
+    if profiles_dir.exists():
+        for html_file in sorted(profiles_dir.glob('*.html')):
+            # Parse filename: flamegraph_<event>_<backend>_<timestamp>.html
+            # or: cache_<event>_<backend>_<timestamp>.html
+            parts = html_file.stem.split('_')
+            if len(parts) >= 3:
+                if parts[0] == 'flamegraph':
+                    event = parts[1]
+                    backend = parts[2]
+                elif parts[0] == 'cache':
+                    event = '_'.join(parts[1:-2]) if len(parts) > 4 else parts[1]
+                    backend = parts[-2] if len(parts) > 3 else parts[2]
+                else:
+                    continue
+                
+                profiler_files.append({
+                    'backend': backend,
+                    'event': event,
+                    'filename': html_file.name,
+                    'path': f'../profiles/{html_file.name}'
+                })
+    
+    cache_supported = platform.system() == 'Linux'
+    
     # Render template
     template = Template(html_template)
     report = template.render(
@@ -1183,7 +1546,18 @@ def generate_report(results, output_dir):
         wc_forl0_max=forl0_latency.get('max', 'N/A'),
         nexmark_rows=nexmark_rows,
         verification_rows=verification_rows,
-        conclusion=conclusion
+        conclusion=conclusion,
+        # [BENCHMARK_TEST] L0Table metrics variables
+        l0_metrics_available=l0_metrics_available,
+        l0_final_hit_rate=l0_final_hit_rate,
+        l0_total_accesses=l0_total_accesses,
+        l0_eviction_count=l0_eviction_count,
+        l0_sources=l0_sources,
+        l0_sample_count=l0_sample_count,
+        # [BENCHMARK_TEST] Profiler/flame graph variables
+        profiler_files=profiler_files if profiler_files else None,
+        cache_supported=cache_supported,
+        platform=platform.system()
     )
     
     # Save HTML report
@@ -1220,6 +1594,11 @@ def main():
     plot_nexmark_comparison(results, figures_dir)
     plot_latency_cdf(results, figures_dir)
     plot_improvement_summary(results, figures_dir)
+    
+    # [BENCHMARK_TEST] Generate L0Table metrics figures if available
+    print("\nGenerating L0Table metrics figures (if available)...")
+    plot_l0table_timeline(figures_dir)
+    plot_cache_hit_comparison(figures_dir)
     
     # Generate report
     print("\nGenerating report...")

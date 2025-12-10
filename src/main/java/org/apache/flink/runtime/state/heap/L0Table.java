@@ -55,10 +55,11 @@ public class L0Table implements AutoCloseable {
     private final Random random;  // For SAMPLED_LRU
 
     // Statistics and metrics
-    private long accessCount = 0;
-    private long hitCount = 0;
-    private long missCount = 0;
-    private long evictionCount = 0;
+    // [BENCHMARK_TEST] volatile for thread-safe reads by L0TableMetricsCollector
+    private volatile long accessCount = 0;
+    private volatile long hitCount = 0;
+    private volatile long missCount = 0;
+    private volatile long evictionCount = 0;
     
     // TinyLFU decay tracking
     private long tinyLfuAccessCount = 0;

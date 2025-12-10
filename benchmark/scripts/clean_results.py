@@ -15,6 +15,9 @@ def clean_results(confirm: bool = True) -> None:
         RESULTS_DIR / "raw",
         RESULTS_DIR / "figures", 
         RESULTS_DIR / "reports",
+        RESULTS_DIR / "latency",
+        RESULTS_DIR / "l0metrics",
+        RESULTS_DIR / "profiles",
     ]
     
     # 统计文件数量
