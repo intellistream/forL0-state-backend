@@ -20,6 +20,7 @@ import seaborn as sns  # type: ignore[import-untyped]
 from jinja2 import Template  # type: ignore[import-untyped]
 
 from utils.config import get_benchmark_root, get_results_dir, load_config
+from utils.hardware_metrics import load_hardware_metrics
 
 # Use non-interactive backend for server environments
 matplotlib.use('Agg')
@@ -813,6 +814,197 @@ def plot_state_entries_timeline(output_dir):
     return filepath
 
 
+def plot_cache_miss_comparison(output_dir):
+    """
+    [BENCHMARK_TEST] Generate CPU Cache Miss comparison bar chart.
+    
+    Creates a stacked bar chart showing:
+    - Total cache misses per query (for each backend)
+    - StateMap-related cache misses highlighted in a different color
+    
+    This chart is only available on Linux where perf_events is supported.
+    """
+    hw_metrics = load_hardware_metrics(str(get_results_dir('hardware')))
+    cache_data = hw_metrics.get('cache', {})
+    
+    if not cache_data:
+        print("No CPU cache metrics available for plotting (Linux only)")
+        return None
+    
+    # Group data by query
+    queries = set()
+    backends = set()
+    for key in cache_data.keys():
+        parts = key.rsplit('_', 1)
+        if len(parts) == 2:
+            queries.add(parts[0])
+            backends.add(parts[1])
+    
+    queries = sorted(queries)
+    backends = sorted(backends)
+    
+    if not queries:
+        print("No queries found in cache metrics")
+        return None
+    
+    print(f"  Plotting Cache Miss chart for queries: {queries}, backends: {backends}")
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    x = np.arange(len(queries))
+    width = 0.35
+    bar_positions = {
+        'hashmap': x - width/2 if 'hashmap' in backends else x,
+        'forl0': x + width/2 if 'hashmap' in backends else x
+    }
+    
+    # Colors
+    base_colors = {'hashmap': '#4C72B0', 'forl0': '#55A868'}
+    statemap_colors = {'hashmap': '#7BA0D0', 'forl0': '#8DCF9F'}  # Lighter versions
+    
+    for backend in backends:
+        total_misses = []
+        statemap_misses = []
+        
+        for query in queries:
+            key = f"{query}_{backend}"
+            stats = cache_data.get(key, {})
+            total = stats.get('total_cache_misses', 0)
+            statemap = stats.get('statemap_cache_misses', 0)
+            
+            total_misses.append(total)
+            statemap_misses.append(statemap)
+        
+        non_statemap = [t - s for t, s in zip(total_misses, statemap_misses)]
+        
+        pos = bar_positions.get(backend, x)
+        
+        # Draw stacked bars: non-StateMap (bottom) + StateMap (top)
+        bars_bottom = ax.bar(pos, non_statemap, width, 
+                             label=f'{backend} (Other)',
+                             color=base_colors.get(backend, '#888888'))
+        bars_top = ax.bar(pos, statemap_misses, width, bottom=non_statemap,
+                          label=f'{backend} (StateMap)',
+                          color=statemap_colors.get(backend, '#AAAAAA'))
+        
+        # Add total value labels
+        for i, (bar, total) in enumerate(zip(bars_bottom, total_misses)):
+            if total > 0:
+                height = total
+                ax.text(bar.get_x() + bar.get_width()/2, height,
+                        f'{total/1e6:.1f}M' if total >= 1e6 else f'{total/1e3:.0f}K',
+                        ha='center', va='bottom', fontsize=9)
+    
+    ax.set_xticks(x)
+    ax.set_xticklabels([q.upper() for q in queries])
+    ax.set_xlabel('Query')
+    ax.set_ylabel('Cache Misses')
+    ax.set_title('CPU Cache Misses by Query and Backend')
+    ax.legend(loc='upper right', ncol=2)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    # Format y-axis with millions/thousands
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, p: f'{x/1e6:.1f}M' if x >= 1e6 else f'{x/1e3:.0f}K' if x >= 1e3 else f'{x:.0f}'))
+    
+    plt.tight_layout()
+    
+    filepath = output_dir / 'cache_miss_comparison.pdf'
+    plt.savefig(filepath)
+    plt.savefig(output_dir / 'cache_miss_comparison.png')
+    plt.close()
+    
+    print(f"Saved: {filepath}")
+    return filepath
+
+
+def plot_memory_usage_timeline(output_dir):
+    """
+    [BENCHMARK_TEST] Generate memory usage timeline chart.
+    
+    Creates a line chart showing RSS memory usage over time for each query.
+    Each query is shown with both hashmap (dashed) and forl0 (solid) lines.
+    """
+    hw_metrics = load_hardware_metrics(str(get_results_dir('hardware')))
+    memory_data = hw_metrics.get('memory', {})
+    
+    if not memory_data:
+        print("No memory metrics available for plotting")
+        return None
+    
+    # Group by query, keeping both backends
+    # Structure: {query: {'hashmap': series, 'forl0': series}}
+    query_backends = {}
+    for key, series in memory_data.items():
+        parts = key.rsplit('_', 1)
+        if len(parts) == 2:
+            query = parts[0]
+            backend = parts[1]
+            
+            if query not in query_backends:
+                query_backends[query] = {}
+            query_backends[query][backend] = series
+    
+    if not query_backends:
+        print("No queries found in memory metrics")
+        return None
+    
+    queries = sorted(query_backends.keys())
+    print(f"  Plotting Memory Usage timeline for queries: {queries}")
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    max_time = 0
+    max_rss = 0
+    
+    for i, query in enumerate(queries):
+        backends = query_backends[query]
+        color = QUERY_COLORS[i % len(QUERY_COLORS)]
+        
+        for backend, series in backends.items():
+            samples = series.get('samples', [])
+            
+            if not samples:
+                continue
+            
+            times = [s.get('timestamp', 0) for s in samples]
+            rss_values = [s.get('rss_mb', 0) for s in samples]
+            
+            if times:
+                max_time = max(max_time, max(times))
+            if rss_values:
+                max_rss = max(max_rss, max(rss_values))
+            
+            # hashmap: dashed line, forl0: solid line
+            linestyle = '--' if backend == 'hashmap' else '-'
+            linewidth = 1.5 if backend == 'hashmap' else 2.0
+            alpha = 0.6 if backend == 'hashmap' else 0.9
+            
+            label = f"{query} ({backend})"
+            ax.plot(times, rss_values, 
+                    color=color, linewidth=linewidth, linestyle=linestyle,
+                    label=label, alpha=alpha)
+    
+    ax.set_xlabel('Time (seconds)', fontsize=12)
+    ax.set_ylabel('Memory Usage (MB)', fontsize=12)
+    ax.set_title('Memory Usage (RSS) Over Time\n(solid: ForL0, dashed: HashMap)', fontsize=14)
+    
+    # Create legend with two columns
+    ax.legend(loc='upper right', ncol=2, fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
+    
+    plt.tight_layout()
+    
+    filepath = output_dir / 'memory_usage_timeline.pdf'
+    plt.savefig(filepath)
+    plt.savefig(output_dir / 'memory_usage_timeline.png')
+    plt.close()
+    
+    print(f"Saved: {filepath}")
+    return filepath
+
+
 def generate_report(results, output_dir):
     """Generate beautiful HTML report."""
     
@@ -1400,6 +1592,12 @@ def generate_report(results, output_dir):
                 (Total samples: {{ l0_sample_count }})
             </p>
             
+            <div style="margin-bottom: 1rem; padding: 0.75rem; background: #e0f2fe; border-radius: 0.5rem; font-size: 0.9rem;">
+                <strong>📊 统计说明：</strong> 表格中的统计数据来自 L0Table 最终汇报（l0table_final），是作业结束时的<strong>累计值</strong>，
+                能准确反映总访问次数和命中率。图表基于周期采样（1秒间隔），可能不完整（特别是运行时间<1秒的算子）。
+                Samples 列标注 "(final)" 表示该查询的周期采样为空，仅有最终汇报数据。
+            </div>
+            
             <!-- Per-Query Statistics Table -->
             <table>
                 <thead>
@@ -1434,6 +1632,96 @@ def generate_report(results, output_dir):
                     <p class="figure-caption">Figure: L0 Cache Valid Slots Over Time (Per Query)</p>
                 </div>
             </div>
+        </div>
+        {% endif %}
+        
+        <!-- Hardware Statistics Section (BENCHMARK_TEST) -->
+        {% if hw_metrics_available %}
+        <div class="section">
+            <h2>🖥️ Hardware Statistics</h2>
+            
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                [BENCHMARK_TEST] Hardware-level metrics including CPU cache and memory usage.
+            </p>
+            
+            {% if not cache_supported %}
+            <div style="margin-bottom: 1rem; padding: 0.75rem; background: #fef3c7; border-radius: 0.5rem;">
+                ⚠️ <strong>Note:</strong> CPU cache statistics require Linux with perf_events support.
+                Current platform: <strong>{{ platform }}</strong> - showing memory metrics only.
+            </div>
+            {% endif %}
+            
+            <h3 style="margin-top: 1.5rem;">CPU Cache Misses</h3>
+            {% if hw_cache_stats %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Query</th>
+                        <th>Backend</th>
+                        <th>Total Cache Misses</th>
+                        <th>StateMap Cache Misses</th>
+                        <th>Miss Rate</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stat in hw_cache_stats %}
+                    <tr>
+                        <td><strong>{{ stat.query }}</strong></td>
+                        <td>{{ stat.backend }}</td>
+                        <td class="value-cell">{{ stat.total_misses }}</td>
+                        <td class="value-cell">{{ stat.statemap_misses }}</td>
+                        <td>{{ stat.miss_rate }}%</td>
+                        <td>{{ stat.duration }}s</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            <div class="figure-container" style="margin-top: 1.5rem;">
+                <img src="../figures/cache_miss_comparison.png" alt="Cache Miss Comparison" onerror="this.parentElement.style.display='none'">
+                <p class="figure-caption">Figure: CPU Cache Misses by Query (Stacked: Other + StateMap)</p>
+            </div>
+            {% else %}
+            <p style="color: var(--text-secondary); font-style: italic;">
+                No CPU cache statistics available. Run benchmarks on Linux with <code>--profile</code> flag to collect cache metrics.
+            </p>
+            {% endif %}
+            
+            <h3 style="margin-top: 2rem;">Memory Usage</h3>
+            {% if hw_memory_stats %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Query</th>
+                        <th>Backend</th>
+                        <th>Avg RSS (MB)</th>
+                        <th>Max RSS (MB)</th>
+                        <th>Samples</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stat in hw_memory_stats %}
+                    <tr>
+                        <td><strong>{{ stat.query }}</strong></td>
+                        <td>{{ stat.backend }}</td>
+                        <td class="value-cell">{{ stat.avg_rss }}</td>
+                        <td class="value-cell">{{ stat.max_rss }}</td>
+                        <td>{{ stat.samples }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            <div class="figure-container" style="margin-top: 1.5rem;">
+                <img src="../figures/memory_usage_timeline.png" alt="Memory Usage Timeline" onerror="this.parentElement.style.display='none'">
+                <p class="figure-caption">Figure: Memory Usage (RSS) Over Time</p>
+            </div>
+            {% else %}
+            <p style="color: var(--text-secondary); font-style: italic;">
+                No memory usage data available. Run benchmarks with hardware metrics collection enabled.
+            </p>
+            {% endif %}
         </div>
         {% endif %}
         
@@ -1704,6 +1992,8 @@ def generate_report(results, output_dir):
         l0_sample_count = len(l0_metrics.get('l0table', []))
         
         # Calculate statistics per query
+        # [BENCHMARK_TEST] Always prefer l0table_final data for accurate cumulative statistics
+        # Periodic samples may miss data for short-lived queries (< 1 second)
         for query in sorted(by_query.keys()):
             query_info = by_query[query]
             samples = query_info.get('samples', [])
@@ -1712,16 +2002,49 @@ def generate_report(results, output_dir):
             l0_samples = [s for s in samples if s.get('type') == 'l0table']
             final_samples = [s for s in samples if s.get('type') == 'l0table_final']
             
-            if l0_samples:
-                # Calculate from periodic samples (sum of accesses over time)
+            # Filter final_samples to only include those with actual access data
+            # (late finals from subsequent jobs may have 0 access)
+            valid_final_samples = [s for s in final_samples if s.get('access_count', 0) > 0]
+            
+            # [BENCHMARK_TEST] Primary strategy: use l0table_final for accurate cumulative stats
+            if valid_final_samples:
+                total_accesses = sum(s.get('access_count', 0) for s in valid_final_samples)
+                total_hits = sum(s.get('hit_count', 0) for s in valid_final_samples)
+                total_evictions = sum(s.get('eviction_count', 0) for s in valid_final_samples)
+                
+                # Calculate weighted average hit rate
+                hit_rates_with_weights = [
+                    (s.get('hit_rate', 0), s.get('access_count', 0)) 
+                    for s in valid_final_samples
+                ]
+                if hit_rates_with_weights:
+                    weighted_sum = sum(hr * w for hr, w in hit_rates_with_weights)
+                    total_weight = sum(w for _, w in hit_rates_with_weights)
+                    avg_hit_rate = weighted_sum / total_weight if total_weight > 0 else 0
+                else:
+                    avg_hit_rate = 0
+                avg_hit_rate_pct = avg_hit_rate * 100  # Convert to percentage
+                
+                # Count periodic samples for reference
+                periodic_count = len([s for s in l0_samples if s.get('access_count', 0) > 0])
+                samples_info = f"{len(valid_final_samples)} (final)" if periodic_count == 0 else str(periodic_count)
+                
+                l0_query_stats.append({
+                    'query': query,
+                    'hit_rate': f"{avg_hit_rate_pct:.1f}",
+                    'total_accesses': f"{total_accesses:,}",
+                    'evictions': f"{total_evictions:,}",
+                    'samples': samples_info
+                })
+            elif l0_samples:
+                # Fallback: use periodic samples if no valid final data
                 total_accesses = sum(s.get('total_accesses', s.get('access_count', 0)) for s in l0_samples)
                 total_hits = sum(s.get('total_hits', s.get('hit_count', 0)) for s in l0_samples)
                 total_evictions = sum(s.get('eviction_count', 0) for s in l0_samples)
                 
-                # Calculate average hit rate from samples (hit_rate is in 0-1 format, convert to percentage)
                 hit_rates = [s.get('hit_rate', 0) for s in l0_samples if s.get('total_accesses', s.get('access_count', 0)) > 0]
                 avg_hit_rate = sum(hit_rates) / len(hit_rates) if hit_rates else 0
-                avg_hit_rate_pct = avg_hit_rate * 100  # Convert to percentage
+                avg_hit_rate_pct = avg_hit_rate * 100
                 
                 l0_query_stats.append({
                     'query': query,
@@ -1730,6 +2053,55 @@ def generate_report(results, output_dir):
                     'evictions': f"{total_evictions:,}",
                     'samples': len(l0_samples)
                 })
+    
+    # [BENCHMARK_TEST] Load hardware metrics for report
+    hw_metrics = load_hardware_metrics(str(get_results_dir('hardware')))
+    hw_cache_data = hw_metrics.get('cache', {})
+    hw_memory_data = hw_metrics.get('memory', {})
+    
+    hw_metrics_available = bool(hw_cache_data or hw_memory_data)
+    
+    # Format cache stats for template
+    hw_cache_stats = []
+    for key, stats in hw_cache_data.items():
+        parts = key.rsplit('_', 1)
+        query = parts[0] if len(parts) == 2 else key
+        backend = parts[1] if len(parts) == 2 else 'unknown'
+        
+        total_misses = stats.get('total_cache_misses', 0)
+        statemap_misses = stats.get('statemap_cache_misses', 0)
+        miss_rate = stats.get('cache_miss_rate', 0)
+        duration = stats.get('duration_seconds', 0)
+        
+        hw_cache_stats.append({
+            'query': query,
+            'backend': backend,
+            'total_misses': f"{total_misses:,}" if total_misses else 'N/A',
+            'statemap_misses': f"{statemap_misses:,}" if statemap_misses else 'N/A',
+            'miss_rate': f"{miss_rate:.2f}",
+            'duration': f"{duration:.1f}"
+        })
+    
+    # Format memory stats for template
+    hw_memory_stats = []
+    for key, series in hw_memory_data.items():
+        parts = key.rsplit('_', 1)
+        query = parts[0] if len(parts) == 2 else key
+        backend = parts[1] if len(parts) == 2 else 'unknown'
+        
+        samples = series.get('samples', [])
+        if samples:
+            rss_values = [s.get('rss_mb', 0) for s in samples]
+            avg_rss = sum(rss_values) / len(rss_values) if rss_values else 0
+            max_rss = max(rss_values) if rss_values else 0
+            
+            hw_memory_stats.append({
+                'query': query,
+                'backend': backend,
+                'avg_rss': f"{avg_rss:.1f}",
+                'max_rss': f"{max_rss:.1f}",
+                'samples': len(samples)
+            })
     
     # [BENCHMARK_TEST] Scan for profiler flame graph files
     import platform
@@ -1794,6 +2166,10 @@ def generate_report(results, output_dir):
         l0_sources=l0_sources,
         l0_sample_count=l0_sample_count,
         l0_query_stats=l0_query_stats,
+        # [BENCHMARK_TEST] Hardware metrics variables
+        hw_metrics_available=hw_metrics_available,
+        hw_cache_stats=hw_cache_stats if hw_cache_stats else None,
+        hw_memory_stats=hw_memory_stats if hw_memory_stats else None,
         # [BENCHMARK_TEST] Profiler/flame graph variables
         profiler_files=profiler_files if profiler_files else None,
         cache_supported=cache_supported,
@@ -1840,6 +2216,11 @@ def main():
     print("\nGenerating L0Table metrics figures (if available)...")
     plot_l0table_timeline(figures_dir)
     plot_state_entries_timeline(figures_dir)
+    
+    # [BENCHMARK_TEST] Generate hardware metrics figures if available
+    print("\nGenerating hardware metrics figures (if available)...")
+    plot_cache_miss_comparison(figures_dir)
+    plot_memory_usage_timeline(figures_dir)
     
     # Generate report
     print("\nGenerating report...")

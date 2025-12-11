@@ -10,7 +10,7 @@ Usage:
     python run_wordcount.py --backend hashmap
     python run_wordcount.py --backend forl0
     python run_wordcount.py --backend all
-    python run_wordcount.py --backend all --profile  # With flame graphs
+    python run_wordcount.py --backend all --profile  # With flame graphs + hardware metrics
 """
 
 import argparse
@@ -38,6 +38,7 @@ from utils.l0_metrics import (
     save_l0table_metrics as save_l0_metrics_file,
     get_l0_metrics_summary
 )
+from utils.hardware_metrics import HardwareMetricsCollector
 
 
 def check_flink_cluster(rest_url: str) -> bool:
@@ -266,7 +267,13 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
 
 
 def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> Optional[dict]:
-    """Run WordCount benchmark on Flink cluster."""
+    """Run WordCount benchmark on Flink cluster.
+    
+    Args:
+        config: Benchmark configuration
+        backend: State backend to use ('hashmap' or 'forl0')
+        enable_profile: Enable profiling (flame graphs + hardware metrics)
+    """
     
     mode = config.get('mode', 'local')
     mode_config = get_mode_config(config, mode)
@@ -330,9 +337,10 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
     print(f"Flink cluster: {rest_url}")
     print(f"Command: {' '.join(cmd)}\n")
     
-    # [BENCHMARK_TEST] Initialize profiler if enabled
+    # [BENCHMARK_TEST] Initialize profiler and hardware metrics if enabled
     profiler = None
     profiler_files = {}
+    hw_collector = None
     if enable_profile:
         profiler = AsyncProfiler()
         if profiler.is_available():
@@ -341,6 +349,10 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
         else:
             print("  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)")
             profiler = None
+        
+        # Also enable hardware metrics collection when profiling
+        hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')))
+        print(f"  Hardware metrics: enabled (perf available: {hw_collector.is_perf_available()})")
     
     # [BENCHMARK_TEST] Record job start time for L0 metrics filtering
     job_start_time = datetime.now()
@@ -364,6 +376,18 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
             else:
                 print("  WARNING: No TaskManager PIDs found for profiling")
         
+        # [BENCHMARK_TEST] Start hardware metrics collection before job
+        if hw_collector:
+            if not tm_pids:
+                tm_pids = find_taskmanager_pids(flink_home)
+            if tm_pids:
+                hw_collector.start_memory_collection(
+                    pid=tm_pids[0],
+                    query='wordcount',
+                    backend=backend,
+                    interval=1.0
+                )
+        
         # Submit job (blocking mode - wait for completion)
         result = subprocess.run(
             cmd,
@@ -374,6 +398,11 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
         
         output = result.stdout + result.stderr
         print(output)
+        
+        # [BENCHMARK_TEST] Stop hardware metrics collection
+        if hw_collector:
+            hw_collector.stop_memory_collection()
+            hw_collector.save_results("wordcount_hw")
         
         # [BENCHMARK_TEST] Stop profiler and collect results
         if profiler and tm_pids:
@@ -432,7 +461,7 @@ def main():
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='hashmap',
                        help='State backend to use (default: hashmap)')
     parser.add_argument('--profile', action='store_true',
-                       help='Enable async-profiler for flame graphs (requires ASYNC_PROFILER_HOME)')
+                       help='Enable profiling (flame graphs + hardware metrics)')
     
     args = parser.parse_args()
     

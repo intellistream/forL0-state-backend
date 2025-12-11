@@ -18,6 +18,7 @@ def clean_results(confirm: bool = True) -> None:
         RESULTS_DIR / "latency",
         RESULTS_DIR / "l0metrics",
         RESULTS_DIR / "profiles",
+        RESULTS_DIR / "hardware",
     ]
     
     # 查找 nexmark_* 目录

@@ -9,7 +9,7 @@ Usage:
     python run_nexmark.py                       # Run with both backends
     python run_nexmark.py --backend forl0       # Run only ForL0
     python run_nexmark.py --queries q5,q8       # Specific queries
-    python run_nexmark.py --profile             # Enable flame graphs
+    python run_nexmark.py --profile             # Enable flame graphs + hardware metrics
 """
 
 import argparse
@@ -34,6 +34,7 @@ from utils.l0_metrics import (
     save_l0table_metrics,
     get_l0_metrics_summary
 )
+from utils.hardware_metrics import HardwareMetricsCollector
 
 
 class NexMarkRunner:
@@ -75,8 +76,14 @@ class NexMarkRunner:
         # L0 metrics results directory (shared across runs)
         self.l0_metrics_dir = self.benchmark_root / "results" / "l0metrics"
         
+        # Hardware metrics results directory
+        self.hw_metrics_dir = self.benchmark_root / "results" / "hardware"
+        
         # Profiler (optional)
         self.profiler = None
+        
+        # Hardware metrics collector (optional)
+        self.hw_collector = None
         
         # Current backend being tested (for L0 metrics)
         self.current_backend = None
@@ -358,6 +365,17 @@ state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
             # [BENCHMARK_TEST] Record query start time for L0 metrics filtering
             query_start_time = datetime.now()
             
+            # [BENCHMARK_TEST] Start per-query memory collection
+            if self.hw_collector and self.current_backend:
+                tm_pid = self._find_taskmanager_pid()
+                if tm_pid:
+                    self.hw_collector.start_memory_collection(
+                        pid=tm_pid,
+                        query=query,
+                        backend=self.current_backend,
+                        interval=1.0
+                    )
+            
             try:
                 start_time = time.time()
                 result = subprocess.run(
@@ -368,6 +386,10 @@ state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
                     env=env
                 )
                 elapsed = time.time() - start_time
+                
+                # [BENCHMARK_TEST] Stop per-query memory collection
+                if self.hw_collector:
+                    self.hw_collector.stop_memory_collection()
                 
                 # [BENCHMARK_TEST] Collect L0 metrics for this query if using forl0 backend
                 if self.current_backend == 'forl0':
@@ -534,7 +556,14 @@ state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
     
     def run(self, backends: list, queries: Optional[str] = None, 
             profile: bool = False, restart_cluster: bool = True) -> dict:
-        """Run NexMark benchmark for specified backends"""
+        """Run NexMark benchmark for specified backends
+        
+        Args:
+            backends: List of backends to test ('hashmap', 'forl0')
+            queries: Comma-separated list of queries (e.g., 'q5,q8')
+            profile: Enable profiling (flame graphs + hardware metrics)
+            restart_cluster: Restart Flink cluster between backends
+        """
         
         # Checks
         self._check_nexmark()
@@ -547,10 +576,14 @@ state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
         # Ensure queries is a string
         queries_str: str = str(queries) if queries else 'q5'
         
-        # Setup profiler if requested
+        # Setup profiler and hardware metrics collector if requested
         if profile:
             profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
             self.profiler = AsyncProfiler(profiler_home)
+            
+            # Also enable hardware metrics collection when profiling
+            self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir))
+            print(f"[NexMark] Profiling enabled (perf available: {self.hw_collector.is_perf_available()})")
         
         # Backup configs
         self._backup_configs()
@@ -592,6 +625,8 @@ state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
                             backend=backend
                         )
                 
+                # Note: Hardware metrics (memory) collection is now done per-query in _run_nexmark_benchmark
+                
                 # Run benchmark
                 metrics = self._run_nexmark_benchmark(queries_str)
                 results[backend] = metrics
@@ -616,6 +651,10 @@ state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
         finally:
             # Restore configs
             self._restore_configs()
+            
+            # [BENCHMARK_TEST] Save hardware metrics
+            if self.hw_collector:
+                self.hw_collector.save_results("nexmark_hw")
         
         # Save results
         self._save_results(results)
@@ -684,7 +723,7 @@ def main():
                        help="Queries to run (comma-separated, e.g., q5,q8)")
     parser.add_argument("--profile", "-p",
                        action="store_true",
-                       help="Enable async profiler for flame graphs")
+                       help="Enable profiling (flame graphs + hardware metrics)")
     parser.add_argument("--no-restart",
                        action="store_true",
                        help="Don't restart Flink cluster between backends")
