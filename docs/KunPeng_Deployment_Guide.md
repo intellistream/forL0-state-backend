@@ -170,28 +170,91 @@ pip3 install --user matplotlib numpy
 
 ---
 
-## 第七步：运行 Benchmark
+## 第七步：安装 Async Profiler（--profile 必需）
+
+使用 `--profile` 选项需要安装 Async Profiler：
+
+```bash
+cd ~/forl0-deploy
+
+# 下载 Async Profiler (Linux ARM64 版本)
+# 需要提前在有网的机器下载，然后传输到服务器
+# 下载地址: https://github.com/async-profiler/async-profiler/releases
+# 选择: async-profiler-3.0-linux-arm64.tar.gz
+
+# 解压
+tar xzvf async-profiler-3.0-linux-arm64.tar.gz
+mv async-profiler-3.0-linux-arm64 tools/async-profiler
+
+# 设置环境变量
+export ASYNC_PROFILER_HOME=~/forl0-deploy/tools/async-profiler
+
+# 验证
+ls $ASYNC_PROFILER_HOME/bin/asprof
+```
+
+### 配置 perf_events（采集 CPU cache 统计需要）
+
+```bash
+# 检查 perf 是否可用
+perf stat -e cache-misses ls 2>&1 | head -5
+
+# 如果报权限错误，需要调整内核参数（需要 root）
+sudo sysctl kernel.perf_event_paranoid=1
+
+# 或永久设置
+echo "kernel.perf_event_paranoid = 1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+---
+
+## 第八步：运行 Benchmark
 
 ```bash
 cd ~/forl0-deploy/scripts
 
 # 设置环境
 export FLINK_HOME=/path/to/flink
+export ASYNC_PROFILER_HOME=~/forl0-deploy/tools/async-profiler  # --profile 需要
 
-# 运行所有测试
+# ========== 基础运行（无性能分析）==========
 python3 run_benchmark.py --test all --backend all
 
-# 或分开运行
-python3 run_wordcount.py --backend all
-python3 run_nexmark.py --backend all
+# ========== 使用 --profile（推荐）==========
+# 启用火焰图 + 硬件统计采集
+python3 run_wordcount.py --backend all --profile
+python3 run_nexmark.py --backend all --profile
 
-# 生成报告
+# 或一起运行
+python3 run_benchmark.py --test all --backend all --profile
+
+# 生成报告（包含火焰图和硬件统计图表）
 python3 generate_report.py
+```
+
+### --profile 采集的指标
+
+| 指标类型 | 说明 | 输出文件 |
+|---------|------|----------|
+| CPU 火焰图 | 热点函数分析 | `results/profiles/*_cpu.html` |
+| Alloc 火焰图 | 内存分配分析 | `results/profiles/*_alloc.html` |
+| 内存使用时间线 | RSS 内存变化 | `results/hardware/*_memory_*.json` |
+| CPU Cache 统计 | cache-misses 等 | `results/hardware/*_cache_*.json` |
+
+### 火焰图查看
+
+```bash
+# 列出生成的火焰图
+ls ~/forl0-deploy/results/profiles/*.html
+
+# 打包下载到本地用浏览器查看
+tar czvf profiles.tar.gz results/profiles/
 ```
 
 ---
 
-## 第八步：查看结果
+## 第九步：查看结果
 
 ```bash
 # 查看摘要
@@ -203,6 +266,14 @@ tar czvf results.tar.gz results/
 ```
 
 下载到 Windows 后用浏览器打开 HTML 报告。
+
+### 报告内容（使用 --profile 时）
+
+1. **性能对比表格** - 吞吐量、延迟
+2. **L0 命中率图表** - ForL0 热点缓存效果
+3. **火焰图** - CPU 和内存分配热点
+4. **内存使用时间线** - 各 Query 内存变化对比（hashmap 虚线，forl0 实线）
+5. **CPU Cache 统计** - cache-misses 对比（仅 Linux）
 
 ---
 
@@ -253,11 +324,29 @@ pip3 install --user --no-index --find-links=./packages pyyaml
 ```bash
 # 环境设置
 export FLINK_HOME=/path/to/flink
+export ASYNC_PROFILER_HOME=~/forl0-deploy/tools/async-profiler
 cd ~/forl0-deploy/scripts
 
-# 运行测试
-python3 run_benchmark.py --test all --backend all
+# 运行测试 (带性能分析)
+python3 run_benchmark.py --test all --backend all --profile
 
 # 查看 L0 命中率
 grep "hit rate" $FLINK_HOME/log/flink-*-taskexecutor-*.log
+
+# 打包所有结果
+cd ~/forl0-deploy && tar czvf results.tar.gz results/
+```
+
+---
+
+## 离线准备 Async Profiler
+
+在有网络的机器上下载：
+
+```bash
+# Linux ARM64 版本
+wget https://github.com/async-profiler/async-profiler/releases/download/v3.0/async-profiler-3.0-linux-arm64.tar.gz
+
+# 传输到服务器
+scp async-profiler-3.0-linux-arm64.tar.gz user@server:~/forl0-deploy/
 ```
