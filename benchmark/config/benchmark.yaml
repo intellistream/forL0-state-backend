@@ -24,7 +24,12 @@ local:
     slide_size: 200           # milliseconds (0.2s)
   
   nexmark:
-    events: 100000            # 10万条 (for quick test)
+    # NexMark queries to run (stateful queries with window/aggregation)
+    queries: "q4,q5,q7,q8"    # 本地测试4个状态密集型查询
+    events: 10000000          # 1000万条 (确保作业运行足够长时间 > 20秒)
+    tps: 1000000              # 100万/s -> 预计运行20秒
+    warmup_events: 500000     # warmup events
+    warmup_duration: 5        # warmup duration in seconds
 
 # Cluster mode settings (for production server)
 cluster:
@@ -40,15 +45,22 @@ cluster:
     slide_size: 200           # milliseconds (0.2s)
   
   nexmark:
+    # NexMark queries to run (all stateful queries for full benchmark)
+    queries: "q4,q5,q7,q8,q9,q11,q12,q18,q19,q20"
     # Data volume per query (as specified in test plan)
     q4_events: 80000000       # 8000万
     q5_events: 80000000       # 8000万
+    q7_events: 80000000       # 8000万
     q8_events: 100000000      # 1亿
     q9_events: 40000000       # 4000万
     q11_events: 80000000      # 8000万
+    q12_events: 80000000      # 8000万
     q18_events: 80000000      # 8000万
     q19_events: 80000000      # 8000万
     q20_events: 60000000      # 6000万
+    tps: 10000000             # events per second (cluster mode)
+    warmup_events: 10000000   # warmup events
+    warmup_duration: 120      # warmup duration in seconds
 
 # State backends to compare
 backends:

@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
 Main benchmark runner - unified entry point for all benchmarks.
+
+Usage:
+    python run_benchmark.py --test all --backend all          # Run everything
+    python run_benchmark.py --test wordcount --backend forl0  # WordCount only
+    python run_benchmark.py --test nexmark --query q5,q8      # NexMark specific queries
+    python run_benchmark.py --test all --profile              # With flame graphs
 """
 
 import argparse
@@ -10,11 +16,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from run_wordcount import run_wordcount, save_result
-from run_nexmark import run_nexmark, NEXMARK_QUERIES
-from utils.config import load_config, get_results_dir
+from run_nexmark import NexMarkRunner
+from utils.config import load_config
 
 
-def run_all_benchmarks(config, backends):
+def run_all_benchmarks(config, backends, profile=False):
     """Run all benchmarks with specified backends."""
     results = {
         'wordcount': {},
@@ -27,13 +33,9 @@ def run_all_benchmarks(config, backends):
         print('='*60)
         
         # Run WordCount
-        wc_result = run_wordcount(config, backend)
+        wc_result = run_wordcount(config, backend, enable_profile=profile)
         if wc_result:
             results['wordcount'][backend] = wc_result
-        
-        # Run NexMark (TODO: update nexmark similarly)
-        # nexmark_results = run_nexmark(config, backend)
-        # results['nexmark'][backend] = nexmark_results
     
     return results
 
@@ -69,43 +71,114 @@ def print_summary(results, backends):
                 print(f"Status: ✗ FAIL (< 60% improvement)")
     
     # NexMark summary
-    print("\n## NexMark Benchmark")
-    print("-" * 50)
     nexmark_results = results.get('nexmark', {})
-    
-    print(f"{'Query':<10}", end='')
-    for backend in backends:
-        print(f"{backend:>20}", end='')
-    if len(backends) == 2:
-        print(f"{'Improvement':>15}", end='')
-    print()
-    print("-" * (10 + 20 * len(backends) + (15 if len(backends) == 2 else 0)))
-    
-    for query in NEXMARK_QUERIES.keys():
-        print(f"{query.upper():<10}", end='')
-        query_results = {}
+    if nexmark_results:
+        print("\n## NexMark Benchmark")
+        print("-" * 50)
         
-        for backend in backends:
-            if backend in nexmark_results and query in nexmark_results[backend]:
-                tput = nexmark_results[backend][query].get('throughput_per_core', 
-                       nexmark_results[backend][query].get('throughput', 'N/A'))
-                query_results[backend] = tput
-                if isinstance(tput, (int, float)):
-                    print(f"{tput:>20,.0f}", end='')
+        # Detect if running on macOS (no per-core metrics)
+        import platform
+        is_macos = platform.system() == 'Darwin'
+        if is_macos:
+            print("Note: Per-core throughput not available on macOS (requires Linux /proc)")
+        
+        # Collect all queries from results
+        all_queries = set()
+        for backend_results in nexmark_results.values():
+            query_results = backend_results.get('query_results', {})
+            all_queries.update(query_results.keys())
+        
+        if all_queries:
+            # Print header
+            header = f"{'Query':<8}{'Time(s)':<10}"
+            for backend in backends:
+                header += f"{backend + ' (eps)':>18}"
+                if not is_macos:
+                    header += f"{'(/core)':>12}"
+            if len(backends) == 2:
+                header += f"{'Improv':>10}"
+            print(header)
+            print("-" * len(header))
+            
+            for query in sorted(all_queries):
+                # Get time from first available backend
+                time_str = ""
+                for backend in backends:
+                    if backend in nexmark_results:
+                        qr = nexmark_results[backend].get('query_results', {}).get(query, {})
+                        if qr.get('time_seconds'):
+                            time_str = f"{qr['time_seconds']:.2f}"
+                            break
+                
+                line = f"{query.upper():<8}{time_str:<10}"
+                query_perfs = {}
+                
+                for backend in backends:
+                    if backend in nexmark_results:
+                        qr = nexmark_results[backend].get('query_results', {}).get(query, {})
+                        tput = qr.get('throughput', 0)
+                        tput_per_core = qr.get('throughput_per_core', 0)
+                        query_perfs[backend] = tput
+                        
+                        # Format throughput (e.g., "1.65 M/s")
+                        if tput >= 1000000:
+                            line += f"{tput/1000000:>15.2f} M/s"
+                        elif tput >= 1000:
+                            line += f"{tput/1000:>15.2f} K/s"
+                        else:
+                            line += f"{tput:>15.0f} /s"
+                        
+                        if not is_macos:
+                            if tput_per_core >= 1000000:
+                                line += f"{tput_per_core/1000000:>9.2f} M/s"
+                            elif tput_per_core >= 1000:
+                                line += f"{tput_per_core/1000:>9.2f} K/s"
+                            else:
+                                line += f"{tput_per_core:>9.0f} /s"
+                    else:
+                        line += f"{'N/A':>18}"
+                        if not is_macos:
+                            line += f"{'N/A':>12}"
+                
+                # Calculate improvement
+                if len(backends) == 2 and 'hashmap' in query_perfs and 'forl0' in query_perfs:
+                    h = query_perfs['hashmap']
+                    f = query_perfs['forl0']
+                    if h > 0:
+                        imp = ((f - h) / h) * 100
+                        line += f"{imp:>9.1f}%"
+                
+                print(line)
+            
+            # Print total/average
+            print("-" * len(header))
+            total_line = f"{'Total':<8}{'':<10}"
+            total_perfs = {}
+            for backend in backends:
+                if backend in nexmark_results:
+                    qrs = nexmark_results[backend].get('query_results', {})
+                    total_tput = sum(qr.get('throughput', 0) for qr in qrs.values())
+                    total_perfs[backend] = total_tput
+                    if total_tput >= 1000000:
+                        total_line += f"{total_tput/1000000:>15.2f} M/s"
+                    else:
+                        total_line += f"{total_tput:>15.0f} /s"
+                    if not is_macos:
+                        total_line += f"{'N/A':>12}"
                 else:
-                    print(f"{tput:>20}", end='')
-            else:
-                print(f"{'N/A':>20}", end='')
-        
-        # Calculate improvement
-        if len(backends) == 2 and 'hashmap' in query_results and 'forl0' in query_results:
-            h = query_results['hashmap']
-            f = query_results['forl0']
-            if isinstance(h, (int, float)) and isinstance(f, (int, float)) and h > 0:
-                imp = ((f - h) / h) * 100
-                print(f"{imp:>14.1f}%", end='')
-        
-        print()
+                    total_line += f"{'N/A':>18}"
+                    if not is_macos:
+                        total_line += f"{'N/A':>12}"
+            
+            if len(backends) == 2 and 'hashmap' in total_perfs and 'forl0' in total_perfs:
+                h = total_perfs['hashmap']
+                f = total_perfs['forl0']
+                if h > 0:
+                    imp = ((f - h) / h) * 100
+                    total_line += f"{imp:>9.1f}%"
+            print(total_line)
+        else:
+            print("No NexMark results available.")
     
     print("\n" + "=" * 70)
 
@@ -124,6 +197,9 @@ Examples:
   
   # Run specific NexMark queries
   python run_benchmark.py --test nexmark --query q5,q8
+  
+  # Run with flame graph profiling
+  python run_benchmark.py --test wordcount --backend all --profile
         """
     )
     
@@ -131,16 +207,22 @@ Examples:
                        help='Test to run (default: all)')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='all',
                        help='State backend to use (default: all)')
-    parser.add_argument('--query', type=str, default='all',
-                       help='NexMark queries to run (comma-separated, e.g., q5,q8)')
+    parser.add_argument('--query', type=str, default=None,
+                       help='NexMark queries to run (comma-separated, e.g., q5,q8). Default: from config')
+    parser.add_argument('--profile', '-p', action='store_true',
+                       help='Enable async profiler for flame graphs')
     
     args = parser.parse_args()
     
     config = load_config()
     mode = config.get('mode', 'local')
+    mode_config = config.get(mode, {})
     
     # Determine backends
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
+    
+    # Determine NexMark queries
+    nexmark_queries = args.query if args.query else mode_config.get('nexmark', {}).get('queries', 'q5')
     
     print("=" * 60)
     print("ForL0 StateBackend Benchmark")
@@ -148,26 +230,47 @@ Examples:
     print(f"Mode: {mode}")
     print(f"Test: {args.test}")
     print(f"Backends: {', '.join(backends)}")
+    if args.test in ['nexmark', 'all']:
+        print(f"NexMark Queries: {nexmark_queries}")
+    if args.profile:
+        print(f"Profiling: Enabled (flame graphs)")
     print("=" * 60)
     
     results = {'wordcount': {}, 'nexmark': {}}
-    mode = config.get('mode', 'local')
     
-    # Run benchmarks
+    # Run WordCount benchmarks
     if args.test in ['wordcount', 'all']:
+        print("\n" + "=" * 60)
+        print("Running WordCount Benchmark")
+        print("=" * 60)
         for backend in backends:
-            result = run_wordcount(config, backend)
+            result = run_wordcount(config, backend, enable_profile=args.profile)
             if result:
                 results['wordcount'][backend] = result
                 save_result(result, 'wordcount', backend, mode)
     
+    # Run NexMark benchmarks
     if args.test in ['nexmark', 'all']:
-        queries = None if args.query == 'all' else args.query.split(',')
-        for backend in backends:
-            # TODO: update nexmark similarly
-            # nexmark_results = run_nexmark(config, backend, queries)
-            # results['nexmark'][backend] = nexmark_results
-            pass
+        print("\n" + "=" * 60)
+        print("Running NexMark Benchmark")
+        print("=" * 60)
+        try:
+            runner = NexMarkRunner(config)
+            nexmark_results = runner.run(
+                backends=backends,
+                queries=nexmark_queries,
+                profile=args.profile,
+                restart_cluster=True
+            )
+            # Store results in our format
+            for backend, metrics in nexmark_results.items():
+                results['nexmark'][backend] = metrics
+        except FileNotFoundError as e:
+            print(f"\n[Warning] NexMark not available: {e}")
+            print("To run NexMark, first compile it:")
+            print("  cd benchmark/nexmark-src && mvn clean package -DskipTests")
+        except Exception as e:
+            print(f"\n[Error] NexMark failed: {e}")
     
     # Print summary
     print_summary(results, backends)
@@ -175,8 +278,8 @@ Examples:
     # Suggest next steps
     print("\nNext steps:")
     print("  1. Review raw results in: benchmark/results/raw/")
-    print("  2. Generate figures: python scripts/generate_report.py")
-    print("  3. View figures in: benchmark/results/figures/")
+    print("  2. Generate report: python scripts/generate_report.py")
+    print("  3. View report in: benchmark/results/reports/")
 
 
 if __name__ == '__main__':

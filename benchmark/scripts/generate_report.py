@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import matplotlib.pyplot as plt  # type: ignore[import-untyped]
 import matplotlib  # type: ignore[import-untyped]
+from matplotlib.ticker import FuncFormatter  # type: ignore[import-untyped]
 import numpy as np  # type: ignore[import-untyped]
 import pandas as pd  # type: ignore[import-untyped]
 import seaborn as sns  # type: ignore[import-untyped]
@@ -46,20 +47,54 @@ COLORS = {
     'forl0': '#55A868',    # Green
 }
 
+# Color palette for multi-query charts
+QUERY_COLORS = [
+    '#2563eb',  # Blue
+    '#16a34a',  # Green
+    '#ea580c',  # Orange
+    '#dc2626',  # Red
+    '#7c3aed',  # Purple
+    '#0891b2',  # Cyan
+    '#ca8a04',  # Yellow
+    '#be185d',  # Pink
+]
+
 BACKEND_LABELS = {
     'hashmap': 'HashMapStateBackend',
     'forl0': 'ForL0StateBackend',
 }
 
 
+def get_throughput(data, parallelism=None):
+    """
+    Get throughput value from result data, preferring throughput_per_core if > 0,
+    otherwise calculate from throughput.
+    
+    On macOS, throughput_per_core is 0 (requires Linux /proc), so we fall back to throughput.
+    """
+    tpc = data.get('throughput_per_core', 0) or 0
+    if tpc > 0:
+        return tpc
+    
+    # Fallback to throughput divided by parallelism
+    throughput = data.get('throughput', 0) or 0
+    if throughput > 0:
+        p = parallelism or data.get('parallelism', 1) or 1
+        return throughput / p
+    
+    return 0
+
+
 def load_results():
-    """Load all benchmark results from raw directory."""
+    """Load all benchmark results from raw directory and nexmark directories."""
     results_dir = get_results_dir('raw')
+    benchmark_results_dir = get_results_dir('')  # Parent results directory
     results = {
         'wordcount': {'hashmap': None, 'forl0': None},
         'nexmark': {'hashmap': {}, 'forl0': {}}
     }
     
+    # Load WordCount results from raw directory
     for filepath in results_dir.glob('*.json'):
         try:
             with open(filepath, 'r') as f:
@@ -79,20 +114,37 @@ def load_results():
                         new_ts = metadata.get('timestamp', '')
                         if new_ts > existing_ts:
                             results['wordcount'][backend] = data
-            
-            elif 'nexmark' in test_name or data.get('benchmark') == 'nexmark':
-                query = data.get('query', '')
-                if backend in results['nexmark'] and query:
-                    if query not in results['nexmark'][backend]:
-                        results['nexmark'][backend][query] = data
-                    else:
-                        existing_ts = results['nexmark'][backend][query].get('_metadata', {}).get('timestamp', '')
-                        new_ts = metadata.get('timestamp', '')
-                        if new_ts > existing_ts:
-                            results['nexmark'][backend][query] = data
         
         except Exception as e:
             print(f"Warning: Could not load {filepath}: {e}")
+    
+    # Load NexMark results from nexmark_* directories
+    nexmark_dirs = sorted(benchmark_results_dir.glob('nexmark_*'), reverse=True)
+    if nexmark_dirs:
+        # Use the latest nexmark results directory
+        latest_nexmark_dir = nexmark_dirs[0]
+        nexmark_results_file = latest_nexmark_dir / 'nexmark_results.json'
+        if nexmark_results_file.exists():
+            try:
+                with open(nexmark_results_file, 'r') as f:
+                    nexmark_data = json.load(f)
+                
+                # Parse NexMark results format
+                for backend in ['hashmap', 'forl0']:
+                    if backend in nexmark_data.get('results', {}):
+                        backend_results = nexmark_data['results'][backend]
+                        query_results = backend_results.get('query_results', {})
+                        for query, qdata in query_results.items():
+                            results['nexmark'][backend][query] = {
+                                'query': query,
+                                'throughput': qdata.get('throughput', qdata.get('events_per_sec', 0)),
+                                'throughput_per_core': qdata.get('throughput_per_core', 0),
+                                'time_seconds': qdata.get('time_seconds', 0),
+                                'events_num': qdata.get('events_num', 0),
+                            }
+                print(f"Loaded NexMark results from: {latest_nexmark_dir.name}")
+            except Exception as e:
+                print(f"Warning: Could not load NexMark results: {e}")
     
     return results
 
@@ -153,18 +205,24 @@ def plot_nexmark_comparison(results, output_dir):
     """Generate NexMark throughput comparison figure for all queries."""
     nexmark_results = results.get('nexmark', {})
     
-    # Collect data
-    queries = ['q4', 'q5', 'q8', 'q9', 'q11', 'q18', 'q19', 'q20']
+    # Dynamically collect available queries from results
+    available_queries = set()
+    for backend in ['hashmap', 'forl0']:
+        if backend in nexmark_results:
+            available_queries.update(nexmark_results[backend].keys())
+    queries = sorted(available_queries, key=lambda x: (int(x[1:]) if x[1:].isdigit() else 999))
+    
+    if not queries:
+        print("Warning: No NexMark queries found in results")
+        return None
+    
     data = []
     
     for query in queries:
         for backend in ['hashmap', 'forl0']:
             if backend in nexmark_results and query in nexmark_results[backend]:
                 result = nexmark_results[backend][query]
-                tpc = result.get('throughput_per_core', result.get('throughput', 0))
-                parallelism = result.get('parallelism', 8)
-                if 'throughput' in result and 'throughput_per_core' not in result:
-                    tpc = result['throughput'] / parallelism
+                tpc = get_throughput(result)
                 data.append({
                     'Query': query.upper(),
                     'Backend': BACKEND_LABELS[backend],
@@ -361,20 +419,26 @@ def plot_improvement_summary(results, output_dir):
     # WordCount improvement
     wc_results = results.get('wordcount', {})
     if wc_results.get('hashmap') and wc_results.get('forl0'):
-        h = wc_results['hashmap'].get('throughput_per_core', 0)
-        f = wc_results['forl0'].get('throughput_per_core', 0)
+        h = get_throughput(wc_results['hashmap'])
+        f = get_throughput(wc_results['forl0'])
         if h > 0:
             improvements.append(((f - h) / h) * 100)
             labels.append('WordCount')
     
-    # NexMark improvements
+    # NexMark improvements - dynamically get available queries
     nexmark_results = results.get('nexmark', {})
-    for query in ['q4', 'q5', 'q8', 'q9', 'q11', 'q18', 'q19', 'q20']:
+    available_queries = set()
+    for backend in ['hashmap', 'forl0']:
+        if backend in nexmark_results:
+            available_queries.update(nexmark_results[backend].keys())
+    queries = sorted(available_queries, key=lambda x: (int(x[1:]) if x[1:].isdigit() else 999))
+    
+    for query in queries:
         h_data = nexmark_results.get('hashmap', {}).get(query, {})
         f_data = nexmark_results.get('forl0', {}).get(query, {})
         
-        h = h_data.get('throughput_per_core', h_data.get('throughput', 0))
-        f = f_data.get('throughput_per_core', f_data.get('throughput', 0))
+        h = get_throughput(h_data)
+        f = get_throughput(f_data)
         
         if h > 0 and f > 0:
             improvements.append(((f - h) / h) * 100)
@@ -423,63 +487,90 @@ def load_l0table_metrics():
     """
     [BENCHMARK_TEST] Load L0TABLE metrics from the l0metrics results directory.
     
-    Returns a list of metric samples sorted by elapsed_ms.
-    Aggregates metrics from all test runs (WordCount, NexMark, etc.)
+    Returns a dict with:
+    - 'by_query': dict mapping query name to its samples
+    - 'l0table': all L0Table samples (for backward compatibility)
+    - 'cache': all cache samples
+    - 'final_l0table': final L0Table statistics
+    - 'final_cache': final cache statistics
+    - 'sources': list of source descriptions
     """
     l0metrics_dir = get_results_dir('l0metrics')
     
-    # Find all L0 metrics files
-    metrics_files = list(l0metrics_dir.glob('l0table_metrics_*.json'))
+    # Find all L0 metrics files - both new format and old format
+    # New format: l0_metrics_{backend}_{query}.json
+    # Old format: l0table_metrics_{backend}_{timestamp}.json
+    new_format_files = list(l0metrics_dir.glob('l0_metrics_*.json'))
+    old_format_files = list(l0metrics_dir.glob('l0table_metrics_*.json'))
+    
+    # Prefer new format files
+    metrics_files = new_format_files if new_format_files else old_format_files
     
     if not metrics_files:
         return None
     
-    # Group files by test type
-    all_metrics = {
-        'wordcount': None,
-        'nexmark': {}
-    }
+    # Group samples by query
+    by_query = {}
+    source_info = []
     
     for filepath in metrics_files:
         try:
             with open(filepath, 'r') as f:
                 data = json.load(f)
             
-            filename = filepath.name
-            samples = data.get('samples', [])
+            # Get query name - new format has 'query' field, old format uses filename parsing
+            query = data.get('query')
+            if query is None:
+                # Try to parse from filename: l0table_metrics_forl0_20251211_... -> 'wordcount' (assumed)
+                # or l0_metrics_forl0_wordcount.json -> 'wordcount'
+                filename = filepath.stem
+                if '_' in filename:
+                    parts = filename.split('_')
+                    # l0_metrics_forl0_q5 -> query = 'q5'
+                    if len(parts) >= 4 and parts[0] == 'l0' and parts[1] == 'metrics':
+                        query = parts[3]
+                    else:
+                        query = 'wordcount'  # Default for old format
+                else:
+                    query = 'wordcount'
             
-            if 'wordcount' in filename or data.get('query') is None:
-                # WordCount metrics - keep the latest
-                if all_metrics['wordcount'] is None:
-                    all_metrics['wordcount'] = {'file': str(filepath), 'data': data}
-                elif filepath.stat().st_mtime > Path(all_metrics['wordcount']['file']).stat().st_mtime:
-                    all_metrics['wordcount'] = {'file': str(filepath), 'data': data}
+            samples = data.get('samples', [])
+            if not samples:
+                continue
+            
+            # Keep only the most recent file for each query
+            if query not in by_query:
+                by_query[query] = {
+                    'file': str(filepath),
+                    'mtime': filepath.stat().st_mtime,
+                    'samples': samples,
+                    'backend': data.get('backend', 'forl0')
+                }
             else:
-                # NexMark metrics - group by query
-                query = data.get('query', 'unknown')
-                if query not in all_metrics['nexmark']:
-                    all_metrics['nexmark'][query] = {'file': str(filepath), 'data': data}
-                elif filepath.stat().st_mtime > Path(all_metrics['nexmark'][query]['file']).stat().st_mtime:
-                    all_metrics['nexmark'][query] = {'file': str(filepath), 'data': data}
+                # Keep newer file
+                if filepath.stat().st_mtime > by_query[query]['mtime']:
+                    by_query[query] = {
+                        'file': str(filepath),
+                        'mtime': filepath.stat().st_mtime,
+                        'samples': samples,
+                        'backend': data.get('backend', 'forl0')
+                    }
+                    
         except Exception as e:
             print(f"Warning: Could not load L0 metrics from {filepath}: {e}")
     
-    # Aggregate all samples for timeline charts
-    all_samples = []
-    source_info = []
-    
-    if all_metrics['wordcount']:
-        wc_data = all_metrics['wordcount']['data']
-        all_samples.extend(wc_data.get('samples', []))
-        source_info.append('WordCount')
-    
-    for query, info in all_metrics['nexmark'].items():
-        nx_data = info['data']
-        all_samples.extend(nx_data.get('samples', []))
-        source_info.append(f'NexMark-{query}')
-    
-    if not all_samples:
+    if not by_query:
         return None
+    
+    # Aggregate all samples for backward compatibility
+    all_samples = []
+    for query, info in by_query.items():
+        samples = info['samples']
+        # Tag samples with query name for multi-line charts
+        for s in samples:
+            s['_query'] = query
+        all_samples.extend(samples)
+        source_info.append(query)
     
     # Separate different types
     l0table_samples = [s for s in all_samples if s.get('type') == 'l0table']
@@ -488,82 +579,105 @@ def load_l0table_metrics():
     final_cache = [s for s in all_samples if s.get('type') == 'cache_final']
     
     return {
-        'l0table': sorted(l0table_samples, key=lambda x: x.get('elapsed_ms', 0)),
-        'cache': sorted(cache_samples, key=lambda x: x.get('elapsed_ms', 0)),
+        'by_query': by_query,
+        'l0table': sorted(l0table_samples, key=lambda x: x.get('time_seconds', x.get('elapsed_ms', 0) / 1000)),
+        'cache': sorted(cache_samples, key=lambda x: x.get('time_seconds', x.get('elapsed_ms', 0) / 1000)),
         'final_l0table': final_l0table,
         'final_cache': final_cache,
         'sources': source_info,
-        'all_metrics': all_metrics
     }
 
 
 def plot_l0table_timeline(output_dir):
     """
-    [BENCHMARK_TEST] Generate L0Table metrics timeline charts.
+    [BENCHMARK_TEST] Generate L0Table Hit Rate timeline chart.
     
-    Creates:
-    - Hit rate over time
-    - Access count over time (incremental per sample)
-    - Valid slots (load factor proxy) over time
-    
-    Aggregates data from all tests (WordCount, NexMark).
+    Creates a single chart showing hit rate over time for each query.
+    Each query (WordCount, NexMark q5, q8, etc.) is shown as a separate line.
     """
     metrics = load_l0table_metrics()
     
-    if not metrics or not metrics.get('l0table'):
+    if not metrics or not metrics.get('by_query'):
         print("No L0Table metrics available for plotting")
         return None
     
-    l0table_samples = metrics['l0table']
-    cache_samples = metrics.get('cache', [])
-    sources = metrics.get('sources', [])
+    by_query = metrics['by_query']
+    queries = sorted(by_query.keys())
     
-    if len(l0table_samples) < 2:
-        print("Not enough L0Table samples for timeline plot")
+    if not queries:
+        print("No queries found in L0Table metrics")
         return None
     
-    print(f"  Plotting L0Table metrics from: {', '.join(sources)}")
+    print(f"  Plotting L0Table Hit Rate for queries: {', '.join(queries)}")
     
-    # Prepare data for L0Table
-    times_sec = [s['elapsed_ms'] / 1000.0 for s in l0table_samples]
-    hit_rates = [s.get('hit_rate', 0) * 100 for s in l0table_samples]  # Convert to percentage
-    access_counts = [s.get('access_count', 0) for s in l0table_samples]
-    valid_slots = [s.get('valid_slots', 0) for s in l0table_samples]
+    # Prepare data for each query
+    from collections import defaultdict
     
-    # Calculate incremental access counts (per interval)
-    incremental_access = [access_counts[0]]
-    for i in range(1, len(access_counts)):
-        incremental_access.append(access_counts[i] - access_counts[i-1])
+    query_data = {}
+    for query in queries:
+        samples = by_query[query]['samples']
+        l0_samples = [s for s in samples if s.get('type') == 'l0table']
+        
+        if not l0_samples:
+            continue
+        
+        # Aggregate by time bucket (1 second intervals) for this query
+        time_buckets = defaultdict(lambda: {
+            'total_access': 0, 
+            'total_hits': 0, 
+            'count': 0
+        })
+        
+        for s in l0_samples:
+            # Use time_seconds (new format) or fall back to elapsed_ms (old format)
+            t_sec = int(s.get('time_seconds', s.get('elapsed_ms', 0) / 1000))
+            bucket = time_buckets[t_sec]
+            bucket['total_access'] += s.get('total_accesses', s.get('access_count', 0))
+            bucket['total_hits'] += s.get('total_hits', s.get('hit_count', 0))
+            bucket['count'] += 1
+        
+        if not time_buckets:
+            continue
+        
+        sorted_times = sorted(time_buckets.keys())
+        times = []
+        hit_rates = []
+        
+        for t in sorted_times:
+            bucket = time_buckets[t]
+            times.append(t)
+            # hit_rate in raw data is 0-1 format, convert to percentage
+            if bucket['total_access'] > 0:
+                hit_rates.append(bucket['total_hits'] / bucket['total_access'] * 100)
+            else:
+                hit_rates.append(0)
+        
+        query_data[query] = {
+            'times': times,
+            'hit_rates': hit_rates
+        }
     
-    # Create figure with 3 subplots
-    fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+    if not query_data:
+        print("No valid data for L0Table timeline")
+        return None
     
-    # Plot 1: Hit Rate over time
-    ax1 = axes[0]
-    ax1.plot(times_sec, hit_rates, color=COLORS['forl0'], linewidth=2, marker='o', markersize=3)
-    ax1.set_ylabel('L0 Hit Rate (%)')
-    title_suffix = f" ({', '.join(sources)})" if sources else ""
-    ax1.set_title(f'L0Table Metrics Timeline{title_suffix}')
-    ax1.set_ylim(0, 100)
-    ax1.axhline(y=50, color='orange', linestyle='--', alpha=0.5, label='50% threshold')
-    ax1.legend(loc='upper right')
+    # Create single figure for Hit Rate
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Plot 2: Incremental Access Count (throughput proxy)
-    ax2 = axes[1]
-    ax2.bar(times_sec, incremental_access, width=0.8, color=COLORS['forl0'], alpha=0.7)
-    ax2.set_ylabel('Accesses per Interval')
+    for i, query in enumerate(sorted(query_data.keys())):
+        data = query_data[query]
+        color = QUERY_COLORS[i % len(QUERY_COLORS)]
+        ax.plot(data['times'], data['hit_rates'], 
+                 color=color, linewidth=2, marker='o', markersize=3, 
+                 label=query, alpha=0.8)
     
-    # Plot 3: Valid Slots (load factor)
-    ax3 = axes[2]
-    ax3.plot(times_sec, valid_slots, color=COLORS['hashmap'], linewidth=2, marker='s', markersize=3)
-    ax3.set_ylabel('Valid Slots')
-    ax3.set_xlabel('Time (seconds)')
-    
-    # Get max valid slots for reference line (16 for default 4-bucket L0Table)
-    max_slots = 16  # 4 buckets × 4 slots
-    ax3.axhline(y=max_slots, color='red', linestyle='--', alpha=0.5, label=f'Max Slots ({max_slots})')
-    ax3.set_ylim(0, max_slots + 2)
-    ax3.legend(loc='upper right')
+    ax.set_ylabel('L0 Hit Rate (%)')
+    ax.set_xlabel('Time (seconds)')
+    ax.set_title('L0Table Hit Rate Over Time')
+    ax.set_ylim(0, 100)
+    ax.axhline(y=50, color='gray', linestyle='--', alpha=0.5, label='50% Threshold')
+    ax.legend(loc='upper right', ncol=min(len(query_data), 4))
+    ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
@@ -573,61 +687,126 @@ def plot_l0table_timeline(output_dir):
     plt.close()
     
     print(f"Saved: {filepath}")
-    
-    # Generate summary stats
-    final_l0table = metrics.get('final_l0table', [])
-    if final_l0table:
-        print("\n[L0Table Final Statistics]")
-        for stat in final_l0table:
-            backend = stat.get('backend', '?')
-            print(f"  Backend {backend}, Table {stat.get('table_index', '?')}: "
-                  f"hit_rate={stat.get('hit_rate', 0):.2%}, "
-                  f"accesses={stat.get('access_count', 0):,}, "
-                  f"evictions={stat.get('eviction_count', 0):,}")
-    
     return filepath
 
 
-def plot_cache_hit_comparison(output_dir):
+def plot_state_entries_timeline(output_dir):
     """
-    [BENCHMARK_TEST] Generate cache hit rate comparison chart.
+    [BENCHMARK_TEST] Generate L0 Cache Valid Slots chart over time.
     
-    Shows L0 hit rate vs overall hit rate over time.
+    Shows L0 valid slots per query over time with a max slots reference line.
+    Each query is shown as a separate line.
     """
     metrics = load_l0table_metrics()
     
-    if not metrics or not metrics.get('cache'):
-        print("No cache metrics available for plotting")
+    if not metrics or not metrics.get('by_query'):
+        print("No metrics available for valid slots plotting")
         return None
     
-    cache_samples = metrics['cache']
+    by_query = metrics['by_query']
+    queries = sorted(by_query.keys())
     
-    if len(cache_samples) < 2:
-        print("Not enough cache samples for comparison plot")
+    if not queries:
+        print("No queries found for valid slots plot")
         return None
     
-    times_sec = [s['elapsed_ms'] / 1000.0 for s in cache_samples]
-    l0_hit_rates = [s.get('l0_hit_rate', 0) * 100 for s in cache_samples]
-    overall_hit_rates = [s.get('overall_hit_rate', 0) * 100 for s in cache_samples]
+    from collections import defaultdict
     
-    fig, ax = plt.subplots(figsize=(10, 5))
+    query_data = {}
+    max_valid_slots = 0  # Track maximum to set reasonable y-axis
     
-    ax.plot(times_sec, l0_hit_rates, color=COLORS['forl0'], linewidth=2, 
-            marker='o', markersize=4, label='L0 Cache Hit Rate')
-    ax.plot(times_sec, overall_hit_rates, color=COLORS['hashmap'], linewidth=2, 
-            marker='s', markersize=4, label='Overall Hit Rate (L0 + MainTable)')
+    for query in queries:
+        samples = by_query[query]['samples']
+        
+        # Get L0Table samples for valid slots
+        l0_samples = [s for s in samples if s.get('type') == 'l0table']
+        
+        if not l0_samples:
+            continue
+        
+        # Aggregate by time bucket
+        l0_buckets = defaultdict(lambda: {'valid_slots': 0, 'count': 0})
+        for s in l0_samples:
+            t_sec = int(s.get('time_seconds', s.get('elapsed_ms', 0) / 1000))
+            l0_buckets[t_sec]['valid_slots'] += s.get('valid_slots', 0)
+            l0_buckets[t_sec]['count'] += 1
+        
+        all_times = sorted(l0_buckets.keys())
+        if not all_times:
+            continue
+        
+        valid_slots_list = [l0_buckets[t]['valid_slots'] for t in all_times]
+        if valid_slots_list:
+            max_valid_slots = max(max_valid_slots, max(valid_slots_list))
+        
+        query_data[query] = {
+            'times': all_times,
+            'valid_slots': valid_slots_list
+        }
+    
+    if not query_data:
+        print("No valid data for valid slots plot")
+        return None
+    
+    # L0Table max slots calculation from benchmark.yaml config:
+    # Read l0_cache_size from config (default 14 = 2^14 = 16384 buckets)
+    # Each bucket has 4 slots
+    # With parallelism (local=2, cluster=8), each subtask handles some key groups
+    # Valid slots in chart is summed across all subtasks in each time bucket
+    try:
+        config = load_config()
+        mode = config.get('mode', 'local')
+        mode_config = config.get(mode, {})
+        parallelism = mode_config.get('parallelism', 2)
+        
+        # Get l0_cache_size from forl0 backend config
+        l0_cache_size = 14  # default
+        for backend in config.get('backends', []):
+            if backend.get('name') == 'forl0':
+                backend_config = backend.get('config', {})
+                l0_cache_size = backend_config.get('l0_cache_size', 14)
+                break
+        
+        # Calculate: 2^l0_cache_size buckets * 4 slots per bucket * key_groups_per_subtask
+        # key_groups = 128 (Flink default maxParallelism)
+        # key_groups_per_subtask = 128 / parallelism
+        slots_per_l0table = (1 << l0_cache_size) * 4
+        key_groups_per_subtask = 128 // parallelism
+        # Max slots per subtask = key_groups_per_subtask * slots_per_l0table
+        L0_MAX_SLOTS_PER_SUBTASK = key_groups_per_subtask * slots_per_l0table
+        print(f"  L0 config: l0_cache_size={l0_cache_size}, parallelism={parallelism}, "
+              f"max_slots_per_subtask={L0_MAX_SLOTS_PER_SUBTASK:,}")
+    except Exception as e:
+        print(f"  Warning: Could not read config, using default: {e}")
+        L0_MAX_SLOTS_PER_SUBTASK = (1 << 14) * 4 * 64  # fallback: 16384 * 4 * 64
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    for i, query in enumerate(sorted(query_data.keys())):
+        data = query_data[query]
+        color = QUERY_COLORS[i % len(QUERY_COLORS)]
+        ax.plot(data['times'], data['valid_slots'], 
+                color=color, linewidth=2, marker='o', markersize=3, 
+                label=query, alpha=0.8)
+    
+    # Add max slots reference line
+    ax.axhline(y=L0_MAX_SLOTS_PER_SUBTASK, color='red', linestyle='--', linewidth=2, 
+               alpha=0.7, label=f'Max Slots/Subtask ({L0_MAX_SLOTS_PER_SUBTASK:,})')
     
     ax.set_xlabel('Time (seconds)')
-    ax.set_ylabel('Hit Rate (%)')
-    ax.set_title('Cache Hit Rate Over Time')
-    ax.set_ylim(0, 105)
-    ax.legend(loc='lower right')
+    ax.set_ylabel('Valid Slots')
+    ax.set_title('L0 Cache Valid Slots Over Time')
+    ax.legend(loc='upper left', ncol=min(len(query_data) + 1, 4))
+    ax.grid(True, alpha=0.3)
+    
+    # Format y-axis with thousands separator
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ',')))
     
     plt.tight_layout()
     
-    filepath = output_dir / 'cache_hit_comparison.pdf'
+    filepath = output_dir / 'state_entries_timeline.pdf'
     plt.savefig(filepath)
-    plt.savefig(output_dir / 'cache_hit_comparison.png')
+    plt.savefig(output_dir / 'state_entries_timeline.png')
     plt.close()
     
     print(f"Saved: {filepath}")
@@ -1161,12 +1340,21 @@ def generate_report(results, output_dir):
                 NexMark is a standard benchmark for streaming systems, simulating an online auction scenario.
             </p>
             
+            {% if not tpc_supported %}
+            <div style="margin-bottom: 1rem; padding: 0.75rem; background: #fef3c7; border-radius: 0.5rem;">
+                ⚠️ <strong>Note:</strong> Throughput per core (rec/s/core) requires Linux /proc filesystem to read CPU time.
+                Current platform: <strong>{{ platform }}</strong>. This metric shows N/A on macOS.
+            </div>
+            {% endif %}
+            
             <table>
                 <thead>
                     <tr>
                         <th>Query</th>
                         <th>Description</th>
                         <th>Events</th>
+                        <th>HashMap (rec/s)</th>
+                        <th>ForL0 (rec/s)</th>
                         <th>HashMap (rec/s/core)</th>
                         <th>ForL0 (rec/s/core)</th>
                         <th>Improvement</th>
@@ -1178,8 +1366,10 @@ def generate_report(results, output_dir):
                         <td><strong>{{ row.query }}</strong></td>
                         <td>{{ row.description }}</td>
                         <td class="value-cell">{{ row.events }}</td>
-                        <td class="value-cell">{{ row.hashmap }}</td>
-                        <td class="value-cell">{{ row.forl0 }}</td>
+                        <td class="value-cell">{{ row.hashmap_throughput }}</td>
+                        <td class="value-cell">{{ row.forl0_throughput }}</td>
+                        <td class="value-cell">{{ row.hashmap_tpc }}</td>
+                        <td class="value-cell">{{ row.forl0_tpc }}</td>
                         <td>
                             {% if row.improvement != 'N/A' %}
                             <span class="improvement-badge {{ row.badge_class }}">
@@ -1207,35 +1397,41 @@ def generate_report(results, output_dir):
             
             <p style="color: var(--text-secondary); margin-bottom: 1rem;">
                 [BENCHMARK_TEST] L0Table metrics collected from: <strong>{{ l0_sources }}</strong>
+                (Total samples: {{ l0_sample_count }})
             </p>
             
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="value">{{ l0_final_hit_rate }}%</div>
-                    <div class="label">L0 Hit Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="value">{{ l0_total_accesses }}</div>
-                    <div class="label">Total Accesses</div>
-                </div>
-                <div class="stat-card">
-                    <div class="value">{{ l0_eviction_count }}</div>
-                    <div class="label">Evictions</div>
-                </div>
-                <div class="stat-card">
-                    <div class="value">{{ l0_sample_count }}</div>
-                    <div class="label">Samples Collected</div>
-                </div>
-            </div>
+            <!-- Per-Query Statistics Table -->
+            <table>
+                <thead>
+                    <tr>
+                        <th>Query</th>
+                        <th>Hit Rate (%)</th>
+                        <th>Total Accesses</th>
+                        <th>Evictions</th>
+                        <th>Samples</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for stat in l0_query_stats %}
+                    <tr>
+                        <td><strong>{{ stat.query }}</strong></td>
+                        <td>{{ stat.hit_rate }}%</td>
+                        <td>{{ stat.total_accesses }}</td>
+                        <td>{{ stat.evictions }}</td>
+                        <td>{{ stat.samples }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
             
-            <div class="figures-row">
+            <div class="figures-row" style="margin-top: 1.5rem;">
                 <div class="figure-container">
                     <img src="../figures/l0table_timeline.png" alt="L0Table Timeline" onerror="this.parentElement.style.display='none'">
-                    <p class="figure-caption">Figure: L0Table Metrics Over Time</p>
+                    <p class="figure-caption">Figure: L0Table Hit Rate Over Time (Per Query)</p>
                 </div>
                 <div class="figure-container">
-                    <img src="../figures/cache_hit_comparison.png" alt="Cache Hit Comparison" onerror="this.parentElement.style.display='none'">
-                    <p class="figure-caption">Figure: Cache Hit Rate Comparison</p>
+                    <img src="../figures/state_entries_timeline.png" alt="State Entries Timeline" onerror="this.parentElement.style.display='none'">
+                    <p class="figure-caption">Figure: L0 Cache Valid Slots Over Time (Per Query)</p>
                 </div>
             </div>
         </div>
@@ -1393,17 +1589,32 @@ def generate_report(results, output_dir):
     
     nexmark_rows = []
     nexmark_results = results.get('nexmark', {})
-    queries = ['q4', 'q5', 'q8', 'q9', 'q11', 'q18', 'q19', 'q20']
+    
+    # Dynamically get available queries from results
+    available_queries = set()
+    for backend in ['hashmap', 'forl0']:
+        if backend in nexmark_results:
+            available_queries.update(nexmark_results[backend].keys())
+    queries = sorted(available_queries, key=lambda x: (int(x[1:]) if x[1:].isdigit() else 999))
+    
+    # Check if throughput_per_core is supported (Linux only)
+    import platform
+    is_linux = platform.system() == 'Linux'
+    tpc_supported = is_linux
     
     for query in queries:
         h_data = nexmark_results.get('hashmap', {}).get(query, {})
         f_data = nexmark_results.get('forl0', {}).get(query, {})
         
-        h_tpc = h_data.get('throughput_per_core', h_data.get('throughput', 0))
-        f_tpc = f_data.get('throughput_per_core', f_data.get('throughput', 0))
-        events = h_data.get('events', f_data.get('events', 'N/A'))
+        # Get raw throughput values
+        h_throughput = h_data.get('throughput', 0) or 0
+        f_throughput = f_data.get('throughput', 0) or 0
+        h_tpc_raw = h_data.get('throughput_per_core', 0) or 0
+        f_tpc_raw = f_data.get('throughput_per_core', 0) or 0
+        events = h_data.get('events_num', f_data.get('events_num', 'N/A'))
         
-        imp = ((f_tpc - h_tpc) / h_tpc * 100) if h_tpc > 0 and f_tpc > 0 else None
+        # Calculate improvement based on throughput (always available)
+        imp = ((f_throughput - h_throughput) / h_throughput * 100) if h_throughput > 0 and f_throughput > 0 else None
         
         # Determine badge class for template
         if imp is not None:
@@ -1422,8 +1633,10 @@ def generate_report(results, output_dir):
             'query': query.upper(),
             'description': nexmark_descriptions.get(query, ''),
             'events': f'{events:,}' if isinstance(events, int) else str(events),
-            'hashmap': f'{h_tpc:,.0f}' if h_tpc else 'N/A',
-            'forl0': f'{f_tpc:,.0f}' if f_tpc else 'N/A',
+            'hashmap_throughput': f'{h_throughput:,.0f}' if h_throughput else 'N/A',
+            'forl0_throughput': f'{f_throughput:,.0f}' if f_throughput else 'N/A',
+            'hashmap_tpc': f'{h_tpc_raw:,.0f}' if h_tpc_raw > 0 else 'N/A',
+            'forl0_tpc': f'{f_tpc_raw:,.0f}' if f_tpc_raw > 0 else 'N/A',
             'improvement': f'{imp:.1f}' if imp is not None else 'N/A',
             'badge_class': badge_class,
             'imp_sign': imp_sign
@@ -1469,28 +1682,54 @@ def generate_report(results, output_dir):
     
     # [BENCHMARK_TEST] Load L0Table metrics for report
     l0_metrics = load_l0table_metrics()
-    l0_metrics_available = l0_metrics is not None and len(l0_metrics.get('final_l0table', [])) > 0
+    l0_sources = 'None'
+    l0_sample_count = 0
+    l0_query_stats = []  # Per-query statistics
+    # Legacy variables for template compatibility
     l0_final_hit_rate = 'N/A'
     l0_total_accesses = 'N/A'
     l0_eviction_count = 'N/A'
-    l0_sources = 'None'
-    l0_sample_count = 0
     
-    if l0_metrics_available:
-        final_stats = l0_metrics.get('final_l0table', [])
+    # Check if l0_metrics is valid (not None and has data)
+    l0_metrics_available = (
+        l0_metrics is not None and 
+        isinstance(l0_metrics, dict) and 
+        len(l0_metrics.get('by_query', {})) > 0
+    )
+    
+    if l0_metrics_available and l0_metrics is not None:
+        by_query = l0_metrics.get('by_query', {})
         sources = l0_metrics.get('sources', [])
         l0_sources = ', '.join(sources) if sources else 'Unknown'
         l0_sample_count = len(l0_metrics.get('l0table', []))
         
-        if final_stats:
-            # Aggregate from all tables
-            total_hits = sum(s.get('hit_count', 0) for s in final_stats)
-            total_acc = sum(s.get('access_count', 0) for s in final_stats)
-            total_evict = sum(s.get('eviction_count', 0) for s in final_stats)
+        # Calculate statistics per query
+        for query in sorted(by_query.keys()):
+            query_info = by_query[query]
+            samples = query_info.get('samples', [])
             
-            l0_final_hit_rate = f"{(total_hits / total_acc * 100):.1f}" if total_acc > 0 else '0.0'
-            l0_total_accesses = f"{total_acc:,}"
-            l0_eviction_count = f"{total_evict:,}"
+            # Get L0Table samples
+            l0_samples = [s for s in samples if s.get('type') == 'l0table']
+            final_samples = [s for s in samples if s.get('type') == 'l0table_final']
+            
+            if l0_samples:
+                # Calculate from periodic samples (sum of accesses over time)
+                total_accesses = sum(s.get('total_accesses', s.get('access_count', 0)) for s in l0_samples)
+                total_hits = sum(s.get('total_hits', s.get('hit_count', 0)) for s in l0_samples)
+                total_evictions = sum(s.get('eviction_count', 0) for s in l0_samples)
+                
+                # Calculate average hit rate from samples (hit_rate is in 0-1 format, convert to percentage)
+                hit_rates = [s.get('hit_rate', 0) for s in l0_samples if s.get('total_accesses', s.get('access_count', 0)) > 0]
+                avg_hit_rate = sum(hit_rates) / len(hit_rates) if hit_rates else 0
+                avg_hit_rate_pct = avg_hit_rate * 100  # Convert to percentage
+                
+                l0_query_stats.append({
+                    'query': query,
+                    'hit_rate': f"{avg_hit_rate_pct:.1f}",
+                    'total_accesses': f"{total_accesses:,}",
+                    'evictions': f"{total_evictions:,}",
+                    'samples': len(l0_samples)
+                })
     
     # [BENCHMARK_TEST] Scan for profiler flame graph files
     import platform
@@ -1554,10 +1793,12 @@ def generate_report(results, output_dir):
         l0_eviction_count=l0_eviction_count,
         l0_sources=l0_sources,
         l0_sample_count=l0_sample_count,
+        l0_query_stats=l0_query_stats,
         # [BENCHMARK_TEST] Profiler/flame graph variables
         profiler_files=profiler_files if profiler_files else None,
         cache_supported=cache_supported,
-        platform=platform.system()
+        platform=platform.system(),
+        tpc_supported=tpc_supported
     )
     
     # Save HTML report
@@ -1598,7 +1839,7 @@ def main():
     # [BENCHMARK_TEST] Generate L0Table metrics figures if available
     print("\nGenerating L0Table metrics figures (if available)...")
     plot_l0table_timeline(figures_dir)
-    plot_cache_hit_comparison(figures_dir)
+    plot_state_entries_timeline(figures_dir)
     
     # Generate report
     print("\nGenerating report...")

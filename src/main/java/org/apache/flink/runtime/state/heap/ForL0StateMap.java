@@ -260,10 +260,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         } else {
             // 回退：无法分配新块，尝试使用旧逻辑（可能触发重分配+立即释放，但这是降级路径）
             long addr = entryArena.updateEntry(result, vb, vlen);
-            if (addr != result) {
+            // 只有当 addr 有效且不同于原地址时才更新指针
+            if (addr != 0 && addr != result) {
                 mainTable.setSlotPointer(addr);
                 updateL0Table(knh, addr);
             }
+            // addr == 0 表示分配失败，保持原状态不变（数据未更新但不会崩溃）
+            // addr == result 表示原地更新成功，无需切换指针
         }
     }
 
