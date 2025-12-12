@@ -733,5 +733,84 @@ class EntryArenaTest {
             }
         }
     }
+
+    /**
+     * Test for EntryArena pre-allocation feature.
+     */
+    @Nested
+    class PreAllocationTests {
+
+        @Test
+        void testPreAllocationWithZeroSize() throws Exception {
+            // With zero size, should behave like regular constructor
+            EntryArena preAllocArena = new EntryArena(allocator, 0);
+            try {
+                EntryArena.ArenaStats stats = preAllocArena.getStats();
+                // Should have exactly 1 segment (the initial segment)
+                assertTrue(stats.totalSystemMemory > 0);
+                
+                // Can still put entries
+                long addr = preAllocArena.putEntry("key".getBytes(), "ns".getBytes(), "val".getBytes());
+                assertTrue(addr > 0);
+            } finally {
+                preAllocArena.close();
+            }
+        }
+
+        @Test
+        void testPreAllocationWithMemorySize() throws Exception {
+            // Pre-allocate 128KB (4 segments of 32KB each)
+            long preAllocSize = 128 * 1024; // 128KB
+            EntryArena preAllocArena = new EntryArena(allocator, preAllocSize);
+            try {
+                EntryArena.ArenaStats stats = preAllocArena.getStats();
+                // Should have multiple segments pre-allocated
+                // Initial segment + (128KB / 32KB) = 1 + 4 = 5 segments minimum
+                // But since first segment is already allocated, it's + numPreAlloc segments
+                assertTrue(stats.totalSystemMemory >= preAllocSize,
+                        "Pre-allocated memory should be at least " + preAllocSize + 
+                        " bytes, actual: " + stats.totalSystemMemory);
+                
+                // Put entries should work without triggering malloc
+                for (int i = 0; i < 100; i++) {
+                    long addr = preAllocArena.putEntry(
+                            ("key" + i).getBytes(), 
+                            "namespace".getBytes(), 
+                            ("value" + i).getBytes());
+                    assertTrue(addr > 0, "Should allocate entry " + i);
+                }
+            } finally {
+                preAllocArena.close();
+            }
+        }
+
+        @Test
+        void testPreAllocationReducesMallocOnNewEntries() throws Exception {
+            // Pre-allocate enough memory for many entries
+            long preAllocSize = 256 * 1024; // 256KB
+            EntryArena preAllocArena = new EntryArena(allocator, preAllocSize);
+            try {
+                long initialMemory = preAllocArena.getStats().totalSystemMemory;
+                
+                // Put many entries (should all fit in pre-allocated space)
+                for (int i = 0; i < 500; i++) {
+                    preAllocArena.putEntry(
+                            ("key" + i).getBytes(),
+                            "ns".getBytes(),
+                            ("value-data-" + i).getBytes());
+                }
+                
+                long afterPutsMemory = preAllocArena.getStats().totalSystemMemory;
+                
+                // Memory usage should not significantly increase if pre-allocation worked
+                // Allow some tolerance for edge cases where we need one more segment
+                assertTrue(afterPutsMemory <= initialMemory + DEFAULT_PAGE_SIZE,
+                        "Memory should not significantly grow after puts if pre-allocation worked. " +
+                        "Initial: " + initialMemory + ", After: " + afterPutsMemory);
+            } finally {
+                preAllocArena.close();
+            }
+        }
+    }
 }
 

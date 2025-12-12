@@ -12,16 +12,16 @@ flink:
 
 # Local mode settings (for development/testing on Mac)
 local:
-  parallelism: 2
+  parallelism: 4
   checkpoint_interval: 0  # 0 = disabled, or set to 10000 for 10s
   
   wordcount:
-    num_keys: 1000000         # 100万 key
-    num_records: 10000000     # 1000万条
-    arrival_rate: 230000      # records/s (230k)
-    skew_factor: 1.1          # Zipf s parameter (1.0~1.2 -> 20%-30% skew)
-    window_size: 5000         # milliseconds (5s)
-    slide_size: 200           # milliseconds (0.2s)
+    num_keys: 5000000         # 500万 key (增加状态规模)
+    num_records: 500000000     # 1亿条 (增加数据量)
+    arrival_rate: 0           # 无限制，全速运行 (消除限流开销)
+    skew_factor: 1.1          # Zipf s parameter 
+    window_size: 5000         # milliseconds
+    slide_size: 5000           # milliseconds
   
   nexmark:
     # NexMark queries to run (stateful queries with window/aggregation)
@@ -85,9 +85,17 @@ backends:
       # Examples: 256mb, 1gb, 0
       l0_memory_max_size: "0"
       # Initial MainTable size as a power of 2, range 1-20
-      main_table_initial_size: 16
+      # Note: Each KeyGroup gets its own StateMap with a MainTable!
+      # With 128 KeyGroups / parallelism=2 = 64 StateMaps per subtask
+      # Size 10 = 1024 buckets × 64 bytes = 64KB per MainTable (small, will auto-expand)
+      main_table_initial_size: 14
       # MainTable resize load factor threshold (0.5-4.0)
       main_table_load_factor_threshold: 1.5
+      # Initial memory to pre-allocate for EntryArena (reduces malloc overhead)
+      # Set to 0 to disable pre-allocation (allocate on demand)
+      # Note: Pre-allocation is now smart - limited to 50% of available memory
+      # Setting to 0 to disable for now - let it allocate on demand
+      arena_initial_size: "16mb"
 
 # Metrics collection settings
 metrics:

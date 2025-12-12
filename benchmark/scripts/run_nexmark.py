@@ -204,12 +204,20 @@ nexmark.workload.suite.benchmark.warmup.tps: {tps}
             l0_size = forl0_config.get('l0_cache_size', 14)
             l0_policy = forl0_config.get('l0_cache_replacement_policy', 'CLOCK')
             l0_enabled = forl0_config.get('l0_cache_enabled', True)
+            l0_memory_max = forl0_config.get('l0_memory_max_size', '0')
+            main_table_size = forl0_config.get('main_table_initial_size', 16)
+            main_table_load_factor = forl0_config.get('main_table_load_factor_threshold', 1.5)
+            arena_initial_size = forl0_config.get('arena_initial_size', '0')
             new_config = f"""
 # State Backend (configured by NexMark runner)
 state.backend: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
-state.backend.forl0.l0-table-size: {2**l0_size}
-state.backend.forl0.l0-eviction-policy: {l0_policy}
 state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
+state.backend.forl0.l0-cache.size: {l0_size}
+state.backend.forl0.l0-cache.replacement-policy: {l0_policy}
+state.backend.forl0.l0-memory.max-size: {l0_memory_max}
+state.backend.forl0.main-table.initial-size: {main_table_size}
+state.backend.forl0.main-table.load-factor-threshold: {main_table_load_factor}
+state.backend.forl0.arena.initial-size: {arena_initial_size}
 """
             # Copy ForL0 JAR to Flink lib if not present
             flink_lib_jar = self.flink_home / "lib" / self.forl0_jar.name

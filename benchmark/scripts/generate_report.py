@@ -752,8 +752,10 @@ def plot_state_entries_timeline(output_dir):
     # L0Table max slots calculation from benchmark.yaml config:
     # Read l0_cache_size from config (default 14 = 2^14 = 16384 buckets)
     # Each bucket has 4 slots
-    # With parallelism (local=2, cluster=8), each subtask handles some key groups
-    # Valid slots in chart is summed across all subtasks in each time bucket
+    # With parallelism, each subtask handles some key groups
+    # 
+    # IMPORTANT: Valid slots in chart is summed across ALL subtasks and ALL KeyGroups,
+    # so max slots should be the total for all subtasks, not per subtask.
     try:
         config = load_config()
         mode = config.get('mode', 'local')
@@ -768,18 +770,19 @@ def plot_state_entries_timeline(output_dir):
                 l0_cache_size = backend_config.get('l0_cache_size', 14)
                 break
         
-        # Calculate: 2^l0_cache_size buckets * 4 slots per bucket * key_groups_per_subtask
-        # key_groups = 128 (Flink default maxParallelism)
-        # key_groups_per_subtask = 128 / parallelism
+        # Calculate: 2^l0_cache_size buckets * 4 slots per bucket
+        # key_groups = 128 (Flink default maxParallelism), all are covered across subtasks
+        # Total max slots = 128 key_groups * slots_per_l0table (since we aggregate all subtasks)
         slots_per_l0table = (1 << l0_cache_size) * 4
-        key_groups_per_subtask = 128 // parallelism
-        # Max slots per subtask = key_groups_per_subtask * slots_per_l0table
-        L0_MAX_SLOTS_PER_SUBTASK = key_groups_per_subtask * slots_per_l0table
+        total_key_groups = 128  # Flink default
+        # Total max slots = all key_groups * slots_per_l0table
+        L0_MAX_SLOTS_TOTAL = total_key_groups * slots_per_l0table
         print(f"  L0 config: l0_cache_size={l0_cache_size}, parallelism={parallelism}, "
-              f"max_slots_per_subtask={L0_MAX_SLOTS_PER_SUBTASK:,}")
+              f"total_key_groups={total_key_groups}, slots_per_l0table={slots_per_l0table:,}, "
+              f"max_slots_total={L0_MAX_SLOTS_TOTAL:,}")
     except Exception as e:
         print(f"  Warning: Could not read config, using default: {e}")
-        L0_MAX_SLOTS_PER_SUBTASK = (1 << 14) * 4 * 64  # fallback: 16384 * 4 * 64
+        L0_MAX_SLOTS_TOTAL = 128 * (1 << 14) * 4  # fallback: 128 * 16384 * 4
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
@@ -790,9 +793,9 @@ def plot_state_entries_timeline(output_dir):
                 color=color, linewidth=2, marker='o', markersize=3, 
                 label=query, alpha=0.8)
     
-    # Add max slots reference line
-    ax.axhline(y=L0_MAX_SLOTS_PER_SUBTASK, color='red', linestyle='--', linewidth=2, 
-               alpha=0.7, label=f'Max Slots/Subtask ({L0_MAX_SLOTS_PER_SUBTASK:,})')
+    # Add max slots reference line (total across all subtasks/keygroups)
+    ax.axhline(y=L0_MAX_SLOTS_TOTAL, color='red', linestyle='--', linewidth=2, 
+               alpha=0.7, label=f'Max Slots (Total) ({L0_MAX_SLOTS_TOTAL:,})')
     
     ax.set_xlabel('Time (seconds)')
     ax.set_ylabel('Valid Slots')

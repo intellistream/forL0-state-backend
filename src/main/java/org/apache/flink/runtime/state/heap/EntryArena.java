@@ -6,6 +6,9 @@ import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.space.MemorySegmentSlice;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -20,6 +23,8 @@ import java.util.List;
  * Safe implementation: uses Flink MemorySegment instead of Unsafe operations.
  */
 public class EntryArena implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(EntryArena.class);
 
     // Entry layout constants
     private static final int HASH_OFFSET = 0;           // 4 bytes
@@ -40,16 +45,21 @@ public class EntryArena implements AutoCloseable {
     private static final int REMAINDER_SPLIT_RATIO_DIVISOR = 8; // split only if remaining >= allocSize/8
 
     // Limit free list scan to avoid O(n) overhead in hot path
-    private static final int MAX_FREE_LIST_SCAN = 16;
+    // Increased from 16 to 64 for better memory reuse
+    private static final int MAX_FREE_LIST_SCAN = 64;
 
     // Quarantine window: delay releasing empty slabs to avoid same-call-chain dangling access and reduce churn
     private final Deque<Integer> pendingRelease = new ArrayDeque<>();
     private boolean[] slabQuarantined = new boolean[16];
 
     // ---- New tuning knobs for quarantine and scanning ----
-    private static final int DRAIN_BUDGET_PER_CALL = 2;              // drain up to N pages per safe point
-    private static final int MAX_QUARANTINE_PAGES = 64;              // threshold to trigger extra draining
+    private static final int DRAIN_BUDGET_PER_CALL = 4;              // drain up to N pages per safe point
+    private static final int MAX_QUARANTINE_PAGES = 256;             // threshold to trigger extra draining (increased for sliding window)
     private static final int ADAPTIVE_SCAN_UPPER_BOUND = 128;        // larger scan when about to grow memory
+    
+    // Operation counter for throttled draining
+    private int opCounter = 0;
+    private static final int DRAIN_CHECK_INTERVAL = 64;              // only check drain every N operations
 
     /**
      * Size classes for free list allocation strategy.
@@ -103,6 +113,9 @@ public class EntryArena implements AutoCloseable {
     private int currentOffset;
     private int currentSlabIndex = -1; // 当前写入的slab索引
 
+    // Pre-allocation tracking: next pre-allocated segment to use when current is full
+    private int nextPreAllocIndex = -1;  // Index of next pre-allocated segment to use (-1 if none available)
+
     // Per-slab usage and index reuse structures
     // private final List<Integer> slabUsedBytes = new ArrayList<>();
     private int[] slabUsedBytes = new int[16];
@@ -122,6 +135,16 @@ public class EntryArena implements AutoCloseable {
      * Creates an Entry Arena (FREE_LIST allocation strategy).
      */
     public EntryArena(MemoryManagerAllocator allocator) {
+        this(allocator, 0);
+    }
+
+    /**
+     * Creates an Entry Arena with optional memory pre-allocation.
+     *
+     * @param allocator The memory allocator to use
+     * @param initialSizeBytes Initial memory to pre-allocate (0 for no pre-allocation)
+     */
+    public EntryArena(MemoryManagerAllocator allocator, long initialSizeBytes) {
         this.allocator = allocator;
         this.segments = new ArrayList<>();
         this.originalAllocations = new ArrayList<>();
@@ -138,6 +161,58 @@ public class EntryArena implements AutoCloseable {
 
         // Allocate initial segment
         allocateNewSegment();
+
+        // Pre-allocate additional segments if requested
+        if (initialSizeBytes > 0) {
+            preAllocateSegments(initialSizeBytes);
+        }
+    }
+
+    /**
+     * Pre-allocates memory segments to reduce runtime malloc overhead.
+     * Pre-allocated segments will be used when current segment is full.
+     *
+     * @param totalBytes Total bytes to pre-allocate
+     */
+    private void preAllocateSegments(long totalBytes) {
+        int segmentsToAllocate = (int) Math.ceil((double) totalBytes / segmentSize);
+        int preAllocated = 0;
+        
+        // Record current segment as the starting point (already allocated by constructor)
+        int startSegmentIndex = currentSlabIndex;
+
+        LOG.info("EntryArena: Pre-allocating {} segments ({} bytes each, total {} bytes)",
+                segmentsToAllocate, segmentSize, totalBytes);
+
+        for (int i = 0; i < segmentsToAllocate; i++) {
+            if (allocateNewSegment()) {
+                preAllocated++;
+                // Note: allocateNewSegment already adds segment to segments list
+                // and sets currentSlabIndex to the new segment.
+                // We just continue to allocate more.
+            } else {
+                LOG.warn("EntryArena: Pre-allocation stopped after {} segments (failed to allocate more)",
+                        preAllocated);
+                break;
+            }
+        }
+
+        // Set nextPreAllocIndex to point to the first pre-allocated segment
+        // (which is the segment after the initial one)
+        if (preAllocated > 0) {
+            nextPreAllocIndex = startSegmentIndex + 1;
+        }
+
+        // Reset to use the first segment for allocation
+        // All subsequent segments are already in segments list and ready for use
+        if (!segments.isEmpty()) {
+            currentSlabIndex = startSegmentIndex;
+            currentSegment = segments.get(startSegmentIndex);
+            currentOffset = 0;
+        }
+
+        LOG.info("EntryArena: Pre-allocated {} segments, total {} bytes, nextPreAllocIndex={}",
+                preAllocated, (long) preAllocated * segmentSize, nextPreAllocIndex);
     }
 
     /**
@@ -506,9 +581,8 @@ public class EntryArena implements AutoCloseable {
     }
 
     private long allocateEntry(int size) {
-        // drain quarantine at a safe point before new allocations (incremental)
-        tryDrainQuarantine();
-
+        // Skip drain here - will drain only when allocation fails or in allocateNewSegment
+        
         long reused = allocateFromFreeListBounded(size, EntryArena.MAX_FREE_LIST_SCAN);
         if (reused != 0) { return reused; }
 
@@ -528,6 +602,12 @@ public class EntryArena implements AutoCloseable {
         long retry = allocateFromFreeListBounded(size, ADAPTIVE_SCAN_UPPER_BOUND);
         if (retry != 0) { return retry; }
 
+        // Try to use next pre-allocated segment if available
+        if (useNextPreAllocatedSegment()) {
+            addr = allocateFromCurrentSegment(size);
+            if (addr != 0) { return addr; }
+        }
+
         // Try to allocate a new page; if it fails, aggressively drain quarantined pages and retry once
         if (!allocateNewSegment()) {
             drainAllQuarantined();
@@ -535,6 +615,30 @@ public class EntryArena implements AutoCloseable {
         }
 
         return allocateFromCurrentSegment(size);
+    }
+
+    /**
+     * Tries to switch to the next pre-allocated segment.
+     * @return true if switched to a pre-allocated segment, false if none available
+     */
+    private boolean useNextPreAllocatedSegment() {
+        if (nextPreAllocIndex >= 0 && nextPreAllocIndex < segments.size()) {
+            MemorySegment nextSeg = segments.get(nextPreAllocIndex);
+            if (nextSeg != null) {
+                currentSlabIndex = nextPreAllocIndex;
+                currentSegment = nextSeg;
+                currentOffset = 0;
+                ensureSlabCapacity(currentSlabIndex);
+                slabUsedBytes[currentSlabIndex] = 0;
+                nextPreAllocIndex++;
+                // Check if we've used all pre-allocated segments
+                if (nextPreAllocIndex >= segments.size()) {
+                    nextPreAllocIndex = -1;  // No more pre-allocated segments
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -648,11 +752,7 @@ public class EntryArena implements AutoCloseable {
             slabQuarantined[slabIndex] = true;
             pendingRelease.addLast(slabIndex);
         }
-        // After enqueueing, if quarantine exceeds threshold, drain a few immediately
-        if (pendingRelease.size() > MAX_QUARANTINE_PAGES) {
-            int excess = pendingRelease.size() - MAX_QUARANTINE_PAGES;
-            drainQuarantineBudgeted(Math.min(excess, DRAIN_BUDGET_PER_CALL));
-        }
+        // Skip immediate drain here - let maybeDrainAfterOp handle it with throttling
         // slabUsedBytes[slabIndex] already 0; segment remains until drained
     }
 
@@ -676,7 +776,13 @@ public class EntryArena implements AutoCloseable {
     }
 
     private void maybeDrainAfterOp() {
-        // only threshold-driven draining; no periodic draining by op counter
+        // Throttled draining: only check every N operations to reduce overhead
+        opCounter++;
+        if ((opCounter & (DRAIN_CHECK_INTERVAL - 1)) != 0) {
+            return;  // Skip check unless we hit the interval
+        }
+        
+        // Only drain when quarantine queue is very large
         if (pendingRelease.size() > MAX_QUARANTINE_PAGES) {
             int excess = pendingRelease.size() - MAX_QUARANTINE_PAGES;
             drainQuarantineBudgeted(Math.min(excess, DRAIN_BUDGET_PER_CALL));

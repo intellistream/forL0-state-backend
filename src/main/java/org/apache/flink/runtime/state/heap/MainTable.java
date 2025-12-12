@@ -50,9 +50,9 @@ public class MainTable implements AutoCloseable {
 
     public MainTable(MemoryManagerAllocator allocator, int bucketCountPow2, double loadFactorThreshold) {
         this.allocator = allocator;
+        this.loadFactorThreshold = loadFactorThreshold;
         this.bucketCount = 1 << bucketCountPow2;
         this.totalBucketCount = this.bucketCount;  // Initialize with main buckets only
-        this.loadFactorThreshold = loadFactorThreshold;
         
         try {
             // 只分配主桶内存

@@ -250,6 +250,7 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
         'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
         'main_table_initial_size': 'state.backend.forl0.main-table.initial-size',
         'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
+        'arena_initial_size': 'state.backend.forl0.arena.initial-size',
     }
     
     for yaml_key, flink_key in config_mapping.items():

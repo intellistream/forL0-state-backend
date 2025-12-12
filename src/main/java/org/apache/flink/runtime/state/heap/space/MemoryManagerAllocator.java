@@ -197,6 +197,25 @@ public final class MemoryManagerAllocator implements AutoCloseable {
     }
 
     /**
+     * Gets the available memory in bytes from the underlying MemoryManager.
+     * This can be used to check how much memory is available before allocating.
+     *
+     * @return available memory in bytes
+     */
+    public long getAvailableMemory() {
+        return memoryManager.availableMemory();
+    }
+
+    /**
+     * Gets the total memory budget in bytes from the underlying MemoryManager.
+     *
+     * @return total memory budget in bytes
+     */
+    public long getTotalMemory() {
+        return memoryManager.getMemorySize();
+    }
+
+    /**
      * Gets the current memory usage in bytes.
      */
     public long getUsedBytes() {
