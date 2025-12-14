@@ -25,6 +25,10 @@ public class MainTable implements AutoCloseable {
     private static final double DEFAULT_LOAD_FACTOR_THRESHOLD = 1.5;
     private static final int MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET = 255;
     private static final byte NULL_BUCKET_ID = 0;
+    
+    // Extension pool configuration
+    private static final int EXTENSION_AREA_SIZE = MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET * BUCKET_SIZE;  // 16320 bytes per area
+    private static final int POOL_GROW_AREAS = 32;  // Allocate 32 extension areas at a time
 
     private final MemoryManagerAllocator allocator;
     private int bucketCount;
@@ -33,13 +37,16 @@ public class MainTable implements AutoCloseable {
     // Track all allocations separately for proper release
     private final List<List<MemorySegment>> allAllocations = new ArrayList<>();
     
+    // Extension bucket pool management
+    private int extensionPoolCapacity;  // Number of extension areas available in pool
+    private int extensionPoolUsed;      // Number of extension areas allocated to main buckets
+    
     private int[] extensionBucketCounts;
     private int[] extensionBucketBaseIndices;
     private final double loadFactorThreshold;
     private volatile boolean needsResize = false;
     private int totalEntries = 0;
     private int maxExtensionBucketsUsed = 0;
-    private int totalBucketCount;  // Cache for total bucket count (main + extension areas)
 
     private MemorySegment lastFoundSegment = null;
     private int lastFountSlotOffset = -1;
@@ -52,7 +59,6 @@ public class MainTable implements AutoCloseable {
         this.allocator = allocator;
         this.loadFactorThreshold = loadFactorThreshold;
         this.bucketCount = 1 << bucketCountPow2;
-        this.totalBucketCount = this.bucketCount;  // Initialize with main buckets only
         
         try {
             // 只分配主桶内存
@@ -70,6 +76,10 @@ public class MainTable implements AutoCloseable {
         // 初始化管理数组
         this.extensionBucketBaseIndices = new int[bucketCount];  // 默认0表示未分配
         this.extensionBucketCounts = new int[bucketCount];       // 默认0
+        
+        // 初始化扩展池状态
+        this.extensionPoolCapacity = 0;
+        this.extensionPoolUsed = 0;
     }
 
     public long get(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
@@ -322,6 +332,24 @@ public class MainTable implements AutoCloseable {
     // --- Extension bucket management ---
 
     /**
+     * 批量增长扩展桶内存池。
+     * 这是分配扩展区域内存的唯一入口，将多次小分配合并为批量分配。
+     * @param areasToAdd 要添加的扩展区域数量
+     */
+    private void growExtensionPool(int areasToAdd) {
+        long totalSize = (long) areasToAdd * EXTENSION_AREA_SIZE;
+        try {
+            List<MemorySegment> newSegments = allocator.allocate((int) totalSize);
+            clearSegments(newSegments);
+            memorySegments.addAll(newSegments);
+            allAllocations.add(newSegments);
+            extensionPoolCapacity += areasToAdd;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to grow extension pool", e);
+        }
+    }
+
+    /**
      * 为指定主桶分配扩展桶，返回相对于该主桶扩展区域的偏移量（1-255）
      * @param mainBucketIndex 主桶索引（必须 < bucketCount）
      * @return 偏移量（1-255），或 NULL_BUCKET_ID(0) 表示失败
@@ -332,25 +360,15 @@ public class MainTable implements AutoCloseable {
             return NULL_BUCKET_ID;
         }
         
-        // 首次扩展：分配255个桶的连续空间
+        // 首次扩展该主桶：从池中分配一个扩展区域
         if (extensionBucketBaseIndices[mainBucketIndex] == 0) {
-            try {
-                long extensionAreaSize = (long) MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET * BUCKET_SIZE;
-                List<MemorySegment> newSegments = allocator.allocate((int) extensionAreaSize);
-                
-                // 记录扩展区域的全局起始索引
-                extensionBucketBaseIndices[mainBucketIndex] = totalBucketCount;
-                totalBucketCount += MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET;  // Update cached total
-                
-                // 追加到memorySegments
-                memorySegments.addAll(newSegments);
-                clearSegments(newSegments);
-                
-                // 跟踪这次分配
-                allAllocations.add(newSegments);
-            } catch (Exception e) {
-                return NULL_BUCKET_ID;  // 内存分配失败
+            // 池容量不足时批量增长
+            if (extensionPoolUsed >= extensionPoolCapacity) {
+                growExtensionPool(POOL_GROW_AREAS);
             }
+            // 从池中分配（O(1) 操作，无系统调用）
+            extensionBucketBaseIndices[mainBucketIndex] = bucketCount + extensionPoolUsed * MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET;
+            extensionPoolUsed++;
         }
         
         // 分配下一个扩展桶（偏移量从1开始）
@@ -362,19 +380,6 @@ public class MainTable implements AutoCloseable {
         }
         
         return offset;
-    }
-
-    /**
-     * 计算新表的总桶数（resize专用）
-     */
-    private int calculateTotalBucketCount(int newBucketCount, int[] newExtensionBucketBaseIndices) {
-        int total = newBucketCount;
-        for (int i = 0; i < newBucketCount; i++) {
-            if (newExtensionBucketBaseIndices[i] > 0) {
-                total += MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET;
-            }
-        }
-        return total;
     }
 
     /**
@@ -436,12 +441,15 @@ public class MainTable implements AutoCloseable {
         List<List<MemorySegment>> newAllAllocations = new ArrayList<>();
         newAllAllocations.add(newMainBucketsAllocation);  // 跟踪主桶分配
         
+        // 新表的扩展池状态
+        int[] newPoolState = new int[2];  // [0]=capacity, [1]=used
+        
         // 创建独立的索引用List
         List<MemorySegment> newMemorySegments = new ArrayList<>(newMainBucketsAllocation);
         clearMemorySegments(newMemorySegments);
 
         // 直接迁移条目，无需中间集合
-        migrateAllEntriesToNewTable(newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, entryArena);
+        migrateAllEntriesToNewTable(newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
 
         // 释放所有旧表的分配（包括主桶和动态扩展桶）
         for (List<MemorySegment> allocation : allAllocations) {
@@ -455,7 +463,8 @@ public class MainTable implements AutoCloseable {
         this.extensionBucketBaseIndices = newExtensionBucketBaseIndices;
         this.extensionBucketCounts = newExtensionBucketCounts;
         this.bucketCount = newBucketCount;
-        this.totalBucketCount = calculateTotalBucketCount(newBucketCount, newExtensionBucketBaseIndices);  // Recalculate total
+        this.extensionPoolCapacity = newPoolState[0];
+        this.extensionPoolUsed = newPoolState[1];
         needsResize = false;
         maxExtensionBucketsUsed = Arrays.stream(extensionBucketCounts).max().orElse(0);
     }
@@ -474,10 +483,10 @@ public class MainTable implements AutoCloseable {
      */
     private void migrateAllEntriesToNewTable(List<MemorySegment> newMemorySegments, int newBucketCount,
                                              int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                             List<List<MemorySegment>> newAllAllocations, EntryArena entryArena) {
+                                             List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryArena entryArena) {
         // 遍历所有基桶，每个基桶会递归遍历其扩展子树
         for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
-            migrateBucketTree(bucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, entryArena);
+            migrateBucketTree(bucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
         }
     }
 
@@ -489,9 +498,9 @@ public class MainTable implements AutoCloseable {
      */
     private void migrateBucketTree(int bucketIndex, int mainBucketIndex, List<MemorySegment> newMemorySegments, int newBucketCount,
                                    int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                   List<List<MemorySegment>> newAllAllocations, EntryArena entryArena) {
+                                   List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryArena entryArena) {
         // 迁移当前桶的所有槽位数据
-        migrateBucketSlots(bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, entryArena);
+        migrateBucketSlots(bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
 
         // 如果是基桶，递归迁移所有扩展桶的数据
         if (bucketIndex < bucketCount) {
@@ -509,14 +518,14 @@ public class MainTable implements AutoCloseable {
                 if (offset != NULL_BUCKET_ID) {
                     // 递归迁移扩展桶及其可能的子扩展桶
                     int extensionBucketIndex = getExtensionBucketGlobalIndex(bucketIndex, offset);
-                    migrateBucketTree(extensionBucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, entryArena);
+                    migrateBucketTree(extensionBucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
                 }
             }
         }
     }
     private void migrateBucketSlots(int bucketIndex, List<MemorySegment> newMemorySegments, int newBucketCount,
                                     int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                    List<List<MemorySegment>> newAllAllocations, EntryArena entryArena) {
+                                    List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryArena entryArena) {
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
@@ -532,22 +541,22 @@ public class MainTable implements AutoCloseable {
             int newBucketIndex = fullHash & (newBucketCount - 1);
 
             // 复用现有的递归插入逻辑，支持多级扩展桶
-            putInNewTable(newMemorySegments, newBucketCount, newBucketIndex, tag, entryAddress, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations);
+            putInNewTable(newMemorySegments, newBucketCount, newBucketIndex, tag, entryAddress, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);
         }
     }
 
     private void putInNewTable(List<MemorySegment> newMemorySegments, int newBucketCount, int bucketIndex,
                               short tag, long entryAddress, int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                              List<List<MemorySegment>> newAllAllocations) {
+                              List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
         // 确定主桶索引（首次调用时 bucketIndex < newBucketCount 必然成立）
         int mainBucketIndex = bucketIndex < newBucketCount ? bucketIndex : getMainBucketIndexForNewTable(bucketIndex, newBucketCount, newExtensionBucketBaseIndices);
         putInNewTableWithMainBucket(newMemorySegments, newBucketCount, bucketIndex, mainBucketIndex, tag, entryAddress, 
-                                   newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations);
+                                   newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);
     }
 
     private void putInNewTableWithMainBucket(List<MemorySegment> newMemorySegments, int newBucketCount, int bucketIndex, int mainBucketIndex,
                               short tag, long entryAddress, int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                              List<List<MemorySegment>> newAllAllocations) {
+                              List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
         // 先尝试插入当前桶
         MemorySegment segment = getSegmentForBucket(newMemorySegments, bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex, segment.size());
@@ -571,7 +580,7 @@ public class MainTable implements AutoCloseable {
 
         if (offset == NULL_BUCKET_ID) {
             // 为新表的主桶分配扩展桶
-            offset = allocateExtensionBucketForNewTable(mainBucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations);
+            offset = allocateExtensionBucketForNewTable(mainBucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);
             if (offset == NULL_BUCKET_ID) return; // 无法分配，跳过
             segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, offset);
         }
@@ -579,43 +588,39 @@ public class MainTable implements AutoCloseable {
         // 递归插入到扩展桶
         int extensionBucketIndex = newExtensionBucketBaseIndices[mainBucketIndex] + (offset & 0xFF) - 1;
         putInNewTableWithMainBucket(newMemorySegments, newBucketCount, extensionBucketIndex, mainBucketIndex, tag, entryAddress, 
-                                   newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations);
+                                   newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);
     }
 
     /**
-     * 为新表的主桶分配扩展桶（resize专用）
+     * 为新表的主桶分配扩展桶（resize专用，使用池化逻辑）
      */
     private byte allocateExtensionBucketForNewTable(int mainBucketIndex, List<MemorySegment> newMemorySegments, int newBucketCount,
                                                     int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                                    List<List<MemorySegment>> newAllAllocations) {
+                                                    List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
         // 检查是否达到单个主桶的扩展上限
         if (newExtensionBucketCounts[mainBucketIndex] >= MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET) {
             return NULL_BUCKET_ID;
         }
         
-        // 首次扩展：分配255个桶的连续空间
+        // 首次扩展该主桶：从池中分配一个扩展区域
         if (newExtensionBucketBaseIndices[mainBucketIndex] == 0) {
-            try {
-                long extensionAreaSize = (long) MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET * BUCKET_SIZE;
-                List<MemorySegment> extensionSegments = allocator.allocate((int) extensionAreaSize);
-                
-                // 计算当前新表的总桶数
-                int currentTotalBuckets = newBucketCount;
-                for (int i = 0; i < newBucketCount; i++) {
-                    if (newExtensionBucketBaseIndices[i] > 0) {
-                        currentTotalBuckets += MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET;
-                    }
+            // 池容量不足时批量增长
+            if (newPoolState[1] >= newPoolState[0]) {
+                // 批量分配扩展区域
+                long totalSize = (long) POOL_GROW_AREAS * EXTENSION_AREA_SIZE;
+                try {
+                    List<MemorySegment> newSegments = allocator.allocate((int) totalSize);
+                    clearSegments(newSegments);
+                    newMemorySegments.addAll(newSegments);
+                    newAllAllocations.add(newSegments);
+                    newPoolState[0] += POOL_GROW_AREAS;
+                } catch (Exception e) {
+                    return NULL_BUCKET_ID;
                 }
-                
-                newExtensionBucketBaseIndices[mainBucketIndex] = currentTotalBuckets;
-                newMemorySegments.addAll(extensionSegments);
-                clearSegments(extensionSegments);
-                
-                // 跟踪这次新表的扩展桶分配
-                newAllAllocations.add(extensionSegments);
-            } catch (Exception e) {
-                return NULL_BUCKET_ID;
             }
+            // 从池中分配（O(1) 操作）
+            newExtensionBucketBaseIndices[mainBucketIndex] = newBucketCount + newPoolState[1] * MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET;
+            newPoolState[1]++;
         }
         
         // 分配下一个扩展桶
