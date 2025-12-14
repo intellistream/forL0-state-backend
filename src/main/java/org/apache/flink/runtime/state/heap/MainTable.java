@@ -154,15 +154,13 @@ public class MainTable implements AutoCloseable {
 
     private long searchBucketSlots(MemorySegment segment, int bucketOffset, short tag, byte[] kb, int klen, byte[] nb,
                                    int nlen, EntryArena arena) {
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+        int slotOffset = bucketOffset;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (ptr == 0) continue;
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;
-
-            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+            if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
                 return ptr;
             }
         }
@@ -206,13 +204,17 @@ public class MainTable implements AutoCloseable {
     private long putInSlots(MemorySegment segment, int bucketOffset, short tag, long entryAddress,
                             byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
         int empty = -1;
+        int emptyOffset = 0;
 
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+        int slotOffset = bucketOffset;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
 
             if (ptr == 0) {
-                if (empty == -1) empty = slot;
+                if (empty == -1) {
+                    empty = slot;
+                    emptyOffset = slotOffset;
+                }
                 continue;
             }
 
@@ -220,22 +222,19 @@ public class MainTable implements AutoCloseable {
             if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
                 lastFoundSegment = segment;
                 lastFountSlotOffset = slotOffset;
-                // If entryAddress is 0, it's an in-place update (no need to change the pointer)
                 if (entryAddress > 0) segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-                return ptr; // update
+                return ptr;
             }
         }
 
         if (empty != -1) {
-            int slotOffset = bucketOffset + empty * SLOT_SIZE;
             lastFoundSegment = segment;
-            lastFountSlotOffset = slotOffset;
-            segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
-            // Only set pointer if entryAddress is non-zero since it's already zeroed
-            if (entryAddress > 0) segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-            return 0; // new
+            lastFountSlotOffset = emptyOffset;
+            segment.putShort(emptyOffset + SLOT_TAG_OFFSET, tag);
+            if (entryAddress > 0) segment.putLong(emptyOffset + SLOT_POINTER_OFFSET, entryAddress);
+            return 0;
         }
-        return -1; // full
+        return -1;
     }
 
     /**
@@ -263,16 +262,13 @@ public class MainTable implements AutoCloseable {
     }
 
     private long removeFromBucketSlots(MemorySegment segment, int bucketOffset, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+        int slotOffset = bucketOffset;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (ptr == 0) continue;
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;
-
-            if (arena.matchesKey(ptr, kb, klen, nb, nlen)) {
-                segment.putShort(slotOffset + SLOT_TAG_OFFSET, (short)0);
+            if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
                 return ptr;
             }
@@ -319,11 +315,11 @@ public class MainTable implements AutoCloseable {
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
+        int slotOffset = bucketOffset;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (slotPointer != 0) {
+                short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
                 visitor.visit(slotPointer, bucketIndex, slotTag);
             }
         }
@@ -529,18 +525,15 @@ public class MainTable implements AutoCloseable {
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+        int slotOffset = bucketOffset;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long entryAddress = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (entryAddress == 0) continue;
 
             short tag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-
-            // 直接从EntryArena读取存储的hash值，无需重新计算
             int fullHash = entryArena.getHash(entryAddress);
             int newBucketIndex = fullHash & (newBucketCount - 1);
 
-            // 复用现有的递归插入逻辑，支持多级扩展桶
             putInNewTable(newMemorySegments, newBucketCount, newBucketIndex, tag, entryAddress, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);
         }
     }
@@ -557,17 +550,13 @@ public class MainTable implements AutoCloseable {
     private void putInNewTableWithMainBucket(List<MemorySegment> newMemorySegments, int newBucketCount, int bucketIndex, int mainBucketIndex,
                               short tag, long entryAddress, int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
                               List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
-        // 先尝试插入当前桶
         MemorySegment segment = getSegmentForBucket(newMemorySegments, bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex, segment.size());
 
-        // 查找空槽位直接插入
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            int slotOffset = bucketOffset + slot * SLOT_SIZE;
+        int slotOffset = bucketOffset;
+        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
             if (ptr == 0) {
-                // 找到空槽位，直接插入（新表中不需要检查重复）
                 segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
                 return;
@@ -579,13 +568,11 @@ public class MainTable implements AutoCloseable {
         byte offset = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
 
         if (offset == NULL_BUCKET_ID) {
-            // 为新表的主桶分配扩展桶
             offset = allocateExtensionBucketForNewTable(mainBucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);
-            if (offset == NULL_BUCKET_ID) return; // 无法分配，跳过
+            if (offset == NULL_BUCKET_ID) return;
             segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, offset);
         }
 
-        // 递归插入到扩展桶
         int extensionBucketIndex = newExtensionBucketBaseIndices[mainBucketIndex] + (offset & 0xFF) - 1;
         putInNewTableWithMainBucket(newMemorySegments, newBucketCount, extensionBucketIndex, mainBucketIndex, tag, entryAddress, 
                                    newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);
