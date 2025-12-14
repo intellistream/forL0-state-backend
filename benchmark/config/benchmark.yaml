@@ -17,17 +17,17 @@ local:
   
   wordcount:
     num_keys: 1000000         # 500万 key (增加状态规模)
-    num_records: 100000000     # 2000万条 (确保作业运行足够长时间 > 20秒)
+    num_records: 20000000     # 2000万条 (确保作业运行足够长时间 > 20秒)
     arrival_rate: 0           # 无限制，全速运行 (消除限流开销)
     skew_factor: 1.1          # Zipf s parameter 
-    window_size: 4000         # milliseconds
-    slide_size: 2000           # milliseconds
+    window_size: 5000         # milliseconds
+    slide_size: 200           # milliseconds
   
   nexmark:
     # NexMark queries to run (stateful queries with window/aggregation)
     queries: "q4,q5,q7,q8"    # 本地测试4个状态密集型查询
-    events: 50000000          # 5000万条 (确保作业运行足够长时间 > 20秒)
-    tps: 5000000              # 500万/s
+    events: 50000000          
+    tps: 100000000              # events per second (local mode)
     warmup_events: 1000000     # warmup events
     warmup_duration: 10        # warmup duration in seconds
 
@@ -78,7 +78,7 @@ backends:
       # Size of each L0Table as a power of 2 (bucket count), range 1-20
       # Actual bucket count = 2^n, each bucket = 64 bytes
       # Example: size=10 means 1024 buckets = 64KB per L0Table
-      l0_cache_size: 14
+      l0_cache_size: 12
       # Cache replacement policy: CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU
       l0_cache_replacement_policy: CLOCK
       # Maximum L0 memory pool size (0 = unlimited)
@@ -88,14 +88,14 @@ backends:
       # Note: Each KeyGroup gets its own StateMap with a MainTable!
       # With 128 KeyGroups / parallelism=2 = 64 StateMaps per subtask
       # Size 10 = 1024 buckets × 64 bytes = 64KB per MainTable (small, will auto-expand)
-      main_table_initial_size: 14
+      main_table_initial_size: 12
       # MainTable resize load factor threshold (0.5-4.0)
       main_table_load_factor_threshold: 1.5
       # Initial memory to pre-allocate for EntryArena (reduces malloc overhead)
       # Set to 0 to disable pre-allocation (allocate on demand)
       # Note: Pre-allocation is now smart - limited to 50% of available memory
-      # Setting to 0 to disable for now - let it allocate on demand
-      arena_initial_size: "24mb"
+      # Total pre-alloc = KeyGroups × States × arena_size (e.g., 64 × 3 × 2mb = 384mb)
+      arena_initial_size: "4mb"
 
 # Metrics collection settings
 metrics:

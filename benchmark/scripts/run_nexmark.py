@@ -130,12 +130,11 @@ class NexMarkRunner:
         print(f"[NexMark] Config files backed up")
     
     def _restore_configs(self):
-        """Restore Flink and NexMark config files"""
+        """Restore Flink config file (not NexMark config, which we want to keep)"""
         if self.flink_config_backup.exists():
             shutil.copy(self.flink_config_backup, self.flink_config)
-        if self.nexmark_yaml_backup.exists():
-            shutil.copy(self.nexmark_yaml_backup, self.nexmark_yaml)
-        print(f"[NexMark] Config files restored")
+        # Note: Don't restore nexmark.yaml - we want to keep our generated config
+        print(f"[NexMark] Flink config restored")
     
     def _generate_nexmark_yaml(self, queries: str):
         """Generate nexmark.yaml from benchmark.yaml config"""
