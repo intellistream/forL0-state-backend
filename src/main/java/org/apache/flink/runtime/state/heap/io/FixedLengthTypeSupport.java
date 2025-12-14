@@ -96,6 +96,7 @@ public final class FixedLengthTypeSupport {
         
         /**
          * Reads value directly from memory segment as Object.
+         * Uses native byte order for optimal performance.
          */
         @SuppressWarnings("unchecked")
         public <S> S read(MemorySegment segment, int offset) {
@@ -123,6 +124,7 @@ public final class FixedLengthTypeSupport {
         
         /**
          * Writes value directly to memory segment.
+         * Uses native byte order for optimal performance.
          */
         public <S> void write(MemorySegment segment, int offset, S value) {
             switch (type) {
@@ -150,119 +152,6 @@ public final class FixedLengthTypeSupport {
                 case CHAR:
                     segment.putChar(offset, (Character) value);
                     break;
-                default:
-                    throw new IllegalStateException("Unknown type: " + type);
-            }
-        }
-        
-        /**
-         * Writes value to byte array (for EntryArena).
-         */
-        public <S> byte[] toBytes(S value) {
-            byte[] bytes = new byte[type.getByteSize()];
-            toBytesInto(value, bytes);
-            return bytes;
-        }
-        
-        /**
-         * Writes value into provided buffer (avoids allocation).
-         * Buffer must be at least getByteSize() bytes.
-         */
-        public <S> void toBytesInto(S value, byte[] buffer) {
-            switch (type) {
-                case LONG:
-                    long longVal = (Long) value;
-                    buffer[0] = (byte) (longVal >> 56);
-                    buffer[1] = (byte) (longVal >> 48);
-                    buffer[2] = (byte) (longVal >> 40);
-                    buffer[3] = (byte) (longVal >> 32);
-                    buffer[4] = (byte) (longVal >> 24);
-                    buffer[5] = (byte) (longVal >> 16);
-                    buffer[6] = (byte) (longVal >> 8);
-                    buffer[7] = (byte) longVal;
-                    break;
-                case INT:
-                    int intVal = (Integer) value;
-                    buffer[0] = (byte) (intVal >> 24);
-                    buffer[1] = (byte) (intVal >> 16);
-                    buffer[2] = (byte) (intVal >> 8);
-                    buffer[3] = (byte) intVal;
-                    break;
-                case DOUBLE:
-                    long doubleBits = Double.doubleToRawLongBits((Double) value);
-                    buffer[0] = (byte) (doubleBits >> 56);
-                    buffer[1] = (byte) (doubleBits >> 48);
-                    buffer[2] = (byte) (doubleBits >> 40);
-                    buffer[3] = (byte) (doubleBits >> 32);
-                    buffer[4] = (byte) (doubleBits >> 24);
-                    buffer[5] = (byte) (doubleBits >> 16);
-                    buffer[6] = (byte) (doubleBits >> 8);
-                    buffer[7] = (byte) doubleBits;
-                    break;
-                case FLOAT:
-                    int floatBits = Float.floatToRawIntBits((Float) value);
-                    buffer[0] = (byte) (floatBits >> 24);
-                    buffer[1] = (byte) (floatBits >> 16);
-                    buffer[2] = (byte) (floatBits >> 8);
-                    buffer[3] = (byte) floatBits;
-                    break;
-                case SHORT:
-                    short shortVal = (Short) value;
-                    buffer[0] = (byte) (shortVal >> 8);
-                    buffer[1] = (byte) shortVal;
-                    break;
-                case BYTE:
-                    buffer[0] = (Byte) value;
-                    break;
-                case BOOLEAN:
-                    buffer[0] = (byte) ((Boolean) value ? 1 : 0);
-                    break;
-                case CHAR:
-                    char charVal = (Character) value;
-                    buffer[0] = (byte) (charVal >> 8);
-                    buffer[1] = (byte) charVal;
-                    break;
-                default:
-                    throw new IllegalStateException("Unknown type: " + type);
-            }
-        }
-        
-        /**
-         * Reads value from byte array.
-         */
-        @SuppressWarnings("unchecked")
-        public <S> S fromBytes(byte[] bytes) {
-            switch (type) {
-                case LONG:
-                    long longVal = 0;
-                    for (int i = 0; i < 8; i++) {
-                        longVal = (longVal << 8) | (bytes[i] & 0xFF);
-                    }
-                    return (S) Long.valueOf(longVal);
-                case INT:
-                    int intVal = ((bytes[0] & 0xFF) << 24) | ((bytes[1] & 0xFF) << 16) |
-                                 ((bytes[2] & 0xFF) << 8) | (bytes[3] & 0xFF);
-                    return (S) Integer.valueOf(intVal);
-                case DOUBLE:
-                    long doubleBits = 0;
-                    for (int i = 0; i < 8; i++) {
-                        doubleBits = (doubleBits << 8) | (bytes[i] & 0xFF);
-                    }
-                    return (S) Double.valueOf(Double.longBitsToDouble(doubleBits));
-                case FLOAT:
-                    int floatBits = ((bytes[0] & 0xFF) << 24) | ((bytes[1] & 0xFF) << 16) |
-                                    ((bytes[2] & 0xFF) << 8) | (bytes[3] & 0xFF);
-                    return (S) Float.valueOf(Float.intBitsToFloat(floatBits));
-                case SHORT:
-                    short shortVal = (short) (((bytes[0] & 0xFF) << 8) | (bytes[1] & 0xFF));
-                    return (S) Short.valueOf(shortVal);
-                case BYTE:
-                    return (S) Byte.valueOf(bytes[0]);
-                case BOOLEAN:
-                    return (S) Boolean.valueOf(bytes[0] != 0);
-                case CHAR:
-                    char charVal = (char) (((bytes[0] & 0xFF) << 8) | (bytes[1] & 0xFF));
-                    return (S) Character.valueOf(charVal);
                 default:
                     throw new IllegalStateException("Unknown type: " + type);
             }
@@ -305,95 +194,89 @@ public final class FixedLengthTypeSupport {
         }
         
         /**
-         * Writes Tuple to byte array.
+         * Reads Tuple directly from MemorySegment (zero-copy fast path).
+         * Uses native byte order for optimal performance.
+         * @param segment The memory segment to read from
+         * @param baseOffset The offset where the tuple data starts
          */
-        @SuppressWarnings("unchecked")
-        public <S extends Tuple> byte[] toBytes(S tuple) {
-            byte[] bytes = new byte[totalSize];
-            toBytesInto(tuple, bytes);
-            return bytes;
-        }
-        
-        /**
-         * Writes Tuple into provided buffer (avoids allocation).
-         * Buffer must be at least getByteSize() bytes.
-         */
-        @SuppressWarnings("unchecked")
-        public <S extends Tuple> void toBytesInto(S tuple, byte[] buffer) {
-            for (int i = 0; i < arity; i++) {
-                Object fieldValue = tuple.getField(i);
-                int offset = fieldOffsets[i];
-                FixedType ft = fieldTypes[i];
-                
-                switch (ft) {
-                    case LONG:
-                        writeLongToBytes(buffer, offset, (Long) fieldValue);
-                        break;
-                    case INT:
-                        writeIntToBytes(buffer, offset, (Integer) fieldValue);
-                        break;
-                    case DOUBLE:
-                        writeLongToBytes(buffer, offset, Double.doubleToRawLongBits((Double) fieldValue));
-                        break;
-                    case FLOAT:
-                        writeIntToBytes(buffer, offset, Float.floatToRawIntBits((Float) fieldValue));
-                        break;
-                    case SHORT:
-                        writeShortToBytes(buffer, offset, (Short) fieldValue);
-                        break;
-                    case BYTE:
-                        buffer[offset] = (Byte) fieldValue;
-                        break;
-                    case BOOLEAN:
-                        buffer[offset] = (byte) ((Boolean) fieldValue ? 1 : 0);
-                        break;
-                    case CHAR:
-                        writeShortToBytes(buffer, offset, (short) ((Character) fieldValue).charValue());
-                        break;
-                }
-            }
-        }
-        
-        /**
-         * Reads Tuple from byte array.
-         */
-        @SuppressWarnings("unchecked")
-        public <S extends Tuple> S fromBytes(byte[] bytes) {
+        public <S extends Tuple> S read(MemorySegment segment, int baseOffset) {
             Object[] fields = new Object[arity];
             
             for (int i = 0; i < arity; i++) {
-                int offset = fieldOffsets[i];
+                int offset = baseOffset + fieldOffsets[i];
                 FixedType ft = fieldTypes[i];
                 
                 switch (ft) {
                     case LONG:
-                        fields[i] = readLongFromBytes(bytes, offset);
+                        fields[i] = segment.getLong(offset);
                         break;
                     case INT:
-                        fields[i] = readIntFromBytes(bytes, offset);
+                        fields[i] = segment.getInt(offset);
                         break;
                     case DOUBLE:
-                        fields[i] = Double.longBitsToDouble(readLongFromBytes(bytes, offset));
+                        fields[i] = segment.getDouble(offset);
                         break;
                     case FLOAT:
-                        fields[i] = Float.intBitsToFloat(readIntFromBytes(bytes, offset));
+                        fields[i] = segment.getFloat(offset);
                         break;
                     case SHORT:
-                        fields[i] = readShortFromBytes(bytes, offset);
+                        fields[i] = segment.getShort(offset);
                         break;
                     case BYTE:
-                        fields[i] = bytes[offset];
+                        fields[i] = segment.get(offset);
                         break;
                     case BOOLEAN:
-                        fields[i] = bytes[offset] != 0;
+                        fields[i] = segment.get(offset) != 0;
                         break;
                     case CHAR:
-                        fields[i] = (char) readShortFromBytes(bytes, offset);
+                        fields[i] = segment.getChar(offset);
                         break;
                 }
             }
             
             return (S) createTuple(fields);
+        }
+        
+        /**
+         * Writes Tuple directly to MemorySegment (zero-copy fast path).
+         * Uses native byte order for optimal performance.
+         * @param segment The memory segment to write to
+         * @param baseOffset The offset where the tuple data starts
+         * @param tuple The tuple to write
+         */
+        public <S extends Tuple> void write(MemorySegment segment, int baseOffset, S tuple) {
+            for (int i = 0; i < arity; i++) {
+                Object fieldValue = tuple.getField(i);
+                int offset = baseOffset + fieldOffsets[i];
+                FixedType ft = fieldTypes[i];
+                
+                switch (ft) {
+                    case LONG:
+                        segment.putLong(offset, (Long) fieldValue);
+                        break;
+                    case INT:
+                        segment.putInt(offset, (Integer) fieldValue);
+                        break;
+                    case DOUBLE:
+                        segment.putDouble(offset, (Double) fieldValue);
+                        break;
+                    case FLOAT:
+                        segment.putFloat(offset, (Float) fieldValue);
+                        break;
+                    case SHORT:
+                        segment.putShort(offset, (Short) fieldValue);
+                        break;
+                    case BYTE:
+                        segment.put(offset, (Byte) fieldValue);
+                        break;
+                    case BOOLEAN:
+                        segment.put(offset, (byte) ((Boolean) fieldValue ? 1 : 0));
+                        break;
+                    case CHAR:
+                        segment.putChar(offset, (Character) fieldValue);
+                        break;
+                }
+            }
         }
         
         /**
@@ -418,52 +301,6 @@ public final class FixedLengthTypeSupport {
                 default:
                     throw new IllegalStateException("Unsupported tuple arity: " + arity);
             }
-        }
-        
-        // Helper methods for byte array operations
-        private static void writeLongToBytes(byte[] bytes, int offset, long value) {
-            bytes[offset]     = (byte) (value >> 56);
-            bytes[offset + 1] = (byte) (value >> 48);
-            bytes[offset + 2] = (byte) (value >> 40);
-            bytes[offset + 3] = (byte) (value >> 32);
-            bytes[offset + 4] = (byte) (value >> 24);
-            bytes[offset + 5] = (byte) (value >> 16);
-            bytes[offset + 6] = (byte) (value >> 8);
-            bytes[offset + 7] = (byte) value;
-        }
-        
-        private static void writeIntToBytes(byte[] bytes, int offset, int value) {
-            bytes[offset]     = (byte) (value >> 24);
-            bytes[offset + 1] = (byte) (value >> 16);
-            bytes[offset + 2] = (byte) (value >> 8);
-            bytes[offset + 3] = (byte) value;
-        }
-        
-        private static void writeShortToBytes(byte[] bytes, int offset, short value) {
-            bytes[offset]     = (byte) (value >> 8);
-            bytes[offset + 1] = (byte) value;
-        }
-        
-        private static long readLongFromBytes(byte[] bytes, int offset) {
-            return ((long)(bytes[offset] & 0xFF) << 56) |
-                   ((long)(bytes[offset + 1] & 0xFF) << 48) |
-                   ((long)(bytes[offset + 2] & 0xFF) << 40) |
-                   ((long)(bytes[offset + 3] & 0xFF) << 32) |
-                   ((long)(bytes[offset + 4] & 0xFF) << 24) |
-                   ((long)(bytes[offset + 5] & 0xFF) << 16) |
-                   ((long)(bytes[offset + 6] & 0xFF) << 8) |
-                   (bytes[offset + 7] & 0xFF);
-        }
-        
-        private static int readIntFromBytes(byte[] bytes, int offset) {
-            return ((bytes[offset] & 0xFF) << 24) |
-                   ((bytes[offset + 1] & 0xFF) << 16) |
-                   ((bytes[offset + 2] & 0xFF) << 8) |
-                   (bytes[offset + 3] & 0xFF);
-        }
-        
-        private static short readShortFromBytes(byte[] bytes, int offset) {
-            return (short) (((bytes[offset] & 0xFF) << 8) | (bytes[offset + 1] & 0xFF));
         }
     }
     

@@ -41,8 +41,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // Fast-path support for Tuple types composed of fixed-length fields
     private final FixedLengthTypeSupport.TupleTypeInfo tupleTypeInfo;
     
-    // Reusable buffer for fixed-length type serialization (avoids byte[] allocation per operation)
-    private final byte[] fixedLengthBuffer;
+    // Fixed-length value size in bytes (for zero-copy MemorySegment operations)
+    private final int fixedLengthValueSize;
 
     // Configuration
     private final boolean l0CacheEnabled;
@@ -192,17 +192,17 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             ? FixedLengthTypeSupport.detectTuple(stateSerializer) 
             : null;
         
-        // Pre-allocate reusable buffer for fixed-length types
+        // Store fixed-length value size for zero-copy operations
         if (stateTypeInfo != null) {
-            this.fixedLengthBuffer = new byte[stateTypeInfo.getByteSize()];
+            this.fixedLengthValueSize = stateTypeInfo.getByteSize();
             LOG.info("ForL0StateMap: Fast-path enabled for state type {} ({} bytes)",
-                    stateTypeInfo.getType(), stateTypeInfo.getByteSize());
+                    stateTypeInfo.getType(), fixedLengthValueSize);
         } else if (tupleTypeInfo != null) {
-            this.fixedLengthBuffer = new byte[tupleTypeInfo.getByteSize()];
+            this.fixedLengthValueSize = tupleTypeInfo.getByteSize();
             LOG.info("ForL0StateMap: Fast-path enabled for Tuple{} ({} bytes)",
-                    tupleTypeInfo.getArity(), tupleTypeInfo.getByteSize());
+                    tupleTypeInfo.getArity(), fixedLengthValueSize);
         } else {
-            this.fixedLengthBuffer = null;
+            this.fixedLengthValueSize = 0;
         }
 
         String fastPathDesc = stateTypeInfo != null ? stateTypeInfo.getType().toString() 
@@ -248,7 +248,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                         knh.namespaceBytes, knh.namespaceLength, entryArena);
                 if (addr > 0) {
                     l0Hits++;
-                    return deserializeValueFromArenaOptimized(addr);
+                    return readValue(addr);
                 }
             }
             addr = mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength,
@@ -256,7 +256,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             if (addr > 0) {
                 mainTableHits++;
                 updateL0Table(knh, addr); // promote to L0 cache
-                return deserializeValueFromArenaOptimized(addr);
+                return readValue(addr);
             }
             return null;
         } catch (IOException e) {
@@ -288,26 +288,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public void put(K key, N namespace, S state) {
         KeyNamespaceHash knh;
-        byte[] vb;
-        int vlen;
-        try{
+        try {
             knh = serializeKeyNamespace(key, namespace);
-            if (stateTypeInfo != null) {
-                // Fast path: fixed-length primitive type with buffer reuse
-                stateTypeInfo.toBytesInto(state, fixedLengthBuffer);
-                vb = fixedLengthBuffer;
-                vlen = fixedLengthBuffer.length;
-            } else if (tupleTypeInfo != null) {
-                // Fast path: Tuple type with buffer reuse
-                tupleTypeInfo.toBytesInto((org.apache.flink.api.java.tuple.Tuple) state, fixedLengthBuffer);
-                vb = fixedLengthBuffer;
-                vlen = fixedLengthBuffer.length;
-            } else {
-                // Normal path: use serializer
-                serializerPack.writeState(state);
-                vb = serializerPack.stateBuffer();
-                vlen = serializerPack.stateLength();
-            }
         } catch (IOException e) {
             LOG.error("Serialization error during put operation for key={}, namespace={}", key, namespace, e);
             throw new RuntimeException("Put operation failed due to serialization error", e);
@@ -316,17 +298,66 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         long result = putEntry(knh);
 
         if (result == 0) { // new entry
-            long addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
-                    knh.namespaceBytes, knh.namespaceLength, vb, vlen);
+            long addr;
+            if (stateTypeInfo != null) {
+                // Zero-copy fast path: allocate entry with reserved value space, then write directly
+                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                        knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
+                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                stateTypeInfo.write(slice.segment, slice.offset, state);
+            } else if (tupleTypeInfo != null) {
+                // Zero-copy fast path for Tuple types
+                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                        knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
+                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                tupleTypeInfo.write(slice.segment, slice.offset, (org.apache.flink.api.java.tuple.Tuple) state);
+            } else {
+                // Normal path: use serializer
+                try {
+                    serializerPack.writeState(state);
+                } catch (IOException e) {
+                    throw new RuntimeException("Put operation failed due to serialization error", e);
+                }
+                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                        knh.namespaceBytes, knh.namespaceLength, serializerPack.stateBuffer(), serializerPack.stateLength());
+            }
             mainTable.setSlotPointer(addr);
             size++;
             updateL0Table(knh, addr);
         } else { // existing entry
-            updateExistingEntry(result, vb, vlen, knh);
+            updateExistingEntry(result, state, knh);
         }
     }
 
-    private void updateExistingEntry(long result, byte[] vb, int vlen, KeyNamespaceHash knh) {
+    /**
+     * Optimized update for fixed-length types: direct MemorySegment write.
+     * For variable-length types, falls back to byte[] based update.
+     */
+    @SuppressWarnings("unchecked")
+    private void updateExistingEntry(long existingAddr, S state, KeyNamespaceHash knh) {
+        if (stateTypeInfo != null) {
+            // Zero-copy: fixed-length types can always update in-place
+            MemorySegmentSlice slice = entryArena.getValueSlice(existingAddr);
+            stateTypeInfo.write(slice.segment, slice.offset, state);
+        } else if (tupleTypeInfo != null) {
+            // Zero-copy: fixed-length Tuple types can always update in-place
+            MemorySegmentSlice slice = entryArena.getValueSlice(existingAddr);
+            tupleTypeInfo.write(slice.segment, slice.offset, (org.apache.flink.api.java.tuple.Tuple) state);
+        } else {
+            // Variable-length: use byte[] based update
+            try {
+                serializerPack.writeState(state);
+            } catch (IOException e) {
+                throw new RuntimeException("Update operation failed due to serialization error", e);
+            }
+            updateExistingEntryBytes(existingAddr, serializerPack.stateBuffer(), serializerPack.stateLength(), knh);
+        }
+    }
+
+    /**
+     * Update existing entry with byte array value (for variable-length types).
+     */
+    private void updateExistingEntryBytes(long result, byte[] vb, int vlen, KeyNamespaceHash knh) {
         // 先尝试就地更新，避免指针切换
         if (entryArena.updateValueInPlace(result, vb, vlen)) {
             return;
@@ -457,16 +488,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             try {
                 byte[] kb = entryArena.getKeyBytes(entryAddress);
                 byte[] nb = entryArena.getNamespaceBytes(entryAddress);
-                byte[] vb = entryArena.getValueBytes(entryAddress);
                 if (kb == null || nb == null) {
                     return; // skip entries with missing key or namespace
                 }
                 K k = deserializeKey(kb);
                 N n = deserializeNamespace(nb);
-                S v = null;
-                if (vb != null && vb.length > 0) {
-                    v = deserializeValue(vb);
-                }
+                // Use optimized deserialization (consistent with get() method)
+                S v = readValue(entryAddress);
                 if (v != null) {
                     list.add(new StateEntry.SimpleStateEntry<>(k, n, v));
                 }
@@ -520,84 +548,84 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
         if (result == 0) { // new entry
             S newState = transformation.apply(null, value);
-            byte[] vb;
-            int vlen;
+            long addr;
             if (useSimpleFastPath) {
-                // Fast path: fixed-length type with buffer reuse
-                stateTypeInfo.toBytesInto(newState, fixedLengthBuffer);
-                vb = fixedLengthBuffer;
-                vlen = fixedLengthBuffer.length;
+                // Zero-copy fast path: allocate entry with reserved value space, then write directly
+                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                        knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
+                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                stateTypeInfo.write(slice.segment, slice.offset, newState);
             } else if (useTupleFastPath) {
-                // Fast path: Tuple type with buffer reuse
-                tupleTypeInfo.toBytesInto((org.apache.flink.api.java.tuple.Tuple) newState, fixedLengthBuffer);
-                vb = fixedLengthBuffer;
-                vlen = fixedLengthBuffer.length;
+                // Zero-copy fast path: allocate entry with reserved value space, then write directly
+                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                        knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
+                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                tupleTypeInfo.write(slice.segment, slice.offset, (org.apache.flink.api.java.tuple.Tuple) newState);
             } else {
                 // Normal path: use serializer
                 serializerPack.writeState(newState);
-                vb = serializerPack.stateBuffer();
-                vlen = serializerPack.stateLength();
+                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                        knh.namespaceBytes, knh.namespaceLength, serializerPack.stateBuffer(), serializerPack.stateLength());
             }
-            long addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
-                    knh.namespaceBytes, knh.namespaceLength, vb, vlen);
             mainTable.setSlotPointer(addr);
             size++;
             updateL0Table(knh, addr);
         } else { // existing entry
             S oldState;
-            if (useSimpleFastPath || useTupleFastPath) {
-                // Fast path: read fixed-length value
-                oldState = deserializeValueFromArenaOptimized(result);
+            MemorySegmentSlice slice = null;
+            if (useSimpleFastPath) {
+                // Zero-copy fast path: read directly from MemorySegment
+                slice = entryArena.getValueSlice(result);
+                oldState = stateTypeInfo.read(slice.segment, slice.offset);
+            } else if (useTupleFastPath) {
+                // Zero-copy fast path: read directly from MemorySegment
+                slice = entryArena.getValueSlice(result);
+                oldState = (S) tupleTypeInfo.read(slice.segment, slice.offset);
             } else {
                 // Normal path
                 oldState = deserializeValueFromArena(result);
             }
             S newState = transformation.apply(oldState, value);
-            byte[] vb;
-            int vlen;
             if (useSimpleFastPath) {
-                // Fast path: fixed-length type with buffer reuse
-                stateTypeInfo.toBytesInto(newState, fixedLengthBuffer);
-                vb = fixedLengthBuffer;
-                vlen = fixedLengthBuffer.length;
+                // Zero-copy fast path: fixed-length guarantees in-place update
+                stateTypeInfo.write(slice.segment, slice.offset, newState);
             } else if (useTupleFastPath) {
-                // Fast path: Tuple type with buffer reuse
-                tupleTypeInfo.toBytesInto((org.apache.flink.api.java.tuple.Tuple) newState, fixedLengthBuffer);
-                vb = fixedLengthBuffer;
-                vlen = fixedLengthBuffer.length;
+                // Zero-copy fast path: fixed-length guarantees in-place update
+                tupleTypeInfo.write(slice.segment, slice.offset, (org.apache.flink.api.java.tuple.Tuple) newState);
             } else {
                 // Normal path: use serializer
                 serializerPack.writeState(newState);
-                vb = serializerPack.stateBuffer();
-                vlen = serializerPack.stateLength();
+                // 先尝试就地更新
+                updateExistingEntryBytes(result, serializerPack.stateBuffer(), serializerPack.stateLength(), knh);
             }
-            // 先尝试就地更新
-            updateExistingEntry(result, vb, vlen, knh);
         }
     }
 
     /**
      * Optimized deserialization for fixed-length types and Tuples.
-     * Reads value directly from EntryArena without using TypeSerializer when fast-path is available.
+     * Reads value directly from MemorySegment without byte[] copy when fast-path is available.
      */
     @SuppressWarnings("unchecked")
-    private S deserializeValueFromArenaOptimized(long entryAddress) {
-        byte[] valueBytes = entryArena.getValueBytes(entryAddress);
-        if (valueBytes == null || valueBytes.length == 0) {
-            return null;
-        }
-        
-        // Fast-path for primitive types (Long, Int, Double, etc.)
+    private S readValue(long entryAddress) {
+        // Fast-path for primitive types: zero-copy direct MemorySegment read
         if (stateTypeInfo != null) {
-            return stateTypeInfo.fromBytes(valueBytes);
+            MemorySegmentSlice slice = entryArena.getValueSlice(entryAddress);
+            if (slice == null || slice.length == 0) {
+                return null;
+            }
+            return stateTypeInfo.read(slice.segment, slice.offset);
         }
         
-        // Fast-path for Tuple types (Tuple2<Long, Long>, etc.)
+        // Fast-path for Tuple types: zero-copy direct MemorySegment read
         if (tupleTypeInfo != null) {
-            return (S) tupleTypeInfo.fromBytes(valueBytes);
+            MemorySegmentSlice slice = entryArena.getValueSlice(entryAddress);
+            if (slice == null || slice.length == 0) {
+                return null;
+            }
+            return (S) tupleTypeInfo.read(slice.segment, slice.offset);
         }
         
-        // Normal path: use TypeSerializer (should not reach here if fast-path check is correct)
+        // Normal path: use TypeSerializer
         try {
             return deserializeValueFromArena(entryAddress);
         } catch (IOException e) {

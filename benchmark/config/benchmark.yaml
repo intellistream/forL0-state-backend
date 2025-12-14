@@ -16,12 +16,12 @@ local:
   checkpoint_interval: 0  # 0 = disabled, or set to 10000 for 10s
   
   wordcount:
-    num_keys: 5000000         # 500万 key (增加状态规模)
-    num_records: 500000000     # 1亿条 (增加数据量)
+    num_keys: 1000000         # 500万 key (增加状态规模)
+    num_records: 100000000     # 2000万条 (确保作业运行足够长时间 > 20秒)
     arrival_rate: 0           # 无限制，全速运行 (消除限流开销)
     skew_factor: 1.1          # Zipf s parameter 
-    window_size: 5000         # milliseconds
-    slide_size: 5000           # milliseconds
+    window_size: 4000         # milliseconds
+    slide_size: 2000           # milliseconds
   
   nexmark:
     # NexMark queries to run (stateful queries with window/aggregation)
@@ -95,7 +95,7 @@ backends:
       # Set to 0 to disable pre-allocation (allocate on demand)
       # Note: Pre-allocation is now smart - limited to 50% of available memory
       # Setting to 0 to disable for now - let it allocate on demand
-      arena_initial_size: "16mb"
+      arena_initial_size: "24mb"
 
 # Metrics collection settings
 metrics:

@@ -45,7 +45,6 @@ public class EntryArena implements AutoCloseable {
     private static final int REMAINDER_SPLIT_RATIO_DIVISOR = 8; // split only if remaining >= allocSize/8
 
     // Limit free list scan to avoid O(n) overhead in hot path
-    // Increased from 16 to 64 for better memory reuse
     private static final int MAX_FREE_LIST_SCAN = 64;
 
     // Quarantine window: delay releasing empty slabs to avoid same-call-chain dangling access and reduce churn
@@ -247,17 +246,23 @@ public class EntryArena implements AutoCloseable {
 
     /**
      * Stores a new entry and returns its address (buffer+length 重载，避免复制 DataOutputSerializer 缓冲区）。
+     * 
+     * <p>If valueBuffer is null but valueLen > 0, space is reserved for the value but not written.
+     * Use {@link #getValueSlice(long)} to get the value region and write directly for zero-copy optimization.
      */
     public long putEntry(int hash, byte[] keyBuffer, int keyLen, byte[] namespaceBuffer, int namespaceLen, byte[] valueBuffer, int valueLen) {
-        if (closed || keyBuffer == null || namespaceBuffer == null || valueBuffer == null) {
+        if (closed || keyBuffer == null || namespaceBuffer == null) {
             return 0;
         }
         // Validate input sizes and lengths
-        if (keyLen < 0 || keyLen > keyBuffer.length || namespaceLen < 0 || namespaceLen > namespaceBuffer.length ||
-                valueLen < 0 || valueLen > valueBuffer.length) {
+        if (keyLen < 0 || keyLen > keyBuffer.length || namespaceLen < 0 || namespaceLen > namespaceBuffer.length) {
             return 0;
         }
-        if (keyLen > 16 * 1024 || namespaceLen > 16 * 1024 || valueLen > 256 * 1024) {
+        // valueBuffer can be null (reserve space only), but if provided, must be valid
+        if (valueBuffer != null && (valueLen < 0 || valueLen > valueBuffer.length)) {
+            return 0;
+        }
+        if (valueLen < 0 || keyLen > 16 * 1024 || namespaceLen > 16 * 1024 || valueLen > 256 * 1024) {
             return 0;
         }
 
@@ -270,18 +275,22 @@ public class EntryArena implements AutoCloseable {
         int slabIndex = getSlabIndex(address);
         int offset = getOffset(address);
         MemorySegment segment = segments.get(slabIndex);
-        // header - store as 4 separate ints to ensure correct byte order for better portability
-        segment.putInt(offset + HASH_OFFSET, hash);
-        segment.putInt(offset + KEY_LEN_OFFSET, keyLen);
-        segment.putInt(offset + NAMESPACE_LEN_OFFSET, namespaceLen);
-        segment.putInt(offset + VALUE_LEN_OFFSET, valueLen);
+        // header - pack 4 ints into 2 longs for fewer memory operations (hot path optimization)
+        // Use 0xFFFFFFFFL mask to prevent sign extension when int is negative (e.g., hash)
+        long header1 = (hash & 0xFFFFFFFFL) | ((long) keyLen << 32);
+        long header2 = (namespaceLen & 0xFFFFFFFFL) | ((long) valueLen << 32);
+        segment.putLong(offset, header1);
+        segment.putLong(offset + 8, header2);
         // body
         int dataOffset = offset + ENTRY_HEADER_SIZE;
         segment.put(dataOffset, keyBuffer, 0, keyLen);
         dataOffset += keyLen;
         segment.put(dataOffset, namespaceBuffer, 0, namespaceLen);
-        dataOffset += namespaceLen;
-        segment.put(dataOffset, valueBuffer, 0, valueLen);
+        // Write value only if buffer is provided; otherwise space is reserved for zero-copy write
+        if (valueBuffer != null && valueLen > 0) {
+            dataOffset += namespaceLen;
+            segment.put(dataOffset, valueBuffer, 0, valueLen);
+        }
         activeEntries++;
         // periodic/quarantine threshold based draining
         maybeDrainAfterOp();
@@ -644,6 +653,7 @@ public class EntryArena implements AutoCloseable {
     /**
      * Attempts to allocate from the current segment if there's enough space.
      * Returns the allocated address or 0 if allocation failed.
+     * Note: ensureSlabCapacity is called when segment is created/switched, not here.
      */
     private long allocateFromCurrentSegment(int size) {
         if (currentSegment != null && currentOffset + size <= currentSegment.size()) {
@@ -651,8 +661,7 @@ public class EntryArena implements AutoCloseable {
             long addr = ((long)(slabIndex + 1) << 32) | (currentOffset + 1);
             currentOffset += size;
             totalAllocated += size;
-            // track per-slab usage
-            ensureSlabCapacity(slabIndex);
+            // track per-slab usage (slabIndex is guaranteed valid by segment initialization)
             slabUsedBytes[slabIndex] += size;
             return addr;
         }
@@ -687,7 +696,6 @@ public class EntryArena implements AutoCloseable {
                 }
                 // update per-slab usage for the reused block
                 int slabIndex = getSlabIndex(cur.address);
-                ensureSlabCapacity(slabIndex);
                 slabUsedBytes[slabIndex] += size;
                 return cur.address;
             }
@@ -724,7 +732,6 @@ public class EntryArena implements AutoCloseable {
             addToFreeList(address, sz);
             // decrease per-slab usage and free page if empty
             int slabIndex = getSlabIndex(address);
-            ensureSlabCapacity(slabIndex);
             int used = slabUsedBytes[slabIndex] - sz;
             slabUsedBytes[slabIndex] = used;
             if (used == 0) {
@@ -747,7 +754,7 @@ public class EntryArena implements AutoCloseable {
         // purge free-list blocks from this slab to avoid handing out invalid addresses
         purgeFreeListForSlab(slabIndex);
         // delay actual release: keep segment readable for a short window
-        ensureSlabCapacity(slabIndex);
+        // slabIndex is from existing segment, no need to ensureSlabCapacity
         if (!slabQuarantined[slabIndex]) {
             slabQuarantined[slabIndex] = true;
             pendingRelease.addLast(slabIndex);
@@ -802,7 +809,6 @@ public class EntryArena implements AutoCloseable {
         if (idx < originalAllocations.size()) {
             originalAllocations.set(idx, null);
         }
-        ensureSlabCapacity(idx);
         slabQuarantined[idx] = false;
         slabUsedBytes[idx] = 0;
         freeSlabIndices.addLast(idx);
