@@ -209,8 +209,8 @@ Examples:
                        help='State backend to use (default: all)')
     parser.add_argument('--query', type=str, default=None,
                        help='NexMark queries to run (comma-separated, e.g., q5,q8). Default: from config')
-    parser.add_argument('--profile', '-p', action='store_true',
-                       help='Enable async profiler for flame graphs')
+    parser.add_argument('--profile', '-p', type=str, default=None, choices=['cpu', 'cache'],
+                       help='Enable profiling: cpu (flame graphs) or cache (cache statistics)')
     
     args = parser.parse_args()
     
@@ -244,7 +244,7 @@ Examples:
         print("Running WordCount Benchmark")
         print("=" * 60)
         for backend in backends:
-            result = run_wordcount(config, backend, enable_profile=args.profile)
+            result = run_wordcount(config, backend, profile_mode=args.profile)
             if result:
                 results['wordcount'][backend] = result
                 save_result(result, 'wordcount', backend, mode)
@@ -259,7 +259,7 @@ Examples:
             nexmark_results = runner.run(
                 backends=backends,
                 queries=nexmark_queries,
-                profile=args.profile,
+                profile_mode=args.profile,
                 restart_cluster=True
             )
             # Store results in our format

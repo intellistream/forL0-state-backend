@@ -817,109 +817,6 @@ def plot_state_entries_timeline(output_dir):
     return filepath
 
 
-def plot_cache_miss_comparison(output_dir):
-    """
-    [BENCHMARK_TEST] Generate CPU Cache Miss comparison bar chart.
-    
-    Creates a stacked bar chart showing:
-    - Total cache misses per query (for each backend)
-    - StateMap-related cache misses highlighted in a different color
-    
-    This chart is only available on Linux where perf_events is supported.
-    """
-    hw_metrics = load_hardware_metrics(str(get_results_dir('hardware')))
-    cache_data = hw_metrics.get('cache', {})
-    
-    if not cache_data:
-        print("No CPU cache metrics available for plotting (Linux only)")
-        return None
-    
-    # Group data by query
-    queries = set()
-    backends = set()
-    for key in cache_data.keys():
-        parts = key.rsplit('_', 1)
-        if len(parts) == 2:
-            queries.add(parts[0])
-            backends.add(parts[1])
-    
-    queries = sorted(queries)
-    backends = sorted(backends)
-    
-    if not queries:
-        print("No queries found in cache metrics")
-        return None
-    
-    print(f"  Plotting Cache Miss chart for queries: {queries}, backends: {backends}")
-    
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    x = np.arange(len(queries))
-    width = 0.35
-    bar_positions = {
-        'hashmap': x - width/2 if 'hashmap' in backends else x,
-        'forl0': x + width/2 if 'hashmap' in backends else x
-    }
-    
-    # Colors
-    base_colors = {'hashmap': '#4C72B0', 'forl0': '#55A868'}
-    statemap_colors = {'hashmap': '#7BA0D0', 'forl0': '#8DCF9F'}  # Lighter versions
-    
-    for backend in backends:
-        total_misses = []
-        statemap_misses = []
-        
-        for query in queries:
-            key = f"{query}_{backend}"
-            stats = cache_data.get(key, {})
-            total = stats.get('total_cache_misses', 0)
-            statemap = stats.get('statemap_cache_misses', 0)
-            
-            total_misses.append(total)
-            statemap_misses.append(statemap)
-        
-        non_statemap = [t - s for t, s in zip(total_misses, statemap_misses)]
-        
-        pos = bar_positions.get(backend, x)
-        
-        # Draw stacked bars: non-StateMap (bottom) + StateMap (top)
-        bars_bottom = ax.bar(pos, non_statemap, width, 
-                             label=f'{backend} (Other)',
-                             color=base_colors.get(backend, '#888888'))
-        bars_top = ax.bar(pos, statemap_misses, width, bottom=non_statemap,
-                          label=f'{backend} (StateMap)',
-                          color=statemap_colors.get(backend, '#AAAAAA'))
-        
-        # Add total value labels
-        for i, (bar, total) in enumerate(zip(bars_bottom, total_misses)):
-            if total > 0:
-                height = total
-                ax.text(bar.get_x() + bar.get_width()/2, height,
-                        f'{total/1e6:.1f}M' if total >= 1e6 else f'{total/1e3:.0f}K',
-                        ha='center', va='bottom', fontsize=9)
-    
-    ax.set_xticks(x)
-    ax.set_xticklabels([q.upper() for q in queries])
-    ax.set_xlabel('Query')
-    ax.set_ylabel('Cache Misses')
-    ax.set_title('CPU Cache Misses by Query and Backend')
-    ax.legend(loc='upper right', ncol=2)
-    ax.grid(True, alpha=0.3, axis='y')
-    
-    # Format y-axis with millions/thousands
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, p: f'{x/1e6:.1f}M' if x >= 1e6 else f'{x/1e3:.0f}K' if x >= 1e3 else f'{x:.0f}'))
-    
-    plt.tight_layout()
-    
-    filepath = output_dir / 'cache_miss_comparison.pdf'
-    plt.savefig(filepath)
-    plt.savefig(output_dir / 'cache_miss_comparison.png')
-    plt.close()
-    
-    print(f"Saved: {filepath}")
-    return filepath
-
-
 def plot_memory_usage_timeline(output_dir):
     """
     [BENCHMARK_TEST] Generate memory usage timeline chart.
@@ -1680,14 +1577,9 @@ def generate_report(results, output_dir):
                     {% endfor %}
                 </tbody>
             </table>
-            
-            <div class="figure-container" style="margin-top: 1.5rem;">
-                <img src="../figures/cache_miss_comparison.png" alt="Cache Miss Comparison" onerror="this.parentElement.style.display='none'">
-                <p class="figure-caption">Figure: CPU Cache Misses by Query (Stacked: Other + StateMap)</p>
-            </div>
             {% else %}
             <p style="color: var(--text-secondary); font-style: italic;">
-                No CPU cache statistics available. Run benchmarks on Linux with <code>--profile</code> flag to collect cache metrics.
+                No CPU cache statistics available. Run benchmarks on Linux with <code>--profile cache</code> flag to collect cache metrics.
             </p>
             {% endif %}
             
@@ -2072,8 +1964,13 @@ def generate_report(results, output_dir):
         backend = parts[1] if len(parts) == 2 else 'unknown'
         
         total_misses = stats.get('total_cache_misses', 0)
+        total_refs = stats.get('total_cache_references', 1)
         statemap_misses = stats.get('statemap_cache_misses', 0)
-        miss_rate = stats.get('cache_miss_rate', 0)
+        statemap_ratio = stats.get('statemap_ratio', 0)
+        
+        # Calculate miss rate as percentage
+        miss_rate = (total_misses / total_refs * 100) if total_refs > 0 else 0
+        
         duration = stats.get('duration_seconds', 0)
         
         hw_cache_stats.append({
@@ -2222,7 +2119,6 @@ def main():
     
     # [BENCHMARK_TEST] Generate hardware metrics figures if available
     print("\nGenerating hardware metrics figures (if available)...")
-    plot_cache_miss_comparison(figures_dir)
     plot_memory_usage_timeline(figures_dir)
     
     # Generate report
@@ -2234,11 +2130,6 @@ def main():
     print(f"Figures: {figures_dir}")
     print(f"Report:  {reports_dir / 'benchmark_report.html'}")
     print("=" * 60)
-    
-    # Open report in browser
-    import webbrowser
-    report_path = reports_dir / 'benchmark_report.html'
-    webbrowser.open(f'file://{report_path}')
 
 
 if __name__ == '__main__':

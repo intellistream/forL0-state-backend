@@ -9,7 +9,8 @@ Usage:
     python run_nexmark.py                       # Run with both backends
     python run_nexmark.py --backend forl0       # Run only ForL0
     python run_nexmark.py --queries q5,q8       # Specific queries
-    python run_nexmark.py --profile             # Enable flame graphs + hardware metrics
+    python run_nexmark.py --profile cpu         # Enable CPU flame graphs
+    python run_nexmark.py --profile cache       # Enable cache statistics
 """
 
 import argparse
@@ -112,8 +113,16 @@ class NexMarkRunner:
         if not nexmark_jars:
             raise FileNotFoundError(f"NexMark JAR not found in {lib_dir}")
         
+        # Copy NexMark JAR to Flink lib (required for source generator)
+        nexmark_jar = nexmark_jars[0]
+        flink_lib_jar = self.flink_home / "lib" / nexmark_jar.name
+        if not flink_lib_jar.exists():
+            import shutil
+            shutil.copy(nexmark_jar, flink_lib_jar)
+            print(f"[NexMark] Copied {nexmark_jar.name} to Flink lib")
+        
         print(f"[NexMark] Using NexMark from: {self.nexmark_home}")
-        print(f"[NexMark] Found JAR: {nexmark_jars[0].name}")
+        print(f"[NexMark] Found JAR: {nexmark_jar.name}")
     
     def _check_flink(self):
         """Check if Flink is available"""
@@ -136,16 +145,47 @@ class NexMarkRunner:
         # Note: Don't restore nexmark.yaml - we want to keep our generated config
         print(f"[NexMark] Flink config restored")
     
-    def _generate_nexmark_yaml(self, queries: str):
-        """Generate nexmark.yaml from benchmark.yaml config"""
-        events = self.nexmark_config.get('events', 10000000)
+    def _get_query_events(self, query: str) -> int:
+        """Get events number for a specific query from config.
+        
+        Tries query-specific config first (e.g., q4_events), then falls back to general events config.
+        
+        Args:
+            query: Query name (e.g., 'q4', 'q5')
+        
+        Returns:
+            Events number for the query
+        """
+        # Try query-specific config first (e.g., q4_events)
+        query_events_key = f"{query}_events"
+        query_events = self.nexmark_config.get(query_events_key)
+        
+        if query_events is not None:
+            return query_events
+        
+        # Fall back to general events config
+        return self.nexmark_config.get('events', 10000000)
+    
+    def _generate_nexmark_yaml(self, queries: str, query_specific: Optional[str] = None):
+        """Generate nexmark.yaml from benchmark.yaml config.
+        
+        Args:
+            queries: Query list for nexmark.yaml (e.g., 'q4,q5' or 'q4')
+            query_specific: If set, use this query's specific events config (e.g., 'q4')
+        """
+        # Determine events number
+        if query_specific:
+            events = self._get_query_events(query_specific)
+            print(f"[NexMark] Using {events:,} events for {query_specific}")
+        else:
+            events = self.nexmark_config.get('events', 10000000)
         tps = self.nexmark_config.get('tps', 500000)
         warmup_events = self.nexmark_config.get('warmup_events', 100000)
         warmup_duration = self.nexmark_config.get('warmup_duration', 10)
         
-        # Always set monitorDelay to 0 to avoid hanging when job finishes quickly
-        # This is safe because we're using events.num mode which waits for job completion
-        monitor_delay = 0
+        # Set monitor delay to give job time to start and produce metrics
+        # If delay is too short, MetricReporter will fail before job produces any metrics
+        monitor_delay = 5  # Wait 5 seconds for job to start and produce initial metrics
         
         # Build nexmark.yaml content
         content = f"""################################################################################
@@ -160,8 +200,8 @@ nexmark.metric.reporter.port: 9098
 flink.rest.address: localhost
 flink.rest.port: 8081
 
-# Metric monitoring settings (adjusted for events mode)
-# When using events.num mode, set delay to 0 to start monitoring immediately
+# Metric monitoring settings
+# Wait for job to start and produce metrics before monitoring begins
 nexmark.metric.monitor.delay: {monitor_delay}s
 nexmark.metric.monitor.interval: 1s
 
@@ -191,14 +231,22 @@ nexmark.workload.suite.benchmark.warmup.tps: {tps}
         config_content = re.sub(r'state\.backend:.*\n', '', config_content)
         config_content = re.sub(r'state\.backend\.type:.*\n', '', config_content)
         config_content = re.sub(r'state\.backend\.forl0\..*\n', '', config_content)
+        # Remove existing parallelism config (will re-add from benchmark.yaml)
+        config_content = re.sub(r'parallelism\.default:.*\n', '', config_content)
         
         # Get ForL0 config from benchmark.yaml
         backends_config = self.config.get('backends', [])
         forl0_config = next((b.get('config', {}) for b in backends_config if b.get('name') == 'forl0'), {})
         
+        # Get parallelism from benchmark.yaml
+        parallelism = self.mode_config.get('parallelism', 1)
+        
         # Add new config
         if backend == "hashmap":
-            new_config = "\n# State Backend (configured by NexMark runner)\nstate.backend.type: hashmap\n"
+            new_config = f"""\n# State Backend (configured by NexMark runner)
+state.backend.type: hashmap
+parallelism.default: {parallelism}
+"""
         elif backend == "forl0":
             l0_size = forl0_config.get('l0_cache_size', 14)
             l0_policy = forl0_config.get('l0_cache_replacement_policy', 'CLOCK')
@@ -216,6 +264,7 @@ state.backend.forl0.l0-cache.replacement-policy: {l0_policy}
 state.backend.forl0.l0-memory.max-size: {l0_memory_max}
 state.backend.forl0.main-table.initial-size: {main_table_size}
 state.backend.forl0.main-table.load-factor-threshold: {main_table_load_factor}
+parallelism.default: {parallelism}
 state.backend.forl0.arena.initial-size: {arena_initial_size}
 """
             # Copy ForL0 JAR to Flink lib if not present
@@ -243,6 +292,9 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
             subprocess.run([str(stop_script)], capture_output=True)
             time.sleep(3)
         
+        # Clean up any existing CPU monitor processes before starting Flink
+        self._cleanup_cpu_monitor()
+        
         # Start cluster
         start_script = self.flink_home / "bin" / "start-cluster.sh"
         if start_script.exists():
@@ -250,6 +302,29 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
             time.sleep(5)
         
         print("[NexMark] Flink cluster restarted")
+    
+    def _cleanup_cpu_monitor(self):
+        """Clean up any existing CPU monitor (CpuMetricSender) processes"""
+        import platform
+        if platform.system() == "Darwin":
+            return  # Not applicable on macOS
+        
+        try:
+            # Find and kill any existing CpuMetricSender processes
+            result = subprocess.run(
+                ["pgrep", "-f", "CpuMetricSender"],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                print(f"[NexMark] Cleaning up {len(pids)} existing CPU monitor process(es)...")
+                for pid in pids:
+                    subprocess.run(["kill", "-9", pid], capture_output=True)
+                time.sleep(1)
+                print(f"[NexMark] CPU monitor processes cleaned up")
+        except Exception as e:
+            print(f"[NexMark] Warning: Failed to cleanup CPU monitor: {e}")
     
     def _collect_l0_metrics_for_query(self, query: str, start_time: datetime):
         """
@@ -304,13 +379,24 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
             print("[NexMark] Cores metric will show as 0. This works correctly on Linux.")
             return
         
+        # Clean up any existing CPU monitor first
+        self._cleanup_cpu_monitor()
+        
         setup_script = self.nexmark_home / "bin" / "setup_cluster.sh"
         if setup_script.exists():
             print("[NexMark] Starting CPU monitor...")
             env = os.environ.copy()
             env['FLINK_HOME'] = str(self.flink_home)
-            subprocess.run([str(setup_script)], capture_output=True, env=env, cwd=str(self.nexmark_home))
-            time.sleep(2)
+            # Use Popen instead of run to start the process without waiting
+            # The script starts background processes (CpuMetricSender), we just need to launch it
+            proc = subprocess.Popen(
+                [str(setup_script)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                cwd=str(self.nexmark_home)
+            )
+            time.sleep(2)  # Give it time to start
             print("[NexMark] CPU monitor started")
         else:
             print("[NexMark] Warning: setup_cluster.sh not found, CPU metrics won't be collected")
@@ -329,10 +415,14 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
             subprocess.run([str(shutdown_script)], capture_output=True, env=env, cwd=str(self.nexmark_home))
             print("[NexMark] CPU monitor stopped")
     
-    def _run_nexmark_benchmark(self, queries: str) -> dict:
+    def _run_nexmark_benchmark(self, queries: str, profile_mode: Optional[str] = None) -> dict:
         """Run NexMark benchmark and return results.
         
         Runs each query individually so that one failed query doesn't block others.
+        
+        Args:
+            queries: Comma-separated query list
+            profile_mode: 'cpu' or 'cache' for per-query profiling
         """
         query_list = [q.strip() for q in queries.split(',')]
         print(f"\n[NexMark] Running {len(query_list)} queries individually: {query_list}")
@@ -340,6 +430,7 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
         # Set environment variable for NexMark config
         env = os.environ.copy()
         env['NEXMARK_CONF_DIR'] = str(self.nexmark_conf_dir)
+        env['FLINK_HOME'] = str(self.flink_home)  # Ensure FLINK_HOME is set for NexMark
         
         # Build classpath
         nexmark_lib = self.nexmark_home / "lib"
@@ -361,38 +452,89 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
         for query in query_list:
             print(f"\n[NexMark] === Running query: {query} ===")
             
-            cmd = [
-                "java",
-                "-cp", classpath,
-                "com.github.nexmark.flink.Benchmark",
-                "--location", str(self.nexmark_home),
-                "--queries", query
-            ]
+            # Regenerate nexmark.yaml with query-specific events config
+            self._generate_nexmark_yaml(query, query_specific=query)
+            
+            # Use NexMark's official run_query.sh script
+            run_script = self.nexmark_home / "bin" / "run_query.sh"
+            cmd = [str(run_script), query]  # run_query.sh defaults to "oa" category
             
             # [BENCHMARK_TEST] Record query start time for L0 metrics filtering
             query_start_time = datetime.now()
             
-            # [BENCHMARK_TEST] Start per-query memory collection
-            if self.hw_collector and self.current_backend:
-                tm_pid = self._find_taskmanager_pid()
-                if tm_pid:
-                    self.hw_collector.start_memory_collection(
+            print(f"  Executing: {' '.join(cmd)}")
+            
+            # Find TaskManager PID
+            tm_pid = self._find_taskmanager_pid()
+            
+            # [BENCHMARK_TEST] Start per-query profiling
+            if self.profiler and self.profiler.is_available() and profile_mode and tm_pid:
+                if profile_mode == 'cpu':
+                    self.profiler.start(
                         pid=tm_pid,
-                        query=query,
+                        events=['cpu', 'alloc'],
+                        output_dir=str(self.results_dir),
                         backend=self.current_backend,
-                        interval=1.0
+                        query=query,
+                        output_format='html',
+                        duration=None
                     )
+                    print(f"  Started CPU profiling for {query} (PID: {tm_pid})")
+                elif profile_mode == 'cache':
+                    self.profiler.start(
+                        pid=tm_pid,
+                        events=['cache-misses'],
+                        output_dir=str(self.results_dir),
+                        backend=self.current_backend,
+                        query=query,
+                        output_format='html',
+                        duration=None
+                    )
+                    print(f"  Started cache profiling for {query} (PID: {tm_pid})")
+            
+            # [BENCHMARK_TEST] Start per-query memory collection
+            if self.hw_collector and self.current_backend and tm_pid:
+                self.hw_collector.start_memory_collection(
+                    pid=tm_pid,
+                    query=query,
+                    backend=self.current_backend,
+                    interval=1.0
+                )
+            
+            # [BENCHMARK_TEST] Start per-query cache collection (if cache mode)
+            if self.hw_collector and profile_mode == 'cache' and tm_pid:
+                self.hw_collector.start_cache_collection(
+                    pid=tm_pid,
+                    query=query,
+                    backend=self.current_backend
+                )
             
             try:
                 start_time = time.time()
+                # Capture output for parsing, but also print to console for visibility
                 result = subprocess.run(
                     cmd,
-                    capture_output=True,
-                    text=True,
                     cwd=str(self.nexmark_home),
-                    env=env
+                    env=env,
+                    capture_output=False,  # Let output go to console for real-time visibility
+                    timeout=3600  # 1 hour timeout for safety
                 )
                 elapsed = time.time() - start_time
+                print(f"\n  Benchmark command completed in {elapsed:.1f}s (return code: {result.returncode})")
+                
+                # [BENCHMARK_TEST] Stop per-query profiling
+                if self.profiler and profile_mode and tm_pid:
+                    try:
+                        self.profiler.stop(tm_pid)
+                        print(f"  Profiler stopped for {query}")
+                    except Exception as e:
+                        print(f"  Profiler stop error for {query}: {e}")
+                
+                # [BENCHMARK_TEST] Stop per-query cache collection
+                if self.hw_collector and profile_mode == 'cache':
+                    cache_stats = self.hw_collector.stop_cache_collection()
+                    if cache_stats:
+                        print(f"  [HW] {query} cache miss rate: {cache_stats.cache_miss_rate:.2%}")
                 
                 # [BENCHMARK_TEST] Stop per-query memory collection
                 if self.hw_collector:
@@ -402,14 +544,24 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
                 if self.current_backend == 'forl0':
                     self._collect_l0_metrics_for_query(query, query_start_time)
                 
-                # Save raw output for this query
-                output_file = self.results_dir / f"nexmark_output_{query}.txt"
-                with open(output_file, 'w') as f:
-                    f.write(f"=== STDOUT ===\n{result.stdout}\n\n=== STDERR ===\n{result.stderr}")
+                # Parse results from both log file and by re-reading stderr output
+                # NexMark prints summary table to stderr
+                log_file = self.nexmark_home / "log" / "nexmark-flink.log"
+                query_metrics = {'query_results': {}}
                 
-                # Parse results
-                full_output = result.stdout + "\n" + result.stderr
-                query_metrics = self._parse_nexmark_output(full_output)
+                if log_file.exists():
+                    with open(log_file, 'r', errors='ignore') as f:
+                        full_output = f.read()
+                    # Look for the summary table in log or stderr
+                    query_metrics = self._parse_nexmark_output(full_output)
+                    
+                    # If not found in log, query might have completed too fast
+                    # Results are printed to console but we can extract from recent log lines
+                    if not query_metrics.get('query_results'):
+                        # Try last 200 lines which should contain the results table
+                        lines = full_output.split('\n')[-200:]
+                        recent_output = '\n'.join(lines)
+                        query_metrics = self._parse_nexmark_output(recent_output)
                 
                 if query in query_metrics.get('query_results', {}):
                     all_metrics['query_results'][query] = query_metrics['query_results'][query]
@@ -419,9 +571,6 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
                     all_metrics['failed_queries'].append(query)
                     if result.returncode != 0:
                         all_metrics['return_code'] = result.returncode
-                        # Print error info but continue with next query
-                        stderr_preview = result.stderr[-500:] if result.stderr else ""
-                        print(f"[NexMark] {query} stderr: {stderr_preview}")
                         
             except Exception as e:
                 print(f"[NexMark] {query} ERROR: {e} - skipping")
@@ -562,13 +711,13 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
         return None
     
     def run(self, backends: list, queries: Optional[str] = None, 
-            profile: bool = False, restart_cluster: bool = True) -> dict:
+            profile_mode: Optional[str] = None, restart_cluster: bool = True) -> dict:
         """Run NexMark benchmark for specified backends
         
         Args:
             backends: List of backends to test ('hashmap', 'forl0')
             queries: Comma-separated list of queries (e.g., 'q5,q8')
-            profile: Enable profiling (flame graphs + hardware metrics)
+            profile_mode: 'cpu' for CPU flame graphs, 'cache' for cache statistics, None to disable
             restart_cluster: Restart Flink cluster between backends
         """
         
@@ -584,13 +733,17 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
         queries_str: str = str(queries) if queries else 'q5'
         
         # Setup profiler and hardware metrics collector if requested
-        if profile:
+        if profile_mode:
             profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
             self.profiler = AsyncProfiler(profiler_home)
             
-            # Also enable hardware metrics collection when profiling
-            self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir))
-            print(f"[NexMark] Profiling enabled (perf available: {self.hw_collector.is_perf_available()})")
+            # Hardware metrics collection
+            if profile_mode == 'cache':
+                self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=self.profiler)
+                print(f"[NexMark] Cache profiling mode (perf available: {self.hw_collector.is_perf_available()})")
+            else:
+                self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=None)
+                print(f"[NexMark] CPU profiling mode")
         
         # Backup configs
         self._backup_configs()
@@ -619,31 +772,9 @@ state.backend.forl0.arena.initial-size: {arena_initial_size}
                 # Start CPU monitor for metrics collection
                 self._start_cpu_monitor()
                 
-                # Start profiler if enabled
-                tm_pid = None
-                if self.profiler and self.profiler.is_available():
-                    tm_pid = self._find_taskmanager_pid()
-                    if tm_pid:
-                        self.results_dir.mkdir(parents=True, exist_ok=True)
-                        self.profiler.start(
-                            pid=tm_pid,
-                            events=['cpu'] if not self.profiler.is_macos else ['itimer'],
-                            output_dir=str(self.results_dir),
-                            backend=backend
-                        )
-                
-                # Note: Hardware metrics (memory) collection is now done per-query in _run_nexmark_benchmark
-                
-                # Run benchmark
-                metrics = self._run_nexmark_benchmark(queries_str)
+                # Run benchmark with per-query profiling
+                metrics = self._run_nexmark_benchmark(queries_str, profile_mode=profile_mode)
                 results[backend] = metrics
-                
-                # Stop profiler
-                if self.profiler and tm_pid:
-                    try:
-                        self.profiler.stop(tm_pid)
-                    except Exception as e:
-                        print(f"[NexMark] Profiler stop error: {e}")
                 
                 # Stop CPU monitor
                 self._stop_cpu_monitor()
@@ -729,8 +860,8 @@ def main():
                        default=None,
                        help="Queries to run (comma-separated, e.g., q5,q8)")
     parser.add_argument("--profile", "-p",
-                       action="store_true",
-                       help="Enable profiling (flame graphs + hardware metrics)")
+                       type=str, default=None, choices=['cpu', 'cache'],
+                       help="Enable profiling: cpu (flame graphs) or cache (cache statistics)")
     parser.add_argument("--no-restart",
                        action="store_true",
                        help="Don't restart Flink cluster between backends")
@@ -751,7 +882,7 @@ def main():
     results = runner.run(
         backends=backends,
         queries=args.queries,
-        profile=args.profile,
+        profile_mode=args.profile,
         restart_cluster=not args.no_restart
     )
     

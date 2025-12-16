@@ -117,8 +117,10 @@ class AsyncProfiler:
         events: Optional[List[str]] = None,
         output_dir: str = './profiles',
         backend: str = 'unknown',
+        query: Optional[str] = None,
         duration: Optional[int] = None,
-        interval: str = '10ms'
+        interval: str = '10ms',
+        output_format: str = 'html'
     ) -> Dict[str, str]:
         """
         Start profiling a Java process.
@@ -132,8 +134,10 @@ class AsyncProfiler:
             events: List of events to profile (only first valid event will be used)
             output_dir: Directory to save flame graphs
             backend: Backend name (used in output filenames)
+            query: Query name (optional, for per-query profiling)
             duration: Duration in seconds (None for indefinite until stop() is called)
             interval: Sampling interval (default: 10ms)
+            output_format: Output format ('html' for flame graph, 'jfr' for JFR recording)
         
         Returns:
             Dict mapping event name to output file path
@@ -175,7 +179,12 @@ class AsyncProfiler:
             return {}
         
         # Build output filename
-        output_file = output_path / f"flamegraph_{actual_event}_{backend}_{timestamp}.html"
+        ext = output_format if output_format in ['jfr', 'html'] else 'html'
+        query_part = f"_{query}" if query else ""
+        if ext == 'jfr':
+            output_file = output_path / f"profile_{actual_event}_{backend}{query_part}_{timestamp}.jfr"
+        else:
+            output_file = output_path / f"flamegraph_{actual_event}_{backend}{query_part}_{timestamp}.html"
         
         # Build command
         cmd: List[str] = [self.asprof_path]

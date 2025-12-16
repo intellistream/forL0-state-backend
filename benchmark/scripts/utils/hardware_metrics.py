@@ -43,6 +43,7 @@ class CacheMissStats:
     total_cache_references: int = 0
     statemap_cache_misses: int = 0  # Estimated from flame graph analysis
     cache_miss_rate: float = 0.0
+    statemap_ratio: float = 0.0  # Ratio of state-related cache misses
     duration_seconds: float = 0.0
     timestamp: str = ""
     
@@ -79,9 +80,10 @@ class MemoryTimeSeries:
 class HardwareMetricsCollector:
     """Collect hardware metrics including CPU cache and memory usage."""
     
-    def __init__(self, output_dir: str = "./results/hardware"):
+    def __init__(self, output_dir: str = "./results/hardware", profiler=None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.profiler = profiler  # AsyncProfiler instance for cache-misses analysis
         
         self.is_linux = platform.system() == 'Linux'
         self.is_macos = platform.system() == 'Darwin'
@@ -94,6 +96,13 @@ class HardwareMetricsCollector:
         self._memory_backend: str = ""
         self._memory_start_time: float = 0.0
         
+        # Cache collection state
+        self._cache_stat_process: Optional[subprocess.Popen] = None  # perf stat for counts
+        self._cache_record_process: Optional[subprocess.Popen] = None  # perf record for call stacks
+        self._cache_query: str = ""
+        self._cache_backend: str = ""
+        self._cache_start_time: float = 0.0
+        
         # Cache miss results storage
         self.cache_stats: Dict[str, CacheMissStats] = {}  # key: "{query}_{backend}"
         
@@ -105,8 +114,9 @@ class HardwareMetricsCollector:
         if not self.is_linux:
             return False
         try:
+            # perf stat doesn't support --version, just check if command exists
             result = subprocess.run(
-                ['perf', 'stat', '--version'],
+                ['which', 'perf'],
                 capture_output=True, text=True, timeout=5
             )
             return result.returncode == 0
@@ -189,6 +199,142 @@ class HardwareMetricsCollector:
             print(f"  [HW] perf stat timed out")
         except Exception as e:
             print(f"  [HW] Error collecting cache stats: {e}")
+        
+        return None
+    
+    def start_cache_collection(
+        self,
+        pid: int,
+        query: str,
+        backend: str
+    ) -> bool:
+        """
+        Start collecting CPU cache statistics.
+        
+        Uses perf stat for accurate cache miss/reference counts.
+        Only available on Linux.
+        
+        Args:
+            pid: Process ID to monitor
+            query: Query/benchmark name
+            backend: Backend name
+        
+        Returns:
+            True if collection started successfully
+        """
+        if not self.is_linux or not self.is_perf_available():
+            return False
+        
+        if self._cache_stat_process is not None or self._cache_record_process is not None:
+            self.stop_cache_collection()
+        
+        self._cache_query = query
+        self._cache_backend = backend
+        self._cache_start_time = time.time()
+        
+        try:
+            # Start perf stat for counts
+            stat_cmd = [
+                'perf', 'stat',
+                '-e', 'cache-misses,cache-references',
+                '-p', str(pid)
+            ]
+            self._cache_stat_process = subprocess.Popen(
+                stat_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Start async-profiler for cache-misses with symbols (REMOVED - now handled in run_wordcount.py)
+            # The profiler should be started in the main script, not here, to avoid conflicts
+            
+            return True
+            
+        except Exception as e:
+            print(f"  [HW] Failed to start cache collection: {e}")
+            if self._cache_stat_process:
+                self._cache_stat_process.kill()
+                self._cache_stat_process = None
+            if self._cache_record_process:
+                self._cache_record_process.kill()
+                self._cache_record_process = None
+            return False
+    
+    def stop_cache_collection(self) -> Optional[CacheMissStats]:
+        """
+        Stop cache statistics collection and analyze results.
+        
+        Returns:
+            CacheMissStats object or None if collection was not running
+        """
+        if self._cache_stat_process is None and self._cache_record_process is None:
+            return None
+        
+        try:
+            duration = time.time() - self._cache_start_time
+            
+            # Stop perf stat and get counts
+            cache_misses = 0
+            cache_refs = 1
+            if self._cache_stat_process:
+                self._cache_stat_process.send_signal(subprocess.signal.SIGINT)
+                stdout, stderr = self._cache_stat_process.communicate(timeout=10)
+                stats = self._parse_perf_output(stderr)
+                cache_misses = stats.get('cache-misses', 0)
+                cache_refs = stats.get('cache-references', 1)
+                self._cache_stat_process = None
+            
+            # Stop async-profiler
+            if self._cache_record_process and self.profiler:
+                # Get PIDs where profiler is attached
+                list_cmd = [self.profiler.asprof_path, 'list']
+                list_result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=5)
+                
+                # Stop profiler for the monitored PID
+                if list_result.returncode == 0 and str(self._cache_stat_process.pid) in list_result.stdout:
+                    stop_cmd = [self.profiler.asprof_path, 'stop', '-o', 'jfr']
+                    subprocess.run(stop_cmd, capture_output=True, text=True, timeout=10)
+                    print(f"  [HW] Stopped Async Profiler")
+                
+                self._cache_record_process = None
+            
+            miss_rate = (cache_misses / cache_refs) if cache_refs > 0 else 0.0
+            
+            cache_stats = CacheMissStats(
+                query=self._cache_query,
+                backend=self._cache_backend,
+                total_cache_misses=cache_misses,
+                total_cache_references=cache_refs,
+                statemap_cache_misses=0,
+                cache_miss_rate=miss_rate,
+                statemap_ratio=0.0,
+                duration_seconds=duration,
+                timestamp=datetime.now().isoformat()
+            )
+            
+            # Store results
+            key = f"{self._cache_query}_{self._cache_backend}"
+            self.cache_stats[key] = cache_stats
+            
+            print(f"  [HW] Cache misses: {cache_misses:,}, Rate: {miss_rate:.1%}")
+            
+            return cache_stats
+            
+        except subprocess.TimeoutExpired:
+            print("  [HW] perf processes did not terminate, killing...")
+            if self._cache_stat_process:
+                self._cache_stat_process.kill()
+                self._cache_stat_process.wait()
+                self._cache_stat_process = None
+            if self._cache_record_process:
+                self._cache_record_process.kill()
+                self._cache_record_process.wait()
+                self._cache_record_process = None
+        except Exception as e:
+            print(f"  [HW] Error stopping cache collection: {e}")
+            import traceback
+            traceback.print_exc()
         
         return None
     

@@ -267,13 +267,13 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
     return args
 
 
-def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> Optional[dict]:
+def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None) -> Optional[dict]:
     """Run WordCount benchmark on Flink cluster.
     
     Args:
         config: Benchmark configuration
         backend: State backend to use ('hashmap' or 'forl0')
-        enable_profile: Enable profiling (flame graphs + hardware metrics)
+        profile_mode: Profiling mode ('cpu' for flame graphs, 'cache' for cache statistics, None to disable)
     """
     
     mode = config.get('mode', 'local')
@@ -340,20 +340,28 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
     
     # [BENCHMARK_TEST] Initialize profiler and hardware metrics if enabled
     profiler = None
-    profiler_files = {}
     hw_collector = None
-    if enable_profile:
+    
+    if profile_mode:
         profiler = AsyncProfiler()
         if profiler.is_available():
             print(f"  Async Profiler: {profiler.get_version()}")
             print(f"  Supported events: {profiler.get_supported_events()}")
+            print(f"  Profiling mode: {profile_mode}")
         else:
             print("  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)")
             profiler = None
         
-        # Also enable hardware metrics collection when profiling
-        hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')))
-        print(f"  Hardware metrics: enabled (perf available: {hw_collector.is_perf_available()})")
+        # Hardware metrics collection
+        # - For 'cpu' mode: collect memory only (profiler handles CPU)
+        # - For 'cache' mode: pass profiler for JFR analysis
+        if profile_mode == 'cache':
+            hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')), profiler=profiler)
+            print(f"  Hardware metrics: enabled (cache mode, perf available: {hw_collector.is_perf_available()})")
+        elif profile_mode:
+            # CPU mode: only collect memory, no cache stats
+            hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')), profiler=None)
+            print(f"  Hardware metrics: memory only (cpu mode)")
     
     # [BENCHMARK_TEST] Record job start time for L0 metrics filtering
     job_start_time = datetime.now()
@@ -361,19 +369,35 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
     try:
         # [BENCHMARK_TEST] Start profiling before job submission
         tm_pids = []
+        jfr_file = None
         if profiler:
             tm_pids = find_taskmanager_pids(flink_home)
             if tm_pids:
                 print(f"  Profiling TaskManager PIDs: {tm_pids}")
                 profiles_dir = get_results_dir('profiles')
-                # Start profiling on first TaskManager (or all)
-                for pid in tm_pids[:1]:  # Profile first TM only to reduce overhead
+                
+                if profile_mode == 'cpu':
+                    # CPU profiling: flame graphs
                     profiler.start(
-                        pid=pid,
+                        pid=tm_pids[0],
+                        events=['cpu', 'alloc'],
                         output_dir=str(profiles_dir),
                         backend=backend,
-                        duration=None  # Will stop after job completes
+                        output_format='html',
+                        duration=None
                     )
+                    print(f"  Started CPU profiling (cpu + alloc)")
+                elif profile_mode == 'cache':
+                    # Cache profiling: HTML flame graph for cache-misses
+                    profiler.start(
+                        pid=tm_pids[0],
+                        events=['cache-misses'],
+                        output_dir=str(profiles_dir),
+                        backend=backend,
+                        output_format='html',
+                        duration=None
+                    )
+                    print(f"  Started cache profiling (cache-misses)")
             else:
                 print("  WARNING: No TaskManager PIDs found for profiling")
         
@@ -388,6 +412,13 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
                     backend=backend,
                     interval=1.0
                 )
+                # [BENCHMARK_TEST] Start cache miss collection in background (only in cache mode)
+                if profile_mode == 'cache':
+                    hw_collector.start_cache_collection(
+                        pid=tm_pids[0],
+                        query='wordcount',
+                        backend=backend
+                    )
         
         # Submit job (blocking mode - wait for completion)
         result = subprocess.run(
@@ -400,17 +431,21 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
         output = result.stdout + result.stderr
         print(output)
         
-        # [BENCHMARK_TEST] Stop hardware metrics collection
-        if hw_collector:
-            hw_collector.stop_memory_collection()
-            hw_collector.save_results("wordcount_hw")
-        
-        # [BENCHMARK_TEST] Stop profiler and collect results
+        # [BENCHMARK_TEST] Stop profiler first (generates flame graph)
         if profiler and tm_pids:
             for pid in tm_pids[:1]:
                 profiler_files = profiler.stop(pid)
             if profiler_files:
                 print(f"  Profiler output files: {list(profiler_files.keys())}")
+        
+        # [BENCHMARK_TEST] Stop hardware metrics collection
+        if hw_collector:
+            hw_collector.stop_memory_collection()
+            if profile_mode == 'cache':
+                cache_stats = hw_collector.stop_cache_collection()
+                if cache_stats:
+                    print(f"  [HW] Cache miss rate: {cache_stats.cache_miss_rate:.2%}")
+            hw_collector.save_results("wordcount_hw")
         
         # Parse result - first try from TaskManager log (has full metrics)
         benchmark_result = parse_taskmanager_log(flink_home, wc_config, mode_config)
@@ -454,6 +489,8 @@ def run_wordcount(config: dict, backend: str, enable_profile: bool = False) -> O
         return None
     except Exception as e:
         print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
