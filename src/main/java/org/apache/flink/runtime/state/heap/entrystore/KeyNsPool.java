@@ -18,13 +18,23 @@ import static org.apache.flink.runtime.state.heap.entrystore.EntryStoreConstants
 /**
  * KeyNsPool: Key/Namespace storage pool with append-only allocation.
  * 
- * <p>Entry Layout:
+ * <p>Entry Layout (with inline value support):
  * <pre>
- * ┌────────┬────────┬────────┬─────────────┬──────┬─────────────────┐
- * │ hash   │ keyLen │ nsLen  │ valueHandle │ key  │   namespace     │
- * │ (4B)   │ (4B)   │ (4B)   │    (8B)     │(var) │     (var)       │
- * └────────┴────────┴────────┴─────────────┴──────┴─────────────────┘
+ * ┌────────┬────────────┬────────┬────────┬─────────────────────┬──────┬─────────────────┐
+ * │ hash   │ modeKeyLen │ nsLen  │padding │ valueHandle/inline  │ key  │   namespace     │
+ * │ (4B)   │   (4B)     │ (2B)   │ (2B)   │       (8B)          │(var) │     (var)       │
+ * └────────┴────────────┴────────┴────────┴─────────────────────┴──────┴─────────────────┘
  *           KEY_ENTRY_HEADER_SIZE = 20B
+ * 
+ * modeKeyLen encoding (32 bits):
+ * ┌─────────┬─────────────┬─────────────────────────┐
+ * │ mode    │ inlineLen   │       keyLen            │
+ * │ (1 bit) │ (4 bits)    │      (27 bits)          │
+ * └─────────┴─────────────┴─────────────────────────┘
+ *  bit 31    bits 30-27     bits 26-0
+ *
+ * - mode=0: pointer mode, valueHandle stores ValuePool address
+ * - mode=1: inline mode, valueHandle stores value bytes directly (≤8B)
  * </pre>
  * 
  * <p>Design:
@@ -33,6 +43,7 @@ import static org.apache.flink.runtime.state.heap.entrystore.EntryStoreConstants
  *   <li>Segment-level live counting for reclamation</li>
  *   <li>Empty segments are released back to allocator</li>
  *   <li>Address encoding: (segmentIndex + 1) << 32 | (offset + 1)</li>
+ *   <li>Small values (≤8B) inline to avoid ValuePool overhead</li>
  * </ul>
  */
 public class KeyNsPool implements AutoCloseable {
@@ -123,7 +134,7 @@ public class KeyNsPool implements AutoCloseable {
     // ========== Core Operations ==========
     
     /**
-     * Allocates a new entry and returns its address.
+     * Allocates a new entry in pointer mode and returns its address.
      * 
      * @param hash the pre-computed hash value
      * @param key the key bytes
@@ -134,6 +145,35 @@ public class KeyNsPool implements AutoCloseable {
      * @return entry address (segmentIndex+1 << 32 | offset+1), or 0 on failure
      */
     public long allocate(int hash, byte[] key, int keyLen, byte[] ns, int nsLen, long valueHandle) {
+        return allocateInternal(hash, key, keyLen, ns, nsLen, valueHandle, 0, MODE_POINTER);
+    }
+    
+    /**
+     * Allocates a new entry with inline value (≤8 bytes).
+     * The value is stored directly in the valueHandle field.
+     * 
+     * @param hash the pre-computed hash value
+     * @param key the key bytes
+     * @param keyLen the key length
+     * @param ns the namespace bytes
+     * @param nsLen the namespace length
+     * @param inlineValue the inline value (packed into a long, little-endian)
+     * @param inlineLen the length of inline value (0-8)
+     * @return entry address, or 0 on failure
+     */
+    public long allocateInline(int hash, byte[] key, int keyLen, byte[] ns, int nsLen, 
+                               long inlineValue, int inlineLen) {
+        if (inlineLen < 0 || inlineLen > INLINE_THRESHOLD) {
+            return NULL_HANDLE;
+        }
+        return allocateInternal(hash, key, keyLen, ns, nsLen, inlineValue, inlineLen, MODE_INLINE);
+    }
+    
+    /**
+     * Internal allocation with mode support.
+     */
+    private long allocateInternal(int hash, byte[] key, int keyLen, byte[] ns, int nsLen,
+                                  long valueOrHandle, int inlineLen, int mode) {
         if (closed) {
             return NULL_HANDLE;
         }
@@ -143,6 +183,10 @@ public class KeyNsPool implements AutoCloseable {
             return NULL_HANDLE;
         }
         if (ns == null || nsLen < 0 || nsLen > ns.length || nsLen > MAX_NAMESPACE_SIZE) {
+            return NULL_HANDLE;
+        }
+        // keyLen uses 27 bits max
+        if (keyLen > KEY_LEN_MASK) {
             return NULL_HANDLE;
         }
         
@@ -167,11 +211,15 @@ public class KeyNsPool implements AutoCloseable {
         int offset = currentOffset;
         MemorySegment seg = segments[segIdx];
         
-        // Write header
+        // Encode modeKeyLen: mode(1bit) | inlineLen(4bits) | keyLen(27bits)
+        int modeKeyLen = (mode << MODE_SHIFT) | (inlineLen << INLINE_LEN_SHIFT) | keyLen;
+        
+        // Write header (new layout)
         seg.putInt(offset + KEY_HASH_OFFSET, hash);
-        seg.putInt(offset + KEY_LEN_OFFSET, keyLen);
-        seg.putInt(offset + NS_LEN_OFFSET, nsLen);
-        seg.putLong(offset + VALUE_HANDLE_OFFSET, valueHandle);
+        seg.putInt(offset + MODE_KEY_LEN_OFFSET, modeKeyLen);
+        seg.putShort(offset + NS_LEN_OFFSET, (short) nsLen);
+        seg.putShort(offset + PADDING_OFFSET, (short) 0);  // reserved padding
+        seg.putLong(offset + VALUE_HANDLE_OFFSET, valueOrHandle);
         
         // Write key and namespace data
         seg.put(offset + KEY_DATA_OFFSET, key, 0, keyLen);
@@ -244,6 +292,158 @@ public class KeyNsPool implements AutoCloseable {
     }
     
     /**
+     * Gets the modeKeyLen field (raw).
+     */
+    private int getModeKeyLen(long address) {
+        int segIdx = decodeSegmentIndex(address);
+        int offset = decodeOffset(address);
+        return segments[segIdx].getInt(offset + MODE_KEY_LEN_OFFSET);
+    }
+    
+    /**
+     * Checks if entry is in inline mode.
+     * 
+     * @param address the entry address
+     * @return true if inline mode, false if pointer mode
+     */
+    public boolean isInlineMode(long address) {
+        int modeKeyLen = getModeKeyLen(address);
+        return ((modeKeyLen >>> MODE_SHIFT) & 1) == MODE_INLINE;
+    }
+    
+    /**
+     * Gets the inline value length (only valid in inline mode).
+     * 
+     * @param address the entry address
+     * @return inline value length (0-8)
+     */
+    public int getInlineValueLen(long address) {
+        int modeKeyLen = getModeKeyLen(address);
+        return (modeKeyLen >>> INLINE_LEN_SHIFT) & 0xF;  // 4 bits
+    }
+    
+    /**
+     * Gets the inline value as a long (only valid in inline mode).
+     * Value is stored little-endian in the valueHandle field.
+     * 
+     * @param address the entry address
+     * @return inline value packed as long
+     */
+    public long getInlineValue(long address) {
+        int segIdx = decodeSegmentIndex(address);
+        int offset = decodeOffset(address);
+        return segments[segIdx].getLong(offset + VALUE_HANDLE_OFFSET);
+    }
+    
+    /**
+     * Gets the inline value as byte array (only valid in inline mode).
+     * 
+     * @param address the entry address
+     * @return inline value bytes
+     */
+    public byte[] getInlineValueBytes(long address) {
+        int len = getInlineValueLen(address);
+        if (len == 0) {
+            return new byte[0];
+        }
+        
+        long inlineValue = getInlineValue(address);
+        byte[] result = new byte[len];
+        for (int i = 0; i < len; i++) {
+            result[i] = (byte) ((inlineValue >>> (i * 8)) & 0xFF);
+        }
+        return result;
+    }
+    
+    /**
+     * Updates inline value in-place (only valid in inline mode).
+     * 
+     * @param address the entry address
+     * @param newValue the new inline value (packed as long)
+     * @param newLen the new inline value length
+     */
+    public void updateInlineValue(long address, long newValue, int newLen) {
+        if (newLen < 0 || newLen > INLINE_THRESHOLD) {
+            throw new IllegalArgumentException("Inline length must be 0-8, got: " + newLen);
+        }
+        
+        int segIdx = decodeSegmentIndex(address);
+        int offset = decodeOffset(address);
+        MemorySegment seg = segments[segIdx];
+        
+        // Update modeKeyLen with new inline length (keep mode and keyLen)
+        int oldModeKeyLen = seg.getInt(offset + MODE_KEY_LEN_OFFSET);
+        int keyLen = oldModeKeyLen & KEY_LEN_MASK;
+        int newModeKeyLen = (MODE_INLINE << MODE_SHIFT) | (newLen << INLINE_LEN_SHIFT) | keyLen;
+        
+        seg.putInt(offset + MODE_KEY_LEN_OFFSET, newModeKeyLen);
+        seg.putLong(offset + VALUE_HANDLE_OFFSET, newValue);
+    }
+    
+    /**
+     * Switches from inline mode to pointer mode.
+     * 
+     * @param address the entry address
+     * @param valueHandle the new value handle in ValuePool
+     */
+    public void switchToPointerMode(long address, long valueHandle) {
+        int segIdx = decodeSegmentIndex(address);
+        int offset = decodeOffset(address);
+        MemorySegment seg = segments[segIdx];
+        
+        // Update modeKeyLen: clear mode bit and inline length
+        int oldModeKeyLen = seg.getInt(offset + MODE_KEY_LEN_OFFSET);
+        int keyLen = oldModeKeyLen & KEY_LEN_MASK;
+        int newModeKeyLen = (MODE_POINTER << MODE_SHIFT) | keyLen;  // inlineLen = 0
+        
+        seg.putInt(offset + MODE_KEY_LEN_OFFSET, newModeKeyLen);
+        seg.putLong(offset + VALUE_HANDLE_OFFSET, valueHandle);
+    }
+    
+    /**
+     * Switches from pointer mode to inline mode.
+     * 
+     * @param address the entry address
+     * @param inlineValue the inline value (packed as long)
+     * @param inlineLen the inline value length
+     */
+    public void switchToInlineMode(long address, long inlineValue, int inlineLen) {
+        if (inlineLen < 0 || inlineLen > INLINE_THRESHOLD) {
+            throw new IllegalArgumentException("Inline length must be 0-8, got: " + inlineLen);
+        }
+        
+        int segIdx = decodeSegmentIndex(address);
+        int offset = decodeOffset(address);
+        MemorySegment seg = segments[segIdx];
+        
+        // Update modeKeyLen: set mode bit and inline length
+        int oldModeKeyLen = seg.getInt(offset + MODE_KEY_LEN_OFFSET);
+        int keyLen = oldModeKeyLen & KEY_LEN_MASK;
+        int newModeKeyLen = (MODE_INLINE << MODE_SHIFT) | (inlineLen << INLINE_LEN_SHIFT) | keyLen;
+        
+        seg.putInt(offset + MODE_KEY_LEN_OFFSET, newModeKeyLen);
+        seg.putLong(offset + VALUE_HANDLE_OFFSET, inlineValue);
+    }
+    
+    /**
+     * Gets the key length of an entry.
+     */
+    public int getKeyLen(long address) {
+        int modeKeyLen = getModeKeyLen(address);
+        return modeKeyLen & KEY_LEN_MASK;
+    }
+    
+    /**
+     * Gets the namespace length of an entry.
+     */
+    public int getNsLen(long address) {
+        int segIdx = decodeSegmentIndex(address);
+        int offset = decodeOffset(address);
+        // nsLen is now 2 bytes (short)
+        return segments[segIdx].getShort(offset + NS_LEN_OFFSET) & 0xFFFF;
+    }
+    
+    /**
      * Gets the key bytes of an entry.
      */
     public byte[] getKeyBytes(long address) {
@@ -251,7 +451,7 @@ public class KeyNsPool implements AutoCloseable {
         int offset = decodeOffset(address);
         MemorySegment seg = segments[segIdx];
         
-        int keyLen = seg.getInt(offset + KEY_LEN_OFFSET);
+        int keyLen = getKeyLen(address);
         if (keyLen <= 0) {
             return new byte[0];
         }
@@ -272,8 +472,8 @@ public class KeyNsPool implements AutoCloseable {
         int offset = decodeOffset(address);
         MemorySegment seg = segments[segIdx];
         
-        int keyLen = seg.getInt(offset + KEY_LEN_OFFSET);
-        int nsLen = seg.getInt(offset + NS_LEN_OFFSET);
+        int keyLen = getKeyLen(address);
+        int nsLen = getNsLen(address);
         
         if (nsLen <= 0) {
             return new byte[0];
@@ -288,7 +488,7 @@ public class KeyNsPool implements AutoCloseable {
     }
     
     /**
-     * Gets the value handle of an entry.
+     * Gets the value handle of an entry (only valid in pointer mode).
      */
     public long getValueHandle(long address) {
         int segIdx = decodeSegmentIndex(address);
@@ -306,7 +506,7 @@ public class KeyNsPool implements AutoCloseable {
         int offset = decodeOffset(address);
         MemorySegment seg = segments[segIdx];
         
-        int keyLen = seg.getInt(offset + KEY_LEN_OFFSET);
+        int keyLen = getKeyLen(address);
         if (keyLen < 0 || keyLen > MAX_KEY_SIZE) {
             return null;
         }
@@ -322,14 +522,34 @@ public class KeyNsPool implements AutoCloseable {
         int offset = decodeOffset(address);
         MemorySegment seg = segments[segIdx];
         
-        int keyLen = seg.getInt(offset + KEY_LEN_OFFSET);
-        int nsLen = seg.getInt(offset + NS_LEN_OFFSET);
+        int keyLen = getKeyLen(address);
+        int nsLen = getNsLen(address);
         
         if (nsLen < 0 || nsLen > MAX_NAMESPACE_SIZE) {
             return null;
         }
         
         return new MemorySegmentSlice(seg, offset + KEY_DATA_OFFSET + keyLen, nsLen);
+    }
+    
+    /**
+     * Gets a zero-copy slice for inline value (only valid in inline mode).
+     * The slice points to the valueHandle field which stores the inline value.
+     * 
+     * @param address the entry address
+     * @return slice for inline value, or null if not in inline mode
+     */
+    public MemorySegmentSlice getInlineValueSlice(long address) {
+        if (!isInlineMode(address)) {
+            return null;
+        }
+        
+        int segIdx = decodeSegmentIndex(address);
+        int offset = decodeOffset(address);
+        MemorySegment seg = segments[segIdx];
+        int inlineLen = getInlineValueLen(address);
+        
+        return new MemorySegmentSlice(seg, offset + VALUE_HANDLE_OFFSET, inlineLen);
     }
     
     // ========== Key Matching ==========
@@ -351,9 +571,9 @@ public class KeyNsPool implements AutoCloseable {
         
         MemorySegment seg = segments[segIdx];
         
-        // Compare lengths first
-        int storedKeyLen = seg.getInt(offset + KEY_LEN_OFFSET);
-        int storedNsLen = seg.getInt(offset + NS_LEN_OFFSET);
+        // Compare lengths first (using new getters)
+        int storedKeyLen = getKeyLen(address);
+        int storedNsLen = getNsLen(address);
         
         if (storedKeyLen != keyLen || storedNsLen != nsLen) {
             return false;

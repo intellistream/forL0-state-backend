@@ -404,7 +404,8 @@ class EntryStoreTest {
         void testStats() {
             byte[] key = "key".getBytes();
             byte[] ns = "ns".getBytes();
-            byte[] value = "value".getBytes();
+            // Use value > 8 bytes to avoid inline storage (INLINE_THRESHOLD = 8)
+            byte[] value = "value_longer_than_8_bytes".getBytes();
             
             for (int i = 0; i < 50; i++) {
                 store.allocateEntry(i, key, key.length, ns, ns.length, value, value.length);
@@ -422,7 +423,8 @@ class EntryStoreTest {
         void testReleaseEmptyMemory() {
             byte[] key = "key".getBytes();
             byte[] ns = "ns".getBytes();
-            byte[] value = "value".getBytes();
+            // Use value > 8 bytes to avoid inline storage (INLINE_THRESHOLD = 8)
+            byte[] value = "value_longer_than_8_bytes".getBytes();
             
             // Allocate many entries
             long[] addresses = new long[500];
@@ -530,6 +532,150 @@ class EntryStoreTest {
             store.close();
             
             assertFalse(store.updateValue(address, "new".getBytes(), 3));
+        }
+    }
+    
+    /**
+     * Tests for Phase 2.5 small value inline optimization.
+     * Values ≤ INLINE_THRESHOLD (8 bytes) are stored inline in KeyNsPool's valueHandle field.
+     */
+    @Nested
+    class InlineModeTests {
+        
+        @Test
+        void testSmallValueIsInlined() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] smallValue = "tiny".getBytes();  // 4 bytes, should be inlined
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, smallValue, smallValue.length);
+            assertNotEquals(NULL_HANDLE, address);
+            
+            // Read back the value
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(smallValue, retrieved);
+        }
+        
+        @Test
+        void testExactThresholdValueIsInlined() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] value = new byte[EntryStoreConstants.INLINE_THRESHOLD];  // Exactly 8 bytes
+            for (int i = 0; i < value.length; i++) {
+                value[i] = (byte) (i + 1);
+            }
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, value, value.length);
+            assertNotEquals(NULL_HANDLE, address);
+            
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(value, retrieved);
+        }
+        
+        @Test
+        void testLargerValueUsesValuePool() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] largeValue = new byte[EntryStoreConstants.INLINE_THRESHOLD + 1];  // 9 bytes, uses ValuePool
+            for (int i = 0; i < largeValue.length; i++) {
+                largeValue[i] = (byte) (i + 1);
+            }
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, largeValue, largeValue.length);
+            assertNotEquals(NULL_HANDLE, address);
+            
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(largeValue, retrieved);
+        }
+        
+        @Test
+        void testUpdateInlineToInline() {
+            // Transition: inline → inline (value stays ≤ 8B)
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] original = "abc".getBytes();  // 3 bytes
+            byte[] updated = "12345678".getBytes();  // 8 bytes
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, original, original.length);
+            assertTrue(store.updateValue(address, updated, updated.length));
+            
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(updated, retrieved);
+        }
+        
+        @Test
+        void testUpdateInlineToPointer() {
+            // Transition: inline → pointer (value grows > 8B)
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] original = "tiny".getBytes();  // 4 bytes, inlined
+            byte[] updated = "this_is_a_long_value".getBytes();  // 20 bytes, needs ValuePool
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, original, original.length);
+            assertTrue(store.updateValue(address, updated, updated.length));
+            
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(updated, retrieved);
+        }
+        
+        @Test
+        void testUpdatePointerToInline() {
+            // Transition: pointer → inline (value shrinks to ≤ 8B)
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] original = "this_is_a_long_value".getBytes();  // 20 bytes, uses ValuePool
+            byte[] updated = "short".getBytes();  // 5 bytes, should inline
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, original, original.length);
+            assertTrue(store.updateValue(address, updated, updated.length));
+            
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(updated, retrieved);
+        }
+        
+        @Test
+        void testUpdatePointerToPointer() {
+            // Transition: pointer → pointer (both values > 8B)
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] original = "original_long_value_123".getBytes();  // 23 bytes
+            byte[] updated = "updated_long_value_456".getBytes();  // 22 bytes
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, original, original.length);
+            assertTrue(store.updateValue(address, updated, updated.length));
+            
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(updated, retrieved);
+        }
+        
+        @Test
+        void testEmptyValueIsInlined() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] emptyValue = new byte[0];  // 0 bytes
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, emptyValue, emptyValue.length);
+            assertNotEquals(NULL_HANDLE, address);
+            
+            byte[] retrieved = store.getValueBytes(address);
+            assertArrayEquals(emptyValue, retrieved);
+        }
+        
+        @Test
+        void testInlineValueSlice() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] value = "inline".getBytes();  // 6 bytes
+            
+            long address = store.allocateEntry(1, key, key.length, ns, ns.length, value, value.length);
+            
+            MemorySegmentSlice slice = store.getValueSlice(address);
+            assertNotNull(slice);
+            assertEquals(value.length, slice.length);
+            
+            byte[] fromSlice = new byte[slice.length];
+            slice.segment.get(slice.offset, fromSlice);
+            assertArrayEquals(value, fromSlice);
         }
     }
 }

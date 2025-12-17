@@ -285,6 +285,32 @@ public class ValuePool implements AutoCloseable {
     }
     
     /**
+     * Gets the actual value length for a value handle.
+     * 
+     * @param valueHandle the value handle
+     * @return the value length in bytes, or -1 on error
+     */
+    public int getValueLen(long valueHandle) {
+        if (valueHandle == NULL_HANDLE) {
+            return -1;
+        }
+        
+        if (isLargeObject(valueHandle)) {
+            LargeAllocation alloc = largeAllocations.get(valueHandle);
+            return alloc != null ? alloc.segment.getInt(VALUE_LEN_OFFSET) : -1;
+        }
+        
+        Run run = decodeRun(valueHandle);
+        int slotOffset = decodeSlotOffset(valueHandle);
+        
+        if (run == null) {
+            return -1;
+        }
+        
+        return run.segment.getInt(slotOffset + VALUE_LEN_OFFSET);
+    }
+    
+    /**
      * Gets the allocated slot size for a value handle.
      * 
      * @param valueHandle the value handle

@@ -114,23 +114,73 @@ class ValuePoolTest {
         
         @Test
         void testSizeClassSelection() {
-            // Test each size class boundary
-            assertEquals(ValueSizeClass.VS_32, ValueSizeClass.getSizeClass(1));
+            // Test fine-grained size class boundaries (28 fixed classes + LARGE)
+            
+            // Small values: 16B step (VS_16 to VS_128)
+            assertEquals(ValueSizeClass.VS_16, ValueSizeClass.getSizeClass(1));
+            assertEquals(ValueSizeClass.VS_16, ValueSizeClass.getSizeClass(16));
+            assertEquals(ValueSizeClass.VS_32, ValueSizeClass.getSizeClass(17));
             assertEquals(ValueSizeClass.VS_32, ValueSizeClass.getSizeClass(32));
-            assertEquals(ValueSizeClass.VS_64, ValueSizeClass.getSizeClass(33));
+            assertEquals(ValueSizeClass.VS_48, ValueSizeClass.getSizeClass(33));
+            assertEquals(ValueSizeClass.VS_48, ValueSizeClass.getSizeClass(48));
+            assertEquals(ValueSizeClass.VS_64, ValueSizeClass.getSizeClass(49));
             assertEquals(ValueSizeClass.VS_64, ValueSizeClass.getSizeClass(64));
-            assertEquals(ValueSizeClass.VS_128, ValueSizeClass.getSizeClass(65));
+            assertEquals(ValueSizeClass.VS_80, ValueSizeClass.getSizeClass(65));
+            assertEquals(ValueSizeClass.VS_80, ValueSizeClass.getSizeClass(80));
+            assertEquals(ValueSizeClass.VS_96, ValueSizeClass.getSizeClass(81));
+            assertEquals(ValueSizeClass.VS_96, ValueSizeClass.getSizeClass(96));
+            assertEquals(ValueSizeClass.VS_112, ValueSizeClass.getSizeClass(97));
+            assertEquals(ValueSizeClass.VS_112, ValueSizeClass.getSizeClass(112));
+            assertEquals(ValueSizeClass.VS_128, ValueSizeClass.getSizeClass(113));
             assertEquals(ValueSizeClass.VS_128, ValueSizeClass.getSizeClass(128));
-            assertEquals(ValueSizeClass.VS_256, ValueSizeClass.getSizeClass(129));
+            
+            // Medium values: 32B step (VS_160 to VS_256)
+            assertEquals(ValueSizeClass.VS_160, ValueSizeClass.getSizeClass(129));
+            assertEquals(ValueSizeClass.VS_160, ValueSizeClass.getSizeClass(160));
+            assertEquals(ValueSizeClass.VS_192, ValueSizeClass.getSizeClass(161));
+            assertEquals(ValueSizeClass.VS_192, ValueSizeClass.getSizeClass(192));
+            assertEquals(ValueSizeClass.VS_224, ValueSizeClass.getSizeClass(193));
+            assertEquals(ValueSizeClass.VS_224, ValueSizeClass.getSizeClass(224));
+            assertEquals(ValueSizeClass.VS_256, ValueSizeClass.getSizeClass(225));
             assertEquals(ValueSizeClass.VS_256, ValueSizeClass.getSizeClass(256));
-            assertEquals(ValueSizeClass.VS_384, ValueSizeClass.getSizeClass(257));
+            
+            // Medium-large values: 64B step (VS_320 to VS_512)
+            assertEquals(ValueSizeClass.VS_320, ValueSizeClass.getSizeClass(257));
+            assertEquals(ValueSizeClass.VS_320, ValueSizeClass.getSizeClass(320));
+            assertEquals(ValueSizeClass.VS_384, ValueSizeClass.getSizeClass(321));
             assertEquals(ValueSizeClass.VS_384, ValueSizeClass.getSizeClass(384));
-            assertEquals(ValueSizeClass.VS_512, ValueSizeClass.getSizeClass(385));
+            assertEquals(ValueSizeClass.VS_448, ValueSizeClass.getSizeClass(385));
+            assertEquals(ValueSizeClass.VS_448, ValueSizeClass.getSizeClass(448));
+            assertEquals(ValueSizeClass.VS_512, ValueSizeClass.getSizeClass(449));
             assertEquals(ValueSizeClass.VS_512, ValueSizeClass.getSizeClass(512));
-            assertEquals(ValueSizeClass.VS_1K, ValueSizeClass.getSizeClass(513));
-            assertEquals(ValueSizeClass.VS_2K, ValueSizeClass.getSizeClass(1025));
-            assertEquals(ValueSizeClass.VS_4K, ValueSizeClass.getSizeClass(2049));
+            
+            // Large values: 128B step (VS_640 to VS_1024)
+            assertEquals(ValueSizeClass.VS_640, ValueSizeClass.getSizeClass(513));
+            assertEquals(ValueSizeClass.VS_640, ValueSizeClass.getSizeClass(640));
+            assertEquals(ValueSizeClass.VS_768, ValueSizeClass.getSizeClass(641));
+            assertEquals(ValueSizeClass.VS_768, ValueSizeClass.getSizeClass(768));
+            assertEquals(ValueSizeClass.VS_896, ValueSizeClass.getSizeClass(769));
+            assertEquals(ValueSizeClass.VS_896, ValueSizeClass.getSizeClass(896));
+            assertEquals(ValueSizeClass.VS_1024, ValueSizeClass.getSizeClass(897));
+            assertEquals(ValueSizeClass.VS_1024, ValueSizeClass.getSizeClass(1024));
+            
+            // Extra-large values: 256B step (VS_1280 to VS_2048)
+            assertEquals(ValueSizeClass.VS_1280, ValueSizeClass.getSizeClass(1025));
+            assertEquals(ValueSizeClass.VS_1280, ValueSizeClass.getSizeClass(1280));
+            assertEquals(ValueSizeClass.VS_1536, ValueSizeClass.getSizeClass(1281));
+            assertEquals(ValueSizeClass.VS_2048, ValueSizeClass.getSizeClass(1793));
+            assertEquals(ValueSizeClass.VS_2048, ValueSizeClass.getSizeClass(2048));
+            
+            // Huge values: 512B step (VS_2560 to VS_4096)
+            assertEquals(ValueSizeClass.VS_2560, ValueSizeClass.getSizeClass(2049));
+            assertEquals(ValueSizeClass.VS_2560, ValueSizeClass.getSizeClass(2560));
+            assertEquals(ValueSizeClass.VS_3072, ValueSizeClass.getSizeClass(2561));
+            assertEquals(ValueSizeClass.VS_4096, ValueSizeClass.getSizeClass(3585));
+            assertEquals(ValueSizeClass.VS_4096, ValueSizeClass.getSizeClass(4096));
+            
+            // LARGE objects (>4KB)
             assertEquals(ValueSizeClass.LARGE, ValueSizeClass.getSizeClass(4097));
+            assertEquals(ValueSizeClass.LARGE, ValueSizeClass.getSizeClass(10000));
         }
         
         @Test
@@ -317,9 +367,11 @@ class ValuePoolTest {
         
         @Test
         void testUpdateInPlaceFitsInSlot() {
-            // Allocate small value, update to larger but still fits in slot
-            byte[] original = new byte[10];
-            byte[] larger = new byte[25];  // Still fits in 32-byte slot (with 4-byte header)
+            // With fine-grained size classes:
+            // - 20B value → 4 + 20 = 24B total → VS_32 (slot size 32)
+            // - 28B value → 4 + 28 = 32B total → still fits in VS_32
+            byte[] original = new byte[20];
+            byte[] larger = new byte[28];  // Still fits in 32-byte slot (with 4-byte header)
             
             for (int i = 0; i < larger.length; i++) {
                 larger[i] = (byte) (i + 1);
@@ -328,7 +380,7 @@ class ValuePoolTest {
             long handle = pool.allocate(original.length);
             pool.write(handle, original, original.length);
             
-            // Should succeed because 4 + 25 = 29 <= 32
+            // Should succeed because 4 + 28 = 32 <= VS_32 slot size (32)
             assertTrue(pool.updateInPlace(handle, larger, larger.length));
             
             byte[] readValue = pool.read(handle);
@@ -337,8 +389,11 @@ class ValuePoolTest {
         
         @Test
         void testUpdateInPlaceExceedsSlot() {
-            byte[] original = new byte[10];  // Fits in 32-byte slot
-            byte[] tooLarge = new byte[50];   // Needs 64-byte slot (4 + 50 = 54 > 32)
+            // With fine-grained size classes:
+            // - 20B value → 4 + 20 = 24B → VS_32 (slot 32)
+            // - 30B value → 4 + 30 = 34B → needs VS_48 (slot 48)
+            byte[] original = new byte[20];  // Fits in VS_32 slot
+            byte[] tooLarge = new byte[30];   // Needs VS_48 slot (4 + 30 = 34 > 32)
             
             long handle = pool.allocate(original.length);
             pool.write(handle, original, original.length);

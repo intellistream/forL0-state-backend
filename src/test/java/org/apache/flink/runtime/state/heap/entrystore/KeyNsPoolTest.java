@@ -518,4 +518,185 @@ class KeyNsPoolTest {
             assertEquals(0, pool.getActiveEntries());
         }
     }
+    
+    /**
+     * Tests for Phase 2.5 inline value support in KeyNsPool.
+     */
+    @Nested
+    class InlineValueTests {
+        
+        /** Helper: pack byte[] into long (little-endian) */
+        private long packToLong(byte[] bytes) {
+            long result = 0;
+            for (int i = 0; i < bytes.length && i < 8; i++) {
+                result |= ((long) (bytes[i] & 0xFF)) << (i * 8);
+            }
+            return result;
+        }
+        
+        @Test
+        void testAllocateInline() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] value = "inline".getBytes();  // 6 bytes
+            
+            long address = pool.allocateInline(1, key, key.length, ns, ns.length, packToLong(value), value.length);
+            assertNotEquals(NULL_HANDLE, address);
+            
+            // Verify inline mode
+            assertTrue(pool.isInlineMode(address));
+            assertEquals(value.length, pool.getInlineValueLen(address));
+        }
+        
+        @Test
+        void testAllocateInlineMaxSize() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] value = new byte[EntryStoreConstants.INLINE_THRESHOLD];  // 8 bytes max
+            for (int i = 0; i < value.length; i++) {
+                value[i] = (byte) (i + 1);
+            }
+            
+            long address = pool.allocateInline(1, key, key.length, ns, ns.length, packToLong(value), value.length);
+            assertNotEquals(NULL_HANDLE, address);
+            
+            assertTrue(pool.isInlineMode(address));
+            assertEquals(INLINE_THRESHOLD, pool.getInlineValueLen(address));
+            
+            // Read back value
+            byte[] retrieved = pool.getInlineValueBytes(address);
+            assertArrayEquals(value, retrieved);
+        }
+        
+        @Test
+        void testAllocateInlineEmpty() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            
+            long address = pool.allocateInline(1, key, key.length, ns, ns.length, 0L, 0);
+            assertNotEquals(NULL_HANDLE, address);
+            
+            assertTrue(pool.isInlineMode(address));
+            assertEquals(0, pool.getInlineValueLen(address));
+        }
+        
+        @Test
+        void testGetInlineValue() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] value = {1, 2, 3, 4, 5};  // 5 bytes
+            
+            long address = pool.allocateInline(1, key, key.length, ns, ns.length, packToLong(value), value.length);
+            
+            // Get as long
+            long inlineValue = pool.getInlineValue(address);
+            
+            // Verify bytes
+            byte[] retrieved = pool.getInlineValueBytes(address);
+            assertArrayEquals(value, retrieved);
+        }
+        
+        @Test
+        void testUpdateInlineValue() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] original = {1, 2, 3};
+            
+            long address = pool.allocateInline(1, key, key.length, ns, ns.length, packToLong(original), original.length);
+            
+            // Update to different inline value
+            byte[] updated = {9, 8, 7, 6, 5};
+            pool.updateInlineValue(address, packToLong(updated), updated.length);
+            
+            assertEquals(updated.length, pool.getInlineValueLen(address));
+            byte[] retrieved = pool.getInlineValueBytes(address);
+            assertArrayEquals(updated, retrieved);
+        }
+        
+        @Test
+        void testSwitchToPointerMode() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] value = {1, 2, 3};
+            
+            long address = pool.allocateInline(1, key, key.length, ns, ns.length, packToLong(value), value.length);
+            assertTrue(pool.isInlineMode(address));
+            
+            // Switch to pointer mode
+            long valueHandle = 0x123456789ABCL;
+            pool.switchToPointerMode(address, valueHandle);
+            
+            assertFalse(pool.isInlineMode(address));
+            assertEquals(valueHandle, pool.getValueHandle(address));
+        }
+        
+        @Test
+        void testSwitchToInlineMode() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            long valueHandle = 0x123456789ABCL;
+            
+            // Start with pointer mode (using regular allocate)
+            long address = pool.allocate(1, key, key.length, ns, ns.length, valueHandle);
+            assertFalse(pool.isInlineMode(address));
+            
+            // Switch to inline mode
+            byte[] newValue = {7, 8, 9};
+            pool.switchToInlineMode(address, packToLong(newValue), newValue.length);
+            
+            assertTrue(pool.isInlineMode(address));
+            assertEquals(newValue.length, pool.getInlineValueLen(address));
+            assertArrayEquals(newValue, pool.getInlineValueBytes(address));
+        }
+        
+        @Test
+        void testGetInlineValueSlice() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            byte[] value = {0x11, 0x22, 0x33, 0x44};  // 4 bytes
+            
+            long address = pool.allocateInline(1, key, key.length, ns, ns.length, packToLong(value), value.length);
+            
+            MemorySegmentSlice slice = pool.getInlineValueSlice(address);
+            assertNotNull(slice);
+            assertEquals(value.length, slice.length);
+            
+            // Read from slice
+            byte[] fromSlice = new byte[slice.length];
+            slice.segment.get(slice.offset, fromSlice);
+            assertArrayEquals(value, fromSlice);
+        }
+        
+        @Test
+        void testPointerModeNotInline() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            long valueHandle = 0x123456789L;
+            
+            long address = pool.allocate(1, key, key.length, ns, ns.length, valueHandle);
+            assertFalse(pool.isInlineMode(address));
+        }
+        
+        @Test
+        void testMultipleInlineEntries() {
+            byte[] key = "key".getBytes();
+            byte[] ns = "ns".getBytes();
+            
+            long[] addresses = new long[100];
+            for (int i = 0; i < addresses.length; i++) {
+                byte[] value = new byte[i % (INLINE_THRESHOLD + 1)];  // 0-8 bytes
+                for (int j = 0; j < value.length; j++) {
+                    value[j] = (byte) (i + j);
+                }
+                addresses[i] = pool.allocateInline(i, key, key.length, ns, ns.length, packToLong(value), value.length);
+                assertTrue(pool.isInlineMode(addresses[i]));
+            }
+            
+            // Verify all entries
+            for (int i = 0; i < addresses.length; i++) {
+                int expectedLen = i % (INLINE_THRESHOLD + 1);
+                assertEquals(expectedLen, pool.getInlineValueLen(addresses[i]));
+            }
+        }
+    }
 }

@@ -125,7 +125,12 @@ public class EntryStore implements AutoCloseable {
             return NULL_HANDLE;
         }
         
-        // Allocate value space first
+        // Check if value can be inlined (≤8 bytes)
+        if (valueLen <= INLINE_THRESHOLD) {
+            return allocateInlineEntry(hash, keyBuffer, keyLen, nsBuffer, nsLen, valueBuffer, valueLen);
+        }
+        
+        // Pointer mode: allocate value space first
         long valueHandle = valuePool.allocate(valueLen);
         if (valueHandle == NULL_HANDLE) {
             return NULL_HANDLE;
@@ -136,7 +141,7 @@ public class EntryStore implements AutoCloseable {
             valuePool.write(valueHandle, valueBuffer, valueLen);
         }
         
-        // Allocate key/namespace entry with valueHandle
+        // Allocate key/namespace entry with valueHandle (pointer mode)
         long keyAddr = keyNsPool.allocate(hash, keyBuffer, keyLen, nsBuffer, nsLen, valueHandle);
         if (keyAddr == NULL_HANDLE) {
             // Rollback value allocation
@@ -148,16 +153,36 @@ public class EntryStore implements AutoCloseable {
     }
     
     /**
+     * Allocates an entry with inline value (≤8 bytes).
+     */
+    private long allocateInlineEntry(int hash,
+                                     byte[] keyBuffer, int keyLen,
+                                     byte[] nsBuffer, int nsLen,
+                                     byte[] valueBuffer, int valueLen) {
+        // Pack value bytes into a long (little-endian)
+        long inlineValue = 0L;
+        if (valueBuffer != null && valueLen > 0) {
+            for (int i = 0; i < valueLen; i++) {
+                inlineValue |= ((long) (valueBuffer[i] & 0xFF)) << (i * 8);
+            }
+        }
+        
+        return keyNsPool.allocateInline(hash, keyBuffer, keyLen, nsBuffer, nsLen, inlineValue, valueLen);
+    }
+    
+    /**
      * Updates an entry's value.
      * 
      * <p><b>CRITICAL</b>: This method guarantees that the entry address does NOT change.
      * The caller does not need to update any index pointers after calling this method.
      * 
-     * <p>Implementation:
-     * <ol>
-     *   <li>Try in-place update if new value fits in existing slot</li>
-     *   <li>Otherwise, allocate new value slot and update the valueHandle in KeyNsPool</li>
-     * </ol>
+     * <p>Handles 4 mode transitions:
+     * <ul>
+     *   <li>inline → inline: update in-place if new length ≤8</li>
+     *   <li>inline → pointer: allocate in ValuePool, switch mode</li>
+     *   <li>pointer → pointer: try in-place, otherwise reallocate</li>
+     *   <li>pointer → inline: free ValuePool slot, switch mode</li>
+     * </ul>
      * 
      * @param address the entry address (from allocateEntry)
      * @param valueBuffer the new value bytes
@@ -173,7 +198,82 @@ public class EntryStore implements AutoCloseable {
             return false;
         }
         
-        // Get current value handle
+        boolean wasInline = keyNsPool.isInlineMode(address);
+        boolean canInline = valueLen <= INLINE_THRESHOLD;
+        
+        if (wasInline && canInline) {
+            // Case 1: inline → inline (in-place update)
+            return updateInlineToInline(address, valueBuffer, valueLen);
+        } else if (wasInline && !canInline) {
+            // Case 2: inline → pointer (allocate in ValuePool)
+            return updateInlineToPointer(address, valueBuffer, valueLen);
+        } else if (!wasInline && canInline) {
+            // Case 3: pointer → inline (free ValuePool, switch mode)
+            return updatePointerToInline(address, valueBuffer, valueLen);
+        } else {
+            // Case 4: pointer → pointer (try in-place or reallocate)
+            return updatePointerToPointer(address, valueBuffer, valueLen);
+        }
+    }
+    
+    /**
+     * Case 1: Update inline value in-place.
+     */
+    private boolean updateInlineToInline(long address, byte[] valueBuffer, int valueLen) {
+        // Pack new value into long
+        long newInlineValue = 0L;
+        for (int i = 0; i < valueLen; i++) {
+            newInlineValue |= ((long) (valueBuffer[i] & 0xFF)) << (i * 8);
+        }
+        keyNsPool.updateInlineValue(address, newInlineValue, valueLen);
+        return true;
+    }
+    
+    /**
+     * Case 2: Transition from inline to pointer mode.
+     */
+    private boolean updateInlineToPointer(long address, byte[] valueBuffer, int valueLen) {
+        // Allocate in ValuePool
+        long newValueHandle = valuePool.allocate(valueLen);
+        if (newValueHandle == NULL_HANDLE) {
+            return false;
+        }
+        
+        // Write value
+        valuePool.write(newValueHandle, valueBuffer, valueLen);
+        
+        // Switch to pointer mode
+        keyNsPool.switchToPointerMode(address, newValueHandle);
+        return true;
+    }
+    
+    /**
+     * Case 3: Transition from pointer to inline mode.
+     */
+    private boolean updatePointerToInline(long address, byte[] valueBuffer, int valueLen) {
+        // Get old value handle to free later
+        long oldValueHandle = keyNsPool.getValueHandle(address);
+        
+        // Pack new value into long
+        long newInlineValue = 0L;
+        for (int i = 0; i < valueLen; i++) {
+            newInlineValue |= ((long) (valueBuffer[i] & 0xFF)) << (i * 8);
+        }
+        
+        // Switch to inline mode
+        keyNsPool.switchToInlineMode(address, newInlineValue, valueLen);
+        
+        // Free old value slot (must be after mode switch to ensure consistency)
+        if (oldValueHandle != NULL_HANDLE) {
+            valuePool.free(oldValueHandle);
+        }
+        return true;
+    }
+    
+    /**
+     * Case 4: Update pointer mode value (try in-place or reallocate).
+     */
+    private boolean updatePointerToPointer(long address, byte[] valueBuffer, int valueLen) {
         long oldValueHandle = keyNsPool.getValueHandle(address);
         if (oldValueHandle == NULL_HANDLE) {
             return false;
@@ -204,6 +304,7 @@ public class EntryStore implements AutoCloseable {
     
     /**
      * Removes an entry and frees all associated memory.
+     * Handles both inline and pointer modes.
      * 
      * @param address the entry address
      */
@@ -212,10 +313,12 @@ public class EntryStore implements AutoCloseable {
             return;
         }
         
-        // Get and free value first
-        long valueHandle = keyNsPool.getValueHandle(address);
-        if (valueHandle != NULL_HANDLE) {
-            valuePool.free(valueHandle);
+        // Only free value in pointer mode (inline mode has no ValuePool allocation)
+        if (!keyNsPool.isInlineMode(address)) {
+            long valueHandle = keyNsPool.getValueHandle(address);
+            if (valueHandle != NULL_HANDLE) {
+                valuePool.free(valueHandle);
+            }
         }
         
         // Free key/namespace entry
@@ -247,11 +350,19 @@ public class EntryStore implements AutoCloseable {
     
     /**
      * Gets the value bytes of an entry.
+     * Handles both inline and pointer modes.
      */
     public byte[] getValueBytes(long address) {
         if (address == NULL_HANDLE) {
             return null;
         }
+        
+        // Check mode
+        if (keyNsPool.isInlineMode(address)) {
+            return keyNsPool.getInlineValueBytes(address);
+        }
+        
+        // Pointer mode
         long valueHandle = keyNsPool.getValueHandle(address);
         return valuePool.read(valueHandle);
     }
@@ -274,6 +385,10 @@ public class EntryStore implements AutoCloseable {
     
     /**
      * Gets a zero-copy slice for the value.
+     * Handles both inline and pointer modes.
+     * 
+     * <p>For inline mode, returns a slice pointing to the valueHandle field
+     * in KeyNsPool. For pointer mode, returns a slice from ValuePool.
      * 
      * <p>This can be used for zero-copy value writes:
      * <pre>
@@ -286,8 +401,46 @@ public class EntryStore implements AutoCloseable {
         if (address == NULL_HANDLE) {
             return null;
         }
+        
+        // Check mode
+        if (keyNsPool.isInlineMode(address)) {
+            return keyNsPool.getInlineValueSlice(address);
+        }
+        
+        // Pointer mode
         long valueHandle = keyNsPool.getValueHandle(address);
         return valuePool.getSlice(valueHandle);
+    }
+    
+    /**
+     * Checks if entry is in inline mode.
+     * 
+     * @param address the entry address
+     * @return true if inline mode, false if pointer mode
+     */
+    public boolean isInlineMode(long address) {
+        return keyNsPool.isInlineMode(address);
+    }
+    
+    /**
+     * Gets the value length of an entry.
+     * Handles both inline and pointer modes.
+     * 
+     * @param address the entry address
+     * @return value length, or -1 if error
+     */
+    public int getValueLen(long address) {
+        if (address == NULL_HANDLE) {
+            return -1;
+        }
+        
+        if (keyNsPool.isInlineMode(address)) {
+            return keyNsPool.getInlineValueLen(address);
+        }
+        
+        // Pointer mode - get from ValuePool
+        long valueHandle = keyNsPool.getValueHandle(address);
+        return valuePool.getValueLen(valueHandle);
     }
     
     // ========== Key Matching ==========
