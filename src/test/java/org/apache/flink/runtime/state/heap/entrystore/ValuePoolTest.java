@@ -122,7 +122,11 @@ class ValuePoolTest {
             assertEquals(ValueSizeClass.VS_128, ValueSizeClass.getSizeClass(65));
             assertEquals(ValueSizeClass.VS_128, ValueSizeClass.getSizeClass(128));
             assertEquals(ValueSizeClass.VS_256, ValueSizeClass.getSizeClass(129));
-            assertEquals(ValueSizeClass.VS_512, ValueSizeClass.getSizeClass(257));
+            assertEquals(ValueSizeClass.VS_256, ValueSizeClass.getSizeClass(256));
+            assertEquals(ValueSizeClass.VS_384, ValueSizeClass.getSizeClass(257));
+            assertEquals(ValueSizeClass.VS_384, ValueSizeClass.getSizeClass(384));
+            assertEquals(ValueSizeClass.VS_512, ValueSizeClass.getSizeClass(385));
+            assertEquals(ValueSizeClass.VS_512, ValueSizeClass.getSizeClass(512));
             assertEquals(ValueSizeClass.VS_1K, ValueSizeClass.getSizeClass(513));
             assertEquals(ValueSizeClass.VS_2K, ValueSizeClass.getSizeClass(1025));
             assertEquals(ValueSizeClass.VS_4K, ValueSizeClass.getSizeClass(2049));

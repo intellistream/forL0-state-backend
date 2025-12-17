@@ -5,12 +5,14 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
+import org.apache.flink.runtime.state.heap.entrystore.EntryStore;
 import org.apache.flink.runtime.state.heap.io.SerializerPack;
 import org.apache.flink.runtime.state.heap.io.FixedLengthTypeSupport;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.space.MemorySegmentSlice;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
+import org.apache.flink.runtime.state.heap.L0Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,9 +27,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMap.class);
 
     // Core storage components
-    private final MemoryManagerAllocator allocator;  // For MainTable and EntryArena
+    private final MemoryManagerAllocator allocator;  // For MainTable and EntryStore
     private final L0MemoryAllocator l0Allocator;     // For L0Table (nullable)
-    private final EntryArena entryArena;
+    private final EntryStore entryStore;
     // 直接管理表实例，移除 TableCore 中间层
     private final MainTable mainTable;
     private final L0Table l0Table; // nullable，仅在启用L0缓存时创建
@@ -178,7 +180,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         // 直接使用 SerializerPack，移除冗余的序列化器引用
         this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
         this.l0CacheEnabled = l0CacheEnabled;
-        this.entryArena = new EntryArena(allocator, arenaInitialSizeBytes);
+        this.entryStore = new EntryStore(allocator, arenaInitialSizeBytes);
         // MainTable 使用 MemoryManagerAllocator，使用配置的负载因子阈值
         this.mainTable = new MainTable(allocator, mainTableInitPow2, loadFactorThreshold);
         this.l0Table = (l0CacheEnabled && l0Allocator != null) 
@@ -223,8 +225,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (l0Table != null) {
             l0Table.close();
         }
-        if (entryArena != null) {
-            entryArena.close();
+        if (entryStore != null) {
+            entryStore.close();
         }
         LOG.debug("ForL0StateMap closed");
     }
@@ -245,14 +247,14 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             long addr;
             if (l0CacheEnabled && l0Table != null) {
                 addr = l0Table.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength,
-                        knh.namespaceBytes, knh.namespaceLength, entryArena);
+                        knh.namespaceBytes, knh.namespaceLength, entryStore);
                 if (addr > 0) {
                     l0Hits++;
                     return readValue(addr);
                 }
             }
             addr = mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength,
-                    knh.namespaceBytes, knh.namespaceLength, entryArena);
+                    knh.namespaceBytes, knh.namespaceLength, entryStore);
             if (addr > 0) {
                 mainTableHits++;
                 updateL0Table(knh, addr); // promote to L0 cache
@@ -273,12 +275,12 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
             if (l0CacheEnabled && l0Table != null) {
                 if (l0Table.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength,
-                        knh.namespaceBytes, knh.namespaceLength, entryArena) > 0)
+                        knh.namespaceBytes, knh.namespaceLength, entryStore) > 0)
                     return true;
             }
 
             return mainTable.get(knh.hash, knh.tag, knh.keyBytes, knh.keyLength,
-                    knh.namespaceBytes, knh.namespaceLength, entryArena) > 0;
+                    knh.namespaceBytes, knh.namespaceLength, entryStore) > 0;
         } catch (IOException e) {
             LOG.error("Error during containsKey operation for key={}, namespace={}", key, namespace, e);
             return false;
@@ -301,15 +303,15 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             long addr;
             if (stateTypeInfo != null) {
                 // Zero-copy fast path: allocate entry with reserved value space, then write directly
-                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                addr = entryStore.allocateEntry(knh.hash, knh.keyBytes, knh.keyLength,
                         knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
-                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                MemorySegmentSlice slice = entryStore.getValueSlice(addr);
                 stateTypeInfo.write(slice.segment, slice.offset, state);
             } else if (tupleTypeInfo != null) {
                 // Zero-copy fast path for Tuple types
-                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                addr = entryStore.allocateEntry(knh.hash, knh.keyBytes, knh.keyLength,
                         knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
-                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                MemorySegmentSlice slice = entryStore.getValueSlice(addr);
                 tupleTypeInfo.write(slice.segment, slice.offset, (org.apache.flink.api.java.tuple.Tuple) state);
             } else {
                 // Normal path: use serializer
@@ -318,7 +320,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 } catch (IOException e) {
                     throw new RuntimeException("Put operation failed due to serialization error", e);
                 }
-                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                addr = entryStore.allocateEntry(knh.hash, knh.keyBytes, knh.keyLength,
                         knh.namespaceBytes, knh.namespaceLength, serializerPack.stateBuffer(), serializerPack.stateLength());
             }
             mainTable.setSlotPointer(addr);
@@ -337,11 +339,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private void updateExistingEntry(long existingAddr, S state, KeyNamespaceHash knh) {
         if (stateTypeInfo != null) {
             // Zero-copy: fixed-length types can always update in-place
-            MemorySegmentSlice slice = entryArena.getValueSlice(existingAddr);
+            MemorySegmentSlice slice = entryStore.getValueSlice(existingAddr);
             stateTypeInfo.write(slice.segment, slice.offset, state);
         } else if (tupleTypeInfo != null) {
             // Zero-copy: fixed-length Tuple types can always update in-place
-            MemorySegmentSlice slice = entryArena.getValueSlice(existingAddr);
+            MemorySegmentSlice slice = entryStore.getValueSlice(existingAddr);
             tupleTypeInfo.write(slice.segment, slice.offset, (org.apache.flink.api.java.tuple.Tuple) state);
         } else {
             // Variable-length: use byte[] based update
@@ -350,35 +352,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             } catch (IOException e) {
                 throw new RuntimeException("Update operation failed due to serialization error", e);
             }
-            updateExistingEntryBytes(existingAddr, serializerPack.stateBuffer(), serializerPack.stateLength(), knh);
-        }
-    }
-
-    /**
-     * Update existing entry with byte array value (for variable-length types).
-     */
-    private void updateExistingEntryBytes(long result, byte[] vb, int vlen, KeyNamespaceHash knh) {
-        // 先尝试就地更新，避免指针切换
-        if (entryArena.updateValueInPlace(result, vb, vlen)) {
-            return;
-        }
-        // 分配新entry，先切换指针与L0，再释放旧entry，避免L0访问悬垂指针
-        long newAddr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
-                knh.namespaceBytes, knh.namespaceLength, vb, vlen);
-        if (newAddr != 0) {
-            mainTable.setSlotPointer(newAddr);
-            updateL0Table(knh, newAddr);
-            entryArena.removeEntry(result);
-        } else {
-            // 回退：无法分配新块，尝试使用旧逻辑（可能触发重分配+立即释放，但这是降级路径）
-            long addr = entryArena.updateEntry(result, vb, vlen);
-            // 只有当 addr 有效且不同于原地址时才更新指针
-            if (addr != 0 && addr != result) {
-                mainTable.setSlotPointer(addr);
-                updateL0Table(knh, addr);
-            }
-            // addr == 0 表示分配失败，保持原状态不变（数据未更新但不会崩溃）
-            // addr == result 表示原地更新成功，无需切换指针
+            // EntryStore.updateValue() guarantees address stability - no pointer switching needed
+            entryStore.updateValue(existingAddr, serializerPack.stateBuffer(), serializerPack.stateLength());
         }
     }
 
@@ -396,7 +371,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public void remove(K key, N namespace) {
         if (key == null || namespace == null) { return; }
-        if (allocator == null || entryArena == null || mainTable == null) { return; }
+        if (allocator == null || entryStore == null || mainTable == null) { return; }
 
         try {
             KeyNamespaceHash knh = serializeKeyNamespace(key, namespace);
@@ -421,13 +396,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public int sizeOfNamespace(Object namespace) {
-        if (entryArena == null || mainTable == null) {
+        if (entryStore == null || mainTable == null) {
             return 0;
         }
         int[] cnt = new int[1];
         mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
             try {
-                byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                byte[] nb = entryStore.getNamespaceBytes(entryAddress);
                 if (nb == null) { return; }
                 N n = deserializeNamespace(nb);
                 if ((namespace == null && n == null) || (namespace != null && namespace.equals(n))) {
@@ -481,13 +456,13 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     public Iterator<StateEntry<K, N, S>> iterator() {
         // 构造一次性快照列表，避免并发修改影响
         ArrayList<StateEntry<K, N, S>> list = new ArrayList<>(Math.max(16, size));
-        if (entryArena == null || mainTable == null) {
+        if (entryStore == null || mainTable == null) {
             return list.iterator();
         }
         mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
             try {
-                byte[] kb = entryArena.getKeyBytes(entryAddress);
-                byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                byte[] kb = entryStore.getKeyBytes(entryAddress);
+                byte[] nb = entryStore.getNamespaceBytes(entryAddress);
                 if (kb == null || nb == null) {
                     return; // skip entries with missing key or namespace
                 }
@@ -514,17 +489,17 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public Stream<K> getKeys(N namespace) {
-        if (namespace == null || entryArena == null || mainTable == null) {
+        if (namespace == null || entryStore == null || mainTable == null) {
             return Stream.empty();
         }
         java.util.ArrayList<K> keys = new java.util.ArrayList<>();
         mainTable.forEachEntry((entryAddress, keyHash, tag) -> {
             try {
-                byte[] nb = entryArena.getNamespaceBytes(entryAddress);
+                byte[] nb = entryStore.getNamespaceBytes(entryAddress);
                 if (nb == null) { return; }
                 N n = deserializeNamespace(nb);
                 if (n != null && n.equals(namespace)) {
-                    byte[] kb = entryArena.getKeyBytes(entryAddress);
+                    byte[] kb = entryStore.getKeyBytes(entryAddress);
                     if (kb != null) {
                         K k = deserializeKey(kb);
                         keys.add(k);
@@ -551,20 +526,20 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             long addr;
             if (useSimpleFastPath) {
                 // Zero-copy fast path: allocate entry with reserved value space, then write directly
-                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                addr = entryStore.allocateEntry(knh.hash, knh.keyBytes, knh.keyLength,
                         knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
-                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                MemorySegmentSlice slice = entryStore.getValueSlice(addr);
                 stateTypeInfo.write(slice.segment, slice.offset, newState);
             } else if (useTupleFastPath) {
                 // Zero-copy fast path: allocate entry with reserved value space, then write directly
-                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                addr = entryStore.allocateEntry(knh.hash, knh.keyBytes, knh.keyLength,
                         knh.namespaceBytes, knh.namespaceLength, null, fixedLengthValueSize);
-                MemorySegmentSlice slice = entryArena.getValueSlice(addr);
+                MemorySegmentSlice slice = entryStore.getValueSlice(addr);
                 tupleTypeInfo.write(slice.segment, slice.offset, (org.apache.flink.api.java.tuple.Tuple) newState);
             } else {
                 // Normal path: use serializer
                 serializerPack.writeState(newState);
-                addr = entryArena.putEntry(knh.hash, knh.keyBytes, knh.keyLength,
+                addr = entryStore.allocateEntry(knh.hash, knh.keyBytes, knh.keyLength,
                         knh.namespaceBytes, knh.namespaceLength, serializerPack.stateBuffer(), serializerPack.stateLength());
             }
             mainTable.setSlotPointer(addr);
@@ -575,11 +550,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             MemorySegmentSlice slice = null;
             if (useSimpleFastPath) {
                 // Zero-copy fast path: read directly from MemorySegment
-                slice = entryArena.getValueSlice(result);
+                slice = entryStore.getValueSlice(result);
                 oldState = stateTypeInfo.read(slice.segment, slice.offset);
             } else if (useTupleFastPath) {
                 // Zero-copy fast path: read directly from MemorySegment
-                slice = entryArena.getValueSlice(result);
+                slice = entryStore.getValueSlice(result);
                 oldState = (S) tupleTypeInfo.read(slice.segment, slice.offset);
             } else {
                 // Normal path
@@ -595,8 +570,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             } else {
                 // Normal path: use serializer
                 serializerPack.writeState(newState);
-                // 先尝试就地更新
-                updateExistingEntryBytes(result, serializerPack.stateBuffer(), serializerPack.stateLength(), knh);
+                entryStore.updateValue(result, serializerPack.stateBuffer(), serializerPack.stateLength());
             }
         }
     }
@@ -609,7 +583,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     private S readValue(long entryAddress) {
         // Fast-path for primitive types: zero-copy direct MemorySegment read
         if (stateTypeInfo != null) {
-            MemorySegmentSlice slice = entryArena.getValueSlice(entryAddress);
+            MemorySegmentSlice slice = entryStore.getValueSlice(entryAddress);
             if (slice == null || slice.length == 0) {
                 return null;
             }
@@ -618,7 +592,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         
         // Fast-path for Tuple types: zero-copy direct MemorySegment read
         if (tupleTypeInfo != null) {
-            MemorySegmentSlice slice = entryArena.getValueSlice(entryAddress);
+            MemorySegmentSlice slice = entryStore.getValueSlice(entryAddress);
             if (slice == null || slice.length == 0) {
                 return null;
             }
@@ -643,7 +617,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             performResize();
         }
         long result = mainTable.put(knh.hash, knh.tag, 0, knh.keyBytes, knh.keyLength,
-                knh.namespaceBytes, knh.namespaceLength, entryArena);
+                knh.namespaceBytes, knh.namespaceLength, entryStore);
         
         // 经过 MainTable 优化后，put 返回 -1 表示严重错误（扩容逻辑失效）
         // 正常情况下 needsResize 标志应该在达到扩展桶上限前就被设置
@@ -665,14 +639,14 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      */
     private void removeEntry(KeyNamespaceHash knh) {
         long removedAddr = mainTable.remove(knh.hash, knh.tag, knh.keyBytes, knh.keyLength,
-                knh.namespaceBytes, knh.namespaceLength, entryArena);
+                knh.namespaceBytes, knh.namespaceLength, entryStore);
         if (removedAddr > 0) {
             size--;
             if (l0CacheEnabled && l0Table != null) {
                 l0Table.remove(knh.hash, knh.tag, knh.keyBytes, knh.keyLength,
-                        knh.namespaceBytes, knh.namespaceLength, entryArena);
+                        knh.namespaceBytes, knh.namespaceLength, entryStore);
             }
-            entryArena.removeEntry(removedAddr);
+            entryStore.removeEntry(removedAddr);
         }
     }
 
@@ -690,14 +664,14 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (l0CacheEnabled && l0Table != null) {
             l0Table.clear();
         }
-        mainTable.tryResize(entryArena);
+        mainTable.tryResize(entryStore);
         resizeInProgress = false;
     }
 
     private void updateL0Table(KeyNamespaceHash knh, long entryAddress) {
         if (l0CacheEnabled && l0Table != null && !resizeInProgress) {
             l0Table.put(knh.hash, knh.tag, entryAddress, knh.keyBytes, knh.keyLength,
-                    knh.namespaceBytes, knh.namespaceLength, entryArena);
+                    knh.namespaceBytes, knh.namespaceLength, entryStore);
         }
     }
 
@@ -721,7 +695,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     private S deserializeValueFromArena(long entryAddress) throws IOException {
-        MemorySegmentSlice slice = entryArena.getValueSlice(entryAddress);
+        MemorySegmentSlice slice = entryStore.getValueSlice(entryAddress);
         if (slice == null || slice.length == 0) {
             return null;
         }

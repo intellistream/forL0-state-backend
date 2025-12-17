@@ -2,6 +2,7 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
+import org.apache.flink.runtime.state.heap.entrystore.EntryStore;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import java.util.ArrayList;
@@ -82,20 +83,20 @@ public class MainTable implements AutoCloseable {
         this.extensionPoolUsed = 0;
     }
 
-    public long get(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long get(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        return searchBucketTree(bucketIndex, bucketIndex, tag, kb, klen, nb, nlen, arena, segment, bucketOffset);
+        return searchBucketTree(bucketIndex, bucketIndex, tag, kb, klen, nb, nlen, store, segment, bucketOffset);
     }
 
     /**
      * 插入或更新条目
      * @return 0 for new entry, positive for existing entry address, -1 for full (needs resize)
      */
-    public long put(int keyHash, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long put(int keyHash, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         int bucketIndex = keyHash & (bucketCount - 1);
-        long result = putInBucketTree(bucketIndex, bucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
+        long result = putInBucketTree(bucketIndex, bucketIndex, tag, entryAddress, kb, klen, nb, nlen, store);
 
         if (result == 0) {
             totalEntries++;
@@ -107,11 +108,11 @@ public class MainTable implements AutoCloseable {
         return result;
     }
 
-    public long remove(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    public long remove(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        long removed = removeFromBucketTree(bucketIndex, bucketIndex, tag, kb, klen, nb, nlen, arena, segment, bucketOffset);
+        long removed = removeFromBucketTree(bucketIndex, bucketIndex, tag, kb, klen, nb, nlen, store, segment, bucketOffset);
         if (removed > 0) {
             totalEntries--;
         }
@@ -133,10 +134,10 @@ public class MainTable implements AutoCloseable {
      * @param bucketIndex 当前桶的全局索引
      * @param mainBucketIndex 当前桶所属的主桶索引
      */
-    private long searchBucketTree(int bucketIndex, int mainBucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena,
+    private long searchBucketTree(int bucketIndex, int mainBucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store,
                                   MemorySegment segment, int bucketOffset) {
         // 先搜索当前桶的槽位
-        long result = searchBucketSlots(segment, bucketOffset, tag, kb, klen, nb, nlen, arena);
+        long result = searchBucketSlots(segment, bucketOffset, tag, kb, klen, nb, nlen, store);
         if (result != 0) return result;
 
         // 根据tag确定扩展桶指针索引
@@ -147,20 +148,20 @@ public class MainTable implements AutoCloseable {
             int extensionBucketIndex = getExtensionBucketGlobalIndex(mainBucketIndex, offset);
             MemorySegment extensionSegment = getSegmentForBucket(extensionBucketIndex);
             int extensionBucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-            return searchBucketTree(extensionBucketIndex, mainBucketIndex, tag, kb, klen, nb, nlen, arena, extensionSegment, extensionBucketOffset);
+            return searchBucketTree(extensionBucketIndex, mainBucketIndex, tag, kb, klen, nb, nlen, store, extensionSegment, extensionBucketOffset);
         }
         return 0;
     }
 
     private long searchBucketSlots(MemorySegment segment, int bucketOffset, short tag, byte[] kb, int klen, byte[] nb,
-                                   int nlen, EntryArena arena) {
+                                   int nlen, EntryStore store) {
         int slotOffset = bucketOffset;
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (ptr == 0) continue;
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+            if (slotTag == tag && store.matchesKey(ptr, kb, klen, nb, nlen)) {
                 return ptr;
             }
         }
@@ -174,11 +175,11 @@ public class MainTable implements AutoCloseable {
      * @return 0 for new entry, positive for updated entry address, -1 for full (needs resize)
      */
     private long putInBucketTree(int bucketIndex, int mainBucketIndex, short tag, long entryAddress, byte[] kb, int klen, byte[] nb,
-                                 int nlen, EntryArena arena) {
+                                 int nlen, EntryStore store) {
         // 先尝试插入当前桶
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        long result = putInSlots(segment, bucketOffset, tag, entryAddress, kb, klen, nb, nlen, arena);
+        long result = putInSlots(segment, bucketOffset, tag, entryAddress, kb, klen, nb, nlen, store);
         if (result != -1) return result;
 
         // 当前桶满，根据tag确定扩展桶
@@ -194,7 +195,7 @@ public class MainTable implements AutoCloseable {
 
         // 递归插入到扩展桶
         int extensionBucketIndex = getExtensionBucketGlobalIndex(mainBucketIndex, extId);
-        return putInBucketTree(extensionBucketIndex, mainBucketIndex, tag, entryAddress, kb, klen, nb, nlen, arena);
+        return putInBucketTree(extensionBucketIndex, mainBucketIndex, tag, entryAddress, kb, klen, nb, nlen, store);
     }
 
     /**
@@ -202,7 +203,7 @@ public class MainTable implements AutoCloseable {
      * @return 0 for new entry, positive for existing entry address, -1 for full bucket
      */
     private long putInSlots(MemorySegment segment, int bucketOffset, short tag, long entryAddress,
-                            byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+                            byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         int empty = -1;
         int emptyOffset = 0;
 
@@ -219,7 +220,7 @@ public class MainTable implements AutoCloseable {
             }
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+            if (slotTag == tag && store.matchesKey(ptr, kb, klen, nb, nlen)) {
                 lastFoundSegment = segment;
                 lastFountSlotOffset = slotOffset;
                 if (entryAddress > 0) segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
@@ -242,10 +243,10 @@ public class MainTable implements AutoCloseable {
      * @param bucketIndex 当前桶的全局索引
      * @param mainBucketIndex 当前桶所属的主桶索引
      */
-    private long removeFromBucketTree(int bucketIndex, int mainBucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena,
+    private long removeFromBucketTree(int bucketIndex, int mainBucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store,
                                       MemorySegment segment, int bucketOffset) {
         // 先尝试从当前桶删除
-        long removed = removeFromBucketSlots(segment, bucketOffset, tag, kb, klen, nb, nlen, arena);
+        long removed = removeFromBucketSlots(segment, bucketOffset, tag, kb, klen, nb, nlen, store);
         if (removed != 0) return removed;
 
         // 根据tag确定扩展桶指针索引
@@ -256,19 +257,19 @@ public class MainTable implements AutoCloseable {
             int extensionBucketIndex = getExtensionBucketGlobalIndex(mainBucketIndex, offset);
             MemorySegment extensionSegment = getSegmentForBucket(extensionBucketIndex);
             int extensionBucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-            removed = removeFromBucketTree(extensionBucketIndex, mainBucketIndex, tag, kb, klen, nb, nlen, arena, extensionSegment, extensionBucketOffset);
+            removed = removeFromBucketTree(extensionBucketIndex, mainBucketIndex, tag, kb, klen, nb, nlen, store, extensionSegment, extensionBucketOffset);
         }
         return removed;
     }
 
-    private long removeFromBucketSlots(MemorySegment segment, int bucketOffset, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+    private long removeFromBucketSlots(MemorySegment segment, int bucketOffset, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         int slotOffset = bucketOffset;
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (ptr == 0) continue;
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag == tag && arena.matchesKey(ptr, kb, klen, nb, nlen)) {
+            if (slotTag == tag && store.matchesKey(ptr, kb, klen, nb, nlen)) {
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
                 return ptr;
             }
@@ -413,12 +414,12 @@ public class MainTable implements AutoCloseable {
 
     // --- Resize operations ---
 
-    public void tryResize(EntryArena entryArena) {
+    public void tryResize(EntryStore entryStore) {
         if (!needsResize) return;
-        resize(entryArena);
+        resize(entryStore);
     }
 
-    public void resize(EntryArena entryArena) {
+    public void resize(EntryStore entryStore) {
         int newBucketCount = bucketCount * 2;
         
         // 只分配新的主桶内存
@@ -445,7 +446,7 @@ public class MainTable implements AutoCloseable {
         clearMemorySegments(newMemorySegments);
 
         // 直接迁移条目，无需中间集合
-        migrateAllEntriesToNewTable(newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
+        migrateAllEntriesToNewTable(newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryStore);
 
         // 释放所有旧表的分配（包括主桶和动态扩展桶）
         for (List<MemorySegment> allocation : allAllocations) {
@@ -479,10 +480,10 @@ public class MainTable implements AutoCloseable {
      */
     private void migrateAllEntriesToNewTable(List<MemorySegment> newMemorySegments, int newBucketCount,
                                              int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                             List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryArena entryArena) {
+                                             List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryStore entryStore) {
         // 遍历所有基桶，每个基桶会递归遍历其扩展子树
         for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
-            migrateBucketTree(bucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
+            migrateBucketTree(bucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryStore);
         }
     }
 
@@ -494,9 +495,9 @@ public class MainTable implements AutoCloseable {
      */
     private void migrateBucketTree(int bucketIndex, int mainBucketIndex, List<MemorySegment> newMemorySegments, int newBucketCount,
                                    int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                   List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryArena entryArena) {
+                                   List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryStore entryStore) {
         // 迁移当前桶的所有槽位数据
-        migrateBucketSlots(bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
+        migrateBucketSlots(bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryStore);
 
         // 如果是基桶，递归迁移所有扩展桶的数据
         if (bucketIndex < bucketCount) {
@@ -514,14 +515,14 @@ public class MainTable implements AutoCloseable {
                 if (offset != NULL_BUCKET_ID) {
                     // 递归迁移扩展桶及其可能的子扩展桶
                     int extensionBucketIndex = getExtensionBucketGlobalIndex(bucketIndex, offset);
-                    migrateBucketTree(extensionBucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryArena);
+                    migrateBucketTree(extensionBucketIndex, bucketIndex, newMemorySegments, newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState, entryStore);
                 }
             }
         }
     }
     private void migrateBucketSlots(int bucketIndex, List<MemorySegment> newMemorySegments, int newBucketCount,
                                     int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                    List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryArena entryArena) {
+                                    List<List<MemorySegment>> newAllAllocations, int[] newPoolState, EntryStore entryStore) {
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
@@ -531,7 +532,7 @@ public class MainTable implements AutoCloseable {
             if (entryAddress == 0) continue;
 
             short tag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            int fullHash = entryArena.getHash(entryAddress);
+            int fullHash = entryStore.getHash(entryAddress);
             int newBucketIndex = fullHash & (newBucketCount - 1);
 
             putInNewTable(newMemorySegments, newBucketCount, newBucketIndex, tag, entryAddress, newExtensionBucketBaseIndices, newExtensionBucketCounts, newAllAllocations, newPoolState);

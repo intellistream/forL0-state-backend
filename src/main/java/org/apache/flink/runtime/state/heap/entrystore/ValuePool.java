@@ -95,7 +95,9 @@ public class ValuePool implements AutoCloseable {
      */
     public ValuePool(MemoryManagerAllocator allocator, long initialSizeBytes) {
         this.allocator = allocator;
-        this.runSize = Math.max(allocator.getPageSize(), RUN_SIZE);
+        // Use page size as run size to avoid wasting memory when allocator
+        // returns multiple smaller segments for a larger request
+        this.runSize = allocator.getPageSize();
         
         // Initialize per-size-class queues
         for (int i = 0; i < ValueSizeClass.FIXED_SIZE_CLASS_COUNT; i++) {
@@ -423,8 +425,13 @@ public class ValuePool implements AutoCloseable {
                 return null;
             }
             
+            // Use the actual segment size, not the requested runSize
+            // This handles cases where page size < runSize
+            MemorySegment segment = alloc.get(0);
+            int actualRunSize = segment.size();
+            
             int index = allRuns.size();  // Index for the new run
-            Run run = new Run(index, sc, alloc.get(0), alloc, runSize);
+            Run run = new Run(index, sc, segment, alloc, actualRunSize);
             allRuns.add(run);
             partialRuns[sc.ordinal()].addFirst(run);
             return run;

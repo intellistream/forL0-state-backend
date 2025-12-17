@@ -25,8 +25,11 @@ public enum ValueSizeClass {
     /** Values 129-256 bytes, slot size 256B */
     VS_256(128, 256, 256),
     
-    /** Values 257-512 bytes, slot size 512B */
-    VS_512(256, 512, 512),
+    /** Values 257-384 bytes, slot size 384B */
+    VS_384(256, 384, 384),
+    
+    /** Values 385-512 bytes, slot size 512B */
+    VS_512(384, 512, 512),
     
     /** Values 513-1024 bytes, slot size 1KB */
     VS_1K(512, 1024, 1024),
@@ -127,6 +130,9 @@ public enum ValueSizeClass {
         }
         if (totalSize <= 256) {
             return VS_256;
+        }
+        if (totalSize <= 384) {
+            return VS_384;
         }
         if (totalSize <= 512) {
             return VS_512;

@@ -2,6 +2,7 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.entrystore.EntryStore;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 import org.junit.jupiter.api.AfterEach;
@@ -25,7 +26,7 @@ class MainTableStressTest {
 
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
-    private EntryArena entryArena;
+    private EntryStore entryStore;
     private MainTable mainTable;
     private Random random;
 
@@ -37,7 +38,7 @@ class MainTableStressTest {
                 .build();
         Object owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
-        entryArena = new EntryArena(allocator);
+        entryStore = new EntryStore(allocator);
 
         // Create MainTable with 32 buckets (2^5) and higher load factor threshold for stress testing
         mainTable = new MainTable(allocator, 5, 1.5); // 阈值调整为1.5（entries/base buckets）
@@ -49,8 +50,8 @@ class MainTableStressTest {
         if (mainTable != null) {
             mainTable.close();
         }
-        if (entryArena != null) {
-            entryArena.close();
+        if (entryStore != null) {
+            entryStore.close();
         }
         if (allocator != null && !allocator.isClosed()) {
             allocator.close();
@@ -89,12 +90,12 @@ class MainTableStressTest {
         // Verify all inserted entries can be retrieved
         int verifyCount = 0;
         for (TestEntry entry : insertedEntries) {
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
 
             if (retrievedAddress > 0) {
-                assertArrayEquals(entry.key, entryArena.getKeyBytes(retrievedAddress));
-                assertArrayEquals(entry.namespace, entryArena.getNamespaceBytes(retrievedAddress));
-                assertArrayEquals(entry.value, entryArena.getValueBytes(retrievedAddress));
+                assertArrayEquals(entry.key, entryStore.getKeyBytes(retrievedAddress));
+                assertArrayEquals(entry.namespace, entryStore.getNamespaceBytes(retrievedAddress));
+                assertArrayEquals(entry.value, entryStore.getValueBytes(retrievedAddress));
                 verifyCount++;
             }
         }
@@ -165,7 +166,7 @@ class MainTableStressTest {
                     List<TestEntry> entryList = new ArrayList<>(currentEntries.values());
                     TestEntry entryToDelete = entryList.get(random.nextInt(entryList.size()));
 
-                    long removedAddress = mainTable.remove(entryToDelete.hash, entryToDelete.tag, entryToDelete.key, entryToDelete.key.length, entryToDelete.namespace, entryToDelete.namespace.length, entryArena);
+                    long removedAddress = mainTable.remove(entryToDelete.hash, entryToDelete.tag, entryToDelete.key, entryToDelete.key.length, entryToDelete.namespace, entryToDelete.namespace.length, entryStore);
 
                     if (removedAddress > 0) {
                         currentEntries.remove(entryToDelete.keyString);
@@ -182,10 +183,10 @@ class MainTableStressTest {
         // Phase 3: Verify remaining entries
         int verifyCount = 0;
         for (TestEntry entry : currentEntries.values()) {
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
 
             if (retrievedAddress > 0) {
-                assertArrayEquals(entry.value, entryArena.getValueBytes(retrievedAddress));
+                assertArrayEquals(entry.value, entryStore.getValueBytes(retrievedAddress));
                 verifyCount++;
             }
         }
@@ -208,14 +209,14 @@ class MainTableStressTest {
 
                 int hash = HashFunctions.compositeHash(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
                 short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
-                long entryAddress = entryArena.putEntry(hash, entry.key, entry.namespace, entry.value);
+                long entryAddress = entryStore.allocateEntry(hash, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entry.value, entry.value.length);
                 if (entryAddress > 0) {
                     entry.entryAddress = entryAddress;
                     entry.hash = hash;
                     entry.tag = tag;
 
                     try {
-                        long result = smallTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+                        long result = smallTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
                         if (result >= 0) {
                             pressureEntries.add(entry);
                         }
@@ -240,10 +241,10 @@ class MainTableStressTest {
             // Verify entries still accessible under pressure
             int verifyCount = 0;
             for (TestEntry entry : pressureEntries) {
-                long retrievedAddress = smallTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+                long retrievedAddress = smallTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
 
                 if (retrievedAddress > 0) {
-                    assertArrayEquals(entry.value, entryArena.getValueBytes(retrievedAddress));
+                    assertArrayEquals(entry.value, entryStore.getValueBytes(retrievedAddress));
                     verifyCount++;
                 }
             }
@@ -277,10 +278,10 @@ class MainTableStressTest {
         int readCount = 0;
         for (int round = 0; round < 100; round++) {
             for (TestEntry entry : baseEntries) {
-                long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+                long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
 
                 if (retrievedAddress > 0) {
-                    assertArrayEquals(entry.value, entryArena.getValueBytes(retrievedAddress));
+                    assertArrayEquals(entry.value, entryStore.getValueBytes(retrievedAddress));
                     readCount++;
                 }
             }
@@ -302,12 +303,12 @@ class MainTableStressTest {
             entry.hash = baseHash; // Same bucket
             entry.tag = (short) (i + 1); // Different tags
 
-            long entryAddress = entryArena.putEntry(entry.hash, entry.key, entry.namespace, entry.value);
+            long entryAddress = entryStore.allocateEntry(entry.hash, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entry.value, entry.value.length);
             if (entryAddress > 0) {
                 entry.entryAddress = entryAddress;
 
                 try {
-                    long result = mainTable.put(entry.hash, entry.tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+                    long result = mainTable.put(entry.hash, entry.tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
                     if (result >= 0) {
                         exhaustionEntries.add(entry);
                     }
@@ -324,7 +325,7 @@ class MainTableStressTest {
         // Verify inserted entries are still accessible
         int verifyCount = 0;
         for (TestEntry entry : exhaustionEntries) {
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
 
             if (retrievedAddress > 0) {
                 verifyCount++;
@@ -343,7 +344,7 @@ class MainTableStressTest {
     private boolean insertEntry(TestEntry entry) {
         int hash = HashFunctions.compositeHash(entry.key, entry.key.length, entry.namespace, entry.namespace.length);
         short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF));
-        long entryAddress = entryArena.putEntry(hash, entry.key, entry.namespace, entry.value);
+        long entryAddress = entryStore.allocateEntry(hash, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entry.value, entry.value.length);
         if (entryAddress <= 0) {
             return false;
         }
@@ -351,7 +352,7 @@ class MainTableStressTest {
         entry.hash = hash;
         entry.tag = tag;
         try {
-            long result = mainTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+            long result = mainTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
             return result >= 0;
         } catch (RuntimeException e) {
             return false;

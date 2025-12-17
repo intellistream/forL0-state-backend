@@ -1,6 +1,7 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.runtime.state.heap.entrystore.EntryStore;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 
 import java.util.List;
@@ -132,7 +133,7 @@ public class L0Table implements AutoCloseable {
 
     /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
     public long get(int keyHash, short tag,
-                    byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+                    byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         accessCount++;
         int bucketIndex = keyHash & (bucketCount - 1);
         
@@ -149,7 +150,7 @@ public class L0Table implements AutoCloseable {
             if (slotTag != tag) continue;
 
             long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (arena.matchesKey(pointer, kb, klen, nb, nlen)) {
+            if (store.matchesKey(pointer, kb, klen, nb, nlen)) {
                 hitCount++;
                 updateSlotOnAccess(segment, bucketOffset, slot, slotOffset);
                 return pointer;
@@ -162,7 +163,7 @@ public class L0Table implements AutoCloseable {
 
     /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
     public long put(int keyHash, short tag, long entryAddress,
-                    byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+                    byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
@@ -181,7 +182,7 @@ public class L0Table implements AutoCloseable {
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
             long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
 
-            if (slotTag == tag && arena.matchesKey(slotPointer, kb, klen, nb, nlen)) {
+            if (slotTag == tag && store.matchesKey(slotPointer, kb, klen, nb, nlen)) {
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
                 updateSlotOnAccess(segment, bucketOffset, slot, slotOffset);
                 return slotPointer;
@@ -208,7 +209,7 @@ public class L0Table implements AutoCloseable {
 
     /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
     public long remove(int keyHash, short tag,
-                       byte[] kb, int klen, byte[] nb, int nlen, EntryArena arena) {
+                       byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
@@ -223,7 +224,7 @@ public class L0Table implements AutoCloseable {
             if (slotTag != tag) continue;
 
             long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (arena.matchesKey(pointer, kb, klen, nb, nlen)) {
+            if (store.matchesKey(pointer, kb, klen, nb, nlen)) {
                 segment.put(bucketOffset + slot, (byte) 0);
                 return pointer;
             }

@@ -2,6 +2,7 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.state.heap.entrystore.EntryStore;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.utils.HashFunctions;
 import org.junit.jupiter.api.AfterEach;
@@ -23,7 +24,7 @@ class MainTableTest {
 
     private MemoryManager memoryManager;
     private MemoryManagerAllocator allocator;
-    private EntryArena entryArena;
+    private EntryStore entryStore;
     private MainTable mainTable;
     private Object owner;
 
@@ -35,7 +36,7 @@ class MainTableTest {
                 .build();
         owner = new Object();
         allocator = new MemoryManagerAllocator(memoryManager, owner);
-        entryArena = new EntryArena(allocator);
+        entryStore = new EntryStore(allocator);
 
         // Create MainTable with 4 buckets (2^2) for testing
         mainTable = new MainTable(allocator, 2);
@@ -46,8 +47,8 @@ class MainTableTest {
         if (mainTable != null) {
             mainTable.close();
         }
-        if (entryArena != null) {
-            entryArena.close();
+        if (entryStore != null) {
+            entryStore.close();
         }
         if (allocator != null && !allocator.isClosed()) {
             allocator.close();
@@ -71,22 +72,22 @@ class MainTableTest {
             int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
 
-            // Store entry in EntryArena
-            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+            // Store entry in EntryStore
+            long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
             assertTrue(entryAddress > 0, "Entry should be stored successfully");
 
             // Put entry into MainTable using new inline method
-            long result = mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+            long result = mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(0, result, "Should return 0 for new insertion");
 
             // Get entry from MainTable using new inline method
-            long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
+            long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(entryAddress, retrievedAddress, "Should retrieve the same entry address");
 
             // Verify entry data
-            assertArrayEquals(key, entryArena.getKeyBytes(retrievedAddress));
-            assertArrayEquals(namespace, entryArena.getNamespaceBytes(retrievedAddress));
-            assertArrayEquals(value, entryArena.getValueBytes(retrievedAddress));
+            assertArrayEquals(key, entryStore.getKeyBytes(retrievedAddress));
+            assertArrayEquals(namespace, entryStore.getNamespaceBytes(retrievedAddress));
+            assertArrayEquals(value, entryStore.getValueBytes(retrievedAddress));
         }
 
         @Test
@@ -102,23 +103,23 @@ class MainTableTest {
             short tag = (short) (hash & 0xFFFF);
 
             // Store initial entry
-            long entryAddress1 = entryArena.putEntry(hash, key, namespace, value1);
+            long entryAddress1 = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value1, value1.length);
 
             // Insert initial entry
-            long result1 = mainTable.put(hash, tag, entryAddress1, key, key.length, namespace, namespace.length, entryArena);
+            long result1 = mainTable.put(hash, tag, entryAddress1, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(0, result1, "Should return 0 for new insertion");
 
             // Store updated entry
-            long entryAddress2 = entryArena.putEntry(hash, key, namespace, value2);
+            long entryAddress2 = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value2, value2.length);
 
             // Update entry in MainTable
-            long result2 = mainTable.put(hash, tag, entryAddress2, key, key.length, namespace, namespace.length, entryArena);
+            long result2 = mainTable.put(hash, tag, entryAddress2, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(entryAddress1, result2, "Should return previous entry address for update");
 
             // Verify updated entry
-            long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
+            long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(entryAddress2, retrievedAddress, "Should retrieve updated entry address");
-            assertArrayEquals(value2, entryArena.getValueBytes(retrievedAddress));
+            assertArrayEquals(value2, entryStore.getValueBytes(retrievedAddress));
         }
 
         @Test
@@ -133,16 +134,16 @@ class MainTableTest {
             short tag = (short) (hash & 0xFFFF);
 
             // Store and insert entry
-            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+            long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
 
-            mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+            mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
 
             // Remove entry
-            long removedAddress = mainTable.remove(hash, tag, key, key.length, namespace, namespace.length, entryArena);
+            long removedAddress = mainTable.remove(hash, tag, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(entryAddress, removedAddress, "Should return removed entry address");
 
             // Verify entry is removed
-            long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
+            long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(0, retrievedAddress, "Entry should not be found after removal");
         }
 
@@ -153,7 +154,7 @@ class MainTableTest {
             int hash = HashFunctions.compositeHash(key, namespace);
             short tag = (short) (hash & 0xFFFF);
 
-            long result = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
+            long result = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryStore);
             assertEquals(0, result, "Should return 0 for non-existent entry");
         }
     }
@@ -175,9 +176,9 @@ class MainTableTest {
                 int hash = 0x12340000 | (i << 2); // All these hashes will map to bucket 0
                 short tag = (short) ((0x5000 + i) & 0xFFFF); // Different tags to avoid conflicts
 
-                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+                long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
 
-                long result = mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+                long result = mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
                 assertEquals(0, result, "Should insert successfully, using extension buckets if needed");
             }
 
@@ -203,23 +204,23 @@ class MainTableTest {
             short tag1 = (short) (hash1 & 0xFFFF);
             short tag2 = (short) (hash2 & 0xFFFF);
 
-            long entryAddress1 = entryArena.putEntry(hash1, key1, namespace, value1);
-            long entryAddress2 = entryArena.putEntry(hash2, key2, namespace, value2);
+            long entryAddress1 = entryStore.allocateEntry(hash1, key1, key1.length, namespace, namespace.length, value1, value1.length);
+            long entryAddress2 = entryStore.allocateEntry(hash2, key2, key2.length, namespace, namespace.length, value2, value2.length);
 
             // Insert entries
-            mainTable.put(hash1, tag1, entryAddress1, key1, key1.length, namespace, namespace.length, entryArena);
-            mainTable.put(hash2, tag2, entryAddress2, key2, key2.length, namespace, namespace.length, entryArena);
+            mainTable.put(hash1, tag1, entryAddress1, key1, key1.length, namespace, namespace.length, entryStore);
+            mainTable.put(hash2, tag2, entryAddress2, key2, key2.length, namespace, namespace.length, entryStore);
 
             // Verify both entries can be retrieved
-            assertEquals(entryAddress1, mainTable.get(hash1, tag1, key1, key1.length, namespace, namespace.length, entryArena));
-            assertEquals(entryAddress2, mainTable.get(hash2, tag2, key2, key2.length, namespace, namespace.length, entryArena));
+            assertEquals(entryAddress1, mainTable.get(hash1, tag1, key1, key1.length, namespace, namespace.length, entryStore));
+            assertEquals(entryAddress2, mainTable.get(hash2, tag2, key2, key2.length, namespace, namespace.length, entryStore));
 
             // Remove one entry
-            assertEquals(entryAddress1, mainTable.remove(hash1, tag1, key1, key1.length, namespace, namespace.length, entryArena));
+            assertEquals(entryAddress1, mainTable.remove(hash1, tag1, key1, key1.length, namespace, namespace.length, entryStore));
 
             // Verify removal
-            assertEquals(0, mainTable.get(hash1, tag1, key1, key1.length, namespace, namespace.length, entryArena));
-            assertEquals(entryAddress2, mainTable.get(hash2, tag2, key2, key2.length, namespace, namespace.length, entryArena)); // Other entry should remain
+            assertEquals(0, mainTable.get(hash1, tag1, key1, key1.length, namespace, namespace.length, entryStore));
+            assertEquals(entryAddress2, mainTable.get(hash2, tag2, key2, key2.length, namespace, namespace.length, entryStore)); // Other entry should remain
         }
     }
 
@@ -238,10 +239,10 @@ class MainTableTest {
                 byte[] value = ("loadValue" + i).getBytes();
 
                 int hash = HashFunctions.compositeHash(key, namespace);
-                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+                long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
                 short tag = (short) (hash & 0xFFFF);
 
-                mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+                mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
             }
 
             MainTable.TableStats stats = mainTable.getStats();
@@ -260,11 +261,11 @@ class MainTableTest {
                     byte[] value = ("resizeValue" + i).getBytes();
 
                     int hash = HashFunctions.compositeHash(key, namespace);
-                    long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+                    long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
                     short tag = (short) (hash & 0xFFFF);
 
                     try {
-                        customTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+                        customTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
                     } catch (RuntimeException e) {
                         if (e.getMessage().contains("resize needed")) {
                             // Expected when table is full
@@ -318,13 +319,13 @@ class MainTableTest {
             byte[] emptyNamespace = new byte[0];
             byte[] value = "emptyKeyValue".getBytes();
 
-            long entryAddress = entryArena.putEntry(0, emptyKey, emptyNamespace, value);
+            long entryAddress = entryStore.allocateEntry(0, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, value, value.length);
             short tag = 0;
 
-            long result = mainTable.put(0, tag, entryAddress, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryArena);
+            long result = mainTable.put(0, tag, entryAddress, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryStore);
             assertEquals(0, result, "Should handle empty key and namespace");
 
-            long retrievedAddress = mainTable.get(0, tag, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryArena);
+            long retrievedAddress = mainTable.get(0, tag, emptyKey, emptyKey.length, emptyNamespace, emptyNamespace.length, entryStore);
             assertEquals(entryAddress, retrievedAddress, "Should retrieve entry with empty key/namespace");
         }
 
@@ -346,14 +347,14 @@ class MainTableTest {
             }
 
             int hash = HashFunctions.compositeHash(largeKey, largeNamespace);
-            long entryAddress = entryArena.putEntry(hash, largeKey, largeNamespace, largeValue);
-            if (entryAddress > 0) { // Only test if EntryArena can handle large entries
+            long entryAddress = entryStore.allocateEntry(hash, largeKey, largeKey.length, largeNamespace, largeNamespace.length, largeValue, largeValue.length);
+            if (entryAddress > 0) { // Only test if EntryStore can handle large entries
                 short tag = (short) (hash & 0xFFFF);
 
-                long result = mainTable.put(hash, tag, entryAddress, largeKey, largeKey.length, largeNamespace, largeNamespace.length, entryArena);
+                long result = mainTable.put(hash, tag, entryAddress, largeKey, largeKey.length, largeNamespace, largeNamespace.length, entryStore);
                 assertEquals(0, result, "Should handle large entries");
 
-                long retrievedAddress = mainTable.get(hash, tag, largeKey, largeKey.length, largeNamespace, largeNamespace.length, entryArena);
+                long retrievedAddress = mainTable.get(hash, tag, largeKey, largeKey.length, largeNamespace, largeNamespace.length, entryStore);
                 assertEquals(entryAddress, retrievedAddress, "Should retrieve large entry");
             }
         }
@@ -372,19 +373,19 @@ class MainTableTest {
             short tag1 = (short) 0x1234;
             short tag2 = (short) 0x5678; // Different tags
 
-            long entryAddress1 = entryArena.putEntry(sameHash, key1, namespace, value1);
-            long entryAddress2 = entryArena.putEntry(sameHash, key2, namespace, value2);
+            long entryAddress1 = entryStore.allocateEntry(sameHash, key1, key1.length, namespace, namespace.length, value1, value1.length);
+            long entryAddress2 = entryStore.allocateEntry(sameHash, key2, key2.length, namespace, namespace.length, value2, value2.length);
 
             // Insert both entries with same hash
-            long result1 = mainTable.put(sameHash, tag1, entryAddress1, key1, key1.length, namespace, namespace.length, entryArena);
-            long result2 = mainTable.put(sameHash, tag2, entryAddress2, key2, key2.length, namespace, namespace.length, entryArena);
+            long result1 = mainTable.put(sameHash, tag1, entryAddress1, key1, key1.length, namespace, namespace.length, entryStore);
+            long result2 = mainTable.put(sameHash, tag2, entryAddress2, key2, key2.length, namespace, namespace.length, entryStore);
 
             assertEquals(0, result1, "First entry should insert successfully");
             assertEquals(0, result2, "Second entry should insert successfully");
 
             // Verify both can be retrieved correctly
-            assertEquals(entryAddress1, mainTable.get(sameHash, tag1, key1, key1.length, namespace, namespace.length, entryArena));
-            assertEquals(entryAddress2, mainTable.get(sameHash, tag2, key2, key2.length, namespace, namespace.length, entryArena));
+            assertEquals(entryAddress1, mainTable.get(sameHash, tag1, key1, key1.length, namespace, namespace.length, entryStore));
+            assertEquals(entryAddress2, mainTable.get(sameHash, tag2, key2, key2.length, namespace, namespace.length, entryStore));
         }
     }
 
@@ -401,10 +402,10 @@ class MainTableTest {
                 byte[] value = ("iterValue" + i).getBytes();
 
                 int hash = HashFunctions.compositeHash(key, namespace);
-                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+                long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
                 short tag = (short) (hash & 0xFFFF);
 
-                mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+                mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
             }
 
             // Verify entries were inserted
@@ -421,10 +422,10 @@ class MainTableTest {
                 byte[] value = ("expandValue" + i).getBytes();
 
                 int hash = HashFunctions.compositeHash(key, namespace);
-                long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+                long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
                 short tag = (short) (hash & 0xFFFF);
 
-                mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+                mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
             }
 
             // Verify entries can be retrieved
@@ -435,11 +436,11 @@ class MainTableTest {
                 int hash = HashFunctions.compositeHash(key, namespace);
                 short tag = (short) (hash & 0xFFFF);
 
-                long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryArena);
+                long retrievedAddress = mainTable.get(hash, tag, key, key.length, namespace, namespace.length, entryStore);
                 assertTrue(retrievedAddress > 0, "Entry should be found");
 
-                assertArrayEquals(key, entryArena.getKeyBytes(retrievedAddress));
-                assertArrayEquals(namespace, entryArena.getNamespaceBytes(retrievedAddress));
+                assertArrayEquals(key, entryStore.getKeyBytes(retrievedAddress));
+                assertArrayEquals(namespace, entryStore.getNamespaceBytes(retrievedAddress));
             }
         }
     }
@@ -455,10 +456,10 @@ class MainTableTest {
             byte[] value = "closeValue".getBytes();
 
             int hash = HashFunctions.compositeHash(key, namespace);
-            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+            long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
             short tag = (short) (hash & 0xFFFF);
 
-            mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+            mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
 
             // Close should not throw exception
             assertDoesNotThrow(() -> mainTable.close());
@@ -492,10 +493,10 @@ class MainTableTest {
             byte[] value = "statsValue".getBytes();
 
             int hash = HashFunctions.compositeHash(key, namespace);
-            long entryAddress = entryArena.putEntry(hash, key, namespace, value);
+            long entryAddress = entryStore.allocateEntry(hash, key, key.length, namespace, namespace.length, value, value.length);
             short tag = (short) (hash & 0xFFFF);
 
-            mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryArena);
+            mainTable.put(hash, tag, entryAddress, key, key.length, namespace, namespace.length, entryStore);
 
             MainTable.TableStats updatedStats = mainTable.getStats();
             assertEquals(1, updatedStats.totalEntries, "Should have 1 entry after insertion");
@@ -517,7 +518,7 @@ class MainTableTest {
     // Helper method for tests
     private boolean insertTestEntry(TestEntry entry) {
         int hash = HashFunctions.compositeHash(entry.key, entry.namespace);
-        long entryAddress = entryArena.putEntry(hash, entry.key, entry.namespace, entry.value);
+        long entryAddress = entryStore.allocateEntry(hash, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entry.value, entry.value.length);
         if (entryAddress <= 0) {
             return false;
         }
@@ -525,7 +526,7 @@ class MainTableTest {
         short tag = (short) (hash & 0xFFFF);
 
         try {
-            long result = mainTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryArena);
+            long result = mainTable.put(hash, tag, entryAddress, entry.key, entry.key.length, entry.namespace, entry.namespace.length, entryStore);
             return result >= 0;
         } catch (RuntimeException e) {
             return false;
