@@ -520,7 +520,7 @@ def main():
     results = {}
     
     for backend in backends:
-        result = run_wordcount(config, backend, enable_profile=args.profile)
+        result = run_wordcount(config, backend, profile_mode='cpu' if args.profile else None)
         if result:
             results[backend] = result
             save_result(result, 'wordcount', backend, config.get('mode', 'local'))

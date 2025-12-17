@@ -104,27 +104,6 @@ public class EntryStore implements AutoCloseable {
                               byte[] keyBuffer, int keyLen,
                               byte[] nsBuffer, int nsLen,
                               byte[] valueBuffer, int valueLen) {
-        if (closed) {
-            return NULL_HANDLE;
-        }
-        
-        // Validate inputs
-        if (keyBuffer == null || nsBuffer == null) {
-            return NULL_HANDLE;
-        }
-        if (keyLen < 0 || keyLen > keyBuffer.length || keyLen > MAX_KEY_SIZE) {
-            return NULL_HANDLE;
-        }
-        if (nsLen < 0 || nsLen > nsBuffer.length || nsLen > MAX_NAMESPACE_SIZE) {
-            return NULL_HANDLE;
-        }
-        if (valueLen < 0 || valueLen > MAX_VALUE_SIZE) {
-            return NULL_HANDLE;
-        }
-        if (valueBuffer != null && valueLen > valueBuffer.length) {
-            return NULL_HANDLE;
-        }
-        
         // Check if value can be inlined (≤8 bytes)
         if (valueLen <= INLINE_THRESHOLD) {
             return allocateInlineEntry(hash, keyBuffer, keyLen, nsBuffer, nsLen, valueBuffer, valueLen);
@@ -190,14 +169,6 @@ public class EntryStore implements AutoCloseable {
      * @return true if update succeeded, false on error
      */
     public boolean updateValue(long address, byte[] valueBuffer, int valueLen) {
-        if (closed || address == NULL_HANDLE || valueBuffer == null) {
-            return false;
-        }
-        
-        if (valueLen < 0 || valueLen > valueBuffer.length || valueLen > MAX_VALUE_SIZE) {
-            return false;
-        }
-        
         boolean wasInline = keyNsPool.isInlineMode(address);
         boolean canInline = valueLen <= INLINE_THRESHOLD;
         

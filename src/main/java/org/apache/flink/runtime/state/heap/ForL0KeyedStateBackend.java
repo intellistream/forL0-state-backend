@@ -351,6 +351,18 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     @SuppressWarnings("unchecked")
     @Override
+    public <N> Stream<K> getKeys(List<String> states, N namespace) {
+        return states.stream()
+                .filter(registeredKVStates::containsKey)
+                .flatMap(state -> {
+                    StateTable<K, N, ?> table = (StateTable<K, N, ?>) registeredKVStates.get(state);
+                    return table.getKeys(namespace);
+                })
+                .distinct();
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
     public <N> Stream<Tuple2<K, N>> getKeysAndNamespaces(String state) {
         if (!registeredKVStates.containsKey(state)) {
             return Stream.empty();

@@ -122,6 +122,9 @@ public class ValuePool implements AutoCloseable {
                     try {
                         Run run = allocateNewRun(sc);
                         if (run != null) {
+                            // allocateNewRun adds to partialRuns, but for pre-allocation
+                            // we want it in emptyRuns, so move it
+                            partialRuns[scIdx].remove(run);
                             emptyRuns[scIdx].addLast(run);
                         }
                     } catch (Exception e) {
@@ -146,10 +149,6 @@ public class ValuePool implements AutoCloseable {
             return NULL_HANDLE;
         }
         
-        if (valueLen < 0 || valueLen > MAX_VALUE_SIZE) {
-            return NULL_HANDLE;
-        }
-        
         int totalSize = VALUE_ENTRY_HEADER_SIZE + valueLen;
         ValueSizeClass sc = ValueSizeClass.getSizeClass(totalSize);
         
@@ -166,10 +165,6 @@ public class ValuePool implements AutoCloseable {
      * @param valueHandle the value handle
      */
     public void free(long valueHandle) {
-        if (valueHandle == NULL_HANDLE) {
-            return;
-        }
-        
         if (isLargeObject(valueHandle)) {
             freeLarge(valueHandle);
             return;
@@ -195,10 +190,6 @@ public class ValuePool implements AutoCloseable {
      * @param len the value length
      */
     public void write(long valueHandle, byte[] buffer, int len) {
-        if (valueHandle == NULL_HANDLE || buffer == null) {
-            return;
-        }
-        
         if (isLargeObject(valueHandle)) {
             writeLarge(valueHandle, buffer, len);
             return;
@@ -221,10 +212,6 @@ public class ValuePool implements AutoCloseable {
      * @return the value bytes, or null on error
      */
     public byte[] read(long valueHandle) {
-        if (valueHandle == NULL_HANDLE) {
-            return null;
-        }
-        
         if (isLargeObject(valueHandle)) {
             return readLarge(valueHandle);
         }
@@ -232,16 +219,8 @@ public class ValuePool implements AutoCloseable {
         Run run = decodeRun(valueHandle);
         int slotOffset = decodeSlotOffset(valueHandle);
         
-        if (run == null) {
-            return null;
-        }
-        
         MemorySegment seg = run.segment;
         int valueLen = seg.getInt(slotOffset + VALUE_LEN_OFFSET);
-        
-        if (valueLen < 0 || valueLen > MAX_VALUE_SIZE) {
-            return null;
-        }
         
         if (valueLen == 0) {
             return new byte[0];
@@ -259,10 +238,6 @@ public class ValuePool implements AutoCloseable {
      * @return the memory segment slice, or null on error
      */
     public MemorySegmentSlice getSlice(long valueHandle) {
-        if (valueHandle == NULL_HANDLE) {
-            return null;
-        }
-        
         if (isLargeObject(valueHandle)) {
             return getLargeSlice(valueHandle);
         }
@@ -270,16 +245,8 @@ public class ValuePool implements AutoCloseable {
         Run run = decodeRun(valueHandle);
         int slotOffset = decodeSlotOffset(valueHandle);
         
-        if (run == null) {
-            return null;
-        }
-        
         MemorySegment seg = run.segment;
         int valueLen = seg.getInt(slotOffset + VALUE_LEN_OFFSET);
-        
-        if (valueLen < 0 || valueLen > MAX_VALUE_SIZE) {
-            return null;
-        }
         
         return new MemorySegmentSlice(seg, slotOffset + VALUE_ENTRY_HEADER_SIZE, valueLen);
     }
@@ -291,21 +258,13 @@ public class ValuePool implements AutoCloseable {
      * @return the value length in bytes, or -1 on error
      */
     public int getValueLen(long valueHandle) {
-        if (valueHandle == NULL_HANDLE) {
-            return -1;
-        }
-        
         if (isLargeObject(valueHandle)) {
             LargeAllocation alloc = largeAllocations.get(valueHandle);
-            return alloc != null ? alloc.segment.getInt(VALUE_LEN_OFFSET) : -1;
+            return alloc.segment.getInt(VALUE_LEN_OFFSET);
         }
         
         Run run = decodeRun(valueHandle);
         int slotOffset = decodeSlotOffset(valueHandle);
-        
-        if (run == null) {
-            return -1;
-        }
         
         return run.segment.getInt(slotOffset + VALUE_LEN_OFFSET);
     }
@@ -317,17 +276,13 @@ public class ValuePool implements AutoCloseable {
      * @return the slot size in bytes, or -1 on error
      */
     public int getSlotSize(long valueHandle) {
-        if (valueHandle == NULL_HANDLE) {
-            return -1;
-        }
-        
         if (isLargeObject(valueHandle)) {
             LargeAllocation alloc = largeAllocations.get(valueHandle);
-            return alloc != null ? alloc.allocatedSize : -1;
+            return alloc.allocatedSize;
         }
         
         Run run = decodeRun(valueHandle);
-        return run != null ? run.sizeClass.getSlotSize() : -1;
+        return run.sizeClass.getSlotSize();
     }
     
     /**
@@ -340,15 +295,11 @@ public class ValuePool implements AutoCloseable {
      * @return true if in-place update succeeded
      */
     public boolean updateInPlace(long valueHandle, byte[] buffer, int len) {
-        if (valueHandle == NULL_HANDLE || buffer == null || len < 0) {
-            return false;
-        }
-        
         int totalSize = VALUE_ENTRY_HEADER_SIZE + len;
         
         if (isLargeObject(valueHandle)) {
             LargeAllocation alloc = largeAllocations.get(valueHandle);
-            if (alloc != null && totalSize <= alloc.allocatedSize) {
+            if (totalSize <= alloc.allocatedSize) {
                 writeLarge(valueHandle, buffer, len);
                 return true;
             }
@@ -356,9 +307,6 @@ public class ValuePool implements AutoCloseable {
         }
         
         Run run = decodeRun(valueHandle);
-        if (run == null) {
-            return false;
-        }
         
         if (totalSize <= run.sizeClass.getSlotSize()) {
             int slotOffset = decodeSlotOffset(valueHandle);

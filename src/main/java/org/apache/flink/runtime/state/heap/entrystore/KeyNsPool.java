@@ -163,9 +163,6 @@ public class KeyNsPool implements AutoCloseable {
      */
     public long allocateInline(int hash, byte[] key, int keyLen, byte[] ns, int nsLen, 
                                long inlineValue, int inlineLen) {
-        if (inlineLen < 0 || inlineLen > INLINE_THRESHOLD) {
-            return NULL_HANDLE;
-        }
         return allocateInternal(hash, key, keyLen, ns, nsLen, inlineValue, inlineLen, MODE_INLINE);
     }
     
@@ -175,18 +172,6 @@ public class KeyNsPool implements AutoCloseable {
     private long allocateInternal(int hash, byte[] key, int keyLen, byte[] ns, int nsLen,
                                   long valueOrHandle, int inlineLen, int mode) {
         if (closed) {
-            return NULL_HANDLE;
-        }
-        
-        // Validate inputs
-        if (key == null || keyLen < 0 || keyLen > key.length || keyLen > MAX_KEY_SIZE) {
-            return NULL_HANDLE;
-        }
-        if (ns == null || nsLen < 0 || nsLen > ns.length || nsLen > MAX_NAMESPACE_SIZE) {
-            return NULL_HANDLE;
-        }
-        // keyLen uses 27 bits max
-        if (keyLen > KEY_LEN_MASK) {
             return NULL_HANDLE;
         }
         
@@ -241,14 +226,7 @@ public class KeyNsPool implements AutoCloseable {
      * @param address the entry address
      */
     public void free(long address) {
-        if (address == NULL_HANDLE) {
-            return;
-        }
-        
         int segIdx = decodeSegmentIndex(address);
-        if (segIdx < 0 || segIdx >= segmentCount || segments[segIdx] == null) {
-            return;
-        }
         
         segmentLiveCount[segIdx]--;
         activeEntries--;
@@ -266,16 +244,8 @@ public class KeyNsPool implements AutoCloseable {
      * @param newValueHandle the new value handle
      */
     public void updateValueHandle(long address, long newValueHandle) {
-        if (address == NULL_HANDLE) {
-            return;
-        }
-        
         int segIdx = decodeSegmentIndex(address);
         int offset = decodeOffset(address);
-        
-        if (segIdx < 0 || segIdx >= segmentCount || segments[segIdx] == null) {
-            return;
-        }
         
         segments[segIdx].putLong(offset + VALUE_HANDLE_OFFSET, newValueHandle);
     }
@@ -363,10 +333,6 @@ public class KeyNsPool implements AutoCloseable {
      * @param newLen the new inline value length
      */
     public void updateInlineValue(long address, long newValue, int newLen) {
-        if (newLen < 0 || newLen > INLINE_THRESHOLD) {
-            throw new IllegalArgumentException("Inline length must be 0-8, got: " + newLen);
-        }
-        
         int segIdx = decodeSegmentIndex(address);
         int offset = decodeOffset(address);
         MemorySegment seg = segments[segIdx];
@@ -408,10 +374,6 @@ public class KeyNsPool implements AutoCloseable {
      * @param inlineLen the inline value length
      */
     public void switchToInlineMode(long address, long inlineValue, int inlineLen) {
-        if (inlineLen < 0 || inlineLen > INLINE_THRESHOLD) {
-            throw new IllegalArgumentException("Inline length must be 0-8, got: " + inlineLen);
-        }
-        
         int segIdx = decodeSegmentIndex(address);
         int offset = decodeOffset(address);
         MemorySegment seg = segments[segIdx];
@@ -452,11 +414,8 @@ public class KeyNsPool implements AutoCloseable {
         MemorySegment seg = segments[segIdx];
         
         int keyLen = getKeyLen(address);
-        if (keyLen <= 0) {
+        if (keyLen == 0) {
             return new byte[0];
-        }
-        if (keyLen > MAX_KEY_SIZE) {
-            return null;
         }
         
         byte[] keyBytes = new byte[keyLen];
@@ -475,11 +434,8 @@ public class KeyNsPool implements AutoCloseable {
         int keyLen = getKeyLen(address);
         int nsLen = getNsLen(address);
         
-        if (nsLen <= 0) {
+        if (nsLen == 0) {
             return new byte[0];
-        }
-        if (nsLen > MAX_NAMESPACE_SIZE) {
-            return null;
         }
         
         byte[] nsBytes = new byte[nsLen];
@@ -507,9 +463,6 @@ public class KeyNsPool implements AutoCloseable {
         MemorySegment seg = segments[segIdx];
         
         int keyLen = getKeyLen(address);
-        if (keyLen < 0 || keyLen > MAX_KEY_SIZE) {
-            return null;
-        }
         
         return new MemorySegmentSlice(seg, offset + KEY_DATA_OFFSET, keyLen);
     }
@@ -525,10 +478,6 @@ public class KeyNsPool implements AutoCloseable {
         int keyLen = getKeyLen(address);
         int nsLen = getNsLen(address);
         
-        if (nsLen < 0 || nsLen > MAX_NAMESPACE_SIZE) {
-            return null;
-        }
-        
         return new MemorySegmentSlice(seg, offset + KEY_DATA_OFFSET + keyLen, nsLen);
     }
     
@@ -540,10 +489,6 @@ public class KeyNsPool implements AutoCloseable {
      * @return slice for inline value, or null if not in inline mode
      */
     public MemorySegmentSlice getInlineValueSlice(long address) {
-        if (!isInlineMode(address)) {
-            return null;
-        }
-        
         int segIdx = decodeSegmentIndex(address);
         int offset = decodeOffset(address);
         MemorySegment seg = segments[segIdx];
@@ -558,16 +503,8 @@ public class KeyNsPool implements AutoCloseable {
      * Checks if the key and namespace match the entry at the given address.
      */
     public boolean matchesKey(long address, byte[] key, int keyLen, byte[] ns, int nsLen) {
-        if (address == NULL_HANDLE || key == null || ns == null) {
-            return false;
-        }
-        
         int segIdx = decodeSegmentIndex(address);
         int offset = decodeOffset(address);
-        
-        if (segIdx < 0 || segIdx >= segmentCount || segments[segIdx] == null) {
-            return false;
-        }
         
         MemorySegment seg = segments[segIdx];
         
