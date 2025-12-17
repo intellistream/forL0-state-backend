@@ -196,9 +196,21 @@ class AsyncProfiler:
             # Start profiling (will be stopped later)
             cmd.append('start')
         
+        # For cache events, use event count interval instead of time interval
+        # Default 10ms is parsed as 10,000,000 nanoseconds which results in very few samples
+        # For cache-misses, use a count-based interval (e.g., sample every 10000 cache misses)
+        if self._is_cache_event(actual_event):
+            # Use count-based interval for hardware events
+            # 10000 means: sample every 10,000 cache-miss events
+            # This gives much more samples than time-based interval
+            actual_interval = '10000'
+            print(f"  Using count-based interval for {actual_event}: {actual_interval} events")
+        else:
+            actual_interval = interval
+        
         cmd.extend([
             '-e', actual_event,
-            '-i', interval,
+            '-i', actual_interval,
             '-f', str(output_file),
             str(pid)
         ])
