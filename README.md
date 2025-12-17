@@ -233,7 +233,7 @@ MapState<String, Integer> mapState = getRuntimeContext().getMapState(mapDescript
 | `ForL0StateMap` | 核心状态存储，组合双层索引 |
 | `L0Table` | 热点缓存，支持多种替换策略 |
 | `MainTable` | 主索引表，支持局部扩展 |
-| `EntryArena` | 键值对物理存储 |
+| `EntryStore` | 键值分离存储（KeyNsPool + ValuePool） |
 | `NativeL0Memory` | JNI 桥接，L0/模拟模式切换 |
 | `NativeL0MemoryAllocator` | L0Table 内存分配器 |
 | `MemoryManagerAllocator` | MainTable 内存分配器 |
@@ -332,7 +332,10 @@ forL0-state-backend/
 │   │   ├── ForL0StateMap.java          # 核心双层索引实现
 │   │   ├── L0Table.java                # 热点缓存
 │   │   ├── MainTable.java              # 主索引表
-│   │   ├── EntryArena.java             # 键值存储
+│   │   ├── entrystore/                 # 键值分离存储
+│   │   │   ├── EntryStore.java         # 统一入口
+│   │   │   ├── KeyNsPool.java          # 键/命名空间池
+│   │   │   └── ValuePool.java          # 值池
 │   │   └── space/                      # 内存分配器
 │   │       ├── NativeL0Memory.java     # JNI 桥接
 │   │       └── NativeL0MemoryAllocator.java

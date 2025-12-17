@@ -14,7 +14,7 @@ import java.util.Map;
 
 /**
  * A memory allocator that uses Flink's MemoryManager to allocate and manage off-heap memory segments.
- * This allocator is used for MainTable and EntryArena.
+ * This allocator is used for MainTable and EntryStore.
  * This allocator is single-threaded as Flink Task state access is single-threaded.
  * Supports both regular segment allocation and aligned memory allocation.
  */

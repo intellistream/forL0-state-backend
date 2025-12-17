@@ -123,7 +123,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     /**
      * Full constructor with all configurable parameters.
      *
-     * @param allocator Memory manager allocator for MainTable and EntryArena
+     * @param allocator Memory manager allocator for MainTable and EntryStore
      * @param l0Allocator L0 memory allocator for L0Table (can be null if L0 disabled)
      * @param mainTableInitPow2 MainTable initial bucket count as power of 2
      * @param l0CacheSizePow2 L0Table bucket count as power of 2
@@ -152,7 +152,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     /**
      * Full constructor with all configurable parameters including arena pre-allocation.
      *
-     * @param allocator Memory manager allocator for MainTable and EntryArena
+     * @param allocator Memory manager allocator for MainTable and EntryStore
      * @param l0Allocator L0 memory allocator for L0Table (can be null if L0 disabled)
      * @param mainTableInitPow2 MainTable initial bucket count as power of 2
      * @param l0CacheSizePow2 L0Table bucket count as power of 2
@@ -162,7 +162,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * @param l0CacheEnabled Whether L0 cache is enabled
      * @param l0Policy L0 cache replacement policy
      * @param loadFactorThreshold MainTable load factor threshold for resize
-     * @param arenaInitialSizeBytes Initial memory to pre-allocate for EntryArena (0 for no pre-allocation)
+     * @param arenaInitialSizeBytes Initial memory to pre-allocate for EntryStore (0 for no pre-allocation)
      */
     public ForL0StateMap(MemoryManagerAllocator allocator,
                          L0MemoryAllocator l0Allocator,

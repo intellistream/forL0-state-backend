@@ -5,7 +5,7 @@ import org.apache.flink.core.memory.MemorySegment;
 
 /**
  * Lightweight slice view of a MemorySegment for zero-copy access.
- * Extracted from EntryArena.Slice to be reusable across packages.
+ * Used by EntryStore for efficient memory access.
  */
 public final class MemorySegmentSlice {
     public final MemorySegment segment;

@@ -42,7 +42,7 @@ public class ForL0StateBackendConfig implements Serializable {
     /** Load factor threshold for MainTable resize. */
     private final double mainTableLoadFactorThreshold;
 
-    /** Initial memory size for EntryArena pre-allocation in bytes. 0 means no pre-allocation. */
+    /** Initial memory size for EntryStore pre-allocation in bytes. 0 means no pre-allocation. */
     private final long arenaInitialSizeBytes;
 
     /**
@@ -90,7 +90,7 @@ public class ForL0StateBackendConfig implements Serializable {
         validateLoadFactorThreshold(loadFactor);
         this.mainTableLoadFactorThreshold = loadFactor;
 
-        // Parse EntryArena settings
+        // Parse EntryStore settings
         MemorySize arenaSize = config.get(ARENA_INITIAL_SIZE);
         this.arenaInitialSizeBytes = (arenaSize == null || arenaSize.getBytes() <= 0) ? 0 : arenaSize.getBytes();
 
@@ -149,7 +149,7 @@ public class ForL0StateBackendConfig implements Serializable {
     }
 
     /**
-     * Gets the initial memory size for EntryArena pre-allocation.
+     * Gets the initial memory size for EntryStore pre-allocation.
      *
      * @return Initial size in bytes, or 0 if no pre-allocation
      */

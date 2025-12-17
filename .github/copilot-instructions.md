@@ -35,7 +35,7 @@ ForL0StateMap
 | `ForL0StateMap` | 核心状态存储,双层索引 | `runtime/state/heap/` |
 | `L0Table` | 热点缓存,多种替换策略 | `runtime/state/heap/` |
 | `MainTable` | 主索引表,支持局部扩展 | `runtime/state/heap/` |
-| `EntryArena` | 键值存储区 | `runtime/state/heap/` |
+| `EntryStore` | 键值分离存储 (KeyNsPool + ValuePool) | `runtime/state/heap/entrystore/` |
 | `NativeL0Memory` | JNI 桥接类 | `runtime/state/heap/space/` |
 | `forl0_native.c` | C 实现 (L0/模拟模式) | `src/main/native/` |
 

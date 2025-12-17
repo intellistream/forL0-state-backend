@@ -7,7 +7,7 @@ import java.util.List;
 /**
  * Interface for L0 memory allocation.
  * L0 memory is specialized memory (e.g., CXL memory, PMEM) allocated via JNI native methods.
- * This is separate from the regular Flink MemoryManager-managed memory used by MainTable and EntryArena.
+ * This is separate from the regular Flink MemoryManager-managed memory used by MainTable and EntryStore.
  *
  * <p>The L0 memory is used exclusively for the L0Table (hot key cache) and has different
  * characteristics from regular off-heap memory:

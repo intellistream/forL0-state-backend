@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Validates off-heap memory is properly reused and released:
- * - Updates reuse EntryArena free blocks (no continuous growth during updates)
+ * - Updates reuse EntryStore free blocks (no continuous growth during updates)
  * - close() releases all managed memory back to MemoryManager
  */
 public class OffHeapMemoryReleaseTest {

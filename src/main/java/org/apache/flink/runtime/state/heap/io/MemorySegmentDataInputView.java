@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * A DataInputView backed by a single MemorySegment window (offset, length).
- * Used for zero-copy deserialization directly from EntryArena slices.
+ * Used for zero-copy deserialization directly from EntryStore slices.
  */
 public class MemorySegmentDataInputView implements DataInputView {
 

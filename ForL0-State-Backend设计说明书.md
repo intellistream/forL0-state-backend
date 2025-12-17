@@ -123,7 +123,7 @@ ForL0StateBackend 通过 **MemoryManagerAllocator** 向 Flink 的 MemoryManager 
 
 #### 2.2.10 Serializer Pack
 
-**SerializerPack** 是用于集中管理序列化逻辑的模块，负责持有并复用由 Flink 运行时注入的 TypeSerializer 实例，并对 ForL0StateBackend 中的二进制布局提供统一的序列化/反序列化方法。该组件为 Snapshot/Restore 路径、EntryArena 的持久化与重建、以及 MainTable 索引序列化提供一致的编码/解码接口，同时通过缓存序列化实例和复用缓冲区来降低序列化开销。
+**SerializerPack** 是用于集中管理序列化逻辑的模块，负责持有并复用由 Flink 运行时注入的 TypeSerializer 实例，并对 ForL0StateBackend 中的二进制布局提供统一的序列化/反序列化方法。该组件为 Snapshot/Restore 路径、EntryStore 的持久化与重建、以及 MainTable 索引序列化提供一致的编码/解码接口，同时通过缓存序列化实例和复用缓冲区来降低序列化开销。
 
 ### 2.3 State Map 实现
 

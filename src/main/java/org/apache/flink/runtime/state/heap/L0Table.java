@@ -18,7 +18,7 @@ import java.util.Random;
  * Supports configurable replacement algorithms (LRU, LFU, etc.) for cache management.
  *
  * <p>Uses L0MemoryAllocator for memory allocation, which is separate from the
- * MemoryManager-managed memory used by MainTable and EntryArena. L0 memory
+ * MemoryManager-managed memory used by MainTable and EntryStore. L0 memory
  * may be backed by specialized hardware (CXL memory, PMEM) via JNI native methods.
  *
  * <p>Uses MemorySegment operations instead of Unsafe for better safety and compatibility.
@@ -247,7 +247,7 @@ public class L0Table implements AutoCloseable {
 
     /**
      * Invalidates all entries with addresses in the specified range.
-     * Used when entries in EntryArena are deallocated.
+     * Used when entries in EntryStore are deallocated.
      *
      * @param minAddress Minimum address (inclusive)
      * @param maxAddress Maximum address (exclusive)
