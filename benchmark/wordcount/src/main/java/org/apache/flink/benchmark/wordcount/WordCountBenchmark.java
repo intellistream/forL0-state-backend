@@ -109,8 +109,8 @@ public class WordCountBenchmark {
             )
             .name("SlidingWindowCount");
         
-        // Metrics sink
-        result.addSink(new MetricsSink(outputPath, parallelism, latencyDir, backend))
+        // Metrics sink - pass numRecords for correct throughput calculation
+        result.addSink(new MetricsSink(outputPath, parallelism, latencyDir, backend, numRecords))
             .name("MetricsSink")
             .setParallelism(1);
         

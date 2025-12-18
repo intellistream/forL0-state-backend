@@ -38,13 +38,13 @@ cluster:
   checkpoint_interval: 0  # ms (10s)
   
   wordcount:
-    num_keys: 1000000         # 1000万 key
+    num_keys: 5000000         # 100万 key
     num_records: 500000000    # 1亿条
     arrival_rate: 0 
     skew_factor: 1.0         # Zipf s parameter
-    window_size: 2000         # milliseconds (5s)
-    slide_size: 2000          # milliseconds (0.2s)
-    warmup_duration: 10       # warmup duration in seconds (0 to disable)
+    window_size: 10000         # milliseconds (5s)
+    slide_size: 10000          # milliseconds (5s)
+    warmup_duration: 30       # warmup duration in seconds (0 to disable)
   
   nexmark:
     # NexMark queries to run (all stateful queries for full benchmark)

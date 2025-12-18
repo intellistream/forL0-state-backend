@@ -60,58 +60,41 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
     private final int parallelism;
     private final String latencyDir;
     private final String backend;
+    /** Total input records (from Source), used for throughput calculation */
+    private final long numRecords;
     
     // Metrics collection
     private transient long startTime;
-    private transient long recordCount;
+    private transient long sampleCount;  // For latency sampling
     private transient List<Long> latencies;
     
-    // For throughput calculation
-    private transient long lastReportTime;
-    private transient long lastReportCount;
-    
-    public MetricsSink(String outputPath, int parallelism, String latencyDir, String backend) {
+    public MetricsSink(String outputPath, int parallelism, String latencyDir, String backend, long numRecords) {
         this.outputPath = outputPath;
         this.parallelism = parallelism;
         this.latencyDir = latencyDir;
         this.backend = backend;
+        this.numRecords = numRecords;
     }
     
     @Override
     public void open(Configuration parameters) throws Exception {
         super.open(parameters);
         startTime = System.currentTimeMillis();
-        recordCount = 0;
+        sampleCount = 0;
         latencies = new ArrayList<>();
-        lastReportTime = startTime;
-        lastReportCount = 0;
     }
     
     @Override
     public void invoke(Tuple3<String, Long, Long> value, Context context) throws Exception {
-        recordCount++;
+        sampleCount++;
         
         // f2 is the source emit timestamp, calculate end-to-end latency
         long currentTime = System.currentTimeMillis();
         long latency = currentTime - value.f2;
         
         // Sample latencies to avoid memory issues with large datasets
-        // Keep every 100th latency measurement for better resolution
-        if (recordCount % 100 == 0 && latency >= 0) {
+        if (sampleCount % 100 == 0 && latency >= 0) {
             latencies.add(latency);
-        }
-        
-        // Progress report every 10 seconds
-        if (currentTime - lastReportTime >= 10_000) {
-            long elapsedSinceLastReport = currentTime - lastReportTime;
-            long recordsSinceLastReport = recordCount - lastReportCount;
-            double currentThroughput = recordsSinceLastReport * 1000.0 / elapsedSinceLastReport;
-            
-            System.out.printf("[Metrics] Records: %,d, Current throughput: %,.0f records/s%n",
-                recordCount, currentThroughput);
-            
-            lastReportTime = currentTime;
-            lastReportCount = recordCount;
         }
     }
     
@@ -121,8 +104,9 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
         long totalTimeMs = endTime - startTime;
         double totalTimeSeconds = totalTimeMs / 1000.0;
         
-        // Calculate metrics
-        double throughput = recordCount / totalTimeSeconds;
+        // Calculate metrics using INPUT records (from Source), not Sink records
+        // Sink records are window aggregation outputs, not the actual input throughput
+        double throughput = numRecords / totalTimeSeconds;
         double throughputPerCore = throughput / parallelism;
         
         // Calculate latency percentiles
@@ -138,7 +122,7 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
         // Build result map
         Map<String, Object> result = new HashMap<>();
         result.put("benchmark", "wordcount");
-        result.put("total_records", recordCount);
+        result.put("total_records", numRecords);
         result.put("total_time_seconds", totalTimeSeconds);
         result.put("throughput", throughput);
         result.put("throughput_per_core", throughputPerCore);
@@ -156,7 +140,7 @@ public class MetricsSink extends RichSinkFunction<Tuple3<String, Long, Long>> {
         System.out.println("\n========================================");
         System.out.println("       BENCHMARK RESULTS");
         System.out.println("========================================");
-        System.out.printf("Total records:      %,d%n", recordCount);
+        System.out.printf("Total records:      %,d%n", numRecords);
         System.out.printf("Total time:         %.2f seconds%n", totalTimeSeconds);
         System.out.printf("Throughput:         %,.0f records/s%n", throughput);
         System.out.printf("Throughput/core:    %,.0f records/s%n", throughputPerCore);

@@ -338,7 +338,24 @@ def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str)
     print(f"\n--- Warmup Phase ({warmup_duration}s) ---")
     print(f"  Submitting warmup job...")
     
-    job_id = submit_job_async(cmd, rest_url)
+    # Create warmup command: disable latency sampling and L0 metrics
+    warmup_cmd = []
+    skip_next = False
+    for i, arg in enumerate(cmd):
+        if skip_next:
+            skip_next = False
+            continue
+        # Skip latency directory argument
+        if arg == '--latencyDir':
+            skip_next = True
+            continue
+        # Disable L0 metrics collector during warmup
+        if 'metricsCollector.enabled=true' in arg:
+            warmup_cmd.append(arg.replace('enabled=true', 'enabled=false'))
+        else:
+            warmup_cmd.append(arg)
+    
+    job_id = submit_job_async(warmup_cmd, rest_url)
     if not job_id:
         print("  WARNING: Failed to submit warmup job, skipping warmup")
         return False
