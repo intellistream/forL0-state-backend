@@ -25,50 +25,45 @@ public final class EntryStoreConstants {
     
     // ========== KeyNsPool Entry Layout ==========
     // Layout (with inline support):
-    // [hash(4B)][modeKeyLen(4B)][nsLen(2B)][padding(2B)][valueHandle/inlineValue(8B)][key][namespace]
+    // [hash(4B)][keyLen(4B)][nsLen(4B)][mode(1B)][valueHandle/inlineValue(8B)][key][namespace]
     //
-    // modeKeyLen encoding (32 bits):
-    // - bit 31: mode (0=pointer, 1=inline)
-    // - bits 30-27: inlineLen (0-8, only valid when mode=1)
-    // - bits 26-0: keyLen (max 128MB)
+    // mode byte encoding:
+    // - high 4 bits: inlineLen (0-8, only valid when inline mode)
+    // - low 4 bits: flags (bit 0: 0=pointer, 1=inline)
+    //
+    // Entry is 8-byte aligned by padding after key+namespace data.
     
     /** Offset of hash field in KeyNsPool entry */
     public static final int KEY_HASH_OFFSET = 0;
     
-    /** Offset of mode+keyLen combined field */
-    public static final int MODE_KEY_LEN_OFFSET = 4;
+    /** Offset of key length field (4 bytes) */
+    public static final int KEY_LEN_OFFSET = 4;
     
-    /** Offset of namespace length field (2 bytes) */
+    /** Offset of namespace length field (4 bytes) */
     public static final int NS_LEN_OFFSET = 8;
     
-    /** Offset of padding (2 bytes, reserved) */
-    public static final int PADDING_OFFSET = 10;
+    /** Offset of mode field (1 byte) */
+    public static final int MODE_OFFSET = 12;
     
     /** Offset of value handle / inline value field (8 bytes) */
-    public static final int VALUE_HANDLE_OFFSET = 12;
+    public static final int VALUE_HANDLE_OFFSET = 13;
     
     /** Offset where key data begins */
-    public static final int KEY_DATA_OFFSET = 20;
+    public static final int KEY_DATA_OFFSET = 21;
     
     /** Total header size for KeyNsPool entry */
-    public static final int KEY_ENTRY_HEADER_SIZE = 20;
+    public static final int KEY_ENTRY_HEADER_SIZE = 21;
     
-    // ========== Mode+KeyLen Encoding Constants ==========
+    // ========== Mode Byte Encoding Constants ==========
     
-    /** Mode bit mask: bit 31 (0x80000000) */
-    public static final int MODE_MASK = 0x80000000;
+    /** Mode flag mask: bit 0 (0x01) */
+    public static final int MODE_FLAG_MASK = 0x01;
     
-    /** Inline length mask: bits 30-27 (0x78000000) */
-    public static final int INLINE_LEN_MASK = 0x78000000;
+    /** Inline length mask: high 4 bits (0xF0) */
+    public static final int INLINE_LEN_MASK = 0xF0;
     
-    /** Key length mask: bits 26-0 (0x07FFFFFF) */
-    public static final int KEY_LEN_MASK = 0x07FFFFFF;
-    
-    /** Mode bit shift (bit 31) */
-    public static final int MODE_SHIFT = 31;
-    
-    /** Inline length shift (bits 30-27) */
-    public static final int INLINE_LEN_SHIFT = 27;
+    /** Inline length shift (4 bits) */
+    public static final int INLINE_LEN_SHIFT = 4;
     
     /** Mode value for pointer mode */
     public static final int MODE_POINTER = 0;
@@ -78,12 +73,6 @@ public final class EntryStoreConstants {
     
     /** Maximum inline value size (8 bytes - fits in valueHandle field) */
     public static final int INLINE_THRESHOLD = 8;
-    
-    // ========== Legacy Constants (for backward compatibility in transition) ==========
-    
-    /** @deprecated Use MODE_KEY_LEN_OFFSET instead */
-    @Deprecated
-    public static final int KEY_LEN_OFFSET = MODE_KEY_LEN_OFFSET;
     
     // ========== ValuePool Entry Layout ==========
     // Layout: [valueLen(4B)][value]
