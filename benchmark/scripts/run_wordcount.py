@@ -61,6 +61,61 @@ def get_job_status(rest_url: str, job_id: str) -> dict:
     return {}
 
 
+def cancel_job(rest_url: str, job_id: str) -> bool:
+    """Cancel a running Flink job via REST API."""
+    try:
+        # Use PATCH to cancel (Flink 1.12+)
+        resp = requests.patch(
+            f"{rest_url}/jobs/{job_id}",
+            params={'mode': 'cancel'},
+            timeout=30
+        )
+        if resp.status_code in [200, 202]:
+            return True
+        # Fallback to DELETE for older versions
+        resp = requests.delete(f"{rest_url}/jobs/{job_id}/cancel", timeout=30)
+        return resp.status_code in [200, 202]
+    except Exception as e:
+        print(f"  WARNING: Failed to cancel job: {e}")
+        return False
+
+
+def submit_job_async(cmd: list, rest_url: str) -> Optional[str]:
+    """Submit a Flink job asynchronously and return job ID."""
+    import re
+    
+    # Run flink run in detached mode
+    detached_cmd = cmd.copy()
+    # Insert -d flag after 'flink run'
+    run_idx = detached_cmd.index('run')
+    detached_cmd.insert(run_idx + 1, '-d')
+    
+    try:
+        result = subprocess.run(
+            detached_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        output = result.stdout + result.stderr
+        
+        # Parse job ID from output: "Job has been submitted with JobID <id>"
+        match = re.search(r'JobID\s+([a-f0-9]+)', output)
+        if match:
+            return match.group(1)
+        
+        print(f"  WARNING: Could not parse job ID from output:\n{output}")
+        return None
+        
+    except subprocess.TimeoutExpired:
+        print("  ERROR: Job submission timed out")
+        return None
+    except Exception as e:
+        print(f"  ERROR: Job submission failed: {e}")
+        return None
+
+
 def wait_for_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> dict:
     """Wait for job to complete and return final status."""
     start_time = time.time()
@@ -267,6 +322,74 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
     return args
 
 
+def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str) -> bool:
+    """
+    Run a warmup job for JIT compilation and cache warming.
+    
+    Args:
+        cmd: Flink run command
+        rest_url: Flink REST API URL
+        warmup_duration: Warmup duration in seconds
+        backend: Backend name for logging
+        
+    Returns:
+        True if warmup completed successfully
+    """
+    print(f"\n--- Warmup Phase ({warmup_duration}s) ---")
+    print(f"  Submitting warmup job...")
+    
+    job_id = submit_job_async(cmd, rest_url)
+    if not job_id:
+        print("  WARNING: Failed to submit warmup job, skipping warmup")
+        return False
+    
+    print(f"  Warmup job submitted: {job_id}")
+    
+    # Wait for warmup duration
+    start_time = time.time()
+    last_state = None
+    
+    while time.time() - start_time < warmup_duration:
+        status = get_job_status(rest_url, job_id)
+        state = status.get('state', 'UNKNOWN')
+        
+        if state != last_state:
+            print(f"  Job state: {state}")
+            last_state = state
+        
+        # If job finished early (e.g., data exhausted), that's fine
+        if state in ['FINISHED', 'FAILED', 'CANCELED']:
+            print(f"  Warmup job ended early with state: {state}")
+            return state != 'FAILED'
+        
+        elapsed = int(time.time() - start_time)
+        remaining = warmup_duration - elapsed
+        if remaining > 0 and remaining % 10 == 0:
+            print(f"  Warmup: {elapsed}s elapsed, {remaining}s remaining...")
+        
+        time.sleep(1)
+    
+    # Cancel warmup job
+    print(f"  Warmup complete, cancelling job...")
+    if cancel_job(rest_url, job_id):
+        # Wait for job to be fully cancelled
+        for _ in range(30):
+            status = get_job_status(rest_url, job_id)
+            state = status.get('state', 'UNKNOWN')
+            if state in ['CANCELED', 'FINISHED', 'FAILED']:
+                print(f"  Warmup job cancelled successfully")
+                break
+            time.sleep(0.5)
+    else:
+        print(f"  WARNING: Failed to cancel warmup job")
+    
+    # Small delay to let resources be released
+    time.sleep(2)
+    
+    print(f"--- Warmup Phase Complete ---\n")
+    return True
+
+
 def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None) -> Optional[dict]:
     """Run WordCount benchmark on Flink cluster.
     
@@ -338,7 +461,13 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
     print(f"Flink cluster: {rest_url}")
     print(f"Command: {' '.join(cmd)}\n")
     
+    # [BENCHMARK_TEST] Run warmup phase if configured
+    warmup_duration = wc_config.get('warmup_duration', 0)
+    if warmup_duration > 0:
+        run_warmup_job(cmd, rest_url, warmup_duration, backend)
+    
     # [BENCHMARK_TEST] Initialize profiler and hardware metrics if enabled
+    # Note: Profiling starts AFTER warmup to capture steady-state performance
     profiler = None
     hw_collector = None
     
@@ -370,6 +499,7 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         # [BENCHMARK_TEST] Start profiling before job submission
         tm_pids = []
         jfr_file = None
+        profiler_files = None  # Initialize profiler_files
         if profiler:
             tm_pids = find_taskmanager_pids(flink_home)
             if tm_pids:
