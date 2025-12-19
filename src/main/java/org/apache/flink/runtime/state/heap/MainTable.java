@@ -2,7 +2,6 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.memory.MemoryAllocationException;
-import org.apache.flink.runtime.state.heap.entrystore.EntryStore;
 import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import java.util.ArrayList;
@@ -11,10 +10,19 @@ import java.util.List;
 
 /**
  * Main Table implementation for ForL0 State Backend.
- * 64-byte aligned buckets with 6 slots + 4 extension pointers.
+ * 
+ * <p>This is the heap object store version that uses object comparison instead of
+ * byte comparison. The Pointer field now stores the array index in HeapEntryStore
+ * instead of off-heap memory address.
+ * 
+ * <p>64-byte aligned buckets with 6 slots + 4 extension pointers.
  * Supports tree-like expansion and global resize.
+ *
+ * @param <K> type of key
+ * @param <N> type of namespace
+ * @param <S> type of state
  */
-public class MainTable implements AutoCloseable {
+public class MainTable<K, N, S> implements AutoCloseable {
 
     private static final int BUCKET_SIZE = 64;
     private static final int SLOTS_PER_BUCKET = 6;
@@ -90,20 +98,43 @@ public class MainTable implements AutoCloseable {
         this.extensionPoolUsed = 0;
     }
 
-    public long get(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+    /**
+     * Gets an entry from the main table using object comparison.
+     * 
+     * <p>This is the heap object store version that uses {@code store.matches()} 
+     * for key/namespace comparison instead of byte comparison.
+     *
+     * @param keyHash the pre-computed hash value
+     * @param tag the tag (high 16 bits of hash)
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore containing the entries
+     * @return the entry address if found, 0 otherwise
+     */
+    public long get(int keyHash, short tag, K key, N namespace, HeapEntryStore<K, N, S> store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        return searchBucketTree(bucketIndex, bucketIndex, tag, kb, klen, nb, nlen, store, segment, bucketOffset);
+        return searchBucketTree(bucketIndex, bucketIndex, tag, key, namespace, store, segment, bucketOffset);
     }
 
     /**
-     * 插入或更新条目
+     * Inserts or updates an entry using object comparison.
+     * 
+     * <p>This is the heap object store version that uses {@code store.matches()} 
+     * for key/namespace comparison instead of byte comparison.
+     *
+     * @param keyHash the pre-computed hash value
+     * @param tag the tag (high 16 bits of hash)
+     * @param entryAddress the HeapEntryStore address of the entry
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore containing the entries
      * @return 0 for new entry, positive for existing entry address, -1 for full (needs resize)
      */
-    public long put(int keyHash, short tag, long entryAddress, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+    public long put(int keyHash, short tag, long entryAddress, K key, N namespace, HeapEntryStore<K, N, S> store) {
         int bucketIndex = keyHash & (bucketCount - 1);
-        long result = putInBucketTree(bucketIndex, bucketIndex, tag, entryAddress, kb, klen, nb, nlen, store);
+        long result = putInBucketTree(bucketIndex, bucketIndex, tag, entryAddress, key, namespace, store);
 
         if (result == 0) {
             totalEntries++;
@@ -115,11 +146,24 @@ public class MainTable implements AutoCloseable {
         return result;
     }
 
-    public long remove(int keyHash, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+    /**
+     * Removes an entry from the main table using object comparison.
+     * 
+     * <p>This is the heap object store version that uses {@code store.matches()} 
+     * for key/namespace comparison instead of byte comparison.
+     *
+     * @param keyHash the pre-computed hash value
+     * @param tag the tag (high 16 bits of hash)
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore containing the entries
+     * @return the removed entry address if found, 0 otherwise
+     */
+    public long remove(int keyHash, short tag, K key, N namespace, HeapEntryStore<K, N, S> store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        long removed = removeFromBucketTree(bucketIndex, bucketIndex, tag, kb, klen, nb, nlen, store, segment, bucketOffset);
+        long removed = removeFromBucketTree(bucketIndex, bucketIndex, tag, key, namespace, store, segment, bucketOffset);
         if (removed > 0) {
             totalEntries--;
         }
@@ -137,38 +181,54 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 递归搜索桶树
-     * @param bucketIndex 当前桶的全局索引
-     * @param mainBucketIndex 当前桶所属的主桶索引
+     * Recursively searches the bucket tree for an entry.
+     *
+     * @param bucketIndex current bucket's global index
+     * @param mainBucketIndex the main bucket index this bucket belongs to
+     * @param tag the tag to match
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore
+     * @param segment the memory segment containing the bucket
+     * @param bucketOffset the offset within the segment
+     * @return the entry address if found, 0 otherwise
      */
-    private long searchBucketTree(int bucketIndex, int mainBucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store,
+    private long searchBucketTree(int bucketIndex, int mainBucketIndex, short tag, 
+                                  K key, N namespace, HeapEntryStore<K, N, S> store,
                                   MemorySegment segment, int bucketOffset) {
-        // 先搜索当前桶的槽位
-        long result = searchBucketSlots(segment, bucketOffset, tag, kb, klen, nb, nlen, store);
+        // Search current bucket's slots first
+        long result = searchBucketSlots(segment, bucketOffset, tag, key, namespace, store);
         if (result != 0) return result;
 
-        // 根据tag确定扩展桶指针索引
-        int extensionIndex = tag & 0x3;  // tag的低2位决定使用哪个扩展指针
+        // Determine extension bucket pointer index based on tag
+        int extensionIndex = tag & 0x3;  // Low 2 bits of tag determine which extension pointer
 
         byte offset = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
         if (offset != NULL_BUCKET_ID) {
             int extensionBucketIndex = getExtensionBucketGlobalIndex(mainBucketIndex, offset);
             MemorySegment extensionSegment = getSegmentForBucket(extensionBucketIndex);
             int extensionBucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-            return searchBucketTree(extensionBucketIndex, mainBucketIndex, tag, kb, klen, nb, nlen, store, extensionSegment, extensionBucketOffset);
+            return searchBucketTree(extensionBucketIndex, mainBucketIndex, tag, key, namespace, store, 
+                                    extensionSegment, extensionBucketOffset);
         }
         return 0;
     }
 
-    private long searchBucketSlots(MemorySegment segment, int bucketOffset, short tag, byte[] kb, int klen, byte[] nb,
-                                   int nlen, EntryStore store) {
+    /**
+     * Searches bucket slots for an entry using object comparison.
+     */
+    private long searchBucketSlots(MemorySegment segment, int bucketOffset, short tag,
+                                   K key, N namespace, HeapEntryStore<K, N, S> store) {
         int slotOffset = bucketOffset;
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (ptr == 0) continue;
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag == tag && store.matchesKey(ptr, kb, klen, nb, nlen)) {
+            // Use object comparison instead of byte comparison
+            if (slotTag == tag && store.matches(ptr, key, namespace)) {
+                lastFoundSegment = segment;
+                lastFountSlotOffset = slotOffset;
                 return ptr;
             }
         }
@@ -176,41 +236,48 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 递归插入到桶树，优先填充当前桶，满了再尝试扩展桶
-     * @param bucketIndex 当前桶的全局索引
-     * @param mainBucketIndex 当前桶所属的主桶索引
+     * Recursively inserts into the bucket tree, filling current bucket first, then extension buckets.
+     *
+     * @param bucketIndex current bucket's global index
+     * @param mainBucketIndex the main bucket index this bucket belongs to
+     * @param tag the tag
+     * @param entryAddress the HeapEntryStore address
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore
      * @return 0 for new entry, positive for updated entry address, -1 for full (needs resize)
      */
-    private long putInBucketTree(int bucketIndex, int mainBucketIndex, short tag, long entryAddress, byte[] kb, int klen, byte[] nb,
-                                 int nlen, EntryStore store) {
-        // 先尝试插入当前桶
+    private long putInBucketTree(int bucketIndex, int mainBucketIndex, short tag, long entryAddress, 
+                                 K key, N namespace, HeapEntryStore<K, N, S> store) {
+        // Try to insert in current bucket first
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-        long result = putInSlots(segment, bucketOffset, tag, entryAddress, kb, klen, nb, nlen, store);
+        long result = putInSlots(segment, bucketOffset, tag, entryAddress, key, namespace, store);
         if (result != -1) return result;
 
-        // 当前桶满，根据tag确定扩展桶
-        int extensionIndex = tag & 0x3;  // tag的低2位决定使用哪个扩展指针
+        // Current bucket full, determine extension bucket based on tag
+        int extensionIndex = tag & 0x3;  // Low 2 bits of tag determine which extension pointer
         byte extId = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
 
         if (extId == 0) {
-            // 分配新的扩展桶
+            // Allocate new extension bucket
             extId = allocateExtensionBucket(mainBucketIndex);
             if (extId == NULL_BUCKET_ID) return -1;
             segment.put(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex, extId);
         }
 
-        // 递归插入到扩展桶
+        // Recursively insert into extension bucket
         int extensionBucketIndex = getExtensionBucketGlobalIndex(mainBucketIndex, extId);
-        return putInBucketTree(extensionBucketIndex, mainBucketIndex, tag, entryAddress, kb, klen, nb, nlen, store);
+        return putInBucketTree(extensionBucketIndex, mainBucketIndex, tag, entryAddress, key, namespace, store);
     }
 
     /**
-     * Performs a put operation on bucket slots with unified logic.
+     * Performs a put operation on bucket slots using object comparison.
+     *
      * @return 0 for new entry, positive for existing entry address, -1 for full bucket
      */
     private long putInSlots(MemorySegment segment, int bucketOffset, short tag, long entryAddress,
-                            byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+                            K key, N namespace, HeapEntryStore<K, N, S> store) {
         int empty = -1;
         int emptyOffset = 0;
 
@@ -227,7 +294,8 @@ public class MainTable implements AutoCloseable {
             }
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag == tag && store.matchesKey(ptr, kb, klen, nb, nlen)) {
+            // Use object comparison instead of byte comparison
+            if (slotTag == tag && store.matches(ptr, key, namespace)) {
                 lastFoundSegment = segment;
                 lastFountSlotOffset = slotOffset;
                 if (entryAddress > 0) segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
@@ -246,37 +314,52 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 递归从桶树中删除条目，不释放空扩展桶
-     * @param bucketIndex 当前桶的全局索引
-     * @param mainBucketIndex 当前桶所属的主桶索引
+     * Recursively removes an entry from the bucket tree.
+     *
+     * @param bucketIndex current bucket's global index
+     * @param mainBucketIndex the main bucket index this bucket belongs to
+     * @param tag the tag
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore
+     * @param segment the memory segment
+     * @param bucketOffset the offset
+     * @return the removed entry address if found, 0 otherwise
      */
-    private long removeFromBucketTree(int bucketIndex, int mainBucketIndex, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store,
+    private long removeFromBucketTree(int bucketIndex, int mainBucketIndex, short tag, 
+                                      K key, N namespace, HeapEntryStore<K, N, S> store,
                                       MemorySegment segment, int bucketOffset) {
-        // 先尝试从当前桶删除
-        long removed = removeFromBucketSlots(segment, bucketOffset, tag, kb, klen, nb, nlen, store);
+        // Try to remove from current bucket first
+        long removed = removeFromBucketSlots(segment, bucketOffset, tag, key, namespace, store);
         if (removed != 0) return removed;
 
-        // 根据tag确定扩展桶指针索引
-        int extensionIndex = tag & 0x3;  // tag的低2位决定使用哪个扩展指针
+        // Determine extension bucket pointer index based on tag
+        int extensionIndex = tag & 0x3;  // Low 2 bits of tag determine which extension pointer
 
         byte offset = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + extensionIndex);
         if (offset != NULL_BUCKET_ID) {
             int extensionBucketIndex = getExtensionBucketGlobalIndex(mainBucketIndex, offset);
             MemorySegment extensionSegment = getSegmentForBucket(extensionBucketIndex);
             int extensionBucketOffset = getBucketOffsetInSegment(extensionBucketIndex);
-            removed = removeFromBucketTree(extensionBucketIndex, mainBucketIndex, tag, kb, klen, nb, nlen, store, extensionSegment, extensionBucketOffset);
+            removed = removeFromBucketTree(extensionBucketIndex, mainBucketIndex, tag, key, namespace, store, 
+                                           extensionSegment, extensionBucketOffset);
         }
         return removed;
     }
 
-    private long removeFromBucketSlots(MemorySegment segment, int bucketOffset, short tag, byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+    /**
+     * Removes an entry from bucket slots using object comparison.
+     */
+    private long removeFromBucketSlots(MemorySegment segment, int bucketOffset, short tag, 
+                                       K key, N namespace, HeapEntryStore<K, N, S> store) {
         int slotOffset = bucketOffset;
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
             long ptr = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
             if (ptr == 0) continue;
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag == tag && store.matchesKey(ptr, kb, klen, nb, nlen)) {
+            // Use object comparison instead of byte comparison
+            if (slotTag == tag && store.matches(ptr, key, namespace)) {
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, 0L);
                 return ptr;
             }
@@ -286,25 +369,32 @@ public class MainTable implements AutoCloseable {
 
     // --- Iteration support ---
 
+    /**
+     * Iterates over all entries in the main table.
+     *
+     * @param visitor the visitor to call for each entry
+     */
     public void forEachEntry(EntryVisitor visitor) {
-        // 遍历所有主桶
+        // Iterate over all main buckets
         for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
             visitBucketTree(bucketIndex, bucketIndex, visitor);
         }
     }
 
     /**
-     * 统一的桶树遍历方法，递归遍历桶及其所有扩展桶
-     * @param bucketIndex 当前桶的全局索引
-     * @param mainBucketIndex 当前桶所属的主桶索引
+     * Unified bucket tree traversal, recursively visiting bucket and all its extension buckets.
+     *
+     * @param bucketIndex current bucket's global index
+     * @param mainBucketIndex the main bucket index this bucket belongs to
+     * @param visitor the visitor to call for each entry
      */
     private void visitBucketTree(int bucketIndex, int mainBucketIndex, EntryVisitor visitor) {
-        // 访问当前桶的所有槽位
+        // Visit all slots in current bucket
         visitBucketSlots(bucketIndex, visitor);
 
-        // 检查该主桶是否有扩展区域
+        // Check if this main bucket has extension area
         if (extensionBucketBaseIndices[mainBucketIndex] == 0) {
-            return;  // 未分配扩展区域
+            return;  // No extension area allocated
         }
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
@@ -336,9 +426,11 @@ public class MainTable implements AutoCloseable {
     // --- Extension bucket management ---
 
     /**
-     * 批量增长扩展桶内存池。
-     * 这是分配扩展区域内存的唯一入口，将多次小分配合并为批量分配。
-     * @param areasToAdd 要添加的扩展区域数量
+     * Batch grow the extension bucket memory pool.
+     * This is the only entry point for allocating extension area memory,
+     * merging multiple small allocations into batch allocations.
+     *
+     * @param areasToAdd number of extension areas to add
      */
     private void growExtensionPool(int areasToAdd) {
         long totalSize = (long) areasToAdd * EXTENSION_AREA_SIZE;
@@ -364,31 +456,33 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 为指定主桶分配扩展桶，返回相对于该主桶扩展区域的偏移量（1-255）
-     * @param mainBucketIndex 主桶索引（必须 < bucketCount）
-     * @return 偏移量（1-255），或 NULL_BUCKET_ID(0) 表示失败
+     * Allocates an extension bucket for the specified main bucket,
+     * returns the offset relative to that main bucket's extension area (1-255).
+     *
+     * @param mainBucketIndex main bucket index (must be < bucketCount)
+     * @return offset (1-255), or NULL_BUCKET_ID(0) for failure
      */
     private byte allocateExtensionBucket(int mainBucketIndex) {
-        // 检查是否达到单个主桶的扩展上限
+        // Check if single main bucket extension limit is reached
         if (extensionBucketCounts[mainBucketIndex] >= MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET) {
             return NULL_BUCKET_ID;
         }
         
-        // 首次扩展该主桶：从池中分配一个扩展区域
+        // First extension of this main bucket: allocate an extension area from pool
         if (extensionBucketBaseIndices[mainBucketIndex] == 0) {
-            // 池容量不足时批量增长
+            // Batch grow pool when capacity insufficient
             if (extensionPoolUsed >= extensionPoolCapacity) {
                 growExtensionPool(POOL_GROW_AREAS);
             }
-            // 从池中分配（O(1) 操作，无系统调用）
+            // Allocate from pool (O(1) operation, no system call)
             extensionBucketBaseIndices[mainBucketIndex] = bucketCount + extensionPoolUsed * MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET;
             extensionPoolUsed++;
         }
         
-        // 分配下一个扩展桶（偏移量从1开始）
+        // Allocate next extension bucket (offset starts from 1)
         byte offset = (byte) (++extensionBucketCounts[mainBucketIndex]);
         
-        // 更新统计
+        // Update statistics
         if (extensionBucketCounts[mainBucketIndex] > maxExtensionBucketsUsed) {
             maxExtensionBucketsUsed = extensionBucketCounts[mainBucketIndex];
         }
@@ -397,10 +491,11 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 将主桶索引 + 偏移量转换为全局桶索引
-     * @param mainBucketIndex 主桶索引
-     * @param offset 扩展桶偏移量（1-255）
-     * @return 全局桶索引
+     * Converts main bucket index + offset to global bucket index.
+     *
+     * @param mainBucketIndex main bucket index
+     * @param offset extension bucket offset (1-255)
+     * @return global bucket index
      */
     private int getExtensionBucketGlobalIndex(int mainBucketIndex, byte offset) {
         int baseIndex = extensionBucketBaseIndices[mainBucketIndex];
@@ -431,15 +526,28 @@ public class MainTable implements AutoCloseable {
 
     // --- Resize operations ---
 
-    public void tryResize(EntryStore entryStore) {
+    /**
+     * Tries to resize the table if needed.
+     *
+     * @param entryStore the HeapEntryStore containing all entries
+     */
+    public void tryResize(HeapEntryStore<K, N, S> entryStore) {
         if (!needsResize) return;
         resize(entryStore);
     }
 
-    public void resize(EntryStore entryStore) {
+    /**
+     * Resizes the main table by doubling the bucket count.
+     * 
+     * <p>This is the heap object store version that uses entry.hash from HeapEntryStore
+     * to recalculate bucket positions. Entry addresses remain stable.
+     *
+     * @param entryStore the HeapEntryStore containing all entries
+     */
+    public void resize(HeapEntryStore<K, N, S> entryStore) {
         int newBucketCount = bucketCount * 2;
         
-        // 只分配新的主桶内存
+        // Only allocate new main bucket memory
         long newTotalSize = (long) newBucketCount * BUCKET_SIZE;
 
         List<MemorySegment> newMainBucketsAllocation;
@@ -449,34 +557,34 @@ public class MainTable implements AutoCloseable {
             throw new RuntimeException(e);
         }
 
-        // 新表的管理数组和分配跟踪
+        // New table's management arrays and allocation tracking
         int[] newExtensionBucketBaseIndices = new int[newBucketCount];
         int[] newExtensionBucketCounts = new int[newBucketCount];
         List<List<MemorySegment>> newAllAllocations = new ArrayList<>();
-        newAllAllocations.add(newMainBucketsAllocation);  // 跟踪主桶分配
+        newAllAllocations.add(newMainBucketsAllocation);  // Track main bucket allocation
         
-        // 新表的扩展池状态
+        // New table's extension pool state
         int[] newPoolState = new int[2];  // [0]=capacity, [1]=used
         
-        // 使用数组存储（执行迁移时会动态扩展）
+        // Use array storage (will expand dynamically during migration)
         MemorySegment[] newMemorySegmentsArray = newMainBucketsAllocation.toArray(new MemorySegment[0]);
         int newSegmentSize = newMemorySegmentsArray[0].size();
-        int[] newSegmentCount = {newMemorySegmentsArray.length};  // 使用数组以便在内部方法中修改
-        MemorySegment[][] newSegmentsHolder = {newMemorySegmentsArray};  // 使用持有者以便扩展
+        int[] newSegmentCount = {newMemorySegmentsArray.length};  // Use array to allow modification in inner methods
+        MemorySegment[][] newSegmentsHolder = {newMemorySegmentsArray};  // Use holder for expansion
         
         clearSegmentArray(newMemorySegmentsArray, newSegmentCount[0]);
 
-        // 直接迁移条目，无需中间集合
-        migrateAllEntriesToNewTable(newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
-                                    newExtensionBucketBaseIndices, newExtensionBucketCounts, 
-                                    newAllAllocations, newPoolState, entryStore);
+        // Migrate entries directly using HeapEntryStore iteration
+        migrateAllEntriesFromHeapStore(newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
+                                       newExtensionBucketBaseIndices, newExtensionBucketCounts, 
+                                       newAllAllocations, newPoolState, entryStore);
 
-        // 释放所有旧表的分配（包括主桶和动态扩展桶）
+        // Release all old table allocations (main buckets and extension buckets)
         for (List<MemorySegment> allocation : allAllocations) {
             allocator.release(allocation);
         }
         
-        // 切换到新表
+        // Switch to new table
         this.allAllocations.clear();
         this.allAllocations.addAll(newAllAllocations);
         this.memorySegments = newSegmentsHolder[0];
@@ -500,80 +608,29 @@ public class MainTable implements AutoCloseable {
     // --- Resize implementation ---
 
     /**
-     * 优化的直接迁移方法，消除中间数据结构
-     * 在遍历过程中直接将条目插入新表，避免额外的内存分配
+     * Migrates all entries from HeapEntryStore to new table.
+     * 
+     * <p>This is the heap object store version that iterates through HeapEntryStore
+     * directly, using cached hash values from entries. Entry addresses remain stable.
      */
-    private void migrateAllEntriesToNewTable(MemorySegment[][] newSegmentsHolder, int[] newSegmentCount, 
-                                             int newSegmentSize, int newBucketCount,
-                                             int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                             List<List<MemorySegment>> newAllAllocations, int[] newPoolState, 
-                                             EntryStore entryStore) {
-        // 遍历所有基桶，每个基桶会递归遍历其扩展子树
-        for (int bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
-            migrateBucketTree(bucketIndex, bucketIndex, newSegmentsHolder, newSegmentCount, newSegmentSize, 
-                              newBucketCount, newExtensionBucketBaseIndices, newExtensionBucketCounts, 
-                              newAllAllocations, newPoolState, entryStore);
-        }
-    }
-
-    /**
-     * 递归迁移一个桶及其所有扩展桶的条目
-     * 体现桶的树形结构：基桶是根节点，扩展桶是子节点
-     * @param bucketIndex 当前桶的全局索引
-     * @param mainBucketIndex 当前桶所属的主桶索引
-     */
-    private void migrateBucketTree(int bucketIndex, int mainBucketIndex, 
-                                   MemorySegment[][] newSegmentsHolder, int[] newSegmentCount, int newSegmentSize,
-                                   int newBucketCount,
-                                   int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                   List<List<MemorySegment>> newAllAllocations, int[] newPoolState, 
-                                   EntryStore entryStore) {
-        // 迁移当前桶的所有槽位数据
-        migrateBucketSlots(bucketIndex, newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
-                           newExtensionBucketBaseIndices, newExtensionBucketCounts, 
-                           newAllAllocations, newPoolState, entryStore);
-
-        // 如果是基桶，递归迁移所有扩展桶的数据
-        if (bucketIndex < bucketCount) {
-            // 检查是否有扩展区域
-            if (extensionBucketBaseIndices[bucketIndex] == 0) {
-                return;  // 该主桶没有扩展桶
-            }
+    private void migrateAllEntriesFromHeapStore(MemorySegment[][] newSegmentsHolder, int[] newSegmentCount, 
+                                                int newSegmentSize, int newBucketCount,
+                                                int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
+                                                List<List<MemorySegment>> newAllAllocations, int[] newPoolState, 
+                                                HeapEntryStore<K, N, S> entryStore) {
+        // Iterate through all active entries in HeapEntryStore
+        long maxAddr = entryStore.getMaxAddress();
+        for (int index = 0; index < maxAddr; index++) {
+            HeapStateEntry<K, N, S> entry = entryStore.getByIndex(index);
+            if (entry == null) continue;  // Skip empty slots (deleted entries)
             
-            MemorySegment segment = getSegmentForBucket(bucketIndex);
-            int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-            // 遍历4个扩展桶指针
-            for (int i = 0; i < EXTENSION_POINTERS; i++) {
-                byte offset = segment.get(bucketOffset + EXTENSION_POINTERS_OFFSET + i);
-                if (offset != NULL_BUCKET_ID) {
-                    // 递归迁移扩展桶及其可能的子扩展桶
-                    int extensionBucketIndex = getExtensionBucketGlobalIndex(bucketIndex, offset);
-                    migrateBucketTree(extensionBucketIndex, bucketIndex, newSegmentsHolder, newSegmentCount, 
-                                      newSegmentSize, newBucketCount, newExtensionBucketBaseIndices, 
-                                      newExtensionBucketCounts, newAllAllocations, newPoolState, entryStore);
-                }
-            }
-        }
-    }
-    
-    private void migrateBucketSlots(int bucketIndex, MemorySegment[][] newSegmentsHolder, int[] newSegmentCount,
-                                    int newSegmentSize, int newBucketCount,
-                                    int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
-                                    List<List<MemorySegment>> newAllAllocations, int[] newPoolState, 
-                                    EntryStore entryStore) {
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
-
-        int slotOffset = bucketOffset;
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-            long entryAddress = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (entryAddress == 0) continue;
-
-            short tag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            int fullHash = entryStore.getHash(entryAddress);
-            int newBucketIndex = fullHash & (newBucketCount - 1);
-
+            // Use cached hash from entry (no re-computation needed)
+            int hash = entry.getHash();
+            short tag = entry.getTag();
+            long entryAddress = index + 1;  // Address is index + 1
+            
+            int newBucketIndex = hash & (newBucketCount - 1);
+            
             putInNewTable(newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
                           newBucketIndex, tag, entryAddress, 
                           newExtensionBucketBaseIndices, newExtensionBucketCounts, 
@@ -635,29 +692,29 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 为新表的主桶分配扩展桶（resize专用，使用池化逻辑）
+     * Allocates an extension bucket for new table's main bucket (resize only, using pool logic).
      */
     private byte allocateExtensionBucketForNewTable(int mainBucketIndex, 
                                                     MemorySegment[][] newSegmentsHolder, int[] newSegmentCount,
                                                     int newSegmentSize, int newBucketCount,
                                                     int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
                                                     List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
-        // 检查是否达到单个主桶的扩展上限
+        // Check if single main bucket extension limit is reached
         if (newExtensionBucketCounts[mainBucketIndex] >= MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET) {
             return NULL_BUCKET_ID;
         }
         
-        // 首次扩展该主桶：从池中分配一个扩展区域
+        // First extension of this main bucket: allocate an extension area from pool
         if (newExtensionBucketBaseIndices[mainBucketIndex] == 0) {
-            // 池容量不足时批量增长
+            // Batch grow pool when capacity insufficient
             if (newPoolState[1] >= newPoolState[0]) {
-                // 批量分配扩展区域
+                // Batch allocate extension areas
                 long totalSize = (long) POOL_GROW_AREAS * EXTENSION_AREA_SIZE;
                 try {
                     List<MemorySegment> newSegments = allocator.allocate((int) totalSize);
                     clearSegmentList(newSegments);
                     
-                    // 扩展数组
+                    // Expand array
                     int oldLen = newSegmentCount[0];
                     int addLen = newSegments.size();
                     MemorySegment[] expanded = Arrays.copyOf(newSegmentsHolder[0], oldLen + addLen);
@@ -673,17 +730,18 @@ public class MainTable implements AutoCloseable {
                     return NULL_BUCKET_ID;
                 }
             }
-            // 从池中分配（O(1) 操作）
+            // Allocate from pool (O(1) operation)
             newExtensionBucketBaseIndices[mainBucketIndex] = newBucketCount + newPoolState[1] * MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET;
             newPoolState[1]++;
         }
         
-        // 分配下一个扩展桶
+        // Allocate next extension bucket
         byte offset = (byte) (++newExtensionBucketCounts[mainBucketIndex]);
         return offset;
     }
+
     /**
-     * 从新表的全局桶索引反推主桶索引（resize专用）
+     * Reverse-calculates main bucket index from global bucket index in new table (resize only).
      */
     private int getMainBucketIndexForNewTable(int globalBucketIndex, int newBucketCount, int[] newExtensionBucketBaseIndices) {
         if (globalBucketIndex < newBucketCount) {
@@ -706,7 +764,7 @@ public class MainTable implements AutoCloseable {
     // --- Helper methods ---
 
     /**
-     * 获取指定桶所在的 MemorySegment。
+     * Gets the MemorySegment containing the specified bucket.
      */
     private MemorySegment getSegmentForBucket(int bucketIndex) {
         int segmentIndex = (bucketIndex * BUCKET_SIZE) / segmentSize;
@@ -714,7 +772,7 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * resize 专用：从新表的 segment 列表获取 segment。
+     * Resize only: gets segment from new table's segment list.
      */
     private MemorySegment getSegmentForBucket(MemorySegment[] segments, int segmentCount, int segSize, int bucketIndex) {
         int segmentIndex = (bucketIndex * BUCKET_SIZE) / segSize;
@@ -722,14 +780,14 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 获取桶在 segment 内的偏移量（使用缓存的 segmentSize）。
+     * Gets bucket offset within segment (using cached segmentSize).
      */
     private int getBucketOffsetInSegment(int bucketIndex) {
         return ((bucketIndex * BUCKET_SIZE) % segmentSize);
     }
 
     /**
-     * resize 专用：使用指定的 segmentSize 计算偏移量。
+     * Resize only: calculates offset using specified segmentSize.
      */
     private int getBucketOffsetInSegment(int bucketIndex, int segSize) {
         return ((bucketIndex * BUCKET_SIZE) % segSize);
@@ -741,7 +799,7 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 清空 segment 数组中的所有内容。
+     * Clears all content in the segment array.
      */
     private void clearSegmentArray(MemorySegment[] segments, int count) {
         byte[] zeroArray = new byte[1024]; // Reusable zero buffer
@@ -759,7 +817,7 @@ public class MainTable implements AutoCloseable {
     }
 
     /**
-     * 清空 segment List 中的所有内容（用于 resize 等场景）。
+     * Clears all content in the segment List (used for resize and similar scenarios).
      */
     private void clearSegmentList(List<MemorySegment> segments) {
         byte[] zeroArray = new byte[1024]; // Reusable zero buffer

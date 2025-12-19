@@ -1,7 +1,6 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.core.memory.MemorySegment;
-import org.apache.flink.runtime.state.heap.entrystore.EntryStore;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 
 import java.util.List;
@@ -9,21 +8,32 @@ import java.util.Random;
 
 /**
  * L0 Table implementation for hot key caching in ForL0 State Backend.
- * Each bucket is 64 bytes aligned and contains 4 slots.
  * 
- * Bucket layout: ValidBitmap(4B) + 4×Slot(15B) = 64B
- * ValidBitmap: 4 bytes at bucket start, 1 byte per slot (valid + accessed flags)
- * Slot layout: Tag(2B) + Extension(5B) + Pointer(8B) = 15B
+ * <p>This is the heap object store version that uses object comparison instead of
+ * byte comparison. The Pointer field now stores the array index in HeapEntryStore
+ * instead of off-heap memory address.
  * 
- * Supports configurable replacement algorithms (LRU, LFU, etc.) for cache management.
+ * <p>Each bucket is 64 bytes aligned and contains 4 slots.
+ * 
+ * <p>Bucket layout: ValidBitmap(4B) + 4×Slot(15B) = 64B
+ * <ul>
+ *   <li>ValidBitmap: 4 bytes at bucket start, 1 byte per slot (valid + accessed flags)</li>
+ *   <li>Slot layout: Tag(2B) + Extension(5B) + Pointer(8B) = 15B</li>
+ * </ul>
+ * 
+ * <p>Supports configurable replacement algorithms (LRU, LFU, etc.) for cache management.
  *
  * <p>Uses L0MemoryAllocator for memory allocation, which is separate from the
- * MemoryManager-managed memory used by MainTable and EntryStore. L0 memory
+ * MemoryManager-managed memory used by MainTable and HeapEntryStore. L0 memory
  * may be backed by specialized hardware (CXL memory, PMEM) via JNI native methods.
  *
  * <p>Uses MemorySegment operations instead of Unsafe for better safety and compatibility.
+ *
+ * @param <K> type of key
+ * @param <N> type of namespace
+ * @param <S> type of state
  */
-public class L0Table implements AutoCloseable {
+public class L0Table<K, N, S> implements AutoCloseable {
 
     // L0 bucket and slot layout constants
     private static final int BUCKET_SIZE = 64;  // 64 bytes per bucket
@@ -131,9 +141,20 @@ public class L0Table implements AutoCloseable {
         }
     }
 
-    /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
-    public long get(int keyHash, short tag,
-                    byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+    /**
+     * Gets an entry from the L0 cache using object comparison.
+     * 
+     * <p>This is the heap object store version that uses {@code store.matches()} 
+     * for key/namespace comparison instead of byte comparison.
+     *
+     * @param keyHash the pre-computed hash value
+     * @param tag the tag (high 16 bits of hash)
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore containing the entries
+     * @return the entry address if found, 0 otherwise
+     */
+    public long get(int keyHash, short tag, K key, N namespace, HeapEntryStore<K, N, S> store) {
         accessCount++;
         int bucketIndex = keyHash & (bucketCount - 1);
         
@@ -150,7 +171,8 @@ public class L0Table implements AutoCloseable {
             if (slotTag != tag) continue;
 
             long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (store.matchesKey(pointer, kb, klen, nb, nlen)) {
+            // Use object comparison instead of byte comparison
+            if (store.matches(pointer, key, namespace)) {
                 hitCount++;
                 updateSlotOnAccess(segment, bucketOffset, slot, slotOffset);
                 return pointer;
@@ -161,9 +183,22 @@ public class L0Table implements AutoCloseable {
         return 0;
     }
 
-    /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
-    public long put(int keyHash, short tag, long entryAddress,
-                    byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+    /**
+     * Puts an entry into the L0 cache using object comparison.
+     * 
+     * <p>This is the heap object store version that uses {@code store.matches()} 
+     * for key/namespace comparison instead of byte comparison.
+     *
+     * @param keyHash the pre-computed hash value
+     * @param tag the tag (high 16 bits of hash)
+     * @param entryAddress the HeapEntryStore address of the entry
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore containing the entries
+     * @return the old entry address if updating, 0 if new entry, or evicted address
+     */
+    public long put(int keyHash, short tag, long entryAddress, 
+                    K key, N namespace, HeapEntryStore<K, N, S> store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
@@ -182,7 +217,8 @@ public class L0Table implements AutoCloseable {
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
             long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
 
-            if (slotTag == tag && store.matchesKey(slotPointer, kb, klen, nb, nlen)) {
+            // Use object comparison instead of byte comparison
+            if (slotTag == tag && store.matches(slotPointer, key, namespace)) {
                 segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
                 updateSlotOnAccess(segment, bucketOffset, slot, slotOffset);
                 return slotPointer;
@@ -207,9 +243,20 @@ public class L0Table implements AutoCloseable {
         return oldEntryAddress;
     }
 
-    /** Inline版本：直接传入序列化后key/namespace，避免lambda Matcher开销 */
-    public long remove(int keyHash, short tag,
-                       byte[] kb, int klen, byte[] nb, int nlen, EntryStore store) {
+    /**
+     * Removes an entry from the L0 cache using object comparison.
+     * 
+     * <p>This is the heap object store version that uses {@code store.matches()} 
+     * for key/namespace comparison instead of byte comparison.
+     *
+     * @param keyHash the pre-computed hash value
+     * @param tag the tag (high 16 bits of hash)
+     * @param key the key object
+     * @param namespace the namespace object
+     * @param store the HeapEntryStore containing the entries
+     * @return the removed entry address if found, 0 otherwise
+     */
+    public long remove(int keyHash, short tag, K key, N namespace, HeapEntryStore<K, N, S> store) {
         int bucketIndex = keyHash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
@@ -224,7 +271,8 @@ public class L0Table implements AutoCloseable {
             if (slotTag != tag) continue;
 
             long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            if (store.matchesKey(pointer, kb, klen, nb, nlen)) {
+            // Use object comparison instead of byte comparison
+            if (store.matches(pointer, key, namespace)) {
                 segment.put(bucketOffset + slot, (byte) 0);
                 return pointer;
             }
@@ -247,7 +295,7 @@ public class L0Table implements AutoCloseable {
 
     /**
      * Invalidates all entries with addresses in the specified range.
-     * Used when entries in EntryStore are deallocated.
+     * Used when entries in HeapEntryStore are deallocated.
      *
      * @param minAddress Minimum address (inclusive)
      * @param maxAddress Maximum address (exclusive)
