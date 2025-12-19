@@ -38,12 +38,12 @@ cluster:
   checkpoint_interval: 0  # ms (10s)
   
   wordcount:
-    num_keys: 5000000         # 100万 key
-    num_records: 500000000    # 1亿条
+    num_keys: 1000000         # 100万 key
+    num_records: 100000000    # 1亿条
     arrival_rate: 0 
     skew_factor: 1.0         # Zipf s parameter
-    window_size: 10000         # milliseconds (5s)
-    slide_size: 10000          # milliseconds (5s)
+    window_size: 5000         # milliseconds (5s)
+    slide_size: 500          # milliseconds (5s)
     warmup_duration: 30       # warmup duration in seconds (0 to disable)
   
   nexmark:
@@ -97,7 +97,7 @@ backends:
       # Set to 0 to disable pre-allocation (allocate on demand)
       # Note: Pre-allocation is now smart - limited to 50% of available memory
       # Total pre-alloc = KeyGroups × States × arena_size (e.g., 64 × 3 × 2mb = 384mb)
-      arena_initial_size: "8mb"
+      arena_initial_size: "2mb"
 
 # Metrics collection settings
 metrics:

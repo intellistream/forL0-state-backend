@@ -717,17 +717,16 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * This is a performance-critical method that should be inlined by JIT.
      */
     private KeyNamespaceHash serializeKeyNamespace(K key, N namespace) throws IOException {
-        // Check cache first
+        // Check cache first using identity comparison (fast path)
         if (key == lastKey && namespace == lastNamespace && lastKeyNamespaceHash != null) {
             return lastKeyNamespaceHash;
         }
 
-        serializerPack.writeKey(key);
-        serializerPack.writeNamespace(namespace);
+        // Serialize and get lengths directly from write methods (avoids extra method calls)
+        int klen = serializerPack.writeKey(key);
+        int nlen = serializerPack.writeNamespace(namespace);
         byte[] kb = serializerPack.keyBuffer();
-        int klen = serializerPack.keyLength();
         byte[] nb = serializerPack.namespaceBuffer();
-        int nlen = serializerPack.namespaceLength();
         int hash = HashFunctions.compositeHash(kb, klen, nb, nlen);
         short tag = (short) ((hash >> 16) ^ (hash & 0xFFFF)); // 取混合后的低16位作为tag
 

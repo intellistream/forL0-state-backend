@@ -78,10 +78,15 @@ public class ValuePool implements AutoCloseable {
     private long largeObjectBytes;
     private boolean closed;
     
+    // ========== Reusable Objects (to avoid allocation in hot paths) ==========
+    
+    /** Reusable slice for getSlice() - single-threaded access assumed */
+    private final MemorySegmentSlice reusableSlice = new MemorySegmentSlice();
+    
     // ========== Constructors ==========
     
     /**
-     * Creates a ValuePool with default run size.
+     * Creates a ValuePool with default settings.
      */
     public ValuePool(MemoryManagerAllocator allocator) {
         this(allocator, 0);
@@ -233,6 +238,7 @@ public class ValuePool implements AutoCloseable {
     
     /**
      * Gets a zero-copy slice for the value.
+     * Note: Returns a reusable slice - caller must use immediately before next call.
      * 
      * @param valueHandle the value handle
      * @return the memory segment slice, or null on error
@@ -248,7 +254,7 @@ public class ValuePool implements AutoCloseable {
         MemorySegment seg = run.segment;
         int valueLen = seg.getInt(slotOffset + VALUE_LEN_OFFSET);
         
-        return new MemorySegmentSlice(seg, slotOffset + VALUE_ENTRY_HEADER_SIZE, valueLen);
+        return reusableSlice.set(seg, slotOffset + VALUE_ENTRY_HEADER_SIZE, valueLen);
     }
     
     /**
@@ -539,7 +545,7 @@ public class ValuePool implements AutoCloseable {
             return null;
         }
         
-        return new MemorySegmentSlice(alloc.segment, VALUE_ENTRY_HEADER_SIZE, len);
+        return reusableSlice.set(alloc.segment, VALUE_ENTRY_HEADER_SIZE, len);
     }
     
     // ========== Handle Encoding/Decoding ==========

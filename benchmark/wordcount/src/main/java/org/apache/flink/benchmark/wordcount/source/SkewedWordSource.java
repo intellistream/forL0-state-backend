@@ -99,26 +99,21 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
         long count = 0;
         long batchCount = 0;
         long lastBatchTime = System.nanoTime();
-        long batchTimestamp = System.currentTimeMillis();  // Timestamp for current batch
         
         while (running && count < (endRecord - startRecord)) {
             // Generate key using Zipf distribution
             int keyIndex = zipf.sample();
             String word = "word_" + keyIndex;
             
-            // Use batch timestamp for end-to-end latency calculation
-            // Update timestamp at the start of each batch to reduce syscall overhead
-            long timestamp = batchTimestamp;
-            
-            // Emit record
+            // Emit record: (word, 1L)
             synchronized (ctx.getCheckpointLock()) {
-                ctx.collect(Tuple2.of(word, timestamp));
+                ctx.collect(Tuple2.of(word, 1L));
             }
             
             count++;
             batchCount++;
             
-            // Rate limiting and batch timestamp update
+            // Rate limiting
             if (ratePerSubtask > 0 && batchCount >= batchSize) {
                 long elapsed = System.nanoTime() - lastBatchTime;
                 long sleepNanos = batchIntervalNanos - elapsed;
@@ -131,11 +126,8 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
                     }
                 }
                 lastBatchTime = System.nanoTime();
-                batchTimestamp = System.currentTimeMillis();  // Update batch timestamp
                 batchCount = 0;
             } else if (ratePerSubtask == 0 && batchCount >= 10000) {
-                // For unlimited rate, update timestamp every 10k records
-                batchTimestamp = System.currentTimeMillis();
                 batchCount = 0;
             }
             

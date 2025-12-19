@@ -1379,48 +1379,9 @@ def generate_report(results, output_dir):
                 </span>
             </div>
             
-            <h3>Latency Comparison</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Percentile</th>
-                        <th>HashMap (ms)</th>
-                        <th>ForL0 (ms)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><strong>P50</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_p50 }}</td>
-                        <td class="value-cell">{{ wc_forl0_p50 }}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>P95</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_p95 }}</td>
-                        <td class="value-cell">{{ wc_forl0_p95 }}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>P99</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_p99 }}</td>
-                        <td class="value-cell">{{ wc_forl0_p99 }}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Max</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_max }}</td>
-                        <td class="value-cell">{{ wc_forl0_max }}</td>
-                    </tr>
-                </tbody>
-            </table>
-            
-            <div class="figures-row">
-                <div class="figure-container">
-                    <img src="../figures/wordcount_throughput.png" alt="WordCount Throughput Comparison">
-                    <p class="figure-caption">Figure 1: Throughput Comparison</p>
-                </div>
-                <div class="figure-container">
-                    <img src="../figures/latency_cdf.png" alt="Latency CDF" onerror="this.parentElement.style.display='none'">
-                    <p class="figure-caption">Figure 2: Latency CDF</p>
-                </div>
+            <div class="figure-container" style="margin-top: 1.5rem;">
+                <img src="../figures/wordcount_throughput.png" alt="WordCount Throughput Comparison">
+                <p class="figure-caption">Figure 1: Throughput Comparison</p>
             </div>
         </div>
         
@@ -1754,10 +1715,6 @@ def generate_report(results, output_dir):
     wc_imp_sign = '+' if wc_tpc_imp >= 0 else ''
     wc_negative_class = 'negative' if wc_tpc_imp < 0 else ''
     
-    # Latency data
-    hashmap_latency = wc_hashmap.get('latency_ms', {})
-    forl0_latency = wc_forl0.get('latency_ms', {})
-    
     # NexMark data
     nexmark_descriptions = {
         'q4': 'Average Selling Price by Category',
@@ -2047,14 +2004,6 @@ def generate_report(results, output_dir):
         wc_badge_class=wc_badge_class,
         wc_imp_sign=wc_imp_sign,
         wc_negative_class=wc_negative_class,
-        wc_hashmap_p50=hashmap_latency.get('p50', 'N/A'),
-        wc_hashmap_p95=hashmap_latency.get('p95', 'N/A'),
-        wc_hashmap_p99=hashmap_latency.get('p99', 'N/A'),
-        wc_hashmap_max=hashmap_latency.get('max', 'N/A'),
-        wc_forl0_p50=forl0_latency.get('p50', 'N/A'),
-        wc_forl0_p95=forl0_latency.get('p95', 'N/A'),
-        wc_forl0_p99=forl0_latency.get('p99', 'N/A'),
-        wc_forl0_max=forl0_latency.get('max', 'N/A'),
         nexmark_rows=nexmark_rows,
         verification_rows=verification_rows,
         conclusion=conclusion,
@@ -2109,7 +2058,6 @@ def main():
     print("\nGenerating figures...")
     plot_wordcount_comparison(results, figures_dir)
     plot_nexmark_comparison(results, figures_dir)
-    plot_latency_cdf(results, figures_dir)
     plot_improvement_summary(results, figures_dir)
     
     # [BENCHMARK_TEST] Generate L0Table metrics figures if available

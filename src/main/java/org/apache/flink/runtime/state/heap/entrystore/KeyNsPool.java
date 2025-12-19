@@ -78,10 +78,15 @@ public class KeyNsPool implements AutoCloseable {
     private int activeEntries;
     private boolean closed;
     
+    // ========== Reusable Objects (to avoid allocation in hot paths) ==========
+    
+    /** Reusable slice for getInlineValueSlice() - single-threaded access assumed */
+    private final MemorySegmentSlice reusableSlice = new MemorySegmentSlice();
+    
     // ========== Constructors ==========
     
     /**
-     * Creates a KeyNsPool with the allocator's page size as segment size.
+     * Creates a KeyNsPool with default settings.
      */
     public KeyNsPool(MemoryManagerAllocator allocator) {
         this(allocator, 0);
@@ -475,6 +480,7 @@ public class KeyNsPool implements AutoCloseable {
     /**
      * Gets a zero-copy slice for inline value (only valid in inline mode).
      * The slice points to the valueHandle field which stores the inline value.
+     * Note: Returns a reusable slice - caller must use immediately before next call.
      * 
      * @param address the entry address
      * @return slice for inline value, or null if not in inline mode
@@ -485,7 +491,7 @@ public class KeyNsPool implements AutoCloseable {
         MemorySegment seg = segments[segIdx];
         int inlineLen = getInlineValueLen(address);
         
-        return new MemorySegmentSlice(seg, offset + VALUE_HANDLE_OFFSET, inlineLen);
+        return reusableSlice.set(seg, offset + VALUE_HANDLE_OFFSET, inlineLen);
     }
     
     // ========== Key Matching ==========

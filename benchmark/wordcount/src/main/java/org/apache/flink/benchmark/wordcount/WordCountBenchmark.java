@@ -18,19 +18,13 @@
 
 package org.apache.flink.benchmark.wordcount;
 
-import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.benchmark.wordcount.sink.MetricsSink;
 import org.apache.flink.benchmark.wordcount.source.SkewedWordSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
-import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
-import org.apache.flink.util.Collector;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
 
 import java.time.Duration;
 
@@ -40,10 +34,9 @@ import java.time.Duration;
  * <p>This benchmark measures the performance of Flink StateBackend implementations
  * using a sliding window word count workload with skewed data distribution.
  * 
- * <p>Metrics collected (aligned with NexMark):
+ * <p>Metrics collected:
  * <ul>
  *   <li>Throughput (records/s)</li>
- *   <li>Latency (P50, P95, P99, Max)</li>
  *   <li>Throughput per core</li>
  * </ul>
  * 
@@ -53,8 +46,8 @@ import java.time.Duration;
  *   --numKeys 1000000 \
  *   --numRecords 100000000 \
  *   --skewFactor 1.1 \
- *   --windowSize 60 \
- *   --slideSize 10 \
+ *   --windowSize 5000 \
+ *   --slideSize 200 \
  *   --parallelism 8
  * </pre>
  */
@@ -72,7 +65,6 @@ public class WordCountBenchmark {
         int slideSizeMillis = params.getInt("slideSize", 200);    // milliseconds
         int parallelism = params.getInt("parallelism", 8);
         String outputPath = params.get("output", null);
-        String latencyDir = params.get("latencyDir", System.getProperty("java.io.tmpdir"));
         String backend = params.get("backend", "unknown");
         
         // Create execution environment
@@ -85,32 +77,23 @@ public class WordCountBenchmark {
             env.enableCheckpointing(checkpointInterval);
         }
         
-        // Create skewed word source
+        // Create skewed word source - outputs Tuple2<word, 1L>
         DataStream<Tuple2<String, Long>> source = env
             .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
-            .name("SkewedWordSource")
-            .assignTimestampsAndWatermarks(
-                WatermarkStrategy
-                    .<Tuple2<String, Long>>forBoundedOutOfOrderness(Duration.ofSeconds(5))
-                    .withTimestampAssigner((event, timestamp) -> event.f1)
-            )
-            .name("Watermarks");
+            .name("SkewedWordSource");
         
         // Sliding window word count
-        DataStream<Tuple3<String, Long, Long>> result = source
+        DataStream<Tuple2<String, Long>> result = source
             .keyBy(t -> t.f0)
-            .window(SlidingEventTimeWindows.of(
+            .window(SlidingProcessingTimeWindows.of(
                 Duration.ofMillis(windowSizeMillis),
                 Duration.ofMillis(slideSizeMillis)
             ))
-            .aggregate(
-                new CountAggregator(),
-                new WindowResultFunction()
-            )
+            .sum(1)
             .name("SlidingWindowCount");
         
-        // Metrics sink - pass numRecords for correct throughput calculation
-        result.addSink(new MetricsSink(outputPath, parallelism, latencyDir, backend, numRecords))
+        // Metrics sink
+        result.addSink(new MetricsSink(outputPath, parallelism, backend, numRecords))
             .name("MetricsSink")
             .setParallelism(1);
         
@@ -126,52 +109,5 @@ public class WordCountBenchmark {
         System.out.println("===========================");
         
         env.execute("WordCount Benchmark");
-    }
-    
-    /**
-     * Aggregator that counts occurrences and tracks the latest record timestamp.
-     * Accumulator: (count, latestTimestamp)
-     */
-    public static class CountAggregator 
-            implements AggregateFunction<Tuple2<String, Long>, Tuple2<Long, Long>, Tuple2<Long, Long>> {
-        
-        @Override
-        public Tuple2<Long, Long> createAccumulator() {
-            return Tuple2.of(0L, 0L);
-        }
-        
-        @Override
-        public Tuple2<Long, Long> add(Tuple2<String, Long> value, Tuple2<Long, Long> accumulator) {
-            // value.f1 is the processing time when the record was emitted from source
-            return Tuple2.of(accumulator.f0 + 1, Math.max(accumulator.f1, value.f1));
-        }
-        
-        @Override
-        public Tuple2<Long, Long> getResult(Tuple2<Long, Long> accumulator) {
-            return accumulator;
-        }
-        
-        @Override
-        public Tuple2<Long, Long> merge(Tuple2<Long, Long> a, Tuple2<Long, Long> b) {
-            return Tuple2.of(a.f0 + b.f0, Math.max(a.f1, b.f1));
-        }
-    }
-    
-    /**
-     * Window function that produces (word, count, sourceTimestamp) tuples.
-     * sourceTimestamp is the latest record's emit time from source, used for end-to-end latency.
-     */
-    public static class WindowResultFunction 
-            extends ProcessWindowFunction<Tuple2<Long, Long>, Tuple3<String, Long, Long>, String, TimeWindow> {
-        
-        @Override
-        public void process(String key,
-                          Context context,
-                          Iterable<Tuple2<Long, Long>> results,
-                          Collector<Tuple3<String, Long, Long>> out) {
-            Tuple2<Long, Long> result = results.iterator().next();
-            // result.f0 = count, result.f1 = latest source timestamp
-            out.collect(Tuple3.of(key, result.f0, result.f1));
-        }
     }
 }

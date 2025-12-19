@@ -33,21 +33,39 @@ public class ReusableBufferDataOutputView implements DataOutputView {
         return position;
     }
 
-    private void ensureCapacity(int add) {
-        int required = position + add;
-        if (required <= buffer.length) {
-            return;
-        }
+    /**
+     * Grow buffer if needed (slow path, should be rarely called after warmup).
+     * Marked as never-inline hint by being private and separate from hot paths.
+     */
+    private void grow(int required) {
         int newCap = Math.max(buffer.length << 1, required);
         byte[] nb = new byte[newCap];
         System.arraycopy(buffer, 0, nb, 0, position);
         buffer = nb;
     }
 
+    /**
+     * Inline capacity check for hot paths.
+     * JIT should inline this check and eliminate the branch when capacity is sufficient.
+     */
+    private void ensureCapacity(int add) {
+        int required = position + add;
+        if (required > buffer.length) {
+            grow(required);
+        }
+    }
+
     @Override
     public void write(int b) throws IOException {
-        ensureCapacity(1);
-        buffer[position++] = (byte) b;
+        // Hot path: inline capacity check
+        byte[] buf = this.buffer;
+        int pos = this.position;
+        if (pos >= buf.length) {
+            grow(pos + 1);
+            buf = this.buffer;
+        }
+        buf[pos] = (byte) b;
+        this.position = pos + 1;
     }
 
     @Override
@@ -59,7 +77,10 @@ public class ReusableBufferDataOutputView implements DataOutputView {
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
         if (len <= 0) return;
-        ensureCapacity(len);
+        int required = position + len;
+        if (required > buffer.length) {
+            grow(required);
+        }
         System.arraycopy(b, off, buffer, position, len);
         position += len;
     }
@@ -71,14 +92,29 @@ public class ReusableBufferDataOutputView implements DataOutputView {
 
     @Override
     public void writeByte(int v) throws IOException {
-        write(v);
+        // Hot path: inline capacity check
+        byte[] buf = this.buffer;
+        int pos = this.position;
+        if (pos >= buf.length) {
+            grow(pos + 1);
+            buf = this.buffer;
+        }
+        buf[pos] = (byte) v;
+        this.position = pos + 1;
     }
 
     @Override
     public void writeShort(int v) throws IOException {
-        ensureCapacity(2);
-        buffer[position++] = (byte) (v >>> 8);
-        buffer[position++] = (byte) (v);
+        // Hot path: inline capacity check and use local refs
+        byte[] buf = this.buffer;
+        int pos = this.position;
+        if (pos + 2 > buf.length) {
+            grow(pos + 2);
+            buf = this.buffer;
+        }
+        buf[pos] = (byte) (v >>> 8);
+        buf[pos + 1] = (byte) v;
+        this.position = pos + 2;
     }
 
     @Override
@@ -88,24 +124,39 @@ public class ReusableBufferDataOutputView implements DataOutputView {
 
     @Override
     public void writeInt(int v) throws IOException {
-        ensureCapacity(4);
-        buffer[position++] = (byte) (v >>> 24);
-        buffer[position++] = (byte) (v >>> 16);
-        buffer[position++] = (byte) (v >>> 8);
-        buffer[position++] = (byte) (v);
+        // Hot path: inline capacity check and use local refs
+        byte[] buf = this.buffer;
+        int pos = this.position;
+        if (pos + 4 > buf.length) {
+            grow(pos + 4);
+            buf = this.buffer;
+        }
+        buf[pos] = (byte) (v >>> 24);
+        buf[pos + 1] = (byte) (v >>> 16);
+        buf[pos + 2] = (byte) (v >>> 8);
+        buf[pos + 3] = (byte) v;
+        this.position = pos + 4;
     }
 
     @Override
     public void writeLong(long v) throws IOException {
-        ensureCapacity(8);
-        buffer[position++] = (byte) (v >>> 56);
-        buffer[position++] = (byte) (v >>> 48);
-        buffer[position++] = (byte) (v >>> 40);
-        buffer[position++] = (byte) (v >>> 32);
-        buffer[position++] = (byte) (v >>> 24);
-        buffer[position++] = (byte) (v >>> 16);
-        buffer[position++] = (byte) (v >>> 8);
-        buffer[position++] = (byte) (v);
+        // Hot path: inline capacity check and use local refs
+        // This is critical for TimeWindow serialization (2 longs = start + end)
+        byte[] buf = this.buffer;
+        int pos = this.position;
+        if (pos + 8 > buf.length) {
+            grow(pos + 8);
+            buf = this.buffer;
+        }
+        buf[pos] = (byte) (v >>> 56);
+        buf[pos + 1] = (byte) (v >>> 48);
+        buf[pos + 2] = (byte) (v >>> 40);
+        buf[pos + 3] = (byte) (v >>> 32);
+        buf[pos + 4] = (byte) (v >>> 24);
+        buf[pos + 5] = (byte) (v >>> 16);
+        buf[pos + 6] = (byte) (v >>> 8);
+        buf[pos + 7] = (byte) v;
+        this.position = pos + 8;
     }
 
     @Override
