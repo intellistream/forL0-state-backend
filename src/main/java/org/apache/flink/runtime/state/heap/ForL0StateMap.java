@@ -699,6 +699,18 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         if (slice == null || slice.length == 0) {
             return null;
         }
+        
+        // Check if slice covers the full value (large objects spanning segments may be truncated)
+        int actualValueLen = entryStore.getValueLen(entryAddress);
+        if (actualValueLen > slice.length) {
+            // Large object spanning multiple segments - fall back to byte[] path
+            byte[] valueBytes = entryStore.getValueBytes(entryAddress);
+            if (valueBytes == null || valueBytes.length == 0) {
+                return null;
+            }
+            return serializerPack.deserializeStateFromBytes(valueBytes);
+        }
+        
         // 使用 SerializerPack 提供的便捷方法：先重置输入视图再反序列化（支持复用实例）
         S reuse = reuseState;
         if (reuse == null) {

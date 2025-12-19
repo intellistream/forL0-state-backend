@@ -265,8 +265,7 @@ public class ValuePool implements AutoCloseable {
      */
     public int getValueLen(long valueHandle) {
         if (isLargeObject(valueHandle)) {
-            LargeAllocation alloc = largeAllocations.get(valueHandle);
-            return alloc.segment.getInt(VALUE_LEN_OFFSET);
+            return getLargeValueLen(valueHandle);
         }
         
         Run run = decodeRun(valueHandle);
@@ -451,10 +450,13 @@ public class ValuePool implements AutoCloseable {
     
     /**
      * Allocates a large object (>4KB).
+     * Supports multi-segment allocation when value exceeds single page size.
      */
     private long allocateLarge(int valueLen) {
         int totalSize = VALUE_ENTRY_HEADER_SIZE + valueLen;
-        int alignedSize = alignToPage(totalSize);
+        int pageSize = allocator.getPageSize();
+        // Align to actual page size, not the constant
+        int alignedSize = ((totalSize + pageSize - 1) / pageSize) * pageSize;
         
         try {
             List<MemorySegment> alloc = allocator.allocate(alignedSize);
@@ -465,11 +467,19 @@ public class ValuePool implements AutoCloseable {
             long id = nextLargeId++;
             long handle = encodeLargeHandle(id);
             
-            LargeAllocation allocation = new LargeAllocation(alloc.get(0), alloc, alignedSize, valueLen);
+            int totalCapacity = alloc.size() * pageSize;
+            
+            // Debug logging for large allocation
+            LOG.debug("[LARGE_ALLOC] valueLen={}, totalSize={}, alignedSize={}, pageSize={}, " +
+                      "segments={}, totalCapacity={}, handle=0x{}", 
+                      valueLen, totalSize, alignedSize, pageSize, alloc.size(), totalCapacity, 
+                      Long.toHexString(handle));
+            
+            LargeAllocation allocation = new LargeAllocation(alloc, alloc, alignedSize, pageSize, valueLen);
             largeAllocations.put(handle, allocation);
             
             // Write value length
-            allocation.segment.putInt(0 + VALUE_LEN_OFFSET, valueLen);
+            allocation.putInt(VALUE_LEN_OFFSET, valueLen);
             
             largeObjectCount++;
             largeObjectBytes += alignedSize;
@@ -497,19 +507,31 @@ public class ValuePool implements AutoCloseable {
     }
     
     /**
-     * Writes to a large object.
+     * Writes to a large object (supports multi-segment).
      */
     private void writeLarge(long valueHandle, byte[] buffer, int len) {
         LargeAllocation alloc = largeAllocations.get(valueHandle);
         if (alloc != null) {
-            alloc.segment.putInt(VALUE_LEN_OFFSET, len);
-            alloc.segment.put(VALUE_ENTRY_HEADER_SIZE, buffer, 0, len);
+            int requiredSize = VALUE_ENTRY_HEADER_SIZE + len;
+            int capacity = alloc.capacity();
+            if (requiredSize > capacity) {
+                LOG.error("[LARGE_WRITE_ERROR] Capacity too small: capacity={}, requiredSize={}, len={}, " +
+                          "allocatedSize={}, handle=0x{}", 
+                          capacity, requiredSize, len, alloc.allocatedSize, Long.toHexString(valueHandle));
+                throw new IndexOutOfBoundsException(
+                    "Large object write failed: capacity " + capacity + 
+                    " < required size " + requiredSize + " (valueLen=" + len + ")");
+            }
+            alloc.putInt(VALUE_LEN_OFFSET, len);
+            alloc.put(VALUE_ENTRY_HEADER_SIZE, buffer, 0, len);
             alloc.usedSize = len;
+        } else {
+            LOG.error("[LARGE_WRITE_ERROR] No allocation found for handle 0x{}", Long.toHexString(valueHandle));
         }
     }
     
     /**
-     * Reads from a large object.
+     * Reads from a large object (supports multi-segment).
      */
     private byte[] readLarge(long valueHandle) {
         LargeAllocation alloc = largeAllocations.get(valueHandle);
@@ -517,7 +539,7 @@ public class ValuePool implements AutoCloseable {
             return null;
         }
         
-        int len = alloc.segment.getInt(VALUE_LEN_OFFSET);
+        int len = alloc.getInt(VALUE_LEN_OFFSET);
         if (len < 0 || len > MAX_VALUE_SIZE) {
             return null;
         }
@@ -527,12 +549,14 @@ public class ValuePool implements AutoCloseable {
         }
         
         byte[] result = new byte[len];
-        alloc.segment.get(VALUE_ENTRY_HEADER_SIZE, result);
+        alloc.get(VALUE_ENTRY_HEADER_SIZE, result, 0, len);
         return result;
     }
     
     /**
      * Gets slice for a large object.
+     * Note: For multi-segment allocations where data spans segments, 
+     * this returns a slice of the first segment only. Caller should use read() for full data.
      */
     private MemorySegmentSlice getLargeSlice(long valueHandle) {
         LargeAllocation alloc = largeAllocations.get(valueHandle);
@@ -540,12 +564,29 @@ public class ValuePool implements AutoCloseable {
             return null;
         }
         
-        int len = alloc.segment.getInt(VALUE_LEN_OFFSET);
+        int len = alloc.getInt(VALUE_LEN_OFFSET);
         if (len < 0 || len > MAX_VALUE_SIZE) {
             return null;
         }
         
-        return reusableSlice.set(alloc.segment, VALUE_ENTRY_HEADER_SIZE, len);
+        // For single-segment allocations, return direct slice
+        // For multi-segment, this only returns the portion in first segment
+        MemorySegment firstSeg = alloc.segments.get(0);
+        int availableInFirst = alloc.pageSize - VALUE_ENTRY_HEADER_SIZE;
+        int sliceLen = Math.min(len, availableInFirst);
+        
+        return reusableSlice.set(firstSeg, VALUE_ENTRY_HEADER_SIZE, sliceLen);
+    }
+    
+    /**
+     * Gets the value length of a large object.
+     */
+    private int getLargeValueLen(long valueHandle) {
+        LargeAllocation alloc = largeAllocations.get(valueHandle);
+        if (alloc == null) {
+            return -1;
+        }
+        return alloc.getInt(VALUE_LEN_OFFSET);
     }
     
     // ========== Handle Encoding/Decoding ==========
@@ -820,18 +861,98 @@ public class ValuePool implements AutoCloseable {
     
     /**
      * Large allocation tracking.
+     * Supports multi-segment storage when value size exceeds single page size.
      */
     private static class LargeAllocation {
-        final MemorySegment segment;
+        /** All segments for this allocation (may be multiple for large values) */
+        final List<MemorySegment> segments;
+        /** Original allocation handle for release */
         final List<MemorySegment> allocHandle;
+        /** Total allocated size across all segments */
         final int allocatedSize;
+        /** Page size (each segment's size) */
+        final int pageSize;
+        /** Current used size (value length, not including header) */
         int usedSize;
         
-        LargeAllocation(MemorySegment segment, List<MemorySegment> allocHandle, int allocatedSize, int usedSize) {
-            this.segment = segment;
+        LargeAllocation(List<MemorySegment> segments, List<MemorySegment> allocHandle, 
+                        int allocatedSize, int pageSize, int usedSize) {
+            this.segments = segments;
             this.allocHandle = allocHandle;
             this.allocatedSize = allocatedSize;
+            this.pageSize = pageSize;
             this.usedSize = usedSize;
+        }
+        
+        /** 
+         * Write data across potentially multiple segments.
+         * @param offset start offset in virtual address space
+         * @param data source data
+         * @param dataOffset offset in source data
+         * @param len length to write
+         */
+        void put(int offset, byte[] data, int dataOffset, int len) {
+            int remaining = len;
+            int srcPos = dataOffset;
+            int pos = offset;
+            
+            while (remaining > 0) {
+                int segIdx = pos / pageSize;
+                int segOffset = pos % pageSize;
+                int writeLen = Math.min(remaining, pageSize - segOffset);
+                
+                segments.get(segIdx).put(segOffset, data, srcPos, writeLen);
+                
+                remaining -= writeLen;
+                srcPos += writeLen;
+                pos += writeLen;
+            }
+        }
+        
+        /**
+         * Read data across potentially multiple segments.
+         */
+        void get(int offset, byte[] dest, int destOffset, int len) {
+            int remaining = len;
+            int dstPos = destOffset;
+            int pos = offset;
+            
+            while (remaining > 0) {
+                int segIdx = pos / pageSize;
+                int segOffset = pos % pageSize;
+                int readLen = Math.min(remaining, pageSize - segOffset);
+                
+                segments.get(segIdx).get(segOffset, dest, dstPos, readLen);
+                
+                remaining -= readLen;
+                dstPos += readLen;
+                pos += readLen;
+            }
+        }
+        
+        /**
+         * Write an int at offset (must not cross segment boundary for header).
+         */
+        void putInt(int offset, int value) {
+            int segIdx = offset / pageSize;
+            int segOffset = offset % pageSize;
+            segments.get(segIdx).putInt(segOffset, value);
+        }
+        
+        /**
+         * Read an int at offset.
+         */
+        int getInt(int offset) {
+            int segIdx = offset / pageSize;
+            int segOffset = offset % pageSize;
+            return segments.get(segIdx).getInt(segOffset);
+        }
+        
+        /**
+         * Get total capacity.
+         */
+        int capacity() {
+            return segments.size() * pageSize;
         }
     }
 }

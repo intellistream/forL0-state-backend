@@ -146,6 +146,14 @@ public class SerializerPack<K, N, S> {
         resetInputView(segment, offset, length);
         return deserializeState(reuse);
     }
+    
+    /**
+     * 从 byte[] 反序列化状态。用于大对象跨多个 segment 的情况。
+     */
+    public S deserializeStateFromBytes(byte[] bytes) throws IOException {
+        org.apache.flink.core.memory.DataInputDeserializer input = new org.apache.flink.core.memory.DataInputDeserializer(bytes);
+        return stateSer.deserialize(input);
+    }
 
     // ========== 访问器方法 ==========
 
