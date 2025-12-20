@@ -1167,49 +1167,208 @@ Day 7        Day 8        Day 9        Day 10
 
 ---
 
-### 7.4 Phase 4: 清理与性能验证 (Day 10-12)
+### 7.4 Phase 4: 代码清理 (Day 10)
 
-**目标**: 删除旧代码，性能基准测试，完成改造
+**目标**: 删除旧代码，移除废弃引用，完成改造
 
 ```
-Week 2 (续)          Week 3
+Week 2 (续)
 ─────────────────────────────────────────────────────────────────
-Day 10       Day 11       Day 12       Day 13
-├────────────┼────────────┼────────────┼────────────┤
-│ 代码清理    │ 性能测试    │ 文档&收尾   │ Code Review│
-│            │ 基准对比    │            │ & Merge    │
-└────────────┴────────────┴────────────┴────────────┘
+Day 10
+├────────────┤
+│ 代码清理    │
+│ (全面)     │
+└────────────┘
 ```
+
+#### 7.4.1 任务分解
 
 | ID | 任务 | 详细内容 | 验收标准 |
 |----|------|----------|----------|
-| 4.1 | 删除旧存储代码 | - `entrystore/EntryStore.java`<br>- `entrystore/KeyNsPool.java`<br>- `entrystore/ValuePool.java`<br>- `entrystore/ValueSizeClass.java`<br>- `entrystore/EntryStoreConstants.java` | 编译通过，无引用 |
-| 4.2 | 删除序列化优化代码 | - `io/SerializerPack.java`<br>- `io/FixedLengthTypeSupport.java` | 编译通过 |
-| 4.3 | 性能基准测试 | - 运行 WordCount benchmark<br>- 对比新旧实现 TPS<br>- 验证 5-10x 提升目标 | 性能达标 |
-| 4.4 | 文档更新 | - 更新 README.md<br>- 更新设计说明书<br>- 标注删除的文件 | 文档完整 |
+| 4.1 | 清理 ForL0StateMap | 移除 SerializerPack 字段和方法 | 编译通过 |
+| 4.2 | 删除 io 目录 | 整个 `io/` 目录（4个文件） | 编译通过 |
+| 4.3 | 删除 entrystore 目录 | 整个 `entrystore/` 目录（6个文件） | 编译通过 |
+| 4.4 | 删除 utils 目录 | 整个 `utils/` 目录（2个文件） | 编译通过 |
+| 4.5 | 删除 legacy 目录 | 整个 `legacy/` 目录（7个文件） | 编译通过 |
+| 4.6 | 删除 hotspot 目录 | 整个 `hotspot/` 目录（13个文件） | 编译通过 |
+| 4.7 | 删除对应测试文件 | 删除旧测试目录（4个目录） | 测试通过 |
 
-**待删除文件清单**:
+#### 7.4.2 待删除文件完整清单
+
+**源代码文件（32个文件）**:
 
 ```
 src/main/java/org/apache/flink/runtime/state/heap/
-├── entrystore/
-│   ├── EntryStore.java          ← 删除
-│   ├── EntryStoreConstants.java ← 删除
-│   ├── EntryStoreStats.java     ← 删除 (如果存在)
-│   ├── KeyNsPool.java           ← 删除
-│   ├── ValuePool.java           ← 删除
-│   └── ValueSizeClass.java      ← 删除
-└── io/
-    ├── SerializerPack.java          ← 删除
-    └── FixedLengthTypeSupport.java  ← 删除
+│
+├── entrystore/                          ← 删除整个目录
+│   ├── EntryStore.java                  # 旧的堆外存储
+│   ├── EntryStoreConstants.java         # 旧常量定义
+│   ├── EntryStoreStats.java             # 旧统计
+│   ├── KeyNsPool.java                   # 键命名空间池
+│   ├── ValuePool.java                   # 值池
+│   └── ValueSizeClass.java              # 值大小分类
+│
+├── io/                                  ← 删除整个目录
+│   ├── SerializerPack.java              # 序列化打包器
+│   ├── FixedLengthTypeSupport.java      # 定长类型优化
+│   ├── MemorySegmentDataInputView.java  # 内存段输入视图
+│   └── ReusableBufferDataOutputView.java # 复用缓冲输出视图
+│
+├── legacy/                              ← 删除整个目录
+│   ├── CavastBucketTable.java           # 旧索引实现
+│   ├── CavastEntryAccess.java           # 旧条目访问
+│   └── levelhash/
+│       ├── LevelHashBucketLayout.java   # Level Hash 布局
+│       ├── LevelHashEntryArena.java     # Level Hash Arena
+│       ├── LevelHashIndex.java          # Level Hash 索引
+│       ├── LevelHashResizeHelper.java   # Level Hash 扩容
+│       └── LevelHashStateMap.java       # Level Hash StateMap
+│
+├── hotspot/                             ← 删除整个目录
+│   ├── hash/
+│   │   └── Hash.java                    # 哈希函数
+│   ├── simulator/
+│   │   └── Simulator.java               # 热点模拟器
+│   ├── sketch/
+│   │   ├── Sketch.java                  # Sketch 接口
+│   │   ├── HeavyKeeper.java             # HeavyKeeper
+│   │   ├── SSummary.java                # Space-Saving Summary
+│   │   ├── ElasticSketch/
+│   │   │   ├── ElasticSketch.java
+│   │   │   ├── HeavyPart.java
+│   │   │   └── LightPart.java
+│   │   └── WavingSketch/
+│   │       ├── WavingSketch.java
+│   │       └── Murmur.java
+│   └── utils/
+│       └── Config.java                  # 配置
+│
+└── utils/                               ← 删除整个目录
+    ├── HashFunctions.java               # 哈希函数（仅 legacy 使用）
+    └── UnsafeUtils.java                 # Unsafe 工具（仅 legacy 使用）
+```
+
+**测试文件（8个文件）**:
+
+```
+src/test/java/org/apache/flink/runtime/state/heap/
+│
+├── entrystore/                          ← 删除整个目录
+│   ├── EntryStoreTest.java
+│   ├── EntryStoreStressTest.java
+│   ├── KeyNsPoolTest.java
+│   ├── ValuePoolTest.java
+│   ├── MemoryOptimizationTest.java
+│   └── TestInlineSlice.java
+│
+├── io/                                  ← 删除整个目录
+│   └── FixedLengthTypeSupportTest.java
+│
+├── legacy/                              ← 删除整个目录
+│   └── CavastBucketTableTest.java
+│
+├── levelhash/                           ← 删除（空目录）
+│
+└── utils/                               ← 删除（空目录）
+```
+
+#### 7.4.3 ForL0StateMap 代码清理
+
+移除 `ForL0StateMap.java` 中不再需要的代码：
+
+```java
+// === 删除以下 import ===
+- import org.apache.flink.runtime.state.heap.io.SerializerPack;
+
+// === 删除以下字段 ===
+- private final SerializerPack<K, N, S> serializerPack;
+
+// === 删除构造函数中的初始化 ===
+- this.serializerPack = new SerializerPack<>(keySerializer, namespaceSerializer, stateSerializer);
+
+// === 删除以下方法 ===
+- SerializerPack<K, N, S> getSerializerPack() { ... }
+
+// === 删除相关注释 ===
+- // 序列化器（仅 Checkpoint/Restore 使用，热路径不序列化）
+```
+
+#### 7.4.4 删除统计
+
+| 类别 | 文件数 | 估计代码行数 |
+|------|--------|-------------|
+| entrystore/ | 6 | ~1500 |
+| io/ | 4 | ~500 |
+| legacy/ | 7 | ~1200 |
+| hotspot/ | 13 | ~2000 |
+| utils/ | 2 | ~300 |
+| 测试文件 | 8 | ~1500 |
+| **总计** | **40** | **~7000** |
+
+#### 7.4.5 执行顺序
+
+```
+Step 1: 清理 ForL0StateMap.java
+        └─ 移除 SerializerPack 相关代码
+        
+Step 2: 删除 io/ 目录
+        └─ 因为 SerializerPack 已无引用
+        
+Step 3: 删除 entrystore/ 目录
+        └─ 旧的堆外存储代码
+        
+Step 4: 删除 utils/ 目录
+        └─ 只被 legacy 使用
+
+Step 5: 删除 legacy/ 目录
+        └─ 旧的索引实现
+        
+Step 6: 删除 hotspot/ 目录
+        └─ 未使用的热点检测代码
+        
+Step 7: 删除测试目录
+        └─ entrystore/, io/, legacy/, levelhash/, utils/
+        
+Step 8: 编译验证 & 运行测试
+        └─ mvn clean compile test
+```
+
+#### 7.4.6 保留的核心文件
+
+改造后保留的核心文件清单：
+
+```
+src/main/java/org/apache/flink/runtime/state/heap/
+├── ForL0StateMap.java           # 核心 StateMap 实现
+├── ForL0StateMapSnapshot.java   # Checkpoint 快照
+├── ForL0StateTable.java         # StateTable
+├── ForL0StateTableSnapshot.java # StateTable 快照
+├── ForL0KeyedStateBackend.java  # KeyedStateBackend
+├── ForL0KeyedStateBackendBuilder.java
+├── ForL0StateBackend.java       # StateBackend
+├── ForL0StateBackendFactory.java
+├── ForL0StateBackendConfig.java
+├── ForL0StateBackendOptions.java
+├── ForL0RestoreOperation.java   # Restore 操作
+├── ForL0*State.java             # 各种 State 类型 (5个)
+├── HeapStateEntry.java          # 堆对象条目 [新增]
+├── HeapEntryStore.java          # 堆对象存储 [新增]
+├── L0Table.java                 # L0 缓存索引
+├── L0TableMetricsCollector.java # L0 指标收集
+├── MainTable.java               # 主索引表
+└── space/                       # 内存分配器 (5个文件)
+    ├── L0MemoryAllocator.java
+    ├── MemoryManagerAllocator.java
+    ├── MemorySegmentSlice.java
+    ├── NativeL0Memory.java
+    └── NativeL0MemoryAllocator.java
 ```
 
 **Phase 4 交付物**:
-- 清理后的代码库
-- 性能测试报告 (`benchmark/results/heap-store-comparison.md`)
+- 清理后的代码库（删除 ~40 个文件，~7000 行代码）
 - 更新后的 README.md
 
-**检查点**: 性能提升 ≥5x，所有测试通过，文档更新完成 ✓
+**检查点**: 编译通过，所有测试通过 ✓
 
 ---
 
@@ -1232,20 +1391,11 @@ src/main/java/org/apache/flink/runtime/state/heap/
 │  Week 2                                                          │
 │  ┌─────┬─────┬─────┬─────┬─────┐                                │
 │  │ D6  │ D7  │ D8  │ D9  │ D10 │                                │
-│  ├─────┼─────┴─────┴─────┼─────┤                                │
-│  │ P2  │    Phase 3      │ P4  │                                │
-│  │续   │ ForL0StateMap   │ 清理│                                │
-│  └─────┴─────────────────┴─────┘                                │
-│         ▼ Milestone 2: 热路径零序列化                            │
-│                                                                  │
-│  Week 3                                                          │
-│  ┌─────┬─────┬─────┐                                            │
-│  │ D11 │ D12 │ D13 │                                            │
-│  ├─────┴─────┴─────┤                                            │
-│  │    Phase 4      │                                            │
-│  │  性能验证&收尾   │                                            │
-│  └─────────────────┘                                            │
-│         ▼ Milestone 3: 性能达标，合并主分支                       │
+│  ├─────┼─────┴─────┴─────┴─────┤                                │
+│  │ P2  │    Phase 3 + Phase 4  │                                │
+│  │续   │ ForL0StateMap + 清理  │                                │
+│  └─────┴───────────────────────┘                                │
+│         ▼ Milestone 2: 热路径零序列化 + 代码清理完成             │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -1257,7 +1407,7 @@ src/main/java/org/apache/flink/runtime/state/heap/
 | Phase 1 | 3 天 | Day 3 | HeapEntryStore 可用 |
 | Phase 2 | 3 天 | Day 6 | 索引层改造完成 |
 | Phase 3 | 3 天 | Day 9 | ForL0StateMap 重构完成 |
-| Phase 4 | 3 天 | Day 12 | 清理完成，性能验证 |
+| Phase 4 | 1 天 | Day 10 | 代码清理完成 |
 | Buffer | 1 天 | Day 13 | Code Review & Merge |
 | **总计** | **13 天** | - | 约 2.5 周 |
 

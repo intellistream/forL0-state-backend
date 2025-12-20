@@ -521,7 +521,18 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     public TableStats getStats() {
         return new TableStats(bucketCount, totalEntries, getLoadFactor(),
-                             getMaxExtensionBucketsUsed(), getAllocatedExtensionBuckets(), needsResize);
+                             getMaxExtensionBucketsUsed(), getAllocatedExtensionBuckets(), 
+                             extensionPoolUsed, getBucketsNeedingExtension(), needsResize);
+    }
+    
+    private int getBucketsNeedingExtension() {
+        int count = 0;
+        for (int i = 0; i < bucketCount; i++) {
+            if (extensionBucketBaseIndices[i] > 0) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // --- Resize operations ---
@@ -765,32 +776,36 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     /**
      * Gets the MemorySegment containing the specified bucket.
+     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
      */
     private MemorySegment getSegmentForBucket(int bucketIndex) {
-        int segmentIndex = (bucketIndex * BUCKET_SIZE) / segmentSize;
+        int segmentIndex = (int) (((long) bucketIndex * BUCKET_SIZE) / segmentSize);
         return memorySegments[Math.min(segmentIndex, memorySegmentCount - 1)];
     }
 
     /**
      * Resize only: gets segment from new table's segment list.
+     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
      */
     private MemorySegment getSegmentForBucket(MemorySegment[] segments, int segmentCount, int segSize, int bucketIndex) {
-        int segmentIndex = (bucketIndex * BUCKET_SIZE) / segSize;
+        int segmentIndex = (int) (((long) bucketIndex * BUCKET_SIZE) / segSize);
         return segments[Math.min(segmentIndex, segmentCount - 1)];
     }
 
     /**
      * Gets bucket offset within segment (using cached segmentSize).
+     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
      */
     private int getBucketOffsetInSegment(int bucketIndex) {
-        return ((bucketIndex * BUCKET_SIZE) % segmentSize);
+        return (int) (((long) bucketIndex * BUCKET_SIZE) % segmentSize);
     }
 
     /**
      * Resize only: calculates offset using specified segmentSize.
+     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
      */
     private int getBucketOffsetInSegment(int bucketIndex, int segSize) {
-        return ((bucketIndex * BUCKET_SIZE) % segSize);
+        return (int) (((long) bucketIndex * BUCKET_SIZE) % segSize);
     }
 
     private void clearAllSlots() {
@@ -854,22 +869,27 @@ public class MainTable<K, N, S> implements AutoCloseable {
         public final double loadFactor;
         public final int maxExtensionBuckets;
         public final int allocatedExtensionBuckets;
+        public final int extensionAreasUsed;  // 已分配的扩展区数
+        public final int bucketsNeedingExtension;  // 需要扩展的主桶数
         public final boolean needsResize;
 
         public TableStats(int bucketCount, int totalEntries, double loadFactor,
-                         int maxExtensionBuckets, int allocatedExtensionBuckets, boolean needsResize) {
+                         int maxExtensionBuckets, int allocatedExtensionBuckets, 
+                         int extensionAreasUsed, int bucketsNeedingExtension, boolean needsResize) {
             this.bucketCount = bucketCount;
             this.totalEntries = totalEntries;
             this.loadFactor = loadFactor;
             this.maxExtensionBuckets = maxExtensionBuckets;
             this.allocatedExtensionBuckets = allocatedExtensionBuckets;
+            this.extensionAreasUsed = extensionAreasUsed;
+            this.bucketsNeedingExtension = bucketsNeedingExtension;
             this.needsResize = needsResize;
         }
 
         @Override
         public String toString() {
-            return String.format("MainTable[buckets=%d, entries=%d, load=%.2f, maxExt=%d, needsResize=%s]",
-                bucketCount, totalEntries, loadFactor, maxExtensionBuckets, needsResize);
+            return String.format("MainTable[buckets=%d, entries=%d, load=%.2f, maxExt=%d, extAreas=%d, bucketsNeedExt=%d, needsResize=%s]",
+                bucketCount, totalEntries, loadFactor, maxExtensionBuckets, extensionAreasUsed, bucketsNeedingExtension, needsResize);
         }
     }
 

@@ -93,11 +93,6 @@ backends:
       main_table_initial_size: 14
       # MainTable resize load factor threshold (0.5-4.0)
       main_table_load_factor_threshold: 1.5
-      # Initial memory to pre-allocate for EntryArena (reduces malloc overhead)
-      # Set to 0 to disable pre-allocation (allocate on demand)
-      # Note: Pre-allocation is now smart - limited to 50% of available memory
-      # Total pre-alloc = KeyGroups × States × arena_size (e.g., 64 × 3 × 2mb = 384mb)
-      arena_initial_size: "2mb"
 
 # Metrics collection settings
 metrics:

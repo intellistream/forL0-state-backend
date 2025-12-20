@@ -42,9 +42,6 @@ public class ForL0StateBackendConfig implements Serializable {
     /** Load factor threshold for MainTable resize. */
     private final double mainTableLoadFactorThreshold;
 
-    /** Initial memory size for EntryStore pre-allocation in bytes. 0 means no pre-allocation. */
-    private final long arenaInitialSizeBytes;
-
     /**
      * Creates a default configuration with all default values.
      */
@@ -55,7 +52,6 @@ public class ForL0StateBackendConfig implements Serializable {
         this.l0MemoryMaxBytes = -1; // unlimited
         this.mainTableInitialSize = MAIN_TABLE_INITIAL_SIZE.defaultValue();
         this.mainTableLoadFactorThreshold = MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
-        this.arenaInitialSizeBytes = 0; // no pre-allocation by default
 
         LOG.debug("ForL0StateBackendConfig created with default values: {}", this);
     }
@@ -90,10 +86,6 @@ public class ForL0StateBackendConfig implements Serializable {
         validateLoadFactorThreshold(loadFactor);
         this.mainTableLoadFactorThreshold = loadFactor;
 
-        // Parse EntryStore settings
-        MemorySize arenaSize = config.get(ARENA_INITIAL_SIZE);
-        this.arenaInitialSizeBytes = (arenaSize == null || arenaSize.getBytes() <= 0) ? 0 : arenaSize.getBytes();
-
         LOG.info("ForL0StateBackendConfig created from config: {}", this);
     }
 
@@ -106,15 +98,13 @@ public class ForL0StateBackendConfig implements Serializable {
             L0Table.ReplacementPolicy l0ReplacementPolicy,
             long l0MemoryMaxBytes,
             int mainTableInitialSize,
-            double mainTableLoadFactorThreshold,
-            long arenaInitialSizeBytes) {
+            double mainTableLoadFactorThreshold) {
         this.l0CacheEnabled = l0CacheEnabled;
         this.l0CacheSize = l0CacheSize;
         this.l0ReplacementPolicy = l0ReplacementPolicy;
         this.l0MemoryMaxBytes = l0MemoryMaxBytes;
         this.mainTableInitialSize = mainTableInitialSize;
         this.mainTableLoadFactorThreshold = mainTableLoadFactorThreshold;
-        this.arenaInitialSizeBytes = arenaInitialSizeBytes;
     }
 
     // ========== Getters ==========
@@ -148,15 +138,6 @@ public class ForL0StateBackendConfig implements Serializable {
         return mainTableLoadFactorThreshold;
     }
 
-    /**
-     * Gets the initial memory size for EntryStore pre-allocation.
-     *
-     * @return Initial size in bytes, or 0 if no pre-allocation
-     */
-    public long getArenaInitialSizeBytes() {
-        return arenaInitialSizeBytes;
-    }
-
     // ========== Utility Methods ==========
 
     /**
@@ -170,8 +151,7 @@ public class ForL0StateBackendConfig implements Serializable {
                 this.l0ReplacementPolicy,
                 this.l0MemoryMaxBytes,
                 this.mainTableInitialSize,
-                this.mainTableLoadFactorThreshold,
-                this.arenaInitialSizeBytes);
+                this.mainTableLoadFactorThreshold);
     }
 
     /**
@@ -190,7 +170,6 @@ public class ForL0StateBackendConfig implements Serializable {
                 ", l0MemoryMaxBytes=" + (l0MemoryMaxBytes == -1 ? "unlimited" : l0MemoryMaxBytes + " bytes") +
                 ", mainTableInitialSize=" + mainTableInitialSize + " (=" + (1 << mainTableInitialSize) + " buckets)" +
                 ", mainTableLoadFactorThreshold=" + mainTableLoadFactorThreshold +
-                ", arenaInitialSizeBytes=" + (arenaInitialSizeBytes == 0 ? "no pre-allocation" : arenaInitialSizeBytes + " bytes") +
                 '}';
     }
 
@@ -206,7 +185,6 @@ public class ForL0StateBackendConfig implements Serializable {
         private long l0MemoryMaxBytes = -1;
         private int mainTableInitialSize = MAIN_TABLE_INITIAL_SIZE.defaultValue();
         private double mainTableLoadFactorThreshold = MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
-        private long arenaInitialSizeBytes = 0;
 
         public Builder setL0CacheEnabled(boolean enabled) {
             this.l0CacheEnabled = enabled;
@@ -251,16 +229,6 @@ public class ForL0StateBackendConfig implements Serializable {
             return this;
         }
 
-        public Builder setArenaInitialSizeBytes(long bytes) {
-            this.arenaInitialSizeBytes = bytes >= 0 ? bytes : 0;
-            return this;
-        }
-
-        public Builder setArenaInitialSize(MemorySize memorySize) {
-            this.arenaInitialSizeBytes = (memorySize == null || memorySize.getBytes() <= 0) ? 0 : memorySize.getBytes();
-            return this;
-        }
-
         public ForL0StateBackendConfig build() {
             return new ForL0StateBackendConfig(
                     l0CacheEnabled,
@@ -268,8 +236,7 @@ public class ForL0StateBackendConfig implements Serializable {
                     l0ReplacementPolicy,
                     l0MemoryMaxBytes,
                     mainTableInitialSize,
-                    mainTableLoadFactorThreshold,
-                    arenaInitialSizeBytes);
+                    mainTableLoadFactorThreshold);
         }
     }
 }

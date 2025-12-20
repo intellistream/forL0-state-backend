@@ -101,26 +101,6 @@ public class ForL0StateBackendOptions {
                                     .text("Example: 256mb, 1gb")
                                     .build());
 
-    // ========== EntryStore Configuration ==========
-
-    /**
-     * Initial memory size to pre-allocate for EntryStore.
-     * Pre-allocating memory reduces runtime malloc overhead.
-     * Set to 0 to disable pre-allocation (allocate on demand).
-     * Default is 0 (no pre-allocation).
-     */
-    public static final ConfigOption<MemorySize> ARENA_INITIAL_SIZE =
-            ConfigOptions.key(PREFIX + "arena.initial-size")
-                    .memoryType()
-                    .defaultValue(MemorySize.ZERO)
-                    .withDescription(
-                            Description.builder()
-                                    .text("Initial memory size to pre-allocate for EntryStore. ")
-                                    .text("Pre-allocating memory reduces runtime malloc overhead. ")
-                                    .text("Set to 0 to disable pre-allocation (allocate on demand). ")
-                                    .text("Example: 64mb, 128mb, 256mb")
-                                    .build());
-
     // ========== MainTable Configuration ==========
 
     /**

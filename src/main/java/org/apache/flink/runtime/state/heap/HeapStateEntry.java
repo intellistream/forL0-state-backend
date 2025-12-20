@@ -59,8 +59,8 @@ public final class HeapStateEntry<K, N, S> implements StateEntry<K, N, S> {
     private S state;
     
     /** 
-     * The cached composite hash value, computed as {@code MathUtils.bitMix(key.hashCode() ^ namespace.hashCode())}.
-     * This provides good bit distribution for hash table indexing.
+     * The cached composite hash value, computed as {@code MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode())}.
+     * This provides good bit distribution for hash table indexing by mixing each hashCode separately before XOR.
      */
     private final int hash;
     
@@ -77,8 +77,10 @@ public final class HeapStateEntry<K, N, S> implements StateEntry<K, N, S> {
         this.key = key;
         this.namespace = namespace;
         this.state = state;
-        // Use the same hash computation as CopyOnWriteStateMap for consistency
-        this.hash = MathUtils.bitMix(key.hashCode() ^ namespace.hashCode());
+        // Apply bitMix to each hashCode BEFORE combining to avoid hash collision clustering
+        // when key and namespace have consecutive/predictable hashCode values.
+        // Must match ForL0StateMap.compositeHash() exactly.
+        this.hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
     }
     
     // ========== StateEntry Interface ==========

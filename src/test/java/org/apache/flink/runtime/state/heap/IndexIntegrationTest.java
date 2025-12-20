@@ -104,9 +104,10 @@ class IndexIntegrationTest {
 
     /**
      * Computes the composite hash for key and namespace.
+     * Must match HeapStateEntry and ForL0StateMap.compositeHash() exactly.
      */
     private static int compositeHash(Object key, Object namespace) {
-        return MathUtils.bitMix(key.hashCode() ^ namespace.hashCode());
+        return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
     }
 
     /**

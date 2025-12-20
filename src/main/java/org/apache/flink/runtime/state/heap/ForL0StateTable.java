@@ -177,8 +177,7 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
                 getStateSerializer(),
                 l0CacheEnabled,
                 cfg.getL0ReplacementPolicy(),       // Replacement policy from config
-                cfg.getMainTableLoadFactorThreshold(), // Load factor from config
-                cfg.getArenaInitialSizeBytes()     // Arena pre-allocation size from config
+                cfg.getMainTableLoadFactorThreshold() // Load factor from config
         );
     }
 

@@ -60,7 +60,7 @@ class MainTableTest {
     // ========== Helper Methods ==========
 
     private int compositeHash(String key, String namespace) {
-        return MathUtils.bitMix(key.hashCode() ^ namespace.hashCode());
+        return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
     }
 
     private short extractTag(int hash) {
