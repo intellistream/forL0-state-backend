@@ -38,13 +38,13 @@ cluster:
   checkpoint_interval: 0  # ms (10s)
   
   wordcount:
-    num_keys: 1000000         # 100万 key
-    num_records: 100000000    # 1亿条
+    num_keys: 5000000         # 100万 key
+    num_records: 80000000    # 1亿条
     arrival_rate: 0 
     skew_factor: 1.0         # Zipf s parameter
     window_size: 5000         # milliseconds (5s)
-    slide_size: 500          # milliseconds (5s)
-    warmup_duration: 30       # warmup duration in seconds (0 to disable)
+    slide_size: 200          # milliseconds (5s)
+    warmup_duration: 20       # warmup duration in seconds (0 to disable)
   
   nexmark:
     # NexMark queries to run (all stateful queries for full benchmark)
@@ -90,14 +90,12 @@ backends:
       # Note: Each KeyGroup gets its own StateMap with a MainTable!
       # With 128 KeyGroups / parallelism=2 = 64 StateMaps per subtask
       # Size 10 = 1024 buckets × 64 bytes = 64KB per MainTable (small, will auto-expand)
-      main_table_initial_size: 14
+      main_table_initial_size: 16
       # MainTable resize load factor threshold (0.5-4.0)
       main_table_load_factor_threshold: 1.5
 
 # Metrics collection settings
 metrics:
-  # Latency percentiles to collect
-  latency_percentiles: [50, 95, 99]
   # Whether to collect L0 cache stats (only for ForL0 backend)
   collect_l0_stats: true
 

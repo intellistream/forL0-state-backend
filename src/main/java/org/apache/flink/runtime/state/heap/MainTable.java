@@ -25,6 +25,7 @@ import java.util.List;
 public class MainTable<K, N, S> implements AutoCloseable {
 
     private static final int BUCKET_SIZE = 64;
+    private static final int BUCKET_SIZE_BITS = 6;  // 64 = 2^6, for fast multiplication via shift
     private static final int SLOTS_PER_BUCKET = 6;
     private static final int SLOT_SIZE = 10;
     private static final int EXTENSION_POINTERS = 4;
@@ -38,6 +39,9 @@ public class MainTable<K, N, S> implements AutoCloseable {
     // Extension pool configuration
     private static final int EXTENSION_AREA_SIZE = MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET * BUCKET_SIZE;  // 16320 bytes per area
     private static final int POOL_GROW_AREAS = 32;  // Allocate 32 extension areas at a time
+    
+    // Static zero buffer for efficient memory clearing (reused across all instances)
+    private static final byte[] ZERO_BUFFER = new byte[8192];  // 8KB buffer
 
     private final MemoryManagerAllocator allocator;
     private int bucketCount;
@@ -45,7 +49,8 @@ public class MainTable<K, N, S> implements AutoCloseable {
     // Segment storage: array for O(1) access
     private MemorySegment[] memorySegments;
     private int memorySegmentCount;
-    private int segmentSize;  // Cached segment size to avoid repeated .size() calls
+    private int segmentSizeBits;   // log2(segmentSize) for bit-shift division
+    private int segmentMask;       // segmentSize - 1 for bit-mask modulo
     
     // Track all allocations separately for proper release
     private final List<List<MemorySegment>> allAllocations = new ArrayList<>();
@@ -62,7 +67,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private int maxExtensionBucketsUsed = 0;
 
     private MemorySegment lastFoundSegment = null;
-    private int lastFountSlotOffset = -1;
+    private int lastFoundSlotOffset = -1;
 
     public MainTable(MemoryManagerAllocator allocator, int bucketCountPow2) {
         this(allocator, bucketCountPow2, DEFAULT_LOAD_FACTOR_THRESHOLD);
@@ -82,7 +87,11 @@ public class MainTable<K, N, S> implements AutoCloseable {
             // 使用数组存储，O(1) 访问
             this.memorySegments = initialAllocation.toArray(new MemorySegment[0]);
             this.memorySegmentCount = this.memorySegments.length;
-            this.segmentSize = this.memorySegments[0].size();
+            int segmentSize = this.memorySegments[0].size();
+            
+            // 初始化位运算字段（segmentSize 保证是 2 的幂次）
+            this.segmentSizeBits = Integer.numberOfTrailingZeros(segmentSize);
+            this.segmentMask = segmentSize - 1;
             
             clearAllSlots();
         } catch (Exception e) {
@@ -171,13 +180,10 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     public void setSlotPointer(long entryAddress) {
-        if (lastFoundSegment != null && lastFountSlotOffset != -1) {
-            lastFoundSegment.putLong(lastFountSlotOffset + SLOT_POINTER_OFFSET, entryAddress);
-            lastFoundSegment = null;
-            lastFountSlotOffset = -1;
-        } else {
-            throw new IllegalStateException("No slot found to set pointer");
-        }
+        assert lastFoundSegment != null && lastFoundSlotOffset != -1 : "No slot found to set pointer";
+        lastFoundSegment.putLong(lastFoundSlotOffset + SLOT_POINTER_OFFSET, entryAddress);
+        lastFoundSegment = null;
+        lastFoundSlotOffset = -1;
     }
 
     /**
@@ -225,10 +231,9 @@ public class MainTable<K, N, S> implements AutoCloseable {
             if (ptr == 0) continue;
 
             short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            // Use object comparison instead of byte comparison
             if (slotTag == tag && store.matches(ptr, key, namespace)) {
                 lastFoundSegment = segment;
-                lastFountSlotOffset = slotOffset;
+                lastFoundSlotOffset = slotOffset;
                 return ptr;
             }
         }
@@ -297,7 +302,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
             // Use object comparison instead of byte comparison
             if (slotTag == tag && store.matches(ptr, key, namespace)) {
                 lastFoundSegment = segment;
-                lastFountSlotOffset = slotOffset;
+                lastFoundSlotOffset = slotOffset;
                 if (entryAddress > 0) segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
                 return ptr;
             }
@@ -305,7 +310,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
         if (empty != -1) {
             lastFoundSegment = segment;
-            lastFountSlotOffset = emptyOffset;
+            lastFoundSlotOffset = emptyOffset;
             segment.putShort(emptyOffset + SLOT_TAG_OFFSET, tag);
             if (entryAddress > 0) segment.putLong(emptyOffset + SLOT_POINTER_OFFSET, entryAddress);
             return 0;
@@ -499,9 +504,6 @@ public class MainTable<K, N, S> implements AutoCloseable {
      */
     private int getExtensionBucketGlobalIndex(int mainBucketIndex, byte offset) {
         int baseIndex = extensionBucketBaseIndices[mainBucketIndex];
-        if (baseIndex == 0) {
-            throw new IllegalStateException("Extension area not allocated for main bucket " + mainBucketIndex);
-        }
         return baseIndex + (offset & 0xFF) - 1;  // offset从1开始，数组索引从0开始
     }
 
@@ -580,13 +582,15 @@ public class MainTable<K, N, S> implements AutoCloseable {
         // Use array storage (will expand dynamically during migration)
         MemorySegment[] newMemorySegmentsArray = newMainBucketsAllocation.toArray(new MemorySegment[0]);
         int newSegmentSize = newMemorySegmentsArray[0].size();
+        int newSegmentSizeBits = Integer.numberOfTrailingZeros(newSegmentSize);
+        int newSegmentMask = newSegmentSize - 1;
         int[] newSegmentCount = {newMemorySegmentsArray.length};  // Use array to allow modification in inner methods
         MemorySegment[][] newSegmentsHolder = {newMemorySegmentsArray};  // Use holder for expansion
         
         clearSegmentArray(newMemorySegmentsArray, newSegmentCount[0]);
 
         // Migrate entries directly using HeapEntryStore iteration
-        migrateAllEntriesFromHeapStore(newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
+        migrateAllEntriesFromHeapStore(newSegmentsHolder, newSegmentCount, newSegmentSizeBits, newSegmentMask, newBucketCount, 
                                        newExtensionBucketBaseIndices, newExtensionBucketCounts, 
                                        newAllAllocations, newPoolState, entryStore);
 
@@ -600,14 +604,20 @@ public class MainTable<K, N, S> implements AutoCloseable {
         this.allAllocations.addAll(newAllAllocations);
         this.memorySegments = newSegmentsHolder[0];
         this.memorySegmentCount = newSegmentCount[0];
-        this.segmentSize = newSegmentSize;
+        this.segmentSizeBits = Integer.numberOfTrailingZeros(newSegmentSize);
+        this.segmentMask = newSegmentSize - 1;
         this.extensionBucketBaseIndices = newExtensionBucketBaseIndices;
         this.extensionBucketCounts = newExtensionBucketCounts;
         this.bucketCount = newBucketCount;
         this.extensionPoolCapacity = newPoolState[0];
         this.extensionPoolUsed = newPoolState[1];
         needsResize = false;
-        maxExtensionBucketsUsed = Arrays.stream(extensionBucketCounts).max().orElse(0);
+        
+        int max = 0;
+        for (int c : extensionBucketCounts) {
+            if (c > max) max = c;
+        }
+        maxExtensionBucketsUsed = max;
     }
 
     private void checkResizeNeeded() {
@@ -625,7 +635,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
      * directly, using cached hash values from entries. Entry addresses remain stable.
      */
     private void migrateAllEntriesFromHeapStore(MemorySegment[][] newSegmentsHolder, int[] newSegmentCount, 
-                                                int newSegmentSize, int newBucketCount,
+                                                int newSegmentSizeBits, int newSegmentMask, int newBucketCount,
                                                 int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
                                                 List<List<MemorySegment>> newAllAllocations, int[] newPoolState, 
                                                 HeapEntryStore<K, N, S> entryStore) {
@@ -636,13 +646,13 @@ public class MainTable<K, N, S> implements AutoCloseable {
             if (entry == null) continue;  // Skip empty slots (deleted entries)
             
             // Use cached hash from entry (no re-computation needed)
-            int hash = entry.getHash();
-            short tag = entry.getTag();
+            int hash = entry.hash;
+            short tag = (short) (hash >>> 16);
             long entryAddress = index + 1;  // Address is index + 1
             
             int newBucketIndex = hash & (newBucketCount - 1);
             
-            putInNewTable(newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
+            putInNewTable(newSegmentsHolder, newSegmentCount, newSegmentSizeBits, newSegmentMask, newBucketCount, 
                           newBucketIndex, tag, entryAddress, 
                           newExtensionBucketBaseIndices, newExtensionBucketCounts, 
                           newAllAllocations, newPoolState);
@@ -650,27 +660,27 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     private void putInNewTable(MemorySegment[][] newSegmentsHolder, int[] newSegmentCount, 
-                               int newSegmentSize, int newBucketCount, int bucketIndex,
+                               int newSegmentSizeBits, int newSegmentMask, int newBucketCount, int bucketIndex,
                                short tag, long entryAddress, 
                                int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
                                List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
         // 确定主桶索引（首次调用时 bucketIndex < newBucketCount 必然成立）
         int mainBucketIndex = bucketIndex < newBucketCount ? bucketIndex : 
                               getMainBucketIndexForNewTable(bucketIndex, newBucketCount, newExtensionBucketBaseIndices);
-        putInNewTableWithMainBucket(newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
+        putInNewTableWithMainBucket(newSegmentsHolder, newSegmentCount, newSegmentSizeBits, newSegmentMask, newBucketCount, 
                                     bucketIndex, mainBucketIndex, tag, entryAddress, 
                                     newExtensionBucketBaseIndices, newExtensionBucketCounts, 
                                     newAllAllocations, newPoolState);
     }
 
     private void putInNewTableWithMainBucket(MemorySegment[][] newSegmentsHolder, int[] newSegmentCount,
-                                             int newSegmentSize, int newBucketCount, 
+                                             int newSegmentSizeBits, int newSegmentMask, int newBucketCount, 
                                              int bucketIndex, int mainBucketIndex,
                                              short tag, long entryAddress, 
                                              int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
                                              List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
-        MemorySegment segment = getSegmentForBucket(newSegmentsHolder[0], newSegmentCount[0], newSegmentSize, bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex, newSegmentSize);
+        MemorySegment segment = getSegmentForBucket(newSegmentsHolder[0], newSegmentSizeBits, bucketIndex);
+        int bucketOffset = getBucketOffsetInSegment(bucketIndex, newSegmentMask);
 
         int slotOffset = bucketOffset;
         for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
@@ -688,7 +698,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
         if (offset == NULL_BUCKET_ID) {
             offset = allocateExtensionBucketForNewTable(mainBucketIndex, newSegmentsHolder, newSegmentCount, 
-                                                        newSegmentSize, newBucketCount, 
+                                                        newBucketCount, 
                                                         newExtensionBucketBaseIndices, newExtensionBucketCounts, 
                                                         newAllAllocations, newPoolState);
             if (offset == NULL_BUCKET_ID) return;
@@ -696,7 +706,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
         }
 
         int extensionBucketIndex = newExtensionBucketBaseIndices[mainBucketIndex] + (offset & 0xFF) - 1;
-        putInNewTableWithMainBucket(newSegmentsHolder, newSegmentCount, newSegmentSize, newBucketCount, 
+        putInNewTableWithMainBucket(newSegmentsHolder, newSegmentCount, newSegmentSizeBits, newSegmentMask, newBucketCount, 
                                     extensionBucketIndex, mainBucketIndex, tag, entryAddress, 
                                     newExtensionBucketBaseIndices, newExtensionBucketCounts, 
                                     newAllAllocations, newPoolState);
@@ -707,7 +717,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
      */
     private byte allocateExtensionBucketForNewTable(int mainBucketIndex, 
                                                     MemorySegment[][] newSegmentsHolder, int[] newSegmentCount,
-                                                    int newSegmentSize, int newBucketCount,
+                                                    int newBucketCount,
                                                     int[] newExtensionBucketBaseIndices, int[] newExtensionBucketCounts,
                                                     List<List<MemorySegment>> newAllAllocations, int[] newPoolState) {
         // Check if single main bucket extension limit is reached
@@ -776,36 +786,32 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     /**
      * Gets the MemorySegment containing the specified bucket.
-     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
      */
     private MemorySegment getSegmentForBucket(int bucketIndex) {
-        int segmentIndex = (int) (((long) bucketIndex * BUCKET_SIZE) / segmentSize);
-        return memorySegments[Math.min(segmentIndex, memorySegmentCount - 1)];
+        long byteOffset = (long) bucketIndex << BUCKET_SIZE_BITS;
+        return memorySegments[(int) (byteOffset >>> segmentSizeBits)];
     }
 
     /**
      * Resize only: gets segment from new table's segment list.
-     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
      */
-    private MemorySegment getSegmentForBucket(MemorySegment[] segments, int segmentCount, int segSize, int bucketIndex) {
-        int segmentIndex = (int) (((long) bucketIndex * BUCKET_SIZE) / segSize);
-        return segments[Math.min(segmentIndex, segmentCount - 1)];
+    private MemorySegment getSegmentForBucket(MemorySegment[] segments, int segSizeBits, int bucketIndex) {
+        long byteOffset = (long) bucketIndex << BUCKET_SIZE_BITS;
+        return segments[(int) (byteOffset >>> segSizeBits)];
     }
 
     /**
-     * Gets bucket offset within segment (using cached segmentSize).
-     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
+     * Gets bucket offset within segment.
      */
     private int getBucketOffsetInSegment(int bucketIndex) {
-        return (int) (((long) bucketIndex * BUCKET_SIZE) % segmentSize);
+        return (int) (((long) bucketIndex << BUCKET_SIZE_BITS) & segmentMask);
     }
 
     /**
-     * Resize only: calculates offset using specified segmentSize.
-     * Uses long arithmetic to avoid integer overflow when bucketIndex is large.
+     * Resize only: calculates offset using specified segment mask.
      */
-    private int getBucketOffsetInSegment(int bucketIndex, int segSize) {
-        return (int) (((long) bucketIndex * BUCKET_SIZE) % segSize);
+    private int getBucketOffsetInSegment(int bucketIndex, int segMask) {
+        return (int) (((long) bucketIndex << BUCKET_SIZE_BITS) & segMask);
     }
 
     private void clearAllSlots() {
@@ -815,16 +821,16 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     /**
      * Clears all content in the segment array.
+     * Uses static ZERO_BUFFER to avoid allocation on each call.
      */
     private void clearSegmentArray(MemorySegment[] segments, int count) {
-        byte[] zeroArray = new byte[1024]; // Reusable zero buffer
         for (int i = 0; i < count; i++) {
             MemorySegment segment = segments[i];
             int remaining = segment.size();
             int offset = 0;
             while (remaining > 0) {
-                int batchSize = Math.min(remaining, zeroArray.length);
-                segment.put(offset, zeroArray, 0, batchSize);
+                int batchSize = Math.min(remaining, ZERO_BUFFER.length);
+                segment.put(offset, ZERO_BUFFER, 0, batchSize);
                 offset += batchSize;
                 remaining -= batchSize;
             }
@@ -833,15 +839,15 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     /**
      * Clears all content in the segment List (used for resize and similar scenarios).
+     * Uses static ZERO_BUFFER to avoid allocation on each call.
      */
     private void clearSegmentList(List<MemorySegment> segments) {
-        byte[] zeroArray = new byte[1024]; // Reusable zero buffer
         for (MemorySegment segment : segments) {
             int remaining = segment.size();
             int offset = 0;
             while (remaining > 0) {
-                int batchSize = Math.min(remaining, zeroArray.length);
-                segment.put(offset, zeroArray, 0, batchSize);
+                int batchSize = Math.min(remaining, ZERO_BUFFER.length);
+                segment.put(offset, ZERO_BUFFER, 0, batchSize);
                 offset += batchSize;
                 remaining -= batchSize;
             }

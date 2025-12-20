@@ -1,21 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.state.StateEntry;
@@ -48,21 +30,21 @@ public final class HeapStateEntry<K, N, S> implements StateEntry<K, N, S> {
     
     /** The key. Assumed to be immutable and not null. */
     @Nonnull
-    private final K key;
+    final K key;
     
     /** The namespace. Assumed to be immutable and not null. */
     @Nonnull
-    private final N namespace;
+    final N namespace;
     
     /** The state value. Can be null and can be updated in place. */
     @Nullable
-    private S state;
+    S state;
     
     /** 
      * The cached composite hash value, computed as {@code MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode())}.
      * This provides good bit distribution for hash table indexing by mixing each hashCode separately before XOR.
      */
-    private final int hash;
+    final int hash;
     
     // ========== Constructors ==========
     
@@ -101,59 +83,6 @@ public final class HeapStateEntry<K, N, S> implements StateEntry<K, N, S> {
     @Override
     public S getState() {
         return state;
-    }
-    
-    // ========== State Update ==========
-    
-    /**
-     * Updates the state value in place.
-     * 
-     * <p>This operation does not change the entry's address in HeapEntryStore,
-     * allowing index pointers to remain stable.
-     * 
-     * @param state the new state value (can be null)
-     */
-    public void setState(@Nullable S state) {
-        this.state = state;
-    }
-    
-    // ========== Hash and Tag ==========
-    
-    /**
-     * Returns the cached composite hash value.
-     * 
-     * @return the hash value
-     */
-    public int getHash() {
-        return hash;
-    }
-    
-    /**
-     * Computes and returns the tag from the hash.
-     * 
-     * <p>The tag is the high 16 bits of the hash, used for fast filtering
-     * in the off-heap index before doing full key/namespace comparison.
-     * 
-     * @return the tag (high 16 bits of hash)
-     */
-    public short getTag() {
-        return (short) (hash >>> 16);
-    }
-    
-    // ========== Matching ==========
-    
-    /**
-     * Checks if this entry matches the given key and namespace.
-     * 
-     * <p>Uses {@code Object.equals()} for comparison, which is the standard
-     * Java equality check. This is much faster than comparing serialized bytes.
-     * 
-     * @param key the key to match (must not be null)
-     * @param namespace the namespace to match (must not be null)
-     * @return true if both key and namespace match
-     */
-    public boolean matches(@Nonnull K key, @Nonnull N namespace) {
-        return this.key.equals(key) && this.namespace.equals(namespace);
     }
     
     // ========== Object Methods ==========

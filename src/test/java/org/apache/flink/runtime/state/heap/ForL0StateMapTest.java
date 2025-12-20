@@ -218,17 +218,17 @@ class ForL0StateMapTest {
             // Put a value (should go to both MainTable and L0Cache)
             stateMap.put(key, namespace, value);
 
-            // Get statistics before first get
-            ForL0StateMap.CacheStats statsBefore = stateMap.getCacheStats();
+            // Get L0 statistics before first get
+            L0Table.L0TableStats statsBefore = stateMap.getL0Stats();
 
             // Get the value (should hit L0 cache)
             String retrievedValue = stateMap.get(key, namespace);
             assertEquals(value, retrievedValue);
 
-            // Check statistics after get
-            ForL0StateMap.CacheStats statsAfter = stateMap.getCacheStats();
-            assertTrue(statsAfter.l0Hits > statsBefore.l0Hits);
-            assertTrue(statsAfter.getL0HitRate() > 0);
+            // Check L0 statistics after get
+            L0Table.L0TableStats statsAfter = stateMap.getL0Stats();
+            assertTrue(statsAfter.hitCount > statsBefore.hitCount);
+            assertTrue(statsAfter.hitRate > 0);
         }
 
         @Test
@@ -244,6 +244,9 @@ class ForL0StateMapTest {
                 // Put in no-cache map
                 noCacheMap.put(key, namespace, value);
                 assertEquals(value, noCacheMap.get(key, namespace));
+                
+                // Verify no L0 stats for no-cache map
+                assertNull(noCacheMap.getL0Stats());
             } catch (Exception e) {
                 fail("Exception in no-cache map test: " + e.getMessage());
             }
@@ -253,14 +256,13 @@ class ForL0StateMapTest {
             Integer namespace2 = 701;
             String value2 = "promotionValue2";
 
-            // Simulate a miss in L0 but hit in MainTable by directly putting to MainTable
-            // This is simplified - in real scenario we'd need to manipulate the cache state
             stateMap.put(key2, namespace2, value2);
             String retrieved = stateMap.get(key2, namespace2);
             assertEquals(value2, retrieved);
 
-            ForL0StateMap.CacheStats stats = stateMap.getCacheStats();
-            assertTrue(stats.totalAccesses > 0);
+            L0Table.L0TableStats stats = stateMap.getL0Stats();
+            assertNotNull(stats);
+            assertTrue(stats.accessCount > 0);
         }
 
         @Test
@@ -339,14 +341,7 @@ class ForL0StateMapTest {
     class StatisticsTests {
 
         @Test
-        void testCacheStatistics() {
-            // Initially no accesses
-            ForL0StateMap.CacheStats initialStats = stateMap.getCacheStats();
-            assertEquals(0, initialStats.totalAccesses);
-            assertEquals(0, initialStats.l0Hits);
-            assertEquals(0, initialStats.mainTableHits);
-            assertEquals(0.0, initialStats.getOverallHitRate(), 0.001);
-
+        void testL0Statistics() {
             // Put some values
             for (int i = 0; i < 5; i++) {
                 stateMap.put("key" + i, i, "value" + i);
@@ -357,25 +352,24 @@ class ForL0StateMapTest {
                 stateMap.get("key" + i, i);
             }
 
-            ForL0StateMap.CacheStats finalStats = stateMap.getCacheStats();
-            assertTrue(finalStats.totalAccesses > 0);
-            assertTrue(finalStats.getOverallHitRate() > 0);
-            assertEquals(5, finalStats.totalEntries);
+            L0Table.L0TableStats l0Stats = stateMap.getL0Stats();
+            assertNotNull(l0Stats);
+            assertTrue(l0Stats.accessCount > 0);
+            assertTrue(l0Stats.hitRate > 0);
+            assertEquals(5, stateMap.size());
         }
 
         @Test
-        void testCacheStatsToString() {
+        void testDetailedStatsToString() {
             stateMap.put("testKey", 1, "testValue");
             stateMap.get("testKey", 1);
 
-            ForL0StateMap.CacheStats stats = stateMap.getCacheStats();
+            ForL0StateMap.DetailedStats stats = stateMap.getDetailedStats();
             String statsString = stats.toString();
 
             assertNotNull(statsString);
-            assertTrue(statsString.contains("CacheStats"));
-            assertTrue(statsString.contains("totalAccesses"));
-            assertTrue(statsString.contains("l0Hits"));
-            assertTrue(statsString.contains("mainTableHits"));
+            assertTrue(statsString.contains("DetailedStats"));
+            assertTrue(statsString.contains("entries"));
         }
     }
 
@@ -626,8 +620,8 @@ class ForL0StateMapTest {
             // Put initial value (should be in L0 cache)
             stateMap.put(key, namespace, initialValue);
 
-            // Get statistics before transform
-            ForL0StateMap.CacheStats statsBefore = stateMap.getCacheStats();
+            // Get L0 statistics before transform
+            L0Table.L0TableStats statsBefore = stateMap.getL0Stats();
 
             // Transform the entry
             stateMap.transform(key, namespace, "_cached", (previous, value) -> {
@@ -638,11 +632,11 @@ class ForL0StateMapTest {
             // Verify the transformation worked
             assertEquals("cache_test_cached", stateMap.get(key, namespace));
 
-            // Get statistics after transform and get
-            ForL0StateMap.CacheStats statsAfter = stateMap.getCacheStats();
+            // Get L0 statistics after transform and get
+            L0Table.L0TableStats statsAfter = stateMap.getL0Stats();
 
-            // Verify cache statistics updated appropriately
-            assertTrue(statsAfter.totalAccesses > statsBefore.totalAccesses);
+            // Verify L0 cache was accessed
+            assertTrue(statsAfter.accessCount > statsBefore.accessCount);
         }
 
         @Test

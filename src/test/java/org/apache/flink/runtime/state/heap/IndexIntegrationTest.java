@@ -442,10 +442,10 @@ class IndexIntegrationTest {
             // Verify hash is cached correctly in entries
             HeapStateEntry<String, String, Integer> entry1 = entryStore.get(addr1);
             HeapStateEntry<String, String, Integer> entry2 = entryStore.get(addr2);
-            assertEquals(hash1, entry1.getHash());
-            assertEquals(hash2, entry2.getHash());
-            assertEquals(tag1, entry1.getTag());
-            assertEquals(tag2, entry2.getTag());
+            assertEquals(hash1, entry1.hash);
+            assertEquals(hash2, entry2.hash);
+            assertEquals(tag1, (short) (entry1.hash >>> 16));
+            assertEquals(tag2, (short) (entry2.hash >>> 16));
 
             // Force resize
             for (int i = 0; i < 20; i++) {

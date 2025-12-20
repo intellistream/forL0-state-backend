@@ -37,6 +37,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     // L0 bucket and slot layout constants
     private static final int BUCKET_SIZE = 64;  // 64 bytes per bucket
+    private static final int BUCKET_SIZE_BITS = 6;  // 64 = 2^6, for fast multiplication via shift
     private static final int SLOTS_PER_BUCKET = 4;  // 4 slots per bucket
     
     // Bucket layout: ValidBitmap (4B) + 4 × Slot (15B each) = 64 bytes
@@ -67,7 +68,10 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     private final L0MemoryAllocator l0Allocator;
     private final int bucketCount;
-    private final List<MemorySegment> memorySegments;
+    private final MemorySegment[] memorySegments;  // Array for O(1) access
+    private final int segmentSizeBits;  // log2(segmentSize) for bit-shift division
+    private final int segmentMask;       // segmentSize - 1 for bit-mask modulo
+    private final List<MemorySegment> originalAllocation;  // Keep reference for release
     private final ReplacementPolicy replacementPolicy;
     private final Random random;  // For SAMPLED_LRU
 
@@ -107,7 +111,14 @@ public class L0Table<K, N, S> implements AutoCloseable {
         try {
             // Allocate memory segments for L0 table using L0 memory allocator
             long totalSize = (long) bucketCount * BUCKET_SIZE;
-            this.memorySegments = l0Allocator.allocate((int) totalSize);
+            List<MemorySegment> allocation = l0Allocator.allocate((int) totalSize);
+            this.originalAllocation = allocation;  // Keep for release
+            this.memorySegments = allocation.toArray(new MemorySegment[0]);
+            
+            // Initialize bit operation fields (segmentSize guaranteed to be power of 2)
+            int segmentSize = this.memorySegments[0].size();
+            this.segmentSizeBits = Integer.numberOfTrailingZeros(segmentSize);
+            this.segmentMask = segmentSize - 1;
 
             // Initialize all slots as invalid
             clearAllSlots();
@@ -336,23 +347,19 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     /**
      * Gets the MemorySegment containing the specified bucket.
-     * Following MainTable's implementation pattern.
+     * Uses bit operations for O(1) access without division.
      */
     private MemorySegment getSegmentForBucket(int bucketIndex) {
-        if (memorySegments.isEmpty()) {
-            throw new IllegalStateException("No memory segments available");
-        }
-        int segmentIndex = (bucketIndex * BUCKET_SIZE) / memorySegments.get(0).size();
-        return memorySegments.get(Math.min(segmentIndex, memorySegments.size() - 1));
+        long byteOffset = (long) bucketIndex << BUCKET_SIZE_BITS;
+        return memorySegments[(int) (byteOffset >>> segmentSizeBits)];
     }
 
     /**
      * Gets the offset within the segment for the specified bucket.
-     * Following MainTable's implementation pattern.
+     * Uses bit mask for O(1) access without modulo.
      */
     private int getBucketOffsetInSegment(int bucketIndex) {
-        int segmentSize = memorySegments.get(0).size();
-        return ((bucketIndex * BUCKET_SIZE) % segmentSize);
+        return (int) (((long) bucketIndex << BUCKET_SIZE_BITS) & segmentMask);
     }
 
     private void clearAllSlots() {
@@ -584,9 +591,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     @Override
     public void close() {
-        if (memorySegments != null) {
-            l0Allocator.release(memorySegments);
-        }
+        l0Allocator.release(originalAllocation);
     }
 
     /**

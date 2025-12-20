@@ -162,8 +162,6 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
      * @return the allocated address (always > 0)
      */
     public long allocate(@Nonnull K key, @Nonnull N namespace, @Nullable S state) {
-        checkNotClosed();
-        
         int index;
         
         // Prefer reusing freed slots (LIFO for cache efficiency)
@@ -193,24 +191,15 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
     /**
      * Gets the entry at the given address.
      * 
+     * <p>HOT PATH: This method is optimized for performance and does not perform
+     * bounds checking. The address must be valid (> 0 and from a previous allocate call).
+     * 
      * @param address the address (from allocate())
-     * @return the entry, or null if the address is invalid or the slot is empty
+     * @return the entry (may be null if the slot was removed)
      */
-    @Nullable
     public HeapStateEntry<K, N, S> get(long address) {
-        if (address <= 0) {
-            return null;
-        }
-        
         int index = (int) address - 1;
-        int chunkIndex = index >> CHUNK_SIZE_BITS;
-        int slotIndex = index & CHUNK_MASK;
-        
-        if (chunkIndex >= chunkCount) {
-            return null;
-        }
-        
-        return chunks[chunkIndex][slotIndex];
+        return chunks[index >> CHUNK_SIZE_BITS][index & CHUNK_MASK];
     }
     
     /**
@@ -221,21 +210,7 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
      */
     public int getHash(long address) {
         HeapStateEntry<K, N, S> entry = get(address);
-        return entry != null ? entry.getHash() : 0;
-    }
-    
-    /**
-     * Gets the tag of the entry at the given address.
-     * 
-     * <p>The tag is the high 16 bits of the hash, used for fast filtering
-     * in the off-heap index.
-     * 
-     * @param address the address
-     * @return the tag, or 0 if the address is invalid
-     */
-    public short getTag(long address) {
-        HeapStateEntry<K, N, S> entry = get(address);
-        return entry != null ? entry.getTag() : 0;
+        return entry != null ? entry.hash : 0;
     }
     
     /**
@@ -248,7 +223,12 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
      */
     public boolean matches(long address, @Nonnull K key, @Nonnull N namespace) {
         HeapStateEntry<K, N, S> entry = get(address);
-        return entry != null && entry.matches(key, namespace);
+        if (entry == null) {
+            return false;
+        }
+        // Identity check first (helps with VoidNamespace singleton)
+        return (entry.namespace == namespace || entry.namespace.equals(namespace))
+            && (entry.key == key || entry.key.equals(key));
     }
     
     /**
@@ -263,7 +243,7 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
     public boolean updateState(long address, @Nullable S state) {
         HeapStateEntry<K, N, S> entry = get(address);
         if (entry != null) {
-            entry.setState(state);
+            entry.state = state;
             return true;
         }
         return false;

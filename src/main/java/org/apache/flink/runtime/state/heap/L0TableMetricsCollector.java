@@ -209,20 +209,6 @@ public class L0TableMetricsCollector implements Closeable {
             }
         }
         
-        // Collect cache stats from StateMaps
-        List<CacheStatsSample> cacheSamples = new ArrayList<>();
-        for (int i = 0; i < stateMaps.size(); i++) {
-            ForL0StateMap<?, ?, ?> map = stateMaps.get(i);
-            if (map != null) {
-                try {
-                    ForL0StateMap.CacheStats stats = map.getCacheStats();
-                    cacheSamples.add(new CacheStatsSample(i, stats));
-                } catch (Exception e) {
-                    // Ignore - map might be closed
-                }
-            }
-        }
-        
         // Output aggregated metrics
         if (!l0Samples.isEmpty()) {
             // Aggregate L0Table stats
@@ -243,7 +229,6 @@ public class L0TableMetricsCollector implements Closeable {
             double hitRate = totalAccessCount > 0 ? (double) totalHitCount / totalAccessCount : 0.0;
             
             // Output in parseable JSON format
-            // Format: L0TABLE_METRICS|backendId|sampleNum|elapsedMs|JSON
             String json = String.format(
                     "{\"type\":\"l0table\",\"backend\":\"%s\",\"sample\":%d,\"elapsed_ms\":%d," +
                     "\"access_count\":%d,\"hit_count\":%d,\"miss_count\":%d,\"eviction_count\":%d," +
@@ -255,31 +240,17 @@ public class L0TableMetricsCollector implements Closeable {
             LOG.info("{}|{}", LOG_PREFIX, json);
         }
         
-        // Output cache stats
-        if (!cacheSamples.isEmpty()) {
-            long totalAccesses = 0;
-            long totalL0Hits = 0;
-            long totalMainTableHits = 0;
+        // Output state map stats (entry count)
+        if (!stateMaps.isEmpty()) {
             int totalEntries = 0;
-            
-            for (CacheStatsSample sample : cacheSamples) {
-                totalAccesses += sample.stats.totalAccesses;
-                totalL0Hits += sample.stats.l0Hits;
-                totalMainTableHits += sample.stats.mainTableHits;
-                totalEntries += sample.stats.totalEntries;
+            for (ForL0StateMap<?, ?, ?> map : stateMaps) {
+                totalEntries += map.size();
             }
             
-            double l0HitRate = totalAccesses > 0 ? (double) totalL0Hits / totalAccesses : 0.0;
-            double overallHitRate = totalAccesses > 0 
-                    ? (double) (totalL0Hits + totalMainTableHits) / totalAccesses : 0.0;
-            
             String json = String.format(
-                    "{\"type\":\"cache\",\"backend\":\"%s\",\"sample\":%d,\"elapsed_ms\":%d," +
-                    "\"total_accesses\":%d,\"l0_hits\":%d,\"main_table_hits\":%d," +
-                    "\"total_entries\":%d,\"l0_hit_rate\":%.4f,\"overall_hit_rate\":%.4f,\"map_count\":%d}",
-                    backendId, sampleCount, elapsedMs,
-                    totalAccesses, totalL0Hits, totalMainTableHits,
-                    totalEntries, l0HitRate, overallHitRate, cacheSamples.size());
+                    "{\"type\":\"statemap\",\"backend\":\"%s\",\"sample\":%d,\"elapsed_ms\":%d," +
+                    "\"total_entries\":%d,\"map_count\":%d}",
+                    backendId, sampleCount, elapsedMs, totalEntries, stateMaps.size());
             
             LOG.info("{}|{}", LOG_PREFIX, json);
         }
@@ -314,20 +285,16 @@ public class L0TableMetricsCollector implements Closeable {
             }
         }
         
-        // Collect final cache stats
+        // Collect final state map stats
         for (int i = 0; i < stateMaps.size(); i++) {
             ForL0StateMap<?, ?, ?> map = stateMaps.get(i);
             if (map != null) {
                 try {
-                    ForL0StateMap.CacheStats stats = map.getCacheStats();
+                    ForL0StateMap.DetailedStats stats = map.getDetailedStats();
                     String json = String.format(
-                            "{\"type\":\"cache_final\",\"backend\":\"%s\",\"map_index\":%d," +
-                            "\"total_elapsed_ms\":%d,\"total_samples\":%d," +
-                            "\"total_accesses\":%d,\"l0_hits\":%d,\"main_table_hits\":%d," +
-                            "\"total_entries\":%d,\"l0_hit_rate\":%.4f,\"overall_hit_rate\":%.4f}",
-                            backendId, i, elapsedMs, sampleCount,
-                            stats.totalAccesses, stats.l0Hits, stats.mainTableHits,
-                            stats.totalEntries, stats.getL0HitRate(), stats.getOverallHitRate());
+                            "{\"type\":\"statemap_final\",\"backend\":\"%s\",\"map_index\":%d," +
+                            "\"total_elapsed_ms\":%d,\"total_samples\":%d,\"total_entries\":%d}",
+                            backendId, i, elapsedMs, sampleCount, stats.totalEntries);
                     
                     LOG.info("{}|{}", LOG_PREFIX, json);
                 } catch (Exception e) {
@@ -390,16 +357,6 @@ public class L0TableMetricsCollector implements Closeable {
         final L0Table.L0TableStats stats;
         
         L0TableSample(int index, L0Table.L0TableStats stats) {
-            this.index = index;
-            this.stats = stats;
-        }
-    }
-    
-    private static class CacheStatsSample {
-        final int index;
-        final ForL0StateMap.CacheStats stats;
-        
-        CacheStatsSample(int index, ForL0StateMap.CacheStats stats) {
             this.index = index;
             this.stats = stats;
         }
