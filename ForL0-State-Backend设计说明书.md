@@ -2,17 +2,18 @@
 
 ## 整体架构设计
 
-ForL0 StateBackend设计的目标是充分利用鲲鹏CPU服务器提供的L0 Cache特性，通过缓存友好的数据布局与分层索引，将Flink状态访问延迟降到最低并提升吞吐与效率。如下所述，整体采用两级索引和键值分离的架构：顶层为**L0 Table（Cache 加速区）**，针对高频访问做极低延迟响应；底层为**Main Table（主状态表）**，负责存放全量索引并通过扩展桶机制解决冲突与扩展需求。索引指针指向堆外的**Entry Store**（Entry数据块），实现索引与数据的分离以减少缓存抖动并优化内存布局。该架构配备专门的Checkpoint接口模块，确保状态数据的一致性与快速恢复能力。此外，还设计了专门的容错机制适配层，使得本方案能对接Flink原生的Checkpoint和故障恢复机制，达到高兼容性与易部署性。
+ForL0 StateBackend设计的目标是充分利用鲲鹏 CPU服务器提供的L0 Cache特性，通过缓存友好的数据布局与分层索引，将Flink状态访问延迟降到最低并提升吞吐与效率。如下所述，整体采用两级索引和堆内对象存储的架构：顶层为**L0 Table（Cache 加速区）**，针对高频访问做极低延迟响应；底层为**Main Table（主状态表）**，负责存放全量索引并通过扩展桶机制解决冲突与扩展需求。索引指针指向堆内的**HeapEntryStore**（对象存储块），实现索引与数据的分离以减少缓存抖动并优化内存布局。该架构配备专门的Checkpoint接口模块，确保状态数据的一致性与快速恢复能力。此外，还设计了专门的容错机制适配层，使得本方案能对接Flink原生的Checkpoint和故障恢复机制，达到高兼容性与易部署性。
 
 > 图 1 整体架构图
 
 本系统采用分层设计，分为 L0 Table 和 Main Table 两大核心部分，并配合内存分配管理与负载管理等辅助组件。主要具有以下特点：
 
-- **缓存友好的数据布局**：64 字节缓存行对齐的桶结构，降低缓存行读取开销；键值分离存储，增强空间局部性；
+- **缓存友好的数据布局**：64 字节缓存行对齐的桶结构，降低缓存行读取开销；索引与对象存储分离，增强空间局部性；
 - **双层索引**：先查 L0 Table（快速命中），未命中再落到 Main Table，查到后可将热点回填 L0 以提升后续访问命中率；
+- **堆内对象存储**：状态对象直接存储在堆内 HeapEntryStore，热路径零序列化，仅在 Checkpoint 时序列化；
 - **多种替换策略**：支持 LRU、LFU、FIFO、RANDOM 等基础替换策略以及热点感知的替换策略，便于根据工作负载选择最优策略；
-- **堆外内存管理**：使用基于 Flink 内置的 MemoryManager 进行统一内存分配与回收；
-- **检查点与容错**：内置适用于堆外内存的 Checkpoint 接口模块、Snapshot 策略与本地恢复配置，并提供容错适配层以对接 Flink 的容错机制，保证一致性与快速恢复；
+- **堆外索引内存管理**：L0Table 和 MainTable 使用堆外内存，通过 Flink 内置的 MemoryManager 进行统一内存分配与回收；
+- **检查点与容错**：内置适用于堆内对象存储的 Checkpoint 接口模块、Snapshot 策略与本地恢复配置，并提供容错适配层以对接 Flink 的容错机制，保证一致性与快速恢复；
 - **易集成与部署**：面向 Flink 1.19+，Java8+ 构建，将生成 JAR 放入 Flink lib 目录或通过代码方式设置 StateBackend 即可集成，而无需对用户代码做任何修改。
 
 **ForL0StateBackend** 通过分层设计、缓存对齐的数据结构与统一内存管理，在保持与 Flink 原生接口兼容的同时，显著提升热点状态访问的延迟和整体状态访问效率，并为未来更加充分地利用鲲鹏 L0 硬件能力留出扩展路径。
@@ -109,9 +110,9 @@ ForL0StateBackend 通过 **MemoryManagerAllocator** 向 Flink 的 MemoryManager 
 
 **L0Table** 提供顶层的热点索引缓存，实现了包含多种替换策略的元数据支撑（LRU/LFU/FIFO/RANDOM 等），并通过 ForL0StateMap 的回填/驱逐逻辑与 MainTable 保持最终一致性，且其内容为可失效的缓存，可在恢复后按需重建。
 
-#### 2.2.7 Entry Store
+#### 2.2.7 HeapEntryStore
 
-**Entry Store** 即 State Map 所管理的 KVNode 空间，用于存放序列化后的 key、namespace、value 等变长数据。KVNode 布局保存必要的元信息（长度、标记、指针等），支持快速定位与重用。Entry Store 负责实际条目的增删改操作，并在全表迁移或 checkpoint 恢复时保证物理地址不变以简化索引重建。
+**HeapEntryStore** 用于存储状态条目的堆内对象数组。每个 HeapStateEntry 包含 key、namespace、state 的对象引用以及缓存的 hash 值。HeapEntryStore 采用分块数组设计（每块 65536 个槽位）避免扩容时的全量复制，并使用空闲列表（栈结构）管理删除后的空槽位。索引层存储的 Pointer 实际为数组下标，实现零序列化的直接对象访问。
 
 #### 2.2.8 ForL0State
 
@@ -121,9 +122,9 @@ ForL0StateBackend 通过 **MemoryManagerAllocator** 向 Flink 的 MemoryManager 
 
 快照与恢复流程沿用 Flink HashMapStateBackend 的 Snapshot/Restore 语义：MainTable 与 Entry Store 为快照的数据来源，快照过程序列化主索引与 KV 存储，并在恢复时重建 MainTable 索引及 KV 区。Snapshot 路径上插入了必要的序列化逻辑以持久化 MainTable 与 Entry Store 的元信息。
 
-#### 2.2.10 Serializer Pack
+#### 2.2.10 Serializer
 
-**SerializerPack** 是用于集中管理序列化逻辑的模块，负责持有并复用由 Flink 运行时注入的 TypeSerializer 实例，并对 ForL0StateBackend 中的二进制布局提供统一的序列化/反序列化方法。该组件为 Snapshot/Restore 路径、EntryStore 的持久化与重建、以及 MainTable 索引序列化提供一致的编码/解码接口，同时通过缓存序列化实例和复用缓冲区来降低序列化开销。
+**Serializer** 仅在 Checkpoint/Restore 路径中使用，负责将堆内对象序列化到快照流中以及从快照流中反序列化重建对象。在热路径（get/put/remove）中不涉及任何序列化操作，状态对象直接以 Java 引用形式存储在 HeapEntryStore 中。
 
 ### 2.3 State Map 实现
 
@@ -131,11 +132,11 @@ ForL0StateMap 是 ForL0 State Backend 的核心实现，围绕 L0 Table + Main T
 
 #### 2.3.1 结构组成
 
-如图所示，ForL0StateMap 由 L0 Table、Main Table 以及 Entry Store 组成：
+如图所示，ForL0StateMap 由 L0 Table、Main Table 以及 HeapEntryStore 组成：
 
 - **L0 Table**：负责缓存最活跃的热点 key，保证极低延迟访问。其容量与替换策略可配置，连续存储于一块连续的堆外内存中。
 - **Main Table**：负责存储全量索引，采用每桶多 slot 和局部树型扩展的缓存友好结构，实现高负载、高冲突情况下的稳定高性能。
-- **Entry Store**：所有实际的 key-value 数据存储于专门的堆外内存池中，采用键值分离设计提高缓存友好性。
+- **HeapEntryStore**：所有实际的 key-value 数据存储于堆内的 HeapStateEntry 对象数组中，采用分块数组 + 空闲列表管理，实现零序列化的对象存储。
 
 > 图 5 ForL0StateMap 结构
 
@@ -185,34 +186,26 @@ Main Table 采用缓存友好设计的树型扩展哈希表，其实现和内存
 
 > 图 7 Main Table 桶布局
 
-#### 2.3.4 Entry Store
+#### 2.3.4 HeapEntryStore
 
-Entry Store 负责所有状态条目的实际存储，采用如下的键值分离设计。使用 slab 大块分配，其中值存储区采用空闲链表管理，键存储区采用写追加。既保证大吞吐分配，也降低碎片化。
+HeapEntryStore 负责所有状态条目的实际存储，采用堆内对象数组设计。
 
-- **结构设计**：每个键 Entry 包含 hash、keyLen、namespaceLen、valueHandle 等元信息，支持变长 key/namespace/value；每个值 Entry 包含 valueLen 和序列化后的 value；
-- **分配策略**：按大块分配，写入新值时按空闲链表分配，写入新键时追加写；删除时，值空间回收，支持快速重用，而键空间不做操作；
-- **对齐和效率**：分配、释放均采用 8B 对齐，提升内存访问效率；
-- **内存池**：所有数据均在 Flink MemoryManager 分配的大块堆外内存中，无需频繁 native 调用。
+- **结构设计**：采用分块数组 `HeapStateEntry[][]`，每块 65536 个槽位，避免扩容时全量复制；
+- **对象存储**：每个 HeapStateEntry 包含 key、namespace、state 的对象引用以及缓存的 hash 值；
+- **空闲管理**：使用 int[] 空闲列表（栈结构）管理删除后的空槽位，实现 O(1) 分配和回收；
+- **零序列化**：热路径直接访问对象引用，无需序列化/反序列化；
+- **哈希缓存**：使用 `MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode())` 计算并缓存 hash 值。
 
-> 图 8 Entry Store 实现结构
+> 图 8 HeapEntryStore 实现结构
 
-**表 4 键 Entry 数据结构**
+**表 4 HeapStateEntry 数据结构**
 
-| 字段         | 说明                        |   字节数(Byte) |
-| ------------ | --------------------------- | -------------: |
-| hash         | key 与 namespace 的 hash 值 |              4 |
-| keyLen       | key 长度                    |              4 |
-| namespaceLen | namespace 长度              |              4 |
-| valueHandle  | value 指针                  |              8 |
-| key          | 序列化后的 key              |       `keyLen` |
-| namespace    | 序列化后的 namespace        | `namespaceLen` |
-
-**表 5 值 Entry 数据结构**
-
-| 字段     | 说明             | 字节数(Byte) |
-| -------- | ---------------- | -----------: |
-| valueLen | value 长度       |            2 |
-| value    | 序列化后的 value |            8 |
+| 字段      | 说明                           | 类型        |
+| --------- | ------------------------------ | ----------- |
+| key       | 状态键对象引用                 | K           |
+| namespace | 命名空间对象引用               | N           |
+| state     | 状态值对象引用                 | S           |
+| hash      | 缓存的复合哈希值               | int         |
 
 #### 2.3.5 主要操作流程
 
@@ -225,10 +218,10 @@ Entry Store 负责所有状态条目的实际存储，采用如下的键值分�
 1. 计算 key 的 tag 和主表 bucket 下标。
 2. 读取主表 bucket，遍历每个 slot：
    - 若 slot 有效且 tag 匹配，取指针指向的条目，比较 key/namespace 是否一致；
-   - 若一致，直接更新 value 数据，提升该 slot 到 L0 Table，流程结束；
+   - 若一致，直接更新 state 对象引用，提升该 slot 到 L0 Table，流程结束；
    - 若不一致，继续遍历。
 3. 若 slot 空闲，则：
-   - 在 Entry Store 分配新的条目，写入键值；
+   - 在 HeapEntryStore 分配新的条目，存储对象引用；
    - 将 slot 的 tag、指针等信息设置为新值；
    - 更新 L0 Table，流程结束。
 4. 若所有 slot 已占用，计算扩展 bucket 下标（`tag & 0x3`）：
@@ -244,14 +237,14 @@ Entry Store 负责所有状态条目的实际存储，采用如下的键值分�
 
 1. 计算 key 的 tag（hash 高位）和 L0 bucket 下标。
 2. 读取 L0 Table 中对应 bucket，遍历其中每个 slot：
-   - 若 slot 有效且 tag 匹配，则取出 slot 指针指向的 Entry Store 条目；
-   - 比较 key/namespace 数据是否与查询完全一致；
-   - 若一致，直接返回该条目的 value 数据，流程结束；
+   - 若 slot 有效且 tag 匹配，则取出 slot 指针指向的 HeapEntryStore 条目；
+   - 通过 equals() 比较 key/namespace 对象是否与查询完全一致；
+   - 若一致，直接返回该条目的 state 对象引用，流程结束；
    - 若不一致，继续检查下一个 slot。
 3. 若 L0 Table 未命中，则计算 Main Table 的 bucket 下标。
 4. 读取主表对应 bucket，遍历 bucket 的每个 slot：
-   - 若 slot 有效且 tag 匹配，则取出 slot 指针指向的 Entry Store 条目，比较 key/namespace 数据是否一致；
-   - 若一致，将该项目插入或提升到 L0 Table，并返回 value 数据，流程结束；
+   - 若 slot 有效且 tag 匹配，则取出 slot 指针指向的 HeapEntryStore 条目，通过 equals() 比较 key/namespace 是否一致；
+   - 若一致，将该项目插入或提升到 L0 Table，并返回 state 对象引用，流程结束；
    - 若不一致，继续遍历。
 5. 若主表 bucket 所有 slot 均未命中，计算扩展 bucket 下标（`tag & 0x3`），
    - 如果对应下标存在扩展 bucket，则递归步骤 4 对扩展 bucket 重复上述操作。
@@ -342,9 +335,9 @@ ForL0StateBackend 提供与 Flink State API 一致的五类状态实现：**ForL
 
 ## 容错机制设计
 
-ForL0StateBackend 的容错设计基于 Flink 原生的快照和恢复框架，确保与 HeapStateBackend 格式的兼容性，并在实现上实现低干扰与高效序列化。主表（Main Table）用于存储全量索引，而 L0 Table 仅作为运行时的热点索引缓存，不参与持久化数据存储。所有实际的键值数据存储在堆外的 Entry Store 中，主表中保存的是指向这些数据字节的指针。
+ForL0StateBackend 的容错设计基于 Flink 原生的快照和恢复框架，确保与 HeapStateBackend 格式的兼容性，并在实现上实现低干扰与高效序列化。主表（Main Table）用于存储全量索引，而 L0 Table 仅作为运行时的热点索引缓存，不参与持久化数据存储。所有实际的状态对象存储在堆内的 HeapEntryStore 中，主表中保存的是指向这些对象的数组下标。
 
-在写操作（如 put、transform、update）中，数据会写入 Entry Store，并且在新增或重分配时更新主表中的指针；如果是原地更新，则主表中的指针保持不变，但底层字节数据会被更新。因此，在快照和恢复流程中，直接以主表为基础进行序列化即可保证数据一致性。由于 ForL0StateBackend 完全使用堆外存储，快照时能够省去大部分的序列化开销，只需序列化关键元数据（如状态条目的相关信息等），大大提高快照过程效率并减轻系统负担。
+在写操作（如 put、transform、update）中，数据会写入 HeapEntryStore，并且在新增或重分配时更新主表中的指针；如果是原地更新，则主表中的指针保持不变，但底层对象会被更新。因此，在快照和恢复流程中，直接以主表为基础遍历 HeapEntryStore 进行序列化即可保证数据一致性。由于热路径无序列化开销，仅在 Checkpoint 时才需要序列化对象，大大提高快照过程效率并减轻系统负担。
 
 ### 快照与恢复流程
 
@@ -356,7 +349,7 @@ ForL0StateBackend 的容错设计基于 Flink 原生的快照和恢复框架，�
 
 **3.1.2 快照采集**  
 
-`ForL0StateMapSnapshot` 通过遍历 Main Table 的条目，从 Entry Store 读取 key、namespace 和对应的 value 字节，构建有效条目列表。随后，快照数据按 Flink 要求的顺序被写入到 Checkpoint 输出流中，包括条目数及每条记录的格式（namespace、key、state）。
+`ForL0StateMapSnapshot` 通过遍历 Main Table 的条目，从 HeapEntryStore 获取 key、namespace 和对应的 value 对象，构建有效条目列表。随后，快照数据按 Flink 要求的顺序被序列化写入到 Checkpoint 输出流中，包括条目数及每条记录的格式（namespace、key、state）。
 
 该实现将遍历与实际序列化写入分为两步：第一步快速收集有效条目，第二步再进行序列化写入，从而减少对正常读写的影响。在此过程中，可选的 `StateSnapshotTransformer` 可以应用于写入前，以支持状态转换和裁剪。
 
@@ -408,6 +401,6 @@ ForL0StateBackend 采用与 Flink 官方 RocksDBStateBackend 相同的加载机�
 
 ## 总结
 
-**ForL0StateBackend** 以两层索引结构最大化利用鲲鹏 CPU L0 缓存特性，显著降低状态访问延迟并提升吞吐为设计目标。系统由 **L0 Table（热点索引缓存层）** 与 **Main Table（全量索引层）** 及 **Entry Store（堆外 KV 存储）** 构成：L0 Table 常驻 L0 缓存区域、用于加速高频访问；Main Table 保存全部键的指针并采用缓存友好的哈希与局部扩展策略；实际键值字节保存在 Entry Store，堆外内存通过利用 Flink 的 MemoryManager 实现的自定义分配器统一分配与管理。
+**ForL0StateBackend** 以两层索引结构最大化利用鲲鹏 CPU L0 缓存特性，显著降低状态访问延迟并提升吞吐为设计目标。系统由 **L0 Table（热点索引缓存层）** 与 **Main Table（全量索引层）** 及 **HeapEntryStore（堆内对象存储）** 构成：L0 Table 常驻 L0 缓存区域、用于加速高频访问；Main Table 保存全部键的指针并采用缓存友好的哈希与局部扩展策略；实际状态对象保存在 HeapEntryStore 中，采用分块数组和空闲列表管理，实现热路径零序列化。
 
-容错方面与 Flink 原生快照机制兼容：快照基于 Main Table 与 Entry Store 的条目遍历与标准序列化格式生成状态快照，支持 Savepoint/Restore 功能，并通过快速收集条目与延后序列化的策略将对在线读写的影响降到最低。总体上，设计在保持与 Flink 快照格式和运行时集成兼容性的同时，实现了充分利用 L0 缓存的、硬件亲和的 **低延迟、高吞吐** 的堆外状态后端。
+容错方面与 Flink 原生快照机制兼容：快照基于 Main Table 与 HeapEntryStore 的条目遍历与标准序列化格式生成状态快照，支持 Savepoint/Restore 功能，并通过快速收集条目与延后序列化的策略将对在线读写的影响降到最低。总体上，设计在保持与 Flink 快照格式和运行时集成兼容性的同时，实现了充分利用 L0 缓存的、硬件亲和的 **低延迟、高吞吐** 的状态后端。

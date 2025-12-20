@@ -26,7 +26,8 @@ ForL0 State Backend 采用双层索引结构设计：
 - **多种替换策略**：支持 LRU、LFU、CLOCK、TinyLFU、Sampled-LRU 等缓存替换算法
 
 ### 🔧 架构特点
-- **键值分离**：索引指向堆外的 Entry 数据块
+- **堆内对象存储**：状态对象直接存储在堆内，零序列化开销
+- **堆外缓存友好索引**：L0Table 和 MainTable 使用堆外内存，64B 缓存行对齐
 - **JNI Native 内存**：L0Table 使用 JNI 分配的原生内存，支持 L0 硬件加速
 - **扩展桶池**：统一管理扩展桶，最多支持 255 个扩展桶/主桶
 - **内存管理**：MainTable 基于 Flink MemoryManager，L0Table 使用独立的 NativeL0MemoryAllocator
@@ -198,7 +199,11 @@ MapState<String, Integer> mapState = getRuntimeContext().getMapState(mapDescript
 ├────────────────────────────────┼────────────────────────────────┤
 │    Flink MemoryManager         │        JNI Native Memory       │
 │    (Off-heap managed memory)   │  (L0 mode / Simulation mode)   │
-└────────────────────────────────┴────────────────────────────────┘
+├────────────────────────────────┴────────────────────────────────┤
+│                      HeapEntryStore (堆内)                       │
+│              Object[] 数组存储 HeapStateEntry 对象               │
+│                   (零序列化，直接对象引用)                        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 数据结构布局
@@ -233,7 +238,8 @@ MapState<String, Integer> mapState = getRuntimeContext().getMapState(mapDescript
 | `ForL0StateMap` | 核心状态存储，组合双层索引 |
 | `L0Table` | 热点缓存，支持多种替换策略 |
 | `MainTable` | 主索引表，支持局部扩展 |
-| `EntryStore` | 键值分离存储（KeyNsPool + ValuePool） |
+| `HeapEntryStore` | 堆内对象存储，零序列化 |
+| `HeapStateEntry` | 状态条目，存储 key/namespace/state 对象引用 |
 | `NativeL0Memory` | JNI 桥接，L0/模拟模式切换 |
 | `NativeL0MemoryAllocator` | L0Table 内存分配器 |
 | `MemoryManagerAllocator` | MainTable 内存分配器 |
@@ -332,10 +338,8 @@ forL0-state-backend/
 │   │   ├── ForL0StateMap.java          # 核心双层索引实现
 │   │   ├── L0Table.java                # 热点缓存
 │   │   ├── MainTable.java              # 主索引表
-│   │   ├── entrystore/                 # 键值分离存储
-│   │   │   ├── EntryStore.java         # 统一入口
-│   │   │   ├── KeyNsPool.java          # 键/命名空间池
-│   │   │   └── ValuePool.java          # 值池
+│   │   ├── HeapEntryStore.java         # 堆内对象存储
+│   │   ├── HeapStateEntry.java         # 状态条目 (key/ns/state)
 │   │   └── space/                      # 内存分配器
 │   │       ├── NativeL0Memory.java     # JNI 桥接
 │   │       └── NativeL0MemoryAllocator.java
