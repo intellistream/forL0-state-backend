@@ -4,7 +4,6 @@ import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.core.execution.SavepointFormatType;
 import org.apache.flink.runtime.execution.Environment;
-import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.*;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.slf4j.Logger;
@@ -80,25 +79,6 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
 
         LatencyTrackingStateConfig latencyTrackingStateConfig =
                 latencyTrackingConfigBuilder.setMetricGroup(parameters.getMetricGroup()).build();
-
-        // Get MemoryManager and provide detailed debugging info
-        MemoryManager memoryManager = env.getMemoryManager();
-        LOG.info("MemoryManager from environment: {}", memoryManager);
-
-        if (memoryManager == null) {
-            LOG.error("MemoryManager is null! Environment details:");
-            LOG.error("  Environment class: {}", env.getClass().getName());
-            LOG.error("  Environment toString: {}", env.toString());
-            LOG.error("This suggests the Flink environment is not properly configured for managed memory.");
-
-            throw new IllegalStateException(
-                "MemoryManager is null from Environment. " +
-                "This indicates that the Flink TaskManager environment is not properly configured. " +
-                "Environment class: " + env.getClass().getName());
-        }
-
-        LOG.info("MemoryManager successfully obtained: pageSize={}, class={}",
-                memoryManager.getPageSize(), memoryManager.getClass().getName());
         
         LOG.info("Using ForL0StateBackend configuration: {}", forl0Config);
 
@@ -117,7 +97,6 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                         priorityQueueSetFactory,
                         true,
                         parameters.getCancelStreamRegistry(),
-                        memoryManager,
                         forl0Config)
                 .build();
     }

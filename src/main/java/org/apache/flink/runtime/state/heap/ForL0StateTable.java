@@ -1,11 +1,9 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
-import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -14,15 +12,11 @@ import java.util.List;
 
 public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
-    @SuppressWarnings("unused")
-    private static final MemoryManager currentMemoryManager = new ThreadLocal<MemoryManager>().get();  // Actually this is used by reflection
-    private static final ThreadLocal<MemoryManager> MEMORY_MANAGER_HOLDER = new ThreadLocal<>();
     // 通过ThreadLocal传递配置对象
     private static final ThreadLocal<ForL0StateBackendConfig> CONFIG_HOLDER = new ThreadLocal<>();
     // 通过ThreadLocal传递共享的L0Allocator
     private static final ThreadLocal<L0MemoryAllocator> L0_ALLOCATOR_HOLDER = new ThreadLocal<>();
 
-    private final MemoryManager memoryManager;
     // ForL0 configuration
     private final ForL0StateBackendConfig config;
     // 共享的L0Allocator（由Backend提供，所有StateTable共享）
@@ -34,7 +28,6 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
                     RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
                     TypeSerializer<K> keySerializer) {
         super(keyContext, metaInfo, keySerializer);
-        this.memoryManager = MEMORY_MANAGER_HOLDER.get();
         // 读取配置对象，如果没有则使用默认配置
         ForL0StateBackendConfig cfg = CONFIG_HOLDER.get();
         this.config = cfg != null ? cfg : new ForL0StateBackendConfig();
@@ -44,26 +37,19 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         // Clean up ThreadLocals
         CONFIG_HOLDER.remove();
         L0_ALLOCATOR_HOLDER.remove();
-        MEMORY_MANAGER_HOLDER.remove();
-
-        if (this.memoryManager == null) {
-            throw new IllegalStateException("MemoryManager not found in ThreadLocal. This is a programming error.");
-        }
     }
 
     // Public static factory method（保持兼容，默认启用L0）
     public static <K, N, S> ForL0StateTable<K, N, S> create(
             InternalKeyContext<K> keyContext,
             RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
-            TypeSerializer<K> keySerializer,
-            MemoryManager memoryManager) {
+            TypeSerializer<K> keySerializer) {
 
-        // Store the MemoryManager in ThreadLocal before calling constructor
-        MEMORY_MANAGER_HOLDER.set(memoryManager);
         try {
             return new ForL0StateTable<>(keyContext, metaInfo, keySerializer);
         } catch (Exception e) {
-            MEMORY_MANAGER_HOLDER.remove(); // Clean up on error
+            CONFIG_HOLDER.remove();
+            L0_ALLOCATOR_HOLDER.remove();
             throw e;
         }
     }
@@ -76,12 +62,11 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
             InternalKeyContext<K> keyContext,
             RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
             TypeSerializer<K> keySerializer,
-            MemoryManager memoryManager,
             boolean l0CacheEnabled) {
         ForL0StateBackendConfig cfg = l0CacheEnabled 
             ? new ForL0StateBackendConfig() 
             : new ForL0StateBackendConfig().withL0CacheDisabled();
-        return create(keyContext, metaInfo, keySerializer, memoryManager, cfg, null);
+        return create(keyContext, metaInfo, keySerializer, cfg, null);
     }
     
     /**
@@ -92,13 +77,12 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
             InternalKeyContext<K> keyContext,
             RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
             TypeSerializer<K> keySerializer,
-            MemoryManager memoryManager,
             boolean l0CacheEnabled,
             @Nullable L0MemoryAllocator sharedL0Allocator) {
         ForL0StateBackendConfig cfg = l0CacheEnabled 
             ? new ForL0StateBackendConfig() 
             : new ForL0StateBackendConfig().withL0CacheDisabled();
-        return create(keyContext, metaInfo, keySerializer, memoryManager, cfg, sharedL0Allocator);
+        return create(keyContext, metaInfo, keySerializer, cfg, sharedL0Allocator);
     }
 
     /**
@@ -108,7 +92,6 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
      * @param keyContext Key context
      * @param metaInfo Metadata info
      * @param keySerializer Key serializer
-     * @param memoryManager Flink memory manager for MainTable
      * @param config ForL0 StateBackend configuration
      * @param sharedL0Allocator The shared L0 allocator (may be null if L0 disabled)
      */
@@ -116,16 +99,13 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
             InternalKeyContext<K> keyContext,
             RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo,
             TypeSerializer<K> keySerializer,
-            MemoryManager memoryManager,
             ForL0StateBackendConfig config,
             @Nullable L0MemoryAllocator sharedL0Allocator) {
-        MEMORY_MANAGER_HOLDER.set(memoryManager);
         CONFIG_HOLDER.set(config);
         L0_ALLOCATOR_HOLDER.set(sharedL0Allocator);
         try {
             return new ForL0StateTable<>(keyContext, metaInfo, keySerializer);
         } catch (Exception e) {
-            MEMORY_MANAGER_HOLDER.remove();
             CONFIG_HOLDER.remove();
             L0_ALLOCATOR_HOLDER.remove();
             throw e;
@@ -136,16 +116,6 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
     protected ForL0StateMap<K, N, S> createStateMap() {
         // Note: This method is called from parent constructor, before our fields are initialized.
         // So we MUST read from ThreadLocal, not from instance fields.
-        
-        // Get MemoryManager from ThreadLocal (required)
-        MemoryManager mm = MEMORY_MANAGER_HOLDER.get();
-        if (mm == null) {
-            mm = this.memoryManager; // Fallback to instance field if available (for subsequent calls)
-        }
-
-        if (mm == null) {
-            throw new IllegalStateException("MemoryManager is not available in createStateMap()");
-        }
 
         // Get config from ThreadLocal, fallback to instance field, then to default
         ForL0StateBackendConfig cfg = CONFIG_HOLDER.get();
@@ -168,7 +138,6 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
         L0MemoryAllocator effectiveL0Allocator = l0CacheEnabled ? l0Allocator : null;
 
         return new ForL0StateMap<>(
-                new MemoryManagerAllocator(mm, this),
                 effectiveL0Allocator,  // L0 memory allocator (null if L0 disabled)
                 cfg.getMainTableInitialSize(),     // MainTable initial size from config
                 cfg.getL0CacheSize(),              // L0Table size from config

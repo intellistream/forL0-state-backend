@@ -1,8 +1,5 @@
 package org.apache.flink.runtime.state.heap;
 
-import org.apache.flink.runtime.memory.MemoryManager;
-import org.apache.flink.runtime.memory.MemoryManagerBuilder;
-import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.util.MathUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,27 +17,15 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class MainTableStressTest {
 
-    private static final int DEFAULT_PAGE_SIZE = 32 * 1024; // 32KB
-    private static final long DEFAULT_MEMORY_SIZE = 512L * DEFAULT_PAGE_SIZE; // 16MB for stress tests
-
-    private MemoryManager memoryManager;
-    private MemoryManagerAllocator allocator;
     private HeapEntryStore<String, String, String> entryStore;
     private MainTable<String, String, String> mainTable;
     private Random random;
 
     @BeforeEach
     void setUp() {
-        memoryManager = MemoryManagerBuilder.newBuilder()
-                .setMemorySize(DEFAULT_MEMORY_SIZE)
-                .setPageSize(DEFAULT_PAGE_SIZE)
-                .build();
-        Object owner = new Object();
-        allocator = new MemoryManagerAllocator(memoryManager, owner);
         entryStore = new HeapEntryStore<>();
-
         // Create MainTable with 32 buckets (2^5) and higher load factor threshold for stress testing
-        mainTable = new MainTable<>(allocator, 5, 1.5); // 阈值调整为1.5（entries/base buckets）
+        mainTable = new MainTable<>(5, 1.5); // 阈值调整为1.5（entries/base buckets）
         random = new Random(42); // Fixed seed for reproducibility
     }
 
@@ -52,22 +37,12 @@ class MainTableStressTest {
         if (entryStore != null) {
             entryStore.close();
         }
-        if (allocator != null && !allocator.isClosed()) {
-            allocator.close();
-        }
-        if (memoryManager != null) {
-            memoryManager.shutdown();
-        }
     }
 
     // ========== Helper Methods ==========
 
     private int compositeHash(String key, String namespace) {
         return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-    }
-
-    private short extractTag(int hash) {
-        return (short) (hash >>> 16);
     }
 
     @RepeatedTest(5)
@@ -99,7 +74,7 @@ class MainTableStressTest {
         // Verify all inserted entries can be retrieved
         int verifyCount = 0;
         for (TestEntry entry : insertedEntries) {
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.namespace, entryStore);
+            int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
             if (retrievedAddress > 0) {
                 HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
@@ -166,7 +141,6 @@ class MainTableStressTest {
                     String newValue = generateRandomValue(random);
                     TestEntry newEntry = new TestEntry(oldEntry.key, oldEntry.namespace, newValue);
                     newEntry.hash = oldEntry.hash;
-                    newEntry.tag = oldEntry.tag;
 
                     if (insertEntry(newEntry)) {
                         currentEntries.put(newEntry.key, newEntry);
@@ -177,7 +151,7 @@ class MainTableStressTest {
                     List<TestEntry> entryList = new ArrayList<>(currentEntries.values());
                     TestEntry entryToDelete = entryList.get(random.nextInt(entryList.size()));
 
-                    long removedAddress = mainTable.remove(entryToDelete.hash, entryToDelete.tag, 
+                    int removedAddress = mainTable.remove(entryToDelete.hash, 
                             entryToDelete.key, entryToDelete.namespace, entryStore);
 
                     if (removedAddress > 0) {
@@ -195,7 +169,7 @@ class MainTableStressTest {
         // Phase 3: Verify remaining entries
         int verifyCount = 0;
         for (TestEntry entry : currentEntries.values()) {
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.namespace, entryStore);
+            int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
             if (retrievedAddress > 0) {
                 HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
@@ -212,7 +186,7 @@ class MainTableStressTest {
     @Test
     void testMemoryPressureStress() {
         // Use smaller table to create memory pressure faster
-        try (MainTable<String, String, String> smallTable = new MainTable<>(allocator, 2, 0.6)) { // 4 buckets, low threshold
+        try (MainTable<String, String, String> smallTable = new MainTable<>(2, 0.6)) { // 4 buckets, low threshold
             List<TestEntry> pressureEntries = new ArrayList<>();
 
             // Insert until memory pressure or resize trigger
@@ -221,15 +195,13 @@ class MainTableStressTest {
                 TestEntry entry = generateRandomEntry("pressure" + i, random);
 
                 int hash = compositeHash(entry.key, entry.namespace);
-                short tag = extractTag(hash);
-                long entryAddress = entryStore.allocate(entry.key, entry.namespace, entry.value);
+                int entryAddress = (int) entryStore.allocate(entry.key, entry.namespace, entry.value);
                 if (entryAddress > 0) {
                     entry.addr = entryAddress;
                     entry.hash = hash;
-                    entry.tag = tag;
 
                     try {
-                        long result = smallTable.put(hash, tag, entryAddress, entry.key, entry.namespace, entryStore);
+                        int result = smallTable.put(hash, entryAddress, entry.key, entry.namespace, entryStore);
                         if (result >= 0) {
                             pressureEntries.add(entry);
                         }
@@ -254,7 +226,7 @@ class MainTableStressTest {
             // Verify entries still accessible under pressure
             int verifyCount = 0;
             for (TestEntry entry : pressureEntries) {
-                long retrievedAddress = smallTable.get(entry.hash, entry.tag, entry.key, entry.namespace, entryStore);
+                int retrievedAddress = smallTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
                 if (retrievedAddress > 0) {
                     HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
@@ -292,7 +264,7 @@ class MainTableStressTest {
         int readCount = 0;
         for (int round = 0; round < 100; round++) {
             for (TestEntry entry : baseEntries) {
-                long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.namespace, entryStore);
+                int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
                 if (retrievedAddress > 0) {
                     HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
@@ -316,14 +288,13 @@ class MainTableStressTest {
         for (int i = 0; i < 300; i++) { // More than 255 extension buckets
             TestEntry entry = generateRandomEntry("exhaustion" + i, random);
             entry.hash = baseHash; // Same bucket
-            entry.tag = (short) (i + 1); // Different tags
 
-            long entryAddress = entryStore.allocate(entry.key, entry.namespace, entry.value);
+            int entryAddress = (int) entryStore.allocate(entry.key, entry.namespace, entry.value);
             if (entryAddress > 0) {
                 entry.addr = entryAddress;
 
                 try {
-                    long result = mainTable.put(entry.hash, entry.tag, entryAddress, entry.key, entry.namespace, entryStore);
+                    int result = mainTable.put(entry.hash, entryAddress, entry.key, entry.namespace, entryStore);
                     if (result >= 0) {
                         exhaustionEntries.add(entry);
                     }
@@ -340,7 +311,7 @@ class MainTableStressTest {
         // Verify inserted entries are still accessible
         int verifyCount = 0;
         for (TestEntry entry : exhaustionEntries) {
-            long retrievedAddress = mainTable.get(entry.hash, entry.tag, entry.key, entry.namespace, entryStore);
+            int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
             if (retrievedAddress > 0) {
                 verifyCount++;
@@ -358,16 +329,14 @@ class MainTableStressTest {
     // Helper methods
     private boolean insertEntry(TestEntry entry) {
         int hash = compositeHash(entry.key, entry.namespace);
-        short tag = extractTag(hash);
-        long entryAddress = entryStore.allocate(entry.key, entry.namespace, entry.value);
+        int entryAddress = (int) entryStore.allocate(entry.key, entry.namespace, entry.value);
         if (entryAddress <= 0) {
             return false;
         }
         entry.addr = entryAddress;
         entry.hash = hash;
-        entry.tag = tag;
         try {
-            long result = mainTable.put(hash, tag, entryAddress, entry.key, entry.namespace, entryStore);
+            int result = mainTable.put(hash, entryAddress, entry.key, entry.namespace, entryStore);
             return result >= 0;
         } catch (RuntimeException e) {
             return false;
@@ -398,7 +367,6 @@ class MainTableStressTest {
         final String value;
         long addr = 0;
         int hash;
-        short tag;
 
         TestEntry(String key, String namespace, String value) {
             this.key = key;

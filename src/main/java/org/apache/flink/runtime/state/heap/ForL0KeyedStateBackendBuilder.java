@@ -3,7 +3,6 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.fs.CloseableRegistry;
-import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.*;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
@@ -33,8 +32,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     private final HeapPriorityQueueSetFactory priorityQueueSetFactory;
     /** Whether asynchronous snapshot is enabled. */
     private final boolean asynchronousSnapshots;
-    /** Memory manager for allocating memory for the state backend. */
-    private final MemoryManager memoryManager;
     /** ForL0 StateBackend configuration. */
     private final ForL0StateBackendConfig forl0Config;
 
@@ -57,7 +54,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
             boolean asynchronousSnapshots,
             CloseableRegistry cancelStreamRegistry,
-            MemoryManager memoryManager,
             ForL0StateBackendConfig forl0Config) {
         super(
                 kvStateRegistry,
@@ -74,7 +70,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.localRecoveryConfig = localRecoveryConfig;
         this.priorityQueueSetFactory = priorityQueueSetFactory;
         this.asynchronousSnapshots = asynchronousSnapshots;
-        this.memoryManager = memoryManager;
         this.forl0Config = forl0Config;
     }
 
@@ -97,7 +92,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
             boolean asynchronousSnapshots,
             CloseableRegistry cancelStreamRegistry,
-            MemoryManager memoryManager,
             boolean l0CacheEnabled) {
         this(
                 kvStateRegistry,
@@ -114,7 +108,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 priorityQueueSetFactory,
                 asynchronousSnapshots,
                 cancelStreamRegistry,
-                memoryManager,
                 l0CacheEnabled 
                     ? new ForL0StateBackendConfig() 
                     : new ForL0StateBackendConfig().withL0CacheDisabled());
@@ -138,8 +131,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             LocalRecoveryConfig localRecoveryConfig,
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
             boolean asynchronousSnapshots,
-            CloseableRegistry cancelStreamRegistry,
-            MemoryManager memoryManager) {
+            CloseableRegistry cancelStreamRegistry) {
         this(
                 kvStateRegistry,
                 keySerializer,
@@ -155,7 +147,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 priorityQueueSetFactory,
                 asynchronousSnapshots,
                 cancelStreamRegistry,
-                memoryManager,
                 new ForL0StateBackendConfig()); // default config with L0 enabled
     }
 
@@ -199,13 +190,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             public <N, V> StateTable<K, N, V> newStateTable(InternalKeyContext<K> keyContext,
                                                             RegisteredKeyValueStateBackendMetaInfo<N, V> keyValueStateMetaInfo,
                                                             TypeSerializer<K> keySerializer) {
-                // Use the static factory method to ensure MemoryManager is available during construction
-                MemoryManager mm = ForL0KeyedStateBackendBuilder.this.memoryManager;
-                if (mm == null) {
-                    throw new IllegalStateException("MemoryManager is null in ForL0KeyedStateBackendBuilder. " +
-                        "This indicates that the MemoryManager was not properly passed from the Environment.");
-                }
-                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, mm, 
+                // Use the static factory method - no MemoryManager needed after refactoring
+                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, 
                         capturedConfig, capturedL0Allocator);
             }
         };
@@ -228,7 +214,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 asynchronousSnapshots ? ASYNCHRONOUS : SYNCHRONOUS,
                 stateTableFactory,
                 keyContext,
-                memoryManager,
                 sharedL0Allocator);
     }
 

@@ -2,11 +2,8 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
-import org.apache.flink.runtime.memory.MemoryManager;
-import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
-import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.junit.jupiter.api.*;
 
@@ -18,28 +15,15 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ForL0StateMapTest {
 
-    private static final int DEFAULT_PAGE_SIZE = 32 * 1024; // 32KB
-    private static final long DEFAULT_MEMORY_SIZE = 64L * DEFAULT_PAGE_SIZE; // 2MB for tests
-
-    private MemoryManager memoryManager;
-    private MemoryManagerAllocator allocator;
     private L0MemoryAllocator l0Allocator;
     private ForL0StateMap<String, Integer, String> stateMap;
-    private Object owner;
 
     @BeforeEach
     void setUp() {
-        memoryManager = MemoryManagerBuilder.newBuilder()
-                .setMemorySize(DEFAULT_MEMORY_SIZE)
-                .setPageSize(DEFAULT_PAGE_SIZE)
-                .build();
-        owner = new Object();
-        allocator = new MemoryManagerAllocator(memoryManager, owner);
         l0Allocator = new NativeL0MemoryAllocator();
 
         // Create ForL0StateMap with L0 cache enabled
         stateMap = new ForL0StateMap<>(
-            allocator,
             l0Allocator,
             4, // MainTable: 16 buckets
             3, // L0Table: 8 buckets
@@ -57,12 +41,6 @@ class ForL0StateMapTest {
         }
         if (l0Allocator != null && !l0Allocator.isClosed()) {
             l0Allocator.close();
-        }
-        if (allocator != null && !allocator.isClosed()) {
-            allocator.close();
-        }
-        if (memoryManager != null) {
-            memoryManager.shutdown();
         }
     }
 
@@ -235,7 +213,7 @@ class ForL0StateMapTest {
         void testMainTableHitWithL0Promotion() {
             // Create a state map without L0 cache first
             try (ForL0StateMap<String, Integer, String> noCacheMap = new ForL0StateMap<>(
-                    allocator, null, 4, 3, StringSerializer.INSTANCE, IntSerializer.INSTANCE, StringSerializer.INSTANCE, false)) {
+                    null, 4, 3, StringSerializer.INSTANCE, IntSerializer.INSTANCE, StringSerializer.INSTANCE, false)) {
 
                 String key = "promotionKey";
                 Integer namespace = 700;
@@ -268,7 +246,6 @@ class ForL0StateMapTest {
         @Test
         void testConstructWithCustomL0Policy() throws Exception {
             try (ForL0StateMap<String, Integer, String> custom = new ForL0StateMap<>(
-                    allocator,
                     l0Allocator,
                     4,
                     3,
@@ -382,7 +359,6 @@ class ForL0StateMapTest {
         void setupSmall() {
             // 使用极小的主表容量以快速触发扩容：2 buckets (pow2=1)
             smallMap = new ForL0StateMap<>(
-                allocator,
                 l0Allocator,
                 1, // 2 buckets; 新负载因子阈值 1.5 * 2 = 3 entries 即标记需扩容（旧注释: 0.75 * 12=9 已废弃）
                 2, // L0 4 buckets
@@ -708,7 +684,6 @@ class ForL0StateMapTest {
         void testFastPathWithLongState() throws Exception {
             // Create a ForL0StateMap with Long state type (should trigger fast path)
             try (ForL0StateMap<String, Integer, Long> longStateMap = new ForL0StateMap<>(
-                    allocator,
                     l0Allocator,
                     4, // MainTable: 16 buckets
                     3, // L0Table: 8 buckets
@@ -738,7 +713,6 @@ class ForL0StateMapTest {
         void testFastPathWithIntState() throws Exception {
             // Create a ForL0StateMap with Integer state type (should trigger fast path)
             try (ForL0StateMap<String, Integer, Integer> intStateMap = new ForL0StateMap<>(
-                    allocator,
                     l0Allocator,
                     4, // MainTable: 16 buckets
                     3, // L0Table: 8 buckets
@@ -765,7 +739,6 @@ class ForL0StateMapTest {
         void testFastPathWithDoubleState() throws Exception {
             // Create a ForL0StateMap with Double state type (should trigger fast path)
             try (ForL0StateMap<String, Integer, Double> doubleStateMap = new ForL0StateMap<>(
-                    allocator,
                     l0Allocator,
                     4, // MainTable: 16 buckets
                     3, // L0Table: 8 buckets
@@ -791,7 +764,6 @@ class ForL0StateMapTest {
             // Test fast path with larger data set to ensure stability
             int numEntries = 10000;
             try (ForL0StateMap<String, Integer, Long> longStateMap = new ForL0StateMap<>(
-                    allocator,
                     l0Allocator,
                     10, // MainTable: 1024 buckets
                     6,  // L0Table: 64 buckets  

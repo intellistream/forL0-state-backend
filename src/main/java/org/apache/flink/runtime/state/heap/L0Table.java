@@ -13,21 +13,35 @@ import java.util.Random;
  * byte comparison. The Pointer field now stores the array index in HeapEntryStore
  * instead of off-heap memory address.
  * 
- * <p>Each bucket is 64 bytes aligned and contains 4 slots.
+ * <p>Each bucket is 64 bytes aligned and contains 7 slots + 1 extension long.
  * 
- * <p>Bucket layout: ValidBitmap(4B) + 4×Slot(15B) = 64B
+ * <p>Bucket layout (64 bytes = 8 longs):
  * <ul>
- *   <li>ValidBitmap: 4 bytes at bucket start, 1 byte per slot (valid + accessed flags)</li>
- *   <li>Slot layout: Tag(2B) + Extension(5B) + Pointer(8B) = 15B</li>
+ *   <li>Slots 0-6: 7 × 8 bytes = 56 bytes, each slot = [Hash(32b) | Ptr(32b)]</li>
+ *   <li>Extension: 8 bytes at offset 56, used for CLOCK accessed bits</li>
  * </ul>
  * 
- * <p>Supports configurable replacement algorithms (LRU, LFU, etc.) for cache management.
+ * <p>Slot format (8 bytes = 1 long):
+ * <pre>
+ * 63                              32 31                        0
+ * ┌────────────────────────────────┬────────────────────────────┐
+ * │         Hash (32 bits)         │       Pointer (32 bits)    │
+ * └────────────────────────────────┴────────────────────────────┘
+ * </pre>
+ * 
+ * <p>Empty slot: slot == 0 (entire long is zero)
+ * 
+ * <p>Supports multiple replacement policies (CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU).
+ * The extension long at offset 56 stores replacement algorithm metadata:
+ * <ul>
+ *   <li>CLOCK/SAMPLED_LRU: bits 0-6 = 7 accessed flags (1 bit per slot)</li>
+ *   <li>LFU/TINY_LFU: 7 × 8 bits = frequency counters (0-255 per slot)</li>
+ *   <li>LRU: 7 × 9 bits = relative timestamps (0-511 per slot)</li>
+ * </ul>
  *
  * <p>Uses L0MemoryAllocator for memory allocation, which is separate from the
- * MemoryManager-managed memory used by MainTable and HeapEntryStore. L0 memory
- * may be backed by specialized hardware (CXL memory, PMEM) via JNI native methods.
- *
- * <p>Uses MemorySegment operations instead of Unsafe for better safety and compatibility.
+ * MemoryManager-managed memory used by MainTable. L0 memory may be backed by
+ * specialized hardware (CXL memory, PMEM) via JNI native methods.
  *
  * @param <K> type of key
  * @param <N> type of namespace
@@ -35,35 +49,45 @@ import java.util.Random;
  */
 public class L0Table<K, N, S> implements AutoCloseable {
 
-    // L0 bucket and slot layout constants
-    private static final int BUCKET_SIZE = 64;  // 64 bytes per bucket
-    private static final int BUCKET_SIZE_BITS = 6;  // 64 = 2^6, for fast multiplication via shift
-    private static final int SLOTS_PER_BUCKET = 4;  // 4 slots per bucket
-    
-    // Bucket layout: ValidBitmap (4B) + 4 × Slot (15B each) = 64 bytes
-    private static final int VALID_BITMAP_SIZE = 4;
-    private static final int SLOT_SIZE = 15;  // 15 bytes per slot
+    // Bucket configuration
+    private static final int BUCKET_SIZE = 64;           // 64 bytes per bucket
+    private static final int BUCKET_SIZE_BITS = 6;       // 64 = 2^6, for fast multiplication via shift
+    private static final int SLOTS_PER_BUCKET = 7;       // 7 data slots per bucket
+    private static final int SLOT_SIZE = 8;              // 8 bytes per slot (1 long)
+    private static final int EXTENSION_OFFSET = 56;      // Extension at offset 56 (after 7 slots)
 
-    // Slot field offsets within a slot (relative to slot start)
-    private static final int SLOT_TAG_OFFSET = 0;       // 2 bytes
-    private static final int SLOT_EXTENSION_OFFSET = 2; // 5 bytes (for LRU/LFU data)
-    private static final int SLOT_POINTER_OFFSET = 7;   // 8 bytes
+    // Slot bit operations (unified with MainTable)
+    private static final int HASH_SHIFT = 32;
+    private static final long PTR_MASK = 0xFFFFFFFFL;
 
-    // Valid field bit masks for CLOCK algorithm
-    private static final byte VALID_MASK = 0x01;       // bit 0: validity
-    private static final byte ACCESSED_MASK = 0x02;     // bit 1: accessed flag (for CLOCK)
-    
-    // LFU constants
-    private static final int MAX_FREQUENCY = 15;        // Max frequency for LFU/TinyLFU
-    private static final long TINY_LFU_DECAY_INTERVAL = 10000; // Decay every 10K accesses
+    // CLOCK algorithm: low 7 bits of extension long store accessed flags
+    private static final long ACCESSED_MASK_ALL = 0x7FL; // bits 0-6
 
-    // Replacement algorithm types
+    // LFU strategy constants
+    private static final int LFU_FREQ_BITS = 8;
+    private static final int LFU_FREQ_MASK = 0xFF;
+
+    // LRU strategy constants
+    private static final int LRU_TS_BITS = 9;
+    private static final int LRU_TS_MASK = 0x1FF;
+
+    // TinyLFU decay interval
+    private static final long DECAY_INTERVAL = 10000L;
+
+    /**
+     * Replacement policies for L0 cache eviction.
+     */
     public enum ReplacementPolicy {
-        LRU,         // Least Recently Used (fixed with relative timestamp)
-        LFU,         // Least Frequently Used (with saturation at 15)
-        CLOCK,       // Clock algorithm (1-bit accessed flag, recommended default)
-        TINY_LFU,    // Window TinyLFU with decay mechanism
-        SAMPLED_LRU  // Random sampling + LRU (lightweight)
+        /** Clock algorithm (1-bit accessed flag, recommended default) */
+        CLOCK,
+        /** Least Recently Used (9-bit relative timestamps) */
+        LRU,
+        /** Least Frequently Used (8-bit frequency counters) */
+        LFU,
+        /** TinyLFU with periodic decay */
+        TINY_LFU,
+        /** Random sampling + LRU (lightweight) */
+        SAMPLED_LRU
     }
 
     private final L0MemoryAllocator l0Allocator;
@@ -75,15 +99,18 @@ public class L0Table<K, N, S> implements AutoCloseable {
     private final ReplacementPolicy replacementPolicy;
     private final Random random;  // For SAMPLED_LRU
 
+    // LRU timestamp counter (cycles 0-511)
+    private int currentTimestamp = 0;
+
+    // TinyLFU decay tracking
+    private long tinyLfuAccessCount = 0;
+
     // Statistics and metrics
     // [BENCHMARK_TEST] volatile for thread-safe reads by L0TableMetricsCollector
     private volatile long accessCount = 0;
     private volatile long hitCount = 0;
     private volatile long missCount = 0;
     private volatile long evictionCount = 0;
-    
-    // TinyLFU decay tracking
-    private long tinyLfuAccessCount = 0;
 
     /**
      * Creates an L0 Table with specified number of buckets and CLOCK replacement policy.
@@ -120,35 +147,11 @@ public class L0Table<K, N, S> implements AutoCloseable {
             this.segmentSizeBits = Integer.numberOfTrailingZeros(segmentSize);
             this.segmentMask = segmentSize - 1;
 
-            // Initialize all slots as invalid
+            // Initialize all buckets (zero out all memory)
             clearAllSlots();
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to allocate L0 Table memory", e);
-        }
-    }
-
-    /**
-     * Removes an entry from L0 table by entry address.
-     */
-    public void removeByAddress(long entryAddress) {
-        if (entryAddress == 0) return;
-
-        for (int bucket = 0; bucket < bucketCount; bucket++) {
-            MemorySegment segment = getSegmentForBucket(bucket);
-            int bucketOffset = getBucketOffsetInSegment(bucket);
-
-            int slotOffset = bucketOffset + VALID_BITMAP_SIZE;
-            for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-                byte valid = segment.get(bucketOffset + slot);
-                if (valid == 0) continue;
-
-                long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-                if (pointer == entryAddress) {
-                    segment.put(bucketOffset + slot, (byte) 0);
-                    return;
-                }
-            }
         }
     }
 
@@ -158,35 +161,31 @@ public class L0Table<K, N, S> implements AutoCloseable {
      * <p>This is the heap object store version that uses {@code store.matches()} 
      * for key/namespace comparison instead of byte comparison.
      *
-     * @param keyHash the pre-computed hash value
-     * @param tag the tag (high 16 bits of hash)
+     * @param hash the pre-computed hash value (full 32 bits used)
      * @param key the key object
      * @param namespace the namespace object
      * @param store the HeapEntryStore containing the entries
-     * @return the entry address if found, 0 otherwise
+     * @return the entry pointer if found, 0 otherwise
      */
-    public long get(int keyHash, short tag, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public int get(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
         accessCount++;
-        int bucketIndex = keyHash & (bucketCount - 1);
+        int bucketIndex = hash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
-        // Check all 4 slots with incremental offset (avoid multiplication)
-        int slotOffset = bucketOffset + VALID_BITMAP_SIZE;
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-            byte valid = segment.get(bucketOffset + slot);
-            if (valid == 0) continue;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;
-
-            long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            // Use object comparison instead of byte comparison
-            if (store.matches(pointer, key, namespace)) {
+        // Check all 7 slots
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            if (slot == 0) continue;  // Empty slot
+            if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
+            
+            int ptr = (int) slot;
+            if (store.matches(ptr, key, namespace)) {
                 hitCount++;
-                updateSlotOnAccess(segment, bucketOffset, slot, slotOffset);
-                return pointer;
+                // Update replacement algorithm metadata
+                updateAccessMetadata(segment, bucketOffset, i);
+                return ptr;
             }
         }
 
@@ -200,58 +199,60 @@ public class L0Table<K, N, S> implements AutoCloseable {
      * <p>This is the heap object store version that uses {@code store.matches()} 
      * for key/namespace comparison instead of byte comparison.
      *
-     * @param keyHash the pre-computed hash value
-     * @param tag the tag (high 16 bits of hash)
-     * @param entryAddress the HeapEntryStore address of the entry
+     * @param hash the pre-computed hash value (full 32 bits used)
+     * @param ptr the HeapEntryStore pointer of the entry
      * @param key the key object
      * @param namespace the namespace object
      * @param store the HeapEntryStore containing the entries
-     * @return the old entry address if updating, 0 if new entry, or evicted address
+     * @return 0 if new entry inserted, old ptr if updated, or evicted ptr if eviction occurred
      */
-    public long put(int keyHash, short tag, long entryAddress, 
-                    K key, N namespace, HeapEntryStore<K, N, S> store) {
-        int bucketIndex = keyHash & (bucketCount - 1);
+    public int put(int hash, int ptr, K key, N namespace, HeapEntryStore<K, N, S> store) {
+        int bucketIndex = hash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
+        // Encode new slot value
+        long newSlot = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
+
         // Find empty slot or update existing entry
         int emptySlot = -1;
-        int slotOffset = bucketOffset + VALID_BITMAP_SIZE;
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-            byte valid = segment.get(bucketOffset + slot);
-            if (valid == 0) {
-                if (emptySlot == -1) emptySlot = slot;
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            if (slot == 0) {
+                if (emptySlot == -1) emptySlot = i;
                 continue;
             }
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            long slotPointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-
-            // Use object comparison instead of byte comparison
-            if (slotTag == tag && store.matches(slotPointer, key, namespace)) {
-                segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-                updateSlotOnAccess(segment, bucketOffset, slot, slotOffset);
-                return slotPointer;
+            
+            if ((int)(slot >>> HASH_SHIFT) == hash) {
+                int slotPtr = (int) slot;
+                if (store.matches(slotPtr, key, namespace)) {
+                    // Update existing entry
+                    segment.putLong(bucketOffset + i * SLOT_SIZE, newSlot);
+                    // Update replacement algorithm metadata
+                    updateAccessMetadata(segment, bucketOffset, i);
+                    return slotPtr;
+                }
             }
         }
 
         // Use empty slot if available
         if (emptySlot != -1) {
-            int emptyOffset = bucketOffset + VALID_BITMAP_SIZE + emptySlot * SLOT_SIZE;
-            writeSlot(segment, bucketOffset, emptySlot, emptyOffset, tag, entryAddress);
+            segment.putLong(bucketOffset + emptySlot * SLOT_SIZE, newSlot);
+            // Initialize replacement algorithm metadata for new entry
+            initSlotMetadata(segment, bucketOffset, emptySlot);
             return 0;
         }
 
         // No empty slot, need eviction
         int victimSlot = selectVictimSlot(segment, bucketOffset);
-        int victimOffset = bucketOffset + VALID_BITMAP_SIZE + victimSlot * SLOT_SIZE;
-        long oldEntryAddress = segment.getLong(victimOffset + SLOT_POINTER_OFFSET);
-
-        writeSlot(segment, bucketOffset, victimSlot, victimOffset, tag, entryAddress);
+        long oldSlot = segment.getLong(bucketOffset + victimSlot * SLOT_SIZE);
+        segment.putLong(bucketOffset + victimSlot * SLOT_SIZE, newSlot);
+        // Initialize replacement algorithm metadata for new entry
+        initSlotMetadata(segment, bucketOffset, victimSlot);
         evictionCount++;
 
-        return oldEntryAddress;
+        return (int) oldSlot;  // Return evicted pointer
     }
 
     /**
@@ -260,36 +261,58 @@ public class L0Table<K, N, S> implements AutoCloseable {
      * <p>This is the heap object store version that uses {@code store.matches()} 
      * for key/namespace comparison instead of byte comparison.
      *
-     * @param keyHash the pre-computed hash value
-     * @param tag the tag (high 16 bits of hash)
+     * @param hash the pre-computed hash value (full 32 bits used)
      * @param key the key object
      * @param namespace the namespace object
      * @param store the HeapEntryStore containing the entries
-     * @return the removed entry address if found, 0 otherwise
+     * @return the removed entry pointer if found, 0 otherwise
      */
-    public long remove(int keyHash, short tag, K key, N namespace, HeapEntryStore<K, N, S> store) {
-        int bucketIndex = keyHash & (bucketCount - 1);
+    public int remove(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
+        int bucketIndex = hash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
         int bucketOffset = getBucketOffsetInSegment(bucketIndex);
 
-        int slotOffset = bucketOffset + VALID_BITMAP_SIZE;
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-            byte valid = segment.get(bucketOffset + slot);
-            if (valid == 0) continue;
-
-            short slotTag = segment.getShort(slotOffset + SLOT_TAG_OFFSET);
-            if (slotTag != tag) continue;
-
-            long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-            // Use object comparison instead of byte comparison
-            if (store.matches(pointer, key, namespace)) {
-                segment.put(bucketOffset + slot, (byte) 0);
-                return pointer;
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            if (slot == 0) continue;
+            if ((int)(slot >>> HASH_SHIFT) != hash) continue;
+            
+            int ptr = (int) slot;
+            if (store.matches(ptr, key, namespace)) {
+                // Clear the slot (set to 0)
+                segment.putLong(bucketOffset + i * SLOT_SIZE, 0);
+                return ptr;
             }
         }
 
         return 0;
+    }
+
+    /**
+     * Removes an entry from L0 table by entry pointer.
+     * Scans all buckets to find and remove the entry.
+     *
+     * @param entryPtr the pointer to remove
+     */
+    public void invalidatePointer(int entryPtr) {
+        if (entryPtr == 0) return;
+
+        for (int bucket = 0; bucket < bucketCount; bucket++) {
+            MemorySegment segment = getSegmentForBucket(bucket);
+            int bucketOffset = getBucketOffsetInSegment(bucket);
+
+            for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+                long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+                if (slot == 0) continue;
+                
+                int ptr = (int) slot;
+                if (ptr == entryPtr) {
+                    segment.putLong(bucketOffset + i * SLOT_SIZE, 0);
+                    return;
+                }
+            }
+        }
     }
 
     /**
@@ -302,28 +325,28 @@ public class L0Table<K, N, S> implements AutoCloseable {
         missCount = 0;
         evictionCount = 0;
         tinyLfuAccessCount = 0;
+        currentTimestamp = 0;
     }
 
     /**
-     * Invalidates all entries with addresses in the specified range.
+     * Invalidates all entries with pointers in the specified range.
      * Used when entries in HeapEntryStore are deallocated.
      *
-     * @param minAddress Minimum address (inclusive)
-     * @param maxAddress Maximum address (exclusive)
+     * @param minPtr Minimum pointer (inclusive)
+     * @param maxPtr Maximum pointer (exclusive)
      */
-    public void invalidateRange(long minAddress, long maxAddress) {
+    public void invalidateRange(int minPtr, int maxPtr) {
         for (int bucket = 0; bucket < bucketCount; bucket++) {
             MemorySegment segment = getSegmentForBucket(bucket);
             int bucketOffset = getBucketOffsetInSegment(bucket);
 
-            int slotOffset = bucketOffset + VALID_BITMAP_SIZE;
-            for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-                byte valid = segment.get(bucketOffset + slot);
-                if (valid == 0) continue;
-
-                long pointer = segment.getLong(slotOffset + SLOT_POINTER_OFFSET);
-                if (pointer >= minAddress && pointer < maxAddress) {
-                    segment.put(bucketOffset + slot, (byte) 0);
+            for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+                long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+                if (slot == 0) continue;
+                
+                int ptr = (int) slot;
+                if (ptr >= minPtr && ptr < maxPtr) {
+                    segment.putLong(bucketOffset + i * SLOT_SIZE, 0);
                 }
             }
         }
@@ -335,6 +358,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
     public L0TableStats getStats() {
         return new L0TableStats(
             getEntryCount(),
+            bucketCount * SLOTS_PER_BUCKET,
             accessCount,
             hitCount,
             missCount,
@@ -343,7 +367,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
         );
     }
 
-    // Helper methods for memory access - MainTable style (zero object allocation)
+    // ==================== Helper methods ====================
 
     /**
      * Gets the MemorySegment containing the specified bucket.
@@ -362,175 +386,245 @@ public class L0Table<K, N, S> implements AutoCloseable {
         return (int) (((long) bucketIndex << BUCKET_SIZE_BITS) & segmentMask);
     }
 
+    /**
+     * Clears all buckets by zeroing out memory.
+     * Each bucket is 64 bytes = 8 longs.
+     */
     private void clearAllSlots() {
         for (int bucket = 0; bucket < bucketCount; bucket++) {
             MemorySegment segment = getSegmentForBucket(bucket);
             int bucketOffset = getBucketOffsetInSegment(bucket);
-            segment.putInt(bucketOffset, 0);
-        }
-    }
-
-    private void writeSlot(MemorySegment segment, int bucketOffset, int slot, int slotOffset, 
-                           short tag, long entryAddress) {
-        segment.putShort(slotOffset + SLOT_TAG_OFFSET, tag);
-        segment.putLong(slotOffset + SLOT_POINTER_OFFSET, entryAddress);
-
-        switch (replacementPolicy) {
-            case LRU:
-                segment.put(bucketOffset + slot, (byte) 1);
-                segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, getRelativeTimestamp());
-                break;
-            case LFU:
-            case TINY_LFU:
-                segment.put(bucketOffset + slot, (byte) 1);
-                segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, 1);
-                break;
-            case CLOCK:
-            case SAMPLED_LRU:
-                segment.put(bucketOffset + slot, VALID_MASK);
-                break;
-            default:
-                segment.put(bucketOffset + slot, (byte) 1);
-                break;
-        }
-    }
-
-    private void updateSlotOnAccess(MemorySegment segment, int bucketOffset, int slot, int slotOffset) {
-        switch (replacementPolicy) {
-            case LRU:
-                segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, getRelativeTimestamp());
-                break;
-            case LFU:
-                int freq = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
-                if (freq < MAX_FREQUENCY) {
-                    segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, freq + 1);
-                }
-                break;
-            case TINY_LFU:
-                int tinyFreq = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
-                if (tinyFreq < MAX_FREQUENCY) {
-                    segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, tinyFreq + 1);
-                }
-                if (++tinyLfuAccessCount >= TINY_LFU_DECAY_INTERVAL) {
-                    decayAllFrequencies();
-                    tinyLfuAccessCount = 0;
-                }
-                break;
-            case CLOCK:
-            case SAMPLED_LRU:
-                byte valid = segment.get(bucketOffset + slot);
-                segment.put(bucketOffset + slot, (byte)(valid | ACCESSED_MASK));
-                break;
-            default:
-                break;
-        }
-    }
-
-    /**
-     * Get relative timestamp to avoid overflow issues.
-     * Uses lower 31 bits of nanoTime to ensure positive values.
-     */
-    private int getRelativeTimestamp() {
-        return (int)(System.nanoTime() & 0x7FFFFFFF);
-    }
-
-    /**
-     * Decay all frequencies in the table (for TinyLFU).
-     * Divides all frequency counters by 2.
-     */
-    private void decayAllFrequencies() {
-        for (int bucket = 0; bucket < bucketCount; bucket++) {
-            MemorySegment segment = getSegmentForBucket(bucket);
-            int bucketOffset = getBucketOffsetInSegment(bucket);
-            
-            int slotOffset = bucketOffset + VALID_BITMAP_SIZE;
-            for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-                byte valid = segment.get(bucketOffset + slot);
-                if ((valid & VALID_MASK) != 0) {
-                    int freq = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
-                    segment.putInt(slotOffset + SLOT_EXTENSION_OFFSET, freq >> 1);
-                }
+            // Zero out all 8 longs in the bucket
+            for (int i = 0; i < 8; i++) {
+                segment.putLong(bucketOffset + i * 8, 0L);
             }
         }
     }
 
-    private int selectVictimSlot(MemorySegment segment, int bucketOffset) {
+    // ==================== Replacement Algorithm Methods ====================
+
+    /**
+     * Updates metadata when a slot is accessed (hit or update).
+     */
+    private void updateAccessMetadata(MemorySegment segment, int bucketOffset, int slotIndex) {
+        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+        long newExtLong;
+
         switch (replacementPolicy) {
+            case CLOCK:
+            case SAMPLED_LRU:
+                // Set accessed bit
+                newExtLong = extLong | (1L << slotIndex);
+                break;
+
+            case LFU:
+                // Increment frequency (saturate at 255)
+                {
+                    int shift = slotIndex * LFU_FREQ_BITS;
+                    int freq = (int) ((extLong >>> shift) & LFU_FREQ_MASK);
+                    if (freq < LFU_FREQ_MASK) {
+                        newExtLong = (extLong & ~((long) LFU_FREQ_MASK << shift)) | ((long) (freq + 1) << shift);
+                    } else {
+                        newExtLong = extLong;
+                    }
+                }
+                break;
+
+            case TINY_LFU:
+                // Increment frequency + check decay
+                {
+                    int shift = slotIndex * LFU_FREQ_BITS;
+                    int freq = (int) ((extLong >>> shift) & LFU_FREQ_MASK);
+                    if (freq < LFU_FREQ_MASK) {
+                        newExtLong = (extLong & ~((long) LFU_FREQ_MASK << shift)) | ((long) (freq + 1) << shift);
+                    } else {
+                        newExtLong = extLong;
+                    }
+                    segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+                    // Check and perform decay
+                    if (++tinyLfuAccessCount >= DECAY_INTERVAL) {
+                        decayAllFrequencies();
+                        tinyLfuAccessCount = 0;
+                    }
+                    return;
+                }
+
             case LRU:
+                // Update timestamp
+                {
+                    int shift = slotIndex * LRU_TS_BITS;
+                    int ts = (currentTimestamp++) & LRU_TS_MASK;
+                    newExtLong = (extLong & ~((long) LRU_TS_MASK << shift)) | ((long) ts << shift);
+                }
+                break;
+
+            default:
+                newExtLong = extLong;
+        }
+
+        segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+    }
+
+    /**
+     * Initializes metadata when a new entry is inserted into a slot.
+     */
+    private void initSlotMetadata(MemorySegment segment, int bucketOffset, int slotIndex) {
+        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+        long newExtLong;
+
+        switch (replacementPolicy) {
+            case CLOCK:
+            case SAMPLED_LRU:
+                // Clear accessed bit (new entry not yet accessed after insert)
+                newExtLong = extLong & ~(1L << slotIndex);
+                break;
+
             case LFU:
             case TINY_LFU:
-                return selectMinExtensionVictim(segment, bucketOffset);
+                // Initialize frequency to 1
+                {
+                    int shift = slotIndex * LFU_FREQ_BITS;
+                    newExtLong = (extLong & ~((long) LFU_FREQ_MASK << shift)) | (1L << shift);
+                }
+                break;
+
+            case LRU:
+                // Set current timestamp
+                {
+                    int shift = slotIndex * LRU_TS_BITS;
+                    int ts = (currentTimestamp++) & LRU_TS_MASK;
+                    newExtLong = (extLong & ~((long) LRU_TS_MASK << shift)) | ((long) ts << shift);
+                }
+                break;
+
+            default:
+                newExtLong = extLong;
+        }
+
+        segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+    }
+
+    /**
+     * Selects a victim slot for eviction based on replacement policy.
+     */
+    private int selectVictimSlot(MemorySegment segment, int bucketOffset) {
+        switch (replacementPolicy) {
             case CLOCK:
                 return selectClockVictim(segment, bucketOffset);
+            case LRU:
+                return selectLruVictim(segment, bucketOffset);
+            case LFU:
+            case TINY_LFU:
+                return selectLfuVictim(segment, bucketOffset);
             case SAMPLED_LRU:
-                return selectSampledLRUVictim(segment, bucketOffset);
+                return selectSampledLruVictim(segment, bucketOffset);
             default:
                 return 0;
         }
     }
 
     /**
-     * 通用的victim选择方法：选择extension字段值最小的slot
-     */
-    private int selectMinExtensionVictim(MemorySegment segment, int bucketOffset) {
-        int victimSlot = 0;
-        int minValue = Integer.MAX_VALUE;
-
-        int slotOffset = bucketOffset + VALID_BITMAP_SIZE;
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++, slotOffset += SLOT_SIZE) {
-            byte valid = segment.get(bucketOffset + slot);
-            if (valid == 0) return slot;
-
-            int value = segment.getInt(slotOffset + SLOT_EXTENSION_OFFSET);
-            if (value < minValue) {
-                minValue = value;
-                victimSlot = slot;
-            }
-        }
-        return victimSlot;
-    }
-
-    /**
-     * CLOCK algorithm: uses a single bit to approximate LRU.
+     * CLOCK: find empty or unaccessed slot, else clear all and return slot 0.
      */
     private int selectClockVictim(MemorySegment segment, int bucketOffset) {
-        // First pass: look for empty or unaccessed slot
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            byte valid = segment.get(bucketOffset + slot);
-            if ((valid & VALID_MASK) == 0) return slot;
-            if ((valid & ACCESSED_MASK) == 0) return slot;
+        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            if (slot == 0) return i;
+            if ((extLong & (1L << i)) == 0) return i;
         }
-        
-        // Second pass: clear all accessed bits and evict first
-        for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-            byte valid = segment.get(bucketOffset + slot);
-            segment.put(bucketOffset + slot, (byte)(valid & ~ACCESSED_MASK));
-        }
+
+        segment.putLong(bucketOffset + EXTENSION_OFFSET, extLong & ~ACCESSED_MASK_ALL);
         return 0;
     }
 
     /**
-     * Sampled LRU: randomly sample 2 slots and pick the less recently accessed one.
+     * LRU: find slot with oldest timestamp.
      */
-    private int selectSampledLRUVictim(MemorySegment segment, int bucketOffset) {
-        int sample1 = random.nextInt(SLOTS_PER_BUCKET);
-        int sample2 = random.nextInt(SLOTS_PER_BUCKET);
-        
-        byte valid1 = segment.get(bucketOffset + sample1);
-        byte valid2 = segment.get(bucketOffset + sample2);
-        
-        if ((valid1 & VALID_MASK) == 0) return sample1;
-        if ((valid2 & VALID_MASK) == 0) return sample2;
-        
-        boolean accessed1 = (valid1 & ACCESSED_MASK) != 0;
-        boolean accessed2 = (valid2 & ACCESSED_MASK) != 0;
-        if (!accessed1 && accessed2) return sample1;
-        if (accessed1 && !accessed2) return sample2;
-        
-        return sample1;
+    private int selectLruVictim(MemorySegment segment, int bucketOffset) {
+        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+        int now = currentTimestamp & LRU_TS_MASK;
+        int oldestSlot = 0;
+        int oldestAge = -1;
+
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            if (slot == 0) return i;
+
+            int ts = (int) ((extLong >>> (i * LRU_TS_BITS)) & LRU_TS_MASK);
+            int age = (now - ts) & LRU_TS_MASK;
+            if (age > oldestAge) {
+                oldestAge = age;
+                oldestSlot = i;
+            }
+        }
+        return oldestSlot;
     }
 
-    // Statistics and metrics methods
+    /**
+     * LFU: find slot with lowest frequency.
+     */
+    private int selectLfuVictim(MemorySegment segment, int bucketOffset) {
+        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+        int minSlot = 0;
+        int minFreq = 256;
+
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            if (slot == 0) return i;
+
+            int freq = (int) ((extLong >>> (i * LFU_FREQ_BITS)) & LFU_FREQ_MASK);
+            if (freq < minFreq) {
+                minFreq = freq;
+                minSlot = i;
+            }
+        }
+        return minSlot;
+    }
+
+    /**
+     * SAMPLED_LRU: randomly sample 2 slots and pick the unaccessed one.
+     */
+    private int selectSampledLruVictim(MemorySegment segment, int bucketOffset) {
+        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+
+        int s1 = random.nextInt(SLOTS_PER_BUCKET);
+        int s2 = random.nextInt(SLOTS_PER_BUCKET);
+
+        long slot1 = segment.getLong(bucketOffset + s1 * SLOT_SIZE);
+        if (slot1 == 0) return s1;
+
+        long slot2 = segment.getLong(bucketOffset + s2 * SLOT_SIZE);
+        if (slot2 == 0) return s2;
+
+        boolean acc1 = (extLong & (1L << s1)) != 0;
+        boolean acc2 = (extLong & (1L << s2)) != 0;
+
+        if (!acc1 && acc2) return s1;
+        if (acc1 && !acc2) return s2;
+        return s1;
+    }
+
+    /**
+     * Decays all frequencies by half (for TinyLFU).
+     */
+    private void decayAllFrequencies() {
+        for (int bucket = 0; bucket < bucketCount; bucket++) {
+            MemorySegment segment = getSegmentForBucket(bucket);
+            int bucketOffset = getBucketOffsetInSegment(bucket);
+            long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+
+            long newExtLong = 0;
+            for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+                int freq = (int) ((extLong >>> (i * LFU_FREQ_BITS)) & LFU_FREQ_MASK);
+                newExtLong |= ((long) (freq >>> 1) << (i * LFU_FREQ_BITS));
+            }
+            segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+        }
+    }
+
+    // ==================== Statistics and metrics ====================
 
     public long getAccessCount() {
         return accessCount;
@@ -560,6 +654,9 @@ public class L0Table<K, N, S> implements AutoCloseable {
         return bucketCount;
     }
 
+    /**
+     * Gets the replacement policy used by this L0 table.
+     */
     public ReplacementPolicy getReplacementPolicy() {
         return replacementPolicy;
     }
@@ -573,8 +670,9 @@ public class L0Table<K, N, S> implements AutoCloseable {
             MemorySegment segment = getSegmentForBucket(bucket);
             int bucketOffset = getBucketOffsetInSegment(bucket);
             
-            for (int slot = 0; slot < SLOTS_PER_BUCKET; slot++) {
-                if (segment.get(bucketOffset + slot) != 0) {
+            for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+                long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+                if (slot != 0) {
                     count++;
                 }
             }
@@ -608,10 +706,10 @@ public class L0Table<K, N, S> implements AutoCloseable {
         public final double hitRate;
         public final double missRate;
 
-        public L0TableStats(int validSlots, long accessCount, long hitCount,
+        public L0TableStats(int validSlots, int totalSlots, long accessCount, long hitCount,
                           long missCount, long evictionCount, double loadFactor) {
             this.validSlots = validSlots;
-            this.totalSlots = 16; // 4 buckets × 4 slots per bucket
+            this.totalSlots = totalSlots;
             this.accessCount = accessCount;
             this.hitCount = hitCount;
             this.missCount = missCount;
@@ -626,7 +724,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
             return String.format(
                 "L0TableStats{validSlots=%d, totalSlots=%d, accessCount=%d, " +
                 "hitCount=%d, missCount=%d, evictionCount=%d, loadFactor=%.3f, " +
-                "hitRate=%.3f, missRate=%.3f, buckets=4, policy=LRU}",
+                "hitRate=%.3f, missRate=%.3f}",
                 validSlots, totalSlots, accessCount, hitCount, missCount,
                 evictionCount, loadFactor, hitRate, missRate
             );

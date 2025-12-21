@@ -2,11 +2,8 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
-import org.apache.flink.runtime.memory.MemoryManager;
-import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
-import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,27 +22,15 @@ public class ForL0StateMapStressTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMapStressTest.class);
 
-    private static final int DEFAULT_PAGE_SIZE = 32 * 1024; // 32KB
-    private static final long HEAP_SIZE = 512 * 256L * DEFAULT_PAGE_SIZE;
     private static final int STRESS_DURATION_SECONDS = 30;
 
-    private MemoryManager memoryManager;
-    private MemoryManagerAllocator allocator;
     private L0MemoryAllocator l0Allocator;
     private ForL0StateMap<Integer, String, String> stateMap;
-    private Object owner;
 
     @BeforeEach
     void setUp() throws Exception {
-        memoryManager = MemoryManagerBuilder.newBuilder()
-                .setMemorySize(HEAP_SIZE)
-                .setPageSize(DEFAULT_PAGE_SIZE)
-                .build();
-        owner = new Object();
-        allocator = new MemoryManagerAllocator(memoryManager, owner);
         l0Allocator = new NativeL0MemoryAllocator();
         stateMap = new ForL0StateMap<>(
-                allocator,
                 l0Allocator,
                 16, // mainTable 64K buckets - 恢复到合理大小
                 10, // l0Cache 1K buckets
@@ -64,9 +49,12 @@ public class ForL0StateMapStressTest {
         if (l0Allocator != null && !l0Allocator.isClosed()) {
             l0Allocator.close();
         }
-        if (allocator != null) {
-            allocator.close();
-        }
+    }
+
+    // Helper method to estimate heap memory usage
+    private static long getHeapUsed() {
+        Runtime rt = Runtime.getRuntime();
+        return rt.totalMemory() - rt.freeMemory();
     }
 
     @Nested
@@ -82,7 +70,7 @@ public class ForL0StateMapStressTest {
             LOG.info("PUT操作压力测试: {} 次操作", totalOperations);
 
             long startTime = System.currentTimeMillis();
-            long startMemory = allocator.getUsedBytes();
+            long startMemory = getHeapUsed();
 
             // 执行大量PUT操作
             for (int i = 0; i < totalOperations; i++) {
@@ -93,12 +81,12 @@ public class ForL0StateMapStressTest {
 
                 if (i % 500000 == 0 && i > 0) {
                     LOG.info("已完成 {} 次PUT操作, 当前大小: {}, 内存使用: {} MB",
-                            i + 1, stateMap.size(), allocator.getUsedBytes() / 1024 / 1024);
+                            i + 1, stateMap.size(), getHeapUsed() / 1024 / 1024);
                 }
             }
 
             long endTime = System.currentTimeMillis();
-            long endMemory = allocator.getUsedBytes();
+            long endMemory = getHeapUsed();
 
             double duration = (endTime - startTime) / 1000.0;
             long memoryUsed = endMemory - startMemory;
@@ -257,7 +245,7 @@ public class ForL0StateMapStressTest {
             LOG.info("  最终状态数量: {}", stateMap.size());
             LOG.info("  耗时: {}秒", duration);
             LOG.info("  平均QPS: {}", totalOperations / duration);
-            LOG.info("  内存使用: {} KB", allocator.getUsedBytes() / 1024);
+            LOG.info("  内存使用: {} KB", getHeapUsed() / 1024);
 
             assertEquals(totalOperations, putCount + getCount + removeCount);
         }
@@ -401,7 +389,7 @@ public class ForL0StateMapStressTest {
                         double elapsed = (currentTime - startTime) / 1000.0;
                         LOG.info("运行 {} s: 总操作数: {}, 前QPS: {}, 状态数量: {}, 内存: {}KB",
                                 elapsed, operationCount, operationCount / elapsed,
-                                stateMap.size(), allocator.getUsedBytes() / 1024);
+                                stateMap.size(), getHeapUsed() / 1024);
                         nextReportTime = currentTime + 5_000;
                     }
 
@@ -423,7 +411,7 @@ public class ForL0StateMapStressTest {
             LOG.info("  平均QPS: {}", operationCount / actualDuration);
             LOG.info("  错误率: {}%", (errorCount * 100.0) / operationCount);
             LOG.info("  最终状态数量: {}", stateMap.size());
-            LOG.info("  内存使用: {} MB", allocator.getUsedBytes() / 1024 / 1024);
+            LOG.info("  内存使用: {} MB", getHeapUsed() / 1024 / 1024);
 
             assertTrue(operationCount > 0);
             assertTrue(errorCount < operationCount * 0.01); // 错误率应小于1%
@@ -439,7 +427,6 @@ public class ForL0StateMapStressTest {
         void initSmall() {
             // 初始仅2 buckets 便于快速触发扩容
             smallMap = new ForL0StateMap<>(
-                    allocator,
                     l0Allocator,
                     1,   // mainTable 2 buckets
                     2,   // l0 4 buckets
@@ -577,7 +564,6 @@ public class ForL0StateMapStressTest {
             // 重置状态，重新准备数据用于Get+Put测试
             stateMap.close();
             stateMap = new ForL0StateMap<>(
-                    allocator,
                     l0Allocator,
                     16, 10,
                     IntSerializer.INSTANCE,
@@ -698,7 +684,7 @@ public class ForL0StateMapStressTest {
 
                     if (i % 200_000 == 0 && i > 0) {
                         LOG.info("已完成 {} 次Transform操作, 当前状态数: {}, 内存: {} MB",
-                                i, stateMap.size(), allocator.getUsedBytes() / 1024 / 1024);
+                                i, stateMap.size(), getHeapUsed() / 1024 / 1024);
                     }
                 }
             } catch (Exception e) {
@@ -717,7 +703,7 @@ public class ForL0StateMapStressTest {
             LOG.info("  最终状态数量: {}", stateMap.size());
             LOG.info("  耗时: {}秒", duration);
             LOG.info("  平均Transform QPS: {}", transformOpsCompleted / duration);
-            LOG.info("  内存使用: {} MB", allocator.getUsedBytes() / 1024 / 1024);
+            LOG.info("  内存使用: {} MB", getHeapUsed() / 1024 / 1024);
 
             assertEquals(totalOperations, transformOpsCompleted);
             // 注意：由于删除操作，最终状态可能为空
@@ -904,7 +890,7 @@ public class ForL0StateMapStressTest {
                 keySequence,
                 namespaceSequence,
                 transformValues,
-                allocator::getUsedBytes
+                ForL0StateMapStressTest::getHeapUsed
             );
 
             // ===== CopyOnWriteStateMap 基准测试 =====
@@ -940,7 +926,6 @@ public class ForL0StateMapStressTest {
          */
         private StateMap<String, String, Integer> createForL0StateMapInteger() {
             return new ForL0StateMap<>(
-                allocator,
                 l0Allocator,
                 16, // mainTable 64K buckets
                 10, // l0Cache 1K buckets

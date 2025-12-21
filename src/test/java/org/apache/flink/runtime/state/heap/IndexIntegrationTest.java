@@ -18,9 +18,6 @@
 
 package org.apache.flink.runtime.state.heap;
 
-import org.apache.flink.runtime.memory.MemoryManager;
-import org.apache.flink.runtime.memory.MemoryManagerBuilder;
-import org.apache.flink.runtime.state.heap.space.MemoryManagerAllocator;
 import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.util.MathUtils;
 
@@ -51,27 +48,17 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class IndexIntegrationTest {
 
-    private static final int DEFAULT_PAGE_SIZE = 32 * 1024;
-    private static final long DEFAULT_MEMORY_SIZE = 16L * 1024 * 1024; // 16MB
-
     private HeapEntryStore<String, String, Integer> entryStore;
     private L0Table<String, String, Integer> l0Table;
     private MainTable<String, String, Integer> mainTable;
 
     // Allocators for testing
     private NativeL0MemoryAllocator l0Allocator;
-    private MemoryManagerAllocator mainAllocator;
-    private MemoryManager memoryManager;
 
     @BeforeEach
     void setUp() {
         entryStore = new HeapEntryStore<>();
         l0Allocator = new NativeL0MemoryAllocator();
-        memoryManager = MemoryManagerBuilder.newBuilder()
-                .setMemorySize(DEFAULT_MEMORY_SIZE)
-                .setPageSize(DEFAULT_PAGE_SIZE)
-                .build();
-        mainAllocator = new MemoryManagerAllocator(memoryManager, new Object());
     }
 
     @AfterEach
@@ -92,12 +79,6 @@ class IndexIntegrationTest {
                 // ignore
             }
         }
-        if (mainAllocator != null && !mainAllocator.isClosed()) {
-            mainAllocator.close();
-        }
-        if (memoryManager != null) {
-            memoryManager.shutdown();
-        }
     }
 
     // ========== Helper Methods ==========
@@ -110,12 +91,7 @@ class IndexIntegrationTest {
         return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
     }
 
-    /**
-     * Extracts the tag from hash.
-     */
-    private static short extractTag(int hash) {
-        return (short) (hash >>> 16);
-    }
+
 
     // ========== L0Table + HeapEntryStore Integration Tests ==========
 
@@ -140,15 +116,14 @@ class IndexIntegrationTest {
             assertTrue(addr > 0);
 
             int hash = compositeHash(key, namespace);
-            short tag = extractTag(hash);
 
             // Put into L0 cache
-            long oldAddr = l0Table.put(hash, tag, addr, key, namespace, entryStore);
+            int oldAddr = l0Table.put(hash, (int) addr, key, namespace, entryStore);
             assertEquals(0, oldAddr);  // New entry
 
             // Get from L0 cache
-            long foundAddr = l0Table.get(hash, tag, key, namespace, entryStore);
-            assertEquals(addr, foundAddr);
+            int foundAddr = l0Table.get(hash, key, namespace, entryStore);
+            assertEquals((int) addr, foundAddr);
 
             // Verify state
             HeapStateEntry<String, String, Integer> entry = entryStore.get(foundAddr);
@@ -156,11 +131,11 @@ class IndexIntegrationTest {
             assertEquals(state, entry.getState());
 
             // Remove from L0 cache
-            long removedAddr = l0Table.remove(hash, tag, key, namespace, entryStore);
-            assertEquals(addr, removedAddr);
+            int removedAddr = l0Table.remove(hash, key, namespace, entryStore);
+            assertEquals((int) addr, removedAddr);
 
             // Should not find after removal
-            long notFound = l0Table.get(hash, tag, key, namespace, entryStore);
+            int notFound = l0Table.get(hash, key, namespace, entryStore);
             assertEquals(0, notFound);
         }
 
@@ -168,16 +143,15 @@ class IndexIntegrationTest {
         @DisplayName("Multiple entries with same hash bucket")
         void testMultipleEntriesSameBucket() {
             // Create entries that will hash to the same bucket
-            List<Long> addresses = new ArrayList<>();
+            List<Integer> addresses = new ArrayList<>();
             for (int i = 0; i < 4; i++) {  // L0 has 4 slots per bucket
                 String key = "key" + i;
                 String namespace = "ns" + i;
                 long addr = entryStore.allocate(key, namespace, i);
-                addresses.add(addr);
+                addresses.add((int) addr);
 
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
-                l0Table.put(hash, tag, addr, key, namespace, entryStore);
+                l0Table.put(hash, (int) addr, key, namespace, entryStore);
             }
 
             // Verify all entries can be found
@@ -185,9 +159,8 @@ class IndexIntegrationTest {
                 String key = "key" + i;
                 String namespace = "ns" + i;
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
 
-                long found = l0Table.get(hash, tag, key, namespace, entryStore);
+                int found = l0Table.get(hash, key, namespace, entryStore);
                 assertEquals(addresses.get(i), found);
             }
         }
@@ -203,8 +176,7 @@ class IndexIntegrationTest {
                 long addr = entryStore.allocate(key, namespace, i);
 
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
-                l0Table.put(hash, tag, addr, key, namespace, entryStore);
+                l0Table.put(hash, (int) addr, key, namespace, entryStore);
             }
 
             // Some entries should have been evicted
@@ -219,18 +191,17 @@ class IndexIntegrationTest {
             long addr = entryStore.allocate(key, namespace, 100);
 
             int hash = compositeHash(key, namespace);
-            short tag = extractTag(hash);
 
             // First get should be a miss
-            l0Table.get(hash, tag, key, namespace, entryStore);
+            l0Table.get(hash, key, namespace, entryStore);
             assertEquals(1, l0Table.getMissCount());
             assertEquals(0, l0Table.getHitCount());
 
             // Put the entry
-            l0Table.put(hash, tag, addr, key, namespace, entryStore);
+            l0Table.put(hash, (int) addr, key, namespace, entryStore);
 
             // Now get should be a hit
-            l0Table.get(hash, tag, key, namespace, entryStore);
+            l0Table.get(hash, key, namespace, entryStore);
             assertEquals(1, l0Table.getMissCount());
             assertEquals(1, l0Table.getHitCount());
 
@@ -246,7 +217,7 @@ class IndexIntegrationTest {
 
         @BeforeEach
         void setUpMainTable() {
-            mainTable = new MainTable<>(mainAllocator, 2);  // 4 buckets
+            mainTable = new MainTable<>(2, 1.5);  // 4 buckets
         }
 
         @Test
@@ -260,15 +231,14 @@ class IndexIntegrationTest {
             long addr = entryStore.allocate(key, namespace, state);
 
             int hash = compositeHash(key, namespace);
-            short tag = extractTag(hash);
 
             // Put into main table
-            long result = mainTable.put(hash, tag, addr, key, namespace, entryStore);
+            int result = mainTable.put(hash, (int) addr, key, namespace, entryStore);
             assertEquals(0, result);  // New entry
 
             // Get from main table
-            long found = mainTable.get(hash, tag, key, namespace, entryStore);
-            assertEquals(addr, found);
+            int found = mainTable.get(hash, key, namespace, entryStore);
+            assertEquals((int) addr, found);
 
             // Verify state through entry store
             HeapStateEntry<String, String, Integer> entry = entryStore.get(found);
@@ -276,11 +246,11 @@ class IndexIntegrationTest {
             assertEquals(state, entry.getState());
 
             // Remove
-            long removed = mainTable.remove(hash, tag, key, namespace, entryStore);
-            assertEquals(addr, removed);
+            int removed = mainTable.remove(hash, key, namespace, entryStore);
+            assertEquals((int) addr, removed);
 
             // Should not find after removal
-            long notFound = mainTable.get(hash, tag, key, namespace, entryStore);
+            int notFound = mainTable.get(hash, key, namespace, entryStore);
             assertEquals(0, notFound);
         }
 
@@ -293,16 +263,15 @@ class IndexIntegrationTest {
             // Initial entry
             long addr1 = entryStore.allocate(key, namespace, 100);
             int hash = compositeHash(key, namespace);
-            short tag = extractTag(hash);
 
-            mainTable.put(hash, tag, addr1, key, namespace, entryStore);
+            mainTable.put(hash, (int) addr1, key, namespace, entryStore);
 
             // Update state in-place (address doesn't change)
             entryStore.updateState(addr1, 200);
 
             // Verify updated state
-            long found = mainTable.get(hash, tag, key, namespace, entryStore);
-            assertEquals(addr1, found);
+            int found = mainTable.get(hash, key, namespace, entryStore);
+            assertEquals((int) addr1, found);
 
             HeapStateEntry<String, String, Integer> entry = entryStore.get(found);
             assertEquals(200, entry.getState());
@@ -312,18 +281,17 @@ class IndexIntegrationTest {
         @DisplayName("Many entries with collision handling")
         void testManyEntriesWithCollisions() {
             int numEntries = 100;
-            Map<String, Long> keyToAddr = new HashMap<>();
+            Map<String, Integer> keyToAddr = new HashMap<>();
 
             // Insert many entries
             for (int i = 0; i < numEntries; i++) {
                 String key = "key" + i;
                 String namespace = "ns";
                 long addr = entryStore.allocate(key, namespace, i);
-                keyToAddr.put(key, addr);
+                keyToAddr.put(key, (int) addr);
 
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
-                mainTable.put(hash, tag, addr, key, namespace, entryStore);
+                mainTable.put(hash, (int) addr, key, namespace, entryStore);
             }
 
             // Verify all entries can be found
@@ -331,9 +299,8 @@ class IndexIntegrationTest {
                 String key = "key" + i;
                 String namespace = "ns";
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
 
-                long found = mainTable.get(hash, tag, key, namespace, entryStore);
+                int found = mainTable.get(hash, key, namespace, entryStore);
                 assertEquals(keyToAddr.get(key), found);
 
                 HeapStateEntry<String, String, Integer> entry = entryStore.get(found);
@@ -350,13 +317,12 @@ class IndexIntegrationTest {
                 String namespace = "ns";
                 long addr = entryStore.allocate(key, namespace, i);
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
-                mainTable.put(hash, tag, addr, key, namespace, entryStore);
+                mainTable.put(hash, (int) addr, key, namespace, entryStore);
             }
 
             // Count entries via iteration
             int[] count = {0};
-            mainTable.forEachEntry((entryAddr, keyHash, tag) -> {
+            mainTable.forEachEntry((entryAddr, keyHash) -> {
                 assertNotNull(entryStore.get(entryAddr));
                 count[0]++;
             });
@@ -375,10 +341,10 @@ class IndexIntegrationTest {
         @DisplayName("Resize preserves all entries")
         void testResizePreservesEntries() {
             // Use small table to trigger resize easily
-            mainTable = new MainTable<>(mainAllocator, 1, 0.5);  // 2 buckets, low threshold
+            mainTable = new MainTable<>(1, 0.5);  // 2 buckets, low threshold
 
             int numEntries = 50;
-            Map<String, Long> keyToAddr = new HashMap<>();
+            Map<String, Integer> keyToAddr = new HashMap<>();
             Map<String, Integer> keyToState = new HashMap<>();
 
             // Insert entries until resize is needed
@@ -388,12 +354,11 @@ class IndexIntegrationTest {
                 Integer state = i * 10;
 
                 long addr = entryStore.allocate(key, namespace, state);
-                keyToAddr.put(key, addr);
+                keyToAddr.put(key, (int) addr);
                 keyToState.put(key, state);
 
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
-                mainTable.put(hash, tag, addr, key, namespace, entryStore);
+                mainTable.put(hash, (int) addr, key, namespace, entryStore);
             }
 
             // Trigger resize if needed
@@ -406,9 +371,8 @@ class IndexIntegrationTest {
                 String key = "resizeKey" + i;
                 String namespace = "ns";
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
 
-                long found = mainTable.get(hash, tag, key, namespace, entryStore);
+                int found = mainTable.get(hash, key, namespace, entryStore);
                 assertEquals(keyToAddr.get(key), found, "Entry not found after resize: " + key);
 
                 HeapStateEntry<String, String, Integer> entry = entryStore.get(found);
@@ -420,32 +384,28 @@ class IndexIntegrationTest {
         @Test
         @DisplayName("Resize uses entry.hash from HeapEntryStore")
         void testResizeUsesEntryHash() {
-            mainTable = new MainTable<>(mainAllocator, 1, 0.5);
+            mainTable = new MainTable<>(1, 0.5);
 
             // Insert entries with known hashes
             String key1 = "key1";
             String ns1 = "ns1";
             int hash1 = compositeHash(key1, ns1);
-            short tag1 = extractTag(hash1);
 
             String key2 = "key2";
             String ns2 = "ns2";
             int hash2 = compositeHash(key2, ns2);
-            short tag2 = extractTag(hash2);
 
             long addr1 = entryStore.allocate(key1, ns1, 100);
             long addr2 = entryStore.allocate(key2, ns2, 200);
 
-            mainTable.put(hash1, tag1, addr1, key1, ns1, entryStore);
-            mainTable.put(hash2, tag2, addr2, key2, ns2, entryStore);
+            mainTable.put(hash1, (int) addr1, key1, ns1, entryStore);
+            mainTable.put(hash2, (int) addr2, key2, ns2, entryStore);
 
             // Verify hash is cached correctly in entries
             HeapStateEntry<String, String, Integer> entry1 = entryStore.get(addr1);
             HeapStateEntry<String, String, Integer> entry2 = entryStore.get(addr2);
             assertEquals(hash1, entry1.hash);
             assertEquals(hash2, entry2.hash);
-            assertEquals(tag1, (short) (entry1.hash >>> 16));
-            assertEquals(tag2, (short) (entry2.hash >>> 16));
 
             // Force resize
             for (int i = 0; i < 20; i++) {
@@ -453,8 +413,7 @@ class IndexIntegrationTest {
                 String n = "ns";
                 long a = entryStore.allocate(k, n, i);
                 int h = compositeHash(k, n);
-                short t = extractTag(h);
-                mainTable.put(h, t, a, k, n, entryStore);
+                mainTable.put(h, (int) a, k, n, entryStore);
             }
 
             if (mainTable.needsResize()) {
@@ -462,8 +421,8 @@ class IndexIntegrationTest {
             }
 
             // Original entries should still be findable
-            assertEquals(addr1, mainTable.get(hash1, tag1, key1, ns1, entryStore));
-            assertEquals(addr2, mainTable.get(hash2, tag2, key2, ns2, entryStore));
+            assertEquals((int) addr1, mainTable.get(hash1, key1, ns1, entryStore));
+            assertEquals((int) addr2, mainTable.get(hash2, key2, ns2, entryStore));
         }
     }
 
@@ -476,7 +435,7 @@ class IndexIntegrationTest {
         @BeforeEach
         void setUpBothTables() {
             l0Table = new L0Table<>(l0Allocator, 2);  // 4 buckets
-            mainTable = new MainTable<>(mainAllocator, 3);  // 8 buckets
+            mainTable = new MainTable<>(3, 1.5);  // 8 buckets
         }
 
         @Test
@@ -489,25 +448,24 @@ class IndexIntegrationTest {
             // First, put entry in main table only
             long addr = entryStore.allocate(key, namespace, state);
             int hash = compositeHash(key, namespace);
-            short tag = extractTag(hash);
 
-            mainTable.put(hash, tag, addr, key, namespace, entryStore);
+            mainTable.put(hash, (int) addr, key, namespace, entryStore);
 
             // L0 should miss
-            long l0Result = l0Table.get(hash, tag, key, namespace, entryStore);
+            int l0Result = l0Table.get(hash, key, namespace, entryStore);
             assertEquals(0, l0Result);
             assertEquals(1, l0Table.getMissCount());
 
             // Main table should hit
-            long mainResult = mainTable.get(hash, tag, key, namespace, entryStore);
-            assertEquals(addr, mainResult);
+            int mainResult = mainTable.get(hash, key, namespace, entryStore);
+            assertEquals((int) addr, mainResult);
 
             // Promote to L0 cache
-            l0Table.put(hash, tag, addr, key, namespace, entryStore);
+            l0Table.put(hash, (int) addr, key, namespace, entryStore);
 
             // Now L0 should hit
-            l0Result = l0Table.get(hash, tag, key, namespace, entryStore);
-            assertEquals(addr, l0Result);
+            l0Result = l0Table.get(hash, key, namespace, entryStore);
+            assertEquals((int) addr, l0Result);
             assertEquals(1, l0Table.getHitCount());
         }
 
@@ -524,14 +482,13 @@ class IndexIntegrationTest {
 
                 long addr = entryStore.allocate(key, namespace, state);
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
 
                 // Put in main table
-                mainTable.put(hash, tag, addr, key, namespace, entryStore);
+                mainTable.put(hash, (int) addr, key, namespace, entryStore);
 
                 // Promote to L0 for first 10 (simulating hot keys)
                 if (i < 10) {
-                    l0Table.put(hash, tag, addr, key, namespace, entryStore);
+                    l0Table.put(hash, (int) addr, key, namespace, entryStore);
                 }
             }
 
@@ -540,17 +497,16 @@ class IndexIntegrationTest {
                 String key = "key" + i;
                 String namespace = "ns";
                 int hash = compositeHash(key, namespace);
-                short tag = extractTag(hash);
 
                 // Main table should always have the entry
-                long mainAddr = mainTable.get(hash, tag, key, namespace, entryStore);
+                int mainAddr = mainTable.get(hash, key, namespace, entryStore);
                 assertTrue(mainAddr > 0);
 
                 HeapStateEntry<String, String, Integer> entry = entryStore.get(mainAddr);
                 assertEquals(i, entry.getState());
 
                 // L0 might or might not have it (depending on eviction)
-                long l0Addr = l0Table.get(hash, tag, key, namespace, entryStore);
+                int l0Addr = l0Table.get(hash, key, namespace, entryStore);
                 if (l0Addr > 0) {
                     // If L0 has it, it should point to the same entry
                     assertEquals(mainAddr, l0Addr);
@@ -567,20 +523,19 @@ class IndexIntegrationTest {
             // Initial entry
             long addr = entryStore.allocate(key, namespace, 1);
             int hash = compositeHash(key, namespace);
-            short tag = extractTag(hash);
 
-            mainTable.put(hash, tag, addr, key, namespace, entryStore);
-            l0Table.put(hash, tag, addr, key, namespace, entryStore);
+            mainTable.put(hash, (int) addr, key, namespace, entryStore);
+            l0Table.put(hash, (int) addr, key, namespace, entryStore);
 
             // Update state in HeapEntryStore (in-place)
             entryStore.updateState(addr, 2);
 
             // Both L0 and Main should see the updated value
-            long l0Addr = l0Table.get(hash, tag, key, namespace, entryStore);
-            long mainAddr = mainTable.get(hash, tag, key, namespace, entryStore);
+            int l0Addr = l0Table.get(hash, key, namespace, entryStore);
+            int mainAddr = mainTable.get(hash, key, namespace, entryStore);
 
-            assertEquals(addr, l0Addr);
-            assertEquals(addr, mainAddr);
+            assertEquals((int) addr, l0Addr);
+            assertEquals((int) addr, mainAddr);
 
             // Both should return the updated state
             assertEquals(2, entryStore.get(l0Addr).getState());
@@ -595,21 +550,20 @@ class IndexIntegrationTest {
 
             long addr = entryStore.allocate(key, namespace, 100);
             int hash = compositeHash(key, namespace);
-            short tag = extractTag(hash);
 
-            mainTable.put(hash, tag, addr, key, namespace, entryStore);
-            l0Table.put(hash, tag, addr, key, namespace, entryStore);
+            mainTable.put(hash, (int) addr, key, namespace, entryStore);
+            l0Table.put(hash, (int) addr, key, namespace, entryStore);
 
             // Delete from L0
-            l0Table.remove(hash, tag, key, namespace, entryStore);
-            assertEquals(0, l0Table.get(hash, tag, key, namespace, entryStore));
+            l0Table.remove(hash, key, namespace, entryStore);
+            assertEquals(0, l0Table.get(hash, key, namespace, entryStore));
 
             // Main should still have it
-            assertEquals(addr, mainTable.get(hash, tag, key, namespace, entryStore));
+            assertEquals((int) addr, mainTable.get(hash, key, namespace, entryStore));
 
             // Delete from main
-            mainTable.remove(hash, tag, key, namespace, entryStore);
-            assertEquals(0, mainTable.get(hash, tag, key, namespace, entryStore));
+            mainTable.remove(hash, key, namespace, entryStore);
+            assertEquals(0, mainTable.get(hash, key, namespace, entryStore));
 
             // Delete from entry store
             entryStore.remove(addr);
