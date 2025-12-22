@@ -64,19 +64,19 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
     
     private static final Logger LOG = LoggerFactory.getLogger(HeapEntryStore.class);
     
-    // ========== Constants ==========
+    // ========== Constants (package-visible for direct access in hot path) ==========
     
     /** 
      * Number of bits for chunk size. Each chunk has 2^16 = 65536 slots.
      * This provides a good balance between chunk granularity and index efficiency.
      */
-    private static final int CHUNK_SIZE_BITS = 16;
+    static final int CHUNK_BITS = 16;
     
     /** Number of entries per chunk (65536). */
-    private static final int CHUNK_SIZE = 1 << CHUNK_SIZE_BITS;
+    static final int CHUNK_SIZE = 1 << CHUNK_BITS;
     
     /** Mask for extracting slot index within a chunk. */
-    private static final int CHUNK_MASK = CHUNK_SIZE - 1;
+    static final int CHUNK_MASK = CHUNK_SIZE - 1;
     
     /** Initial number of chunks. */
     private static final int INITIAL_CHUNKS = 1;
@@ -84,13 +84,14 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
     /** Initial size of the free list array. */
     private static final int INITIAL_FREE_LIST_SIZE = 1024;
     
-    // ========== Storage Structure ==========
+    // ========== Storage Structure (package-visible for direct access in hot path) ==========
     
     /** 
      * Chunked array storage: chunks[chunkIndex][slotIndex].
      * Each chunk is lazily allocated when needed.
+     * <p>Package-visible for direct access from ForL0StateMap hot path.
      */
-    private HeapStateEntry<K, N, S>[][] chunks;
+    HeapStateEntry<K, N, S>[][] chunks;
     
     /** Current number of allocated chunks. */
     private int chunkCount;
@@ -159,9 +160,10 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
      * @param key the key (must not be null)
      * @param namespace the namespace (must not be null)
      * @param state the state value (can be null)
+     * @param hash the pre-computed composite hash
      * @return the allocated address (always > 0)
      */
-    public long allocate(@Nonnull K key, @Nonnull N namespace, @Nullable S state) {
+    public long allocate(@Nonnull K key, @Nonnull N namespace, @Nullable S state, int hash) {
         int index;
         
         // Prefer reusing freed slots (LIFO for cache efficiency)
@@ -176,8 +178,8 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
         }
         
         // Create and store the entry
-        HeapStateEntry<K, N, S> entry = new HeapStateEntry<>(key, namespace, state);
-        int chunkIndex = index >> CHUNK_SIZE_BITS;
+        HeapStateEntry<K, N, S> entry = new HeapStateEntry<>(key, namespace, state, hash);
+        int chunkIndex = index >> CHUNK_BITS;
         int slotIndex = index & CHUNK_MASK;
         chunks[chunkIndex][slotIndex] = entry;
         
@@ -185,68 +187,41 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
         totalAllocations++;
         
         // Return index + 1 to reserve 0 as NULL
-        return (long) index + 1;
+        return (long) (index + 1);
     }
     
     /**
      * Gets the entry at the given address.
      * 
-     * <p>HOT PATH: This method is optimized for performance and does not perform
-     * bounds checking. The address must be valid (> 0 and from a previous allocate call).
+     * <p>Package-visible for tests and non-hot-path code. For hot path in ForL0StateMap,
+     * use direct chunk access instead: {@code chunks[idx >> CHUNK_BITS][idx & CHUNK_MASK]}.
      * 
      * @param address the address (from allocate())
      * @return the entry (may be null if the slot was removed)
      */
-    public HeapStateEntry<K, N, S> get(long address) {
-        int index = (int) address - 1;
-        return chunks[index >> CHUNK_SIZE_BITS][index & CHUNK_MASK];
-    }
-    
-    /**
-     * Gets the hash value of the entry at the given address.
-     * 
-     * @param address the address
-     * @return the hash value, or 0 if the address is invalid
-     */
-    public int getHash(long address) {
-        HeapStateEntry<K, N, S> entry = get(address);
-        return entry != null ? entry.hash : 0;
+    HeapStateEntry<K, N, S> get(long address) {
+        int idx = (int) address - 1;
+        return chunks[idx >> CHUNK_BITS][idx & CHUNK_MASK];
     }
     
     /**
      * Checks if the entry at the given address matches the key and namespace.
      * 
-     * @param address the address
+     * <p>HOT PATH: This method is marked final and kept minimal to encourage JIT inlining.
+     * Uses identity check first for common cases (e.g., VoidNamespace singleton).
+     * 
+     * @param address the address (ptr from allocate)
      * @param key the key to match
      * @param namespace the namespace to match
      * @return true if the entry exists and matches
      */
-    public boolean matches(long address, @Nonnull K key, @Nonnull N namespace) {
-        HeapStateEntry<K, N, S> entry = get(address);
-        if (entry == null) {
-            return false;
-        }
-        // Identity check first (helps with VoidNamespace singleton)
-        return (entry.namespace == namespace || entry.namespace.equals(namespace))
+    public final boolean matches(long address, K key, N namespace) {
+        int idx = (int) address - 1;
+        HeapStateEntry<K, N, S> entry = chunks[idx >> CHUNK_BITS][idx & CHUNK_MASK];
+        // Identity check first (helps with VoidNamespace singleton), then equals
+        return entry != null 
+            && (entry.namespace == namespace || entry.namespace.equals(namespace))
             && (entry.key == key || entry.key.equals(key));
-    }
-    
-    /**
-     * Updates the state of the entry at the given address.
-     * 
-     * <p>This is an in-place update; the address remains stable.
-     * 
-     * @param address the address
-     * @param state the new state value
-     * @return true if the update was successful (entry exists)
-     */
-    public boolean updateState(long address, @Nullable S state) {
-        HeapStateEntry<K, N, S> entry = get(address);
-        if (entry != null) {
-            entry.state = state;
-            return true;
-        }
-        return false;
     }
     
     /**
@@ -260,7 +235,7 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
         }
         
         int index = (int) address - 1;
-        int chunkIndex = index >> CHUNK_SIZE_BITS;
+        int chunkIndex = index >> CHUNK_BITS;
         int slotIndex = index & CHUNK_MASK;
         
         if (chunkIndex >= chunkCount) {
@@ -308,7 +283,7 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
         if (index < 0 || index >= nextAllocIndex) {
             return null;
         }
-        int chunkIndex = index >> CHUNK_SIZE_BITS;
+        int chunkIndex = index >> CHUNK_BITS;
         int slotIndex = index & CHUNK_MASK;
         return chunks[chunkIndex][slotIndex];
     }
@@ -410,15 +385,6 @@ public class HeapEntryStore<K, N, S> implements AutoCloseable {
      */
     public boolean isClosed() {
         return closed;
-    }
-    
-    /**
-     * Throws an exception if this store has been closed.
-     */
-    private void checkNotClosed() {
-        if (closed) {
-            throw new IllegalStateException("HeapEntryStore has been closed");
-        }
     }
     
     @Override

@@ -36,9 +36,6 @@ public class ForL0StateBackendConfig implements Serializable {
     /** Maximum L0 memory pool capacity in bytes. -1 means unlimited. */
     private final long l0MemoryMaxBytes;
 
-    /** Initial size of MainTable as power of 2 (bucket count = 2^size). */
-    private final int mainTableInitialSize;
-
     /** Load factor threshold for MainTable resize. */
     private final double mainTableLoadFactorThreshold;
 
@@ -50,7 +47,6 @@ public class ForL0StateBackendConfig implements Serializable {
         this.l0CacheSize = L0_CACHE_SIZE.defaultValue();
         this.l0ReplacementPolicy = parseReplacementPolicy(L0_CACHE_REPLACEMENT_POLICY.defaultValue());
         this.l0MemoryMaxBytes = -1; // unlimited
-        this.mainTableInitialSize = MAIN_TABLE_INITIAL_SIZE.defaultValue();
         this.mainTableLoadFactorThreshold = MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
 
         LOG.debug("ForL0StateBackendConfig created with default values: {}", this);
@@ -77,11 +73,7 @@ public class ForL0StateBackendConfig implements Serializable {
         MemorySize memorySize = config.get(L0_MEMORY_MAX_SIZE);
         this.l0MemoryMaxBytes = (memorySize == null || memorySize.getBytes() <= 0) ? -1 : memorySize.getBytes();
 
-        // Parse MainTable settings
-        int mainTableSize = config.get(MAIN_TABLE_INITIAL_SIZE);
-        validateMainTableInitialSize(mainTableSize);
-        this.mainTableInitialSize = mainTableSize;
-
+        // Parse MainTable load factor setting
         double loadFactor = config.get(MAIN_TABLE_LOAD_FACTOR_THRESHOLD);
         validateLoadFactorThreshold(loadFactor);
         this.mainTableLoadFactorThreshold = loadFactor;
@@ -97,13 +89,11 @@ public class ForL0StateBackendConfig implements Serializable {
             int l0CacheSize,
             L0Table.ReplacementPolicy l0ReplacementPolicy,
             long l0MemoryMaxBytes,
-            int mainTableInitialSize,
             double mainTableLoadFactorThreshold) {
         this.l0CacheEnabled = l0CacheEnabled;
         this.l0CacheSize = l0CacheSize;
         this.l0ReplacementPolicy = l0ReplacementPolicy;
         this.l0MemoryMaxBytes = l0MemoryMaxBytes;
-        this.mainTableInitialSize = mainTableInitialSize;
         this.mainTableLoadFactorThreshold = mainTableLoadFactorThreshold;
     }
 
@@ -130,10 +120,6 @@ public class ForL0StateBackendConfig implements Serializable {
         return l0MemoryMaxBytes;
     }
 
-    public int getMainTableInitialSize() {
-        return mainTableInitialSize;
-    }
-
     public double getMainTableLoadFactorThreshold() {
         return mainTableLoadFactorThreshold;
     }
@@ -150,7 +136,6 @@ public class ForL0StateBackendConfig implements Serializable {
                 this.l0CacheSize,
                 this.l0ReplacementPolicy,
                 this.l0MemoryMaxBytes,
-                this.mainTableInitialSize,
                 this.mainTableLoadFactorThreshold);
     }
 
@@ -168,7 +153,6 @@ public class ForL0StateBackendConfig implements Serializable {
                 ", l0CacheSize=" + l0CacheSize + " (=" + (1 << l0CacheSize) + " buckets)" +
                 ", l0ReplacementPolicy=" + l0ReplacementPolicy +
                 ", l0MemoryMaxBytes=" + (l0MemoryMaxBytes == -1 ? "unlimited" : l0MemoryMaxBytes + " bytes") +
-                ", mainTableInitialSize=" + mainTableInitialSize + " (=" + (1 << mainTableInitialSize) + " buckets)" +
                 ", mainTableLoadFactorThreshold=" + mainTableLoadFactorThreshold +
                 '}';
     }
@@ -183,7 +167,6 @@ public class ForL0StateBackendConfig implements Serializable {
         private int l0CacheSize = L0_CACHE_SIZE.defaultValue();
         private L0Table.ReplacementPolicy l0ReplacementPolicy = L0Table.ReplacementPolicy.CLOCK;
         private long l0MemoryMaxBytes = -1;
-        private int mainTableInitialSize = MAIN_TABLE_INITIAL_SIZE.defaultValue();
         private double mainTableLoadFactorThreshold = MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
 
         public Builder setL0CacheEnabled(boolean enabled) {
@@ -217,12 +200,6 @@ public class ForL0StateBackendConfig implements Serializable {
             return this;
         }
 
-        public Builder setMainTableInitialSize(int size) {
-            validateMainTableInitialSize(size);
-            this.mainTableInitialSize = size;
-            return this;
-        }
-
         public Builder setMainTableLoadFactorThreshold(double threshold) {
             validateLoadFactorThreshold(threshold);
             this.mainTableLoadFactorThreshold = threshold;
@@ -235,7 +212,6 @@ public class ForL0StateBackendConfig implements Serializable {
                     l0CacheSize,
                     l0ReplacementPolicy,
                     l0MemoryMaxBytes,
-                    mainTableInitialSize,
                     mainTableLoadFactorThreshold);
         }
     }

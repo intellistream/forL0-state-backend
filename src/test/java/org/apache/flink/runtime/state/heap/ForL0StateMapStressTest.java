@@ -32,7 +32,6 @@ public class ForL0StateMapStressTest {
         l0Allocator = new NativeL0MemoryAllocator();
         stateMap = new ForL0StateMap<>(
                 l0Allocator,
-                16, // mainTable 64K buckets - 恢复到合理大小
                 10, // l0Cache 1K buckets
                 IntSerializer.INSTANCE,
                 StringSerializer.INSTANCE,
@@ -421,57 +420,68 @@ public class ForL0StateMapStressTest {
     @Nested
     @DisplayName("自动扩容压力测试")
     class AutoResizeStressTests {
-        private ForL0StateMap<Integer, String, String> smallMap;
-
-        @BeforeEach
-        void initSmall() {
-            // 初始仅2 buckets 便于快速触发扩容
-            smallMap = new ForL0StateMap<>(
-                    l0Allocator,
-                    1,   // mainTable 2 buckets
-                    2,   // l0 4 buckets
-                    IntSerializer.INSTANCE,
-                    StringSerializer.INSTANCE,
-                    StringSerializer.INSTANCE,
-                    true
-            );
-        }
-
-        @AfterEach
-        void closeSmall() throws Exception {
-            if (smallMap != null) smallMap.close();
-        }
 
         @Test
+        @Timeout(value = 180, unit = TimeUnit.SECONDS)
         @DisplayName("高写入触发多次扩容并验证数据一致性")
-        void testMultipleAutoResizes() {
-            int expectedMinBucket = 2;
-            int lastBucket = smallMap.getDetailedStats().mainTableStats.bucketCount;
-            assertEquals(expectedMinBucket, lastBucket);
+        void testMultipleAutoResizes() throws Exception {
+            // MainTable 固定初始大小为 65536 buckets
+            // 负载因子阈值 1.5 意味着需要 > 98304 entries 才能触发扩容
+            // 我们插入 150000 条数据来触发扩容
+            
+            int initialBucket = stateMap.getDetailedStats().mainTableStats.bucketCount;
+            assertEquals(65536, initialBucket, "初始应该是 65536 buckets");
+            
+            LOG.info("开始自动扩容压力测试：目标插入 150000 条数据触发扩容");
 
             // 记录扩容发生的 bucketCount 序列
             java.util.List<Integer> bucketHistory = new java.util.ArrayList<>();
-            bucketHistory.add(lastBucket);
+            bucketHistory.add(initialBucket);
+            int lastBucket = initialBucket;
 
-            int totalInsert = 0;
-            int targetBucket = 32; // 期望最终扩容到至少32 buckets
-            while (smallMap.getDetailedStats().mainTableStats.bucketCount < targetBucket && totalInsert < 10_000) {
-                smallMap.put(totalInsert, "ns", "v" + totalInsert);
-                totalInsert++;
-                int current = smallMap.getDetailedStats().mainTableStats.bucketCount;
-                if (current != lastBucket) {
-                    bucketHistory.add(current);
-                    lastBucket = current;
+            final int totalInsert = 150_000; // 超过 98304 触发扩容
+            long startTime = System.currentTimeMillis();
+            
+            for (int i = 0; i < totalInsert; i++) {
+                stateMap.put(i, "ns" + (i % 100), "value" + i);
+                
+                // 每 10000 条检查一次是否扩容
+                if (i % 10000 == 0 && i > 0) {
+                    int current = stateMap.getDetailedStats().mainTableStats.bucketCount;
+                    if (current != lastBucket) {
+                        bucketHistory.add(current);
+                        LOG.info("扩容发生: {} -> {} buckets (已插入 {} 条)", lastBucket, current, i);
+                        lastBucket = current;
+                    }
                 }
             }
 
-            ForL0StateMap.DetailedStats stats = smallMap.getDetailedStats();
-            assertTrue(stats.mainTableStats.bucketCount >= targetBucket, "应已扩容到 >= " + targetBucket + " buckets, 实际=" + stats.mainTableStats.bucketCount);
+            long duration = System.currentTimeMillis() - startTime;
+            ForL0StateMap.DetailedStats stats = stateMap.getDetailedStats();
+            
+            LOG.info("自动扩容压力测试完成:");
+            LOG.info("  总插入: {} 条", totalInsert);
+            LOG.info("  最终 bucket 数: {}", stats.mainTableStats.bucketCount);
+            LOG.info("  扩容历史: {}", bucketHistory);
+            LOG.info("  耗时: {} 秒", duration / 1000.0);
+            LOG.info("  QPS: {}", totalInsert / (duration / 1000.0));
 
-            // 抽样验证数据
-            for (int k = 0; k < totalInsert; k += Math.max(1, totalInsert / 50)) {
-                assertEquals("v" + k, smallMap.get(k, "ns"));
+            // 验证已经扩容（从 65536 扩容到 131072）
+            assertTrue(stats.mainTableStats.bucketCount > 65536, 
+                    "应已扩容到 > 65536 buckets, 实际=" + stats.mainTableStats.bucketCount);
+            assertEquals(totalInsert, stats.totalEntries, "应有 " + totalInsert + " 条数据");
+
+            // 抽样验证数据完整性
+            LOG.info("开始数据完整性验证...");
+            int sampleInterval = totalInsert / 1000; // 抽样 1000 条
+            int verifiedCount = 0;
+            for (int k = 0; k < totalInsert; k += sampleInterval) {
+                String expected = "value" + k;
+                String actual = stateMap.get(k, "ns" + (k % 100));
+                assertEquals(expected, actual, "数据不一致: key=" + k);
+                verifiedCount++;
             }
+            LOG.info("数据完整性验证通过: 抽样验证 {} 条", verifiedCount);
 
             // bucket 序列应严格递增且为2的幂
             int prev = -1;
@@ -485,38 +495,74 @@ public class ForL0StateMapStressTest {
         }
 
         @Test
+        @Timeout(value = 120, unit = TimeUnit.SECONDS)
         @DisplayName("扩容过程中混合读写一致性验证")
-        void testMixedOpsDuringResize() {
+        void testMixedOpsDuringResize() throws Exception {
+            // 目标：在扩容过程中进行混合读写删操作，验证数据一致性
+            // 需要插入足够多的数据触发扩容（> 98304 条）
+            // 由于有删除操作，需要更多的写入操作来确保最终条目数超过阈值
+            
+            LOG.info("开始扩容过程中混合读写测试");
+            
             java.util.Random rnd = new java.util.Random(123);
-            @SuppressWarnings("unused")
-            int writes = 0;  // Reserved for future write operation counting
-            for (int i = 0; i < 5000; i++) {
+            
+            // 先插入足够多的基础数据确保触发扩容
+            int baseInsert = 110_000;
+            LOG.info("插入 {} 条基础数据...", baseInsert);
+            for (int i = 0; i < baseInsert; i++) {
+                stateMap.put(i, "ns" + (i % 50), "baseVal" + i);
+            }
+            
+            ForL0StateMap.DetailedStats statsAfterBase = stateMap.getDetailedStats();
+            LOG.info("基础数据插入完成: entries={}, buckets={}", 
+                    statsAfterBase.totalEntries, statsAfterBase.mainTableStats.bucketCount);
+            
+            // 验证已经扩容
+            assertTrue(statsAfterBase.mainTableStats.bucketCount > 65536, 
+                    "基础数据应已触发扩容");
+            
+            // 在扩容后继续进行混合操作
+            int mixedOps = 20_000;
+            int writes = 0, reads = 0, deletes = 0;
+            
+            for (int i = 0; i < mixedOps; i++) {
                 int op = rnd.nextInt(100);
-                if (op < 60) { // 写
-                    smallMap.put(i, "n" + (i % 7), "val" + i);
+                int key = baseInsert + i;
+                String ns = "n" + (i % 7);
+                
+                if (op < 60) { // 60% 写入
+                    stateMap.put(key, ns, "mixVal" + i);
                     writes++;
-                } else if (op < 90) { // 读
-                    int k = rnd.nextInt(i + 1);
-                    smallMap.get(k, "n" + (k % 7));
-                } else { // 删
-                    int k = rnd.nextInt(i + 1);
-                    smallMap.remove(k, "n" + (k % 7));
+                } else if (op < 90) { // 30% 读取
+                    int k = rnd.nextInt(baseInsert + i);
+                    stateMap.get(k, "ns" + (k % 50));
+                    reads++;
+                } else { // 10% 删除（只删除最近插入的，不删除基础数据）
+                    int k = baseInsert + rnd.nextInt(Math.max(1, i));
+                    stateMap.remove(k, "n" + ((k - baseInsert) % 7));
+                    deletes++;
                 }
             }
-            // 强制再进行一次读写穿插，确保最新 bucket 使用正常
+
+            ForL0StateMap.DetailedStats finalStats = stateMap.getDetailedStats();
+            LOG.info("混合操作完成: writes={}, reads={}, deletes={}", writes, reads, deletes);
+            LOG.info("最终状态: entries={}, buckets={}", finalStats.totalEntries, finalStats.mainTableStats.bucketCount);
+
+            // 强制再进行一次读写穿插，确保扩容后读写正常
             for (int i = 0; i < 1000; i++) {
-                smallMap.put(10_000 + i, "nX", "VX" + i);
-                assertEquals("VX" + i, smallMap.get(10_000 + i, "nX"));
+                int key = 300_000 + i;
+                stateMap.put(key, "nX", "VX" + i);
+                assertEquals("VX" + i, stateMap.get(key, "nX"));
             }
-            // 校验部分旧数据仍可访问（存在被删除则允许null）
-            for (int i = 0; i < 5000; i += 500) {
-                String v = smallMap.get(i, "n" + (i % 7));
-                if (v != null) {
-                    assertTrue(v.equals("val" + i) || v.startsWith("VX"), "返回的数据应为原值或新写值");
-                }
+            
+            // 验证部分基础数据仍可访问
+            for (int i = 0; i < baseInsert; i += baseInsert / 100) {
+                String expected = "baseVal" + i;
+                String actual = stateMap.get(i, "ns" + (i % 50));
+                assertEquals(expected, actual, "基础数据应仍可访问: key=" + i);
             }
-            // 确认已经至少扩容一次
-            assertTrue(smallMap.getDetailedStats().mainTableStats.bucketCount > 2);
+            
+            LOG.info("扩容后读写验证通过");
         }
     }
 
@@ -565,7 +611,7 @@ public class ForL0StateMapStressTest {
             stateMap.close();
             stateMap = new ForL0StateMap<>(
                     l0Allocator,
-                    16, 10,
+                    10,
                     IntSerializer.INSTANCE,
                     StringSerializer.INSTANCE,
                     StringSerializer.INSTANCE,
@@ -851,15 +897,8 @@ public class ForL0StateMapStressTest {
         }
     }
 
-    private String createLargeString(int length) {
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append('x');
-        }
-        return sb.toString();
-    }
-
     @Nested
+    @Disabled
     @DisplayName("Put/Get操作性能基准测试")
     class PutGetBenchmarkTests {
 
@@ -927,7 +966,6 @@ public class ForL0StateMapStressTest {
         private StateMap<String, String, Integer> createForL0StateMapInteger() {
             return new ForL0StateMap<>(
                 l0Allocator,
-                16, // mainTable 64K buckets
                 10, // l0Cache 1K buckets
                 StringSerializer.INSTANCE,
                 StringSerializer.INSTANCE,

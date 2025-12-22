@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.state.heap;
 
+import org.apache.flink.util.MathUtils;
 import org.junit.jupiter.api.*;
 
 import java.util.HashSet;
@@ -44,6 +45,11 @@ class HeapEntryStoreTest {
         }
     }
     
+    /** Helper method to compute hash for tests. */
+    private static <K, N> int computeHash(K key, N namespace) {
+        return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
+    }
+    
     // ========== HeapStateEntry Tests ==========
     
     @Nested
@@ -51,8 +57,9 @@ class HeapEntryStoreTest {
         
         @Test
         void testBasicCreation() {
+            int hash = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash);
             
             assertEquals("key1", entry.getKey());
             assertEquals(Integer.valueOf(1), entry.getNamespace());
@@ -61,8 +68,9 @@ class HeapEntryStoreTest {
         
         @Test
         void testNullState() {
+            int hash = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry = 
-                new HeapStateEntry<>("key1", 1, null);
+                new HeapStateEntry<>("key1", 1, null, hash);
             
             assertEquals("key1", entry.getKey());
             assertEquals(Integer.valueOf(1), entry.getNamespace());
@@ -71,8 +79,9 @@ class HeapEntryStoreTest {
         
         @Test
         void testSetState() {
+            int hash = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash);
             
             assertEquals("value1", entry.getState());
             
@@ -86,29 +95,33 @@ class HeapEntryStoreTest {
         
         @Test
         void testHashComputation() {
+            int hash1 = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry1 = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash1);
             HeapStateEntry<String, Integer, String> entry2 = 
-                new HeapStateEntry<>("key1", 1, "value2");
+                new HeapStateEntry<>("key1", 1, "value2", hash1);
             
             // Same key and namespace should have the same hash
             assertEquals(entry1.hash, entry2.hash);
             
             // Different key should have different hash (with high probability)
+            int hash3 = computeHash("key2", 1);
             HeapStateEntry<String, Integer, String> entry3 = 
-                new HeapStateEntry<>("key2", 1, "value1");
+                new HeapStateEntry<>("key2", 1, "value1", hash3);
             assertNotEquals(entry1.hash, entry3.hash);
             
             // Different namespace should have different hash (with high probability)
+            int hash4 = computeHash("key1", 2);
             HeapStateEntry<String, Integer, String> entry4 = 
-                new HeapStateEntry<>("key1", 2, "value1");
+                new HeapStateEntry<>("key1", 2, "value1", hash4);
             assertNotEquals(entry1.hash, entry4.hash);
         }
         
         @Test
         void testTagDerivation() {
+            int hash = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash);
             
             // Tag is the high 16 bits of hash (computed inline, not via method)
             short expectedTag = (short) (entry.hash >>> 16);
@@ -118,8 +131,9 @@ class HeapEntryStoreTest {
         
         @Test
         void testMatches() {
+            int hash = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash);
             
             // Matching logic is now in HeapEntryStore, test via direct field access
             // Should match same key and namespace
@@ -134,12 +148,13 @@ class HeapEntryStoreTest {
         
         @Test
         void testEqualsAndHashCode() {
+            int hash = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry1 = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash);
             HeapStateEntry<String, Integer, String> entry2 = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash);
             HeapStateEntry<String, Integer, String> entry3 = 
-                new HeapStateEntry<>("key1", 1, "value2");
+                new HeapStateEntry<>("key1", 1, "value2", hash);
             
             // Same content should be equal
             assertEquals(entry1, entry2);
@@ -151,8 +166,9 @@ class HeapEntryStoreTest {
         
         @Test
         void testToString() {
+            int hash = computeHash("key1", 1);
             HeapStateEntry<String, Integer, String> entry = 
-                new HeapStateEntry<>("key1", 1, "value1");
+                new HeapStateEntry<>("key1", 1, "value1", hash);
             
             String str = entry.toString();
             assertTrue(str.contains("key1"));
@@ -168,7 +184,7 @@ class HeapEntryStoreTest {
         @Test
         void testAllocateAndGet() {
             // Allocate an entry
-            long addr = store.allocate("key1", 1, "value1");
+            long addr = store.allocate("key1", 1, "value1", computeHash("key1", 1));
             
             // Address should be > 0 (0 is reserved as NULL)
             assertTrue(addr > 0);
@@ -190,7 +206,7 @@ class HeapEntryStoreTest {
             Set<Long> addresses = new HashSet<>();
             
             for (int i = 0; i < 100; i++) {
-                long addr = store.allocate("key" + i, i, "value" + i);
+                long addr = store.allocate("key" + i, i, "value" + i, computeHash("key" + i, i));
                 assertTrue(addr > 0);
                 assertTrue(addresses.add(addr), "Address should be unique");
             }
@@ -215,31 +231,31 @@ class HeapEntryStoreTest {
         
         @Test
         void testUpdateState() {
-            long addr = store.allocate("key1", 1, "value1");
+            long addr = store.allocate("key1", 1, "value1", computeHash("key1", 1));
             
-            // Update the state
-            boolean updated = store.updateState(addr, "value2");
-            assertTrue(updated);
+            // Update the state via direct field access
+            HeapStateEntry<String, Integer, String> entry = store.get(addr);
+            entry.state = "value2";
             
             // Verify the update
-            HeapStateEntry<String, Integer, String> entry = store.get(addr);
-            assertEquals("value2", entry.getState());
+            HeapStateEntry<String, Integer, String> retrieved = store.get(addr);
+            assertEquals("value2", retrieved.getState());
             
             // Key and namespace should remain unchanged
-            assertEquals("key1", entry.getKey());
-            assertEquals(Integer.valueOf(1), entry.getNamespace());
+            assertEquals("key1", retrieved.getKey());
+            assertEquals(Integer.valueOf(1), retrieved.getNamespace());
         }
         
         @Test
         void testUpdateStateToNull() {
-            long addr = store.allocate("key1", 1, "value1");
+            long addr = store.allocate("key1", 1, "value1", computeHash("key1", 1));
             
-            // Update to null
-            boolean updated = store.updateState(addr, null);
-            assertTrue(updated);
-            
+            // Update to null via direct field access
             HeapStateEntry<String, Integer, String> entry = store.get(addr);
-            assertNull(entry.getState());
+            entry.state = null;
+            
+            HeapStateEntry<String, Integer, String> retrieved = store.get(addr);
+            assertNull(retrieved.getState());
         }
     }
     
@@ -250,7 +266,7 @@ class HeapEntryStoreTest {
         
         @Test
         void testRemove() {
-            long addr = store.allocate("key1", 1, "value1");
+            long addr = store.allocate("key1", 1, "value1", computeHash("key1", 1));
             assertEquals(1, store.getActiveEntries());
             
             // Remove the entry
@@ -266,13 +282,13 @@ class HeapEntryStoreTest {
         @Test
         void testRemoveAndReuse() {
             // Allocate and remove
-            long addr1 = store.allocate("key1", 1, "value1");
+            long addr1 = store.allocate("key1", 1, "value1", computeHash("key1", 1));
             store.remove(addr1);
             
             assertEquals(1, store.getFreeSlotCount());
             
             // Allocate again - should reuse the freed slot
-            long addr2 = store.allocate("key2", 2, "value2");
+            long addr2 = store.allocate("key2", 2, "value2", computeHash("key2", 2));
             
             // The reused address should be the same as the removed one (LIFO)
             assertEquals(addr1, addr2);
@@ -290,7 +306,7 @@ class HeapEntryStoreTest {
             // Allocate 5 entries
             long[] addrs = new long[5];
             for (int i = 0; i < 5; i++) {
-                addrs[i] = store.allocate("key" + i, i, "value" + i);
+                addrs[i] = store.allocate("key" + i, i, "value" + i, computeHash("key" + i, i));
             }
             assertEquals(5, store.getActiveEntries());
             
@@ -301,8 +317,8 @@ class HeapEntryStoreTest {
             assertEquals(2, store.getFreeSlotCount());
             
             // Allocate 2 new entries - should reuse in LIFO order
-            long newAddr1 = store.allocate("newKey1", 10, "newValue1");
-            long newAddr2 = store.allocate("newKey2", 20, "newValue2");
+            long newAddr1 = store.allocate("newKey1", 10, "newValue1", computeHash("newKey1", 10));
+            long newAddr2 = store.allocate("newKey2", 20, "newValue2", computeHash("newKey2", 20));
             
             // LIFO: addr3 was removed last, so it should be reused first
             assertEquals(addrs[3], newAddr1);
@@ -323,7 +339,7 @@ class HeapEntryStoreTest {
         
         @Test
         void testDoubleRemove() {
-            long addr = store.allocate("key1", 1, "value1");
+            long addr = store.allocate("key1", 1, "value1", computeHash("key1", 1));
             
             store.remove(addr);
             assertEquals(1, store.getFreeSlotCount());
@@ -349,7 +365,7 @@ class HeapEntryStoreTest {
             // Allocate more than one chunk's worth
             int entriesToAllocate = 65536 + 100;
             for (int i = 0; i < entriesToAllocate; i++) {
-                store.allocate("key" + i, i, "value" + i);
+                store.allocate("key" + i, i, "value" + i, computeHash("key" + i, i));
             }
             
             // Should have expanded to 2 chunks
@@ -375,7 +391,7 @@ class HeapEntryStoreTest {
             int entriesToAllocate = 65536 * (targetChunks - 1) + 1;
             
             for (int i = 0; i < entriesToAllocate; i++) {
-                store.allocate("key" + i, i, "value" + i);
+                store.allocate("key" + i, i, "value" + i, computeHash("key" + i, i));
             }
             
             assertEquals(targetChunks, store.getChunkCount());
@@ -389,14 +405,12 @@ class HeapEntryStoreTest {
         
         @Test
         void testHashAndTag() {
-            long addr = store.allocate("testKey", 42, "testValue");
+            long addr = store.allocate("testKey", 42, "testValue", computeHash("testKey", 42));
             
-            // Get hash via store method
-            int hash = store.getHash(addr);
-            
-            // Get entry and verify consistency
+            // Get entry and access hash directly
             HeapStateEntry<String, Integer, String> entry = store.get(addr);
-            assertEquals(entry.hash, hash);
+            int hash = entry.hash;
+            
             // Tag is computed inline from hash
             short tag = (short) (hash >>> 16);
             assertEquals((short) (entry.hash >>> 16), tag);
@@ -413,7 +427,7 @@ class HeapEntryStoreTest {
         
         @Test
         void testMatches() {
-            long addr = store.allocate("key1", 1, "value1");
+            long addr = store.allocate("key1", 1, "value1", computeHash("key1", 1));
             
             // Should match with correct key and namespace
             assertTrue(store.matches(addr, "key1", 1));
@@ -436,7 +450,7 @@ class HeapEntryStoreTest {
         
         @Test
         void testClose() {
-            store.allocate("key1", 1, "value1");
+            store.allocate("key1", 1, "value1", computeHash("key1", 1));
             assertFalse(store.isClosed());
             
             store.close();
@@ -464,8 +478,8 @@ class HeapEntryStoreTest {
             assertEquals(0, store.getFreeSlotCount());
             
             // Allocate
-            long addr1 = store.allocate("key1", 1, "value1");
-            long addr2 = store.allocate("key2", 2, "value2");
+            long addr1 = store.allocate("key1", 1, "value1", computeHash("key1", 1));
+            long addr2 = store.allocate("key2", 2, "value2", computeHash("key2", 2));
             assertEquals(2, store.getActiveEntries());
             assertEquals(2, store.getTotalAllocations());
             
@@ -476,7 +490,7 @@ class HeapEntryStoreTest {
             assertEquals(1, store.getFreeSlotCount());
             
             // Reuse
-            store.allocate("key3", 3, "value3");
+            store.allocate("key3", 3, "value3", computeHash("key3", 3));
             assertEquals(2, store.getActiveEntries());
             assertEquals(3, store.getTotalAllocations());
             assertEquals(0, store.getFreeSlotCount());
@@ -486,10 +500,10 @@ class HeapEntryStoreTest {
         void testNextAllocIndex() {
             assertEquals(0, store.getNextAllocIndex());
             
-            store.allocate("key1", 1, "value1");
+            store.allocate("key1", 1, "value1", computeHash("key1", 1));
             assertEquals(1, store.getNextAllocIndex());
             
-            store.allocate("key2", 2, "value2");
+            store.allocate("key2", 2, "value2", computeHash("key2", 2));
             assertEquals(2, store.getNextAllocIndex());
             
             // Remove doesn't affect nextAllocIndex
@@ -497,7 +511,7 @@ class HeapEntryStoreTest {
             assertEquals(2, store.getNextAllocIndex());
             
             // Reuse uses free list, not nextAllocIndex
-            store.allocate("key3", 3, "value3");
+            store.allocate("key3", 3, "value3", computeHash("key3", 3));
             assertEquals(2, store.getNextAllocIndex()); // Still 2, reused slot 0
         }
         
@@ -505,10 +519,10 @@ class HeapEntryStoreTest {
         void testMaxAddress() {
             assertEquals(0, store.getMaxAddress());
             
-            store.allocate("key1", 1, "value1");
+            store.allocate("key1", 1, "value1", computeHash("key1", 1));
             assertEquals(1, store.getMaxAddress());
             
-            store.allocate("key2", 2, "value2");
+            store.allocate("key2", 2, "value2", computeHash("key2", 2));
             assertEquals(2, store.getMaxAddress());
         }
     }
@@ -520,8 +534,8 @@ class HeapEntryStoreTest {
         
         @Test
         void testGetByIndex() {
-            long addr1 = store.allocate("key1", 1, "value1");
-            long addr2 = store.allocate("key2", 2, "value2");
+            long addr1 = store.allocate("key1", 1, "value1", computeHash("key1", 1));
+            long addr2 = store.allocate("key2", 2, "value2", computeHash("key2", 2));
             
             // getByIndex uses 0-based index
             HeapStateEntry<String, Integer, String> entry0 = store.getByIndex(0);
@@ -539,9 +553,9 @@ class HeapEntryStoreTest {
         
         @Test
         void testIterateWithHoles() {
-            store.allocate("key0", 0, "value0");
-            long addr1 = store.allocate("key1", 1, "value1");
-            store.allocate("key2", 2, "value2");
+            store.allocate("key0", 0, "value0", computeHash("key0", 0));
+            long addr1 = store.allocate("key1", 1, "value1", computeHash("key1", 1));
+            store.allocate("key2", 2, "value2", computeHash("key2", 2));
             
             // Remove middle entry
             store.remove(addr1);
@@ -563,7 +577,7 @@ class HeapEntryStoreTest {
     
     @Test
     void testToString() {
-        store.allocate("key1", 1, "value1");
+        store.allocate("key1", 1, "value1", computeHash("key1", 1));
         
         String str = store.toString();
         assertTrue(str.contains("activeEntries=1"));

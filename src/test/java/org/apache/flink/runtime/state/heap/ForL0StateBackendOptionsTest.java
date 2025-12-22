@@ -31,11 +31,6 @@ class ForL0StateBackendOptionsTest {
         }
 
         @Test
-        void testMainTableInitialSizeDefault() {
-            assertEquals(10, ForL0StateBackendOptions.MAIN_TABLE_INITIAL_SIZE.defaultValue());
-        }
-
-        @Test
         void testMainTableLoadFactorThresholdDefault() {
             assertEquals(1.5, ForL0StateBackendOptions.MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue());
         }
@@ -59,21 +54,6 @@ class ForL0StateBackendOptionsTest {
                 () -> ForL0StateBackendOptions.validateL0CacheSize(-1));
             assertThrows(IllegalArgumentException.class, 
                 () -> ForL0StateBackendOptions.validateL0CacheSize(21));
-        }
-
-        @Test
-        void testValidateMainTableInitialSize_valid() {
-            assertDoesNotThrow(() -> ForL0StateBackendOptions.validateMainTableInitialSize(1));
-            assertDoesNotThrow(() -> ForL0StateBackendOptions.validateMainTableInitialSize(15));
-            assertDoesNotThrow(() -> ForL0StateBackendOptions.validateMainTableInitialSize(20));
-        }
-
-        @Test
-        void testValidateMainTableInitialSize_invalid() {
-            assertThrows(IllegalArgumentException.class, 
-                () -> ForL0StateBackendOptions.validateMainTableInitialSize(0));
-            assertThrows(IllegalArgumentException.class, 
-                () -> ForL0StateBackendOptions.validateMainTableInitialSize(21));
         }
 
         @Test
@@ -147,7 +127,6 @@ class ForL0StateBackendOptionsTest {
             assertEquals(10, config.getL0CacheSize());
             assertEquals(L0Table.ReplacementPolicy.CLOCK, config.getL0ReplacementPolicy());
             assertEquals(-1, config.getL0MemoryMaxBytes()); // unlimited
-            assertEquals(10, config.getMainTableInitialSize());
             assertEquals(1.5, config.getMainTableLoadFactorThreshold());
         }
 
@@ -158,7 +137,6 @@ class ForL0StateBackendOptionsTest {
             configuration.set(ForL0StateBackendOptions.L0_CACHE_SIZE, 12);
             configuration.set(ForL0StateBackendOptions.L0_CACHE_REPLACEMENT_POLICY, "LRU");
             configuration.set(ForL0StateBackendOptions.L0_MEMORY_MAX_SIZE, MemorySize.ofMebiBytes(256));
-            configuration.set(ForL0StateBackendOptions.MAIN_TABLE_INITIAL_SIZE, 8);
             configuration.set(ForL0StateBackendOptions.MAIN_TABLE_LOAD_FACTOR_THRESHOLD, 2.0);
 
             ForL0StateBackendConfig config = new ForL0StateBackendConfig(configuration);
@@ -167,7 +145,6 @@ class ForL0StateBackendOptionsTest {
             assertEquals(12, config.getL0CacheSize());
             assertEquals(L0Table.ReplacementPolicy.LRU, config.getL0ReplacementPolicy());
             assertEquals(256 * 1024 * 1024, config.getL0MemoryMaxBytes());
-            assertEquals(8, config.getMainTableInitialSize());
             assertEquals(2.0, config.getMainTableLoadFactorThreshold());
         }
 
@@ -181,7 +158,7 @@ class ForL0StateBackendOptionsTest {
             
             // Other settings should be preserved
             assertEquals(config.getL0CacheSize(), disabledConfig.getL0CacheSize());
-            assertEquals(config.getMainTableInitialSize(), disabledConfig.getMainTableInitialSize());
+            assertEquals(config.getMainTableLoadFactorThreshold(), disabledConfig.getMainTableLoadFactorThreshold());
         }
 
         @Test
@@ -191,7 +168,6 @@ class ForL0StateBackendOptionsTest {
                     .setL0CacheSize(14)
                     .setL0ReplacementPolicy(L0Table.ReplacementPolicy.LFU)
                     .setL0MemoryMaxBytes(512 * 1024 * 1024L)
-                    .setMainTableInitialSize(12)
                     .setMainTableLoadFactorThreshold(1.8)
                     .build();
 
@@ -199,7 +175,6 @@ class ForL0StateBackendOptionsTest {
             assertEquals(14, config.getL0CacheSize());
             assertEquals(L0Table.ReplacementPolicy.LFU, config.getL0ReplacementPolicy());
             assertEquals(512 * 1024 * 1024L, config.getL0MemoryMaxBytes());
-            assertEquals(12, config.getMainTableInitialSize());
             assertEquals(1.8, config.getMainTableLoadFactorThreshold());
         }
 
@@ -230,11 +205,6 @@ class ForL0StateBackendOptionsTest {
 
             assertThrows(IllegalArgumentException.class, () -> 
                 ForL0StateBackendConfig.builder()
-                    .setMainTableInitialSize(25)
-                    .build());
-
-            assertThrows(IllegalArgumentException.class, () -> 
-                ForL0StateBackendConfig.builder()
                     .setMainTableLoadFactorThreshold(0.1)
                     .build());
         }
@@ -251,7 +221,6 @@ class ForL0StateBackendOptionsTest {
             assertTrue(str.contains("l0CacheEnabled=true"));
             assertTrue(str.contains("l0CacheSize=10"));
             assertTrue(str.contains("l0ReplacementPolicy=CLOCK"));
-            assertTrue(str.contains("mainTableInitialSize=10"));
             assertTrue(str.contains("mainTableLoadFactorThreshold=1.5"));
         }
     }
@@ -282,7 +251,6 @@ class ForL0StateBackendOptionsTest {
             flinkConfig.set(ForL0StateBackendOptions.L0_CACHE_SIZE, 14);
             flinkConfig.set(ForL0StateBackendOptions.L0_CACHE_REPLACEMENT_POLICY, "LRU");
             flinkConfig.set(ForL0StateBackendOptions.L0_MEMORY_MAX_SIZE, MemorySize.ofMebiBytes(512));
-            flinkConfig.set(ForL0StateBackendOptions.MAIN_TABLE_INITIAL_SIZE, 12);
             flinkConfig.set(ForL0StateBackendOptions.MAIN_TABLE_LOAD_FACTOR_THRESHOLD, 2.0);
 
             // Step 2: Create a default ForL0StateBackend
@@ -298,7 +266,6 @@ class ForL0StateBackendOptionsTest {
             assertEquals(14, config.getL0CacheSize(), "L0 cache size should be 14");
             assertEquals(L0Table.ReplacementPolicy.LRU, config.getL0ReplacementPolicy(), "Replacement policy should be LRU");
             assertEquals(512 * 1024 * 1024L, config.getL0MemoryMaxBytes(), "L0 memory max should be 512MB");
-            assertEquals(12, config.getMainTableInitialSize(), "MainTable initial size should be 12");
             assertEquals(2.0, config.getMainTableLoadFactorThreshold(), "Load factor threshold should be 2.0");
         }
 
@@ -321,7 +288,6 @@ class ForL0StateBackendOptionsTest {
             // Default values for unset options
             assertTrue(config.isL0CacheEnabled());
             assertEquals(-1, config.getL0MemoryMaxBytes()); // unlimited
-            assertEquals(10, config.getMainTableInitialSize());
             assertEquals(1.5, config.getMainTableLoadFactorThreshold());
         }
 
@@ -333,7 +299,6 @@ class ForL0StateBackendOptionsTest {
             flinkConfig.setString("state.backend.forl0.l0-cache.size", "16");
             flinkConfig.setString("state.backend.forl0.l0-cache.replacement-policy", "LFU");
             flinkConfig.setString("state.backend.forl0.l0-memory.max-size", "1gb");
-            flinkConfig.setString("state.backend.forl0.main-table.initial-size", "8");
             flinkConfig.setString("state.backend.forl0.main-table.load-factor-threshold", "1.8");
 
             ForL0StateBackend originalBackend = new ForL0StateBackend();
@@ -345,7 +310,6 @@ class ForL0StateBackendOptionsTest {
             assertEquals(16, config.getL0CacheSize());
             assertEquals(L0Table.ReplacementPolicy.LFU, config.getL0ReplacementPolicy());
             assertEquals(1024L * 1024 * 1024, config.getL0MemoryMaxBytes()); // 1GB
-            assertEquals(8, config.getMainTableInitialSize());
             assertEquals(1.8, config.getMainTableLoadFactorThreshold());
         }
 
@@ -360,8 +324,6 @@ class ForL0StateBackendOptionsTest {
                     ForL0StateBackendOptions.L0_CACHE_REPLACEMENT_POLICY.key());
             assertEquals("state.backend.forl0.l0-memory.max-size", 
                     ForL0StateBackendOptions.L0_MEMORY_MAX_SIZE.key());
-            assertEquals("state.backend.forl0.main-table.initial-size", 
-                    ForL0StateBackendOptions.MAIN_TABLE_INITIAL_SIZE.key());
             assertEquals("state.backend.forl0.main-table.load-factor-threshold", 
                     ForL0StateBackendOptions.MAIN_TABLE_LOAD_FACTOR_THRESHOLD.key());
         }

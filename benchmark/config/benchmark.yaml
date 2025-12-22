@@ -38,12 +38,12 @@ cluster:
   checkpoint_interval: 0  # ms (10s)
   
   wordcount:
-    num_keys: 5000000         # 100万 key
-    num_records: 80000000    # 1亿条
+    num_keys: 1000000         # 100万 key
+    num_records: 1000000000    # 10亿条
     arrival_rate: 0 
     skew_factor: 1.0         # Zipf s parameter
     window_size: 5000         # milliseconds (5s)
-    slide_size: 500          # milliseconds (5s)
+    slide_size: 5000          # milliseconds (5s)
     warmup_duration: 20       # warmup duration in seconds (0 to disable)
   
   nexmark:
@@ -76,7 +76,7 @@ backends:
     # ForL0 backend specific configuration
     config:
       # Whether L0 cache (hot key cache) is enabled
-      l0_cache_enabled: true
+      l0_cache_enabled: false
       # Size of each L0Table as a power of 2 (bucket count), range 1-20
       # Actual bucket count = 2^n, each bucket = 64 bytes
       # Example: size=10 means 1024 buckets = 64KB per L0Table
@@ -86,12 +86,8 @@ backends:
       # Maximum L0 memory pool size (0 = unlimited)
       # Examples: 256mb, 1gb, 0
       l0_memory_max_size: "0"
-      # Initial MainTable size as a power of 2, range 1-20
-      # Note: Each KeyGroup gets its own StateMap with a MainTable!
-      # With 128 KeyGroups / parallelism=2 = 64 StateMaps per subtask
-      # Size 10 = 1024 buckets × 64 bytes = 64KB per MainTable (small, will auto-expand)
-      main_table_initial_size: 16
       # MainTable resize load factor threshold (0.5-4.0)
+      # Note: MainTable initial size is now fixed at 65536 buckets (4MB per table)
       main_table_load_factor_threshold: 1.5
 
 # Metrics collection settings

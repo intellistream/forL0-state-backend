@@ -25,7 +25,6 @@ class ForL0StateMapTest {
         // Create ForL0StateMap with L0 cache enabled
         stateMap = new ForL0StateMap<>(
             l0Allocator,
-            4, // MainTable: 16 buckets
             3, // L0Table: 8 buckets
             StringSerializer.INSTANCE,
             IntSerializer.INSTANCE,
@@ -213,7 +212,7 @@ class ForL0StateMapTest {
         void testMainTableHitWithL0Promotion() {
             // Create a state map without L0 cache first
             try (ForL0StateMap<String, Integer, String> noCacheMap = new ForL0StateMap<>(
-                    null, 4, 3, StringSerializer.INSTANCE, IntSerializer.INSTANCE, StringSerializer.INSTANCE, false)) {
+                    null, 3, StringSerializer.INSTANCE, IntSerializer.INSTANCE, StringSerializer.INSTANCE, false)) {
 
                 String key = "promotionKey";
                 Integer namespace = 700;
@@ -247,7 +246,6 @@ class ForL0StateMapTest {
         void testConstructWithCustomL0Policy() throws Exception {
             try (ForL0StateMap<String, Integer, String> custom = new ForL0StateMap<>(
                     l0Allocator,
-                    4,
                     3,
                     StringSerializer.INSTANCE,
                     IntSerializer.INSTANCE,
@@ -350,69 +348,8 @@ class ForL0StateMapTest {
         }
     }
 
-    @Nested
-    class AutoResizeTests {
-
-        private ForL0StateMap<String, Integer, String> smallMap;
-
-        @BeforeEach
-        void setupSmall() {
-            // 使用极小的主表容量以快速触发扩容：2 buckets (pow2=1)
-            smallMap = new ForL0StateMap<>(
-                l0Allocator,
-                1, // 2 buckets; 新负载因子阈值 1.5 * 2 = 3 entries 即标记需扩容（旧注释: 0.75 * 12=9 已废弃）
-                2, // L0 4 buckets
-                StringSerializer.INSTANCE,
-                IntSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                true
-            );
-        }
-
-        @AfterEach
-        void tearDownSmall() throws Exception {
-            if (smallMap != null) {
-                smallMap.close();
-            }
-        }
-
-        @Test
-        void testAutoResizeTriggeredByLoadFactor() {
-            int initialBuckets = smallMap.getDetailedStats().mainTableStats.bucketCount;
-            assertEquals(2, initialBuckets);
-
-            int insertCount = 20; // 足够触发一次扩容（>9 entries）
-            for (int i = 0; i < insertCount; i++) {
-                smallMap.put("k" + i, 0, "v" + i);
-            }
-
-            ForL0StateMap.DetailedStats stats = smallMap.getDetailedStats();
-            int afterBuckets = stats.mainTableStats.bucketCount;
-            assertTrue(afterBuckets >= 4, "应已至少扩容到4 buckets, 实际=" + afterBuckets);
-            assertEquals(insertCount, stats.totalEntries);
-
-            // 校验数据仍可访问
-            for (int i = 0; i < insertCount; i++) {
-                assertEquals("v" + i, smallMap.get("k" + i, 0));
-            }
-        }
-
-        @Test
-        void testMultipleResizesAndDataIntegrity() {
-            int targetBucketCount = 8; // 希望触发到 8 buckets
-            int i = 0;
-            while (smallMap.getDetailedStats().mainTableStats.bucketCount < targetBucketCount && i < 2000) {
-                smallMap.put("mk" + i, 2, "mv" + i);
-                i++;
-            }
-            ForL0StateMap.DetailedStats stats = smallMap.getDetailedStats();
-            assertTrue(stats.mainTableStats.bucketCount >= targetBucketCount, "应已达到多次扩容");
-            // 抽样验证
-            for (int k = 0; k < i; k += Math.max(1, i / 10)) {
-                assertEquals("mv" + k, smallMap.get("mk" + k, 2));
-            }
-        }
-    }
+    // Note: AutoResizeTests removed - MainTable now has fixed initial size of 65536 buckets,
+    // making small-scale resize tests impractical. Resize functionality is tested in stress tests.
 
     @Nested
     class LifecycleTests {
@@ -582,9 +519,12 @@ class ForL0StateMapTest {
                 });
             });
 
-            // Verify state map remains unchanged after exception
-            assertEquals(0, stateMap.size());
-            assertNull(stateMap.get(key, namespace));
+            // After exception, behavior matches Flink's CopyOnWriteStateMap:
+            // The entry is created (size incremented) but state remains null
+            // because transformation.apply() threw before setting state.
+            assertEquals(1, stateMap.size());
+            assertNull(stateMap.get(key, namespace));  // state is null
+            assertTrue(stateMap.containsKey(key, namespace));  // but entry exists
         }
 
         @Test
@@ -685,7 +625,6 @@ class ForL0StateMapTest {
             // Create a ForL0StateMap with Long state type (should trigger fast path)
             try (ForL0StateMap<String, Integer, Long> longStateMap = new ForL0StateMap<>(
                     l0Allocator,
-                    4, // MainTable: 16 buckets
                     3, // L0Table: 8 buckets
                     StringSerializer.INSTANCE,
                     IntSerializer.INSTANCE,
@@ -714,7 +653,6 @@ class ForL0StateMapTest {
             // Create a ForL0StateMap with Integer state type (should trigger fast path)
             try (ForL0StateMap<String, Integer, Integer> intStateMap = new ForL0StateMap<>(
                     l0Allocator,
-                    4, // MainTable: 16 buckets
                     3, // L0Table: 8 buckets
                     StringSerializer.INSTANCE,
                     IntSerializer.INSTANCE,
@@ -740,7 +678,6 @@ class ForL0StateMapTest {
             // Create a ForL0StateMap with Double state type (should trigger fast path)
             try (ForL0StateMap<String, Integer, Double> doubleStateMap = new ForL0StateMap<>(
                     l0Allocator,
-                    4, // MainTable: 16 buckets
                     3, // L0Table: 8 buckets
                     StringSerializer.INSTANCE,
                     IntSerializer.INSTANCE,
@@ -765,7 +702,6 @@ class ForL0StateMapTest {
             int numEntries = 10000;
             try (ForL0StateMap<String, Integer, Long> longStateMap = new ForL0StateMap<>(
                     l0Allocator,
-                    10, // MainTable: 1024 buckets
                     6,  // L0Table: 64 buckets  
                     StringSerializer.INSTANCE,
                     IntSerializer.INSTANCE,

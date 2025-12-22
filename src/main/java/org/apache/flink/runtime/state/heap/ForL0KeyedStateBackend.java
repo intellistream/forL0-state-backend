@@ -262,6 +262,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     }
     
     // [BENCHMARK_TEST] Starts metrics collector if not already started
+    @SuppressWarnings("null")
     private void maybeStartMetricsCollector() {
         if (metricsCollector != null && !metricsCollectorStarted) {
             metricsCollectorStarted = true;

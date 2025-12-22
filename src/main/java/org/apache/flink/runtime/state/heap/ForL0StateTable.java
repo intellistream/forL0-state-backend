@@ -139,7 +139,6 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
         return new ForL0StateMap<>(
                 effectiveL0Allocator,  // L0 memory allocator (null if L0 disabled)
-                cfg.getMainTableInitialSize(),     // MainTable initial size from config
                 cfg.getL0CacheSize(),              // L0Table size from config
                 getKeySerializer(),
                 getNamespaceSerializer(),

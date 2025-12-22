@@ -1,7 +1,6 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.state.StateEntry;
-import org.apache.flink.util.MathUtils;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -49,20 +48,18 @@ public final class HeapStateEntry<K, N, S> implements StateEntry<K, N, S> {
     // ========== Constructors ==========
     
     /**
-     * Creates a new heap state entry.
+     * Creates a new heap state entry with pre-computed hash.
      * 
      * @param key the key (must not be null)
      * @param namespace the namespace (must not be null)
      * @param state the state value (can be null)
+     * @param hash the pre-computed composite hash
      */
-    public HeapStateEntry(@Nonnull K key, @Nonnull N namespace, @Nullable S state) {
+    public HeapStateEntry(@Nonnull K key, @Nonnull N namespace, @Nullable S state, int hash) {
         this.key = key;
         this.namespace = namespace;
         this.state = state;
-        // Apply bitMix to each hashCode BEFORE combining to avoid hash collision clustering
-        // when key and namespace have consecutive/predictable hashCode values.
-        // Must match ForL0StateMap.compositeHash() exactly.
-        this.hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
+        this.hash = hash;
     }
     
     // ========== StateEntry Interface ==========

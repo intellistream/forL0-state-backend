@@ -10,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.stream.Stream;
 
@@ -20,11 +19,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     // Core storage components
     private final HeapEntryStore<K, N, S> heapEntryStore;  // Heap-based entry storage (zero serialization)
-    private final MainTable<K, N, S> mainTable;            // Generic MainTable with object comparison
-    private final L0Table<K, N, S> l0Table;                // nullable, Generic L0Table with object comparison
-
-    // Configuration
-    private final boolean l0CacheEnabled;
+    private final MainTable<K, N, S> mainTable;            // MainTable manages L0Table internally
 
     // Size tracking
     private int size = 0;
@@ -35,15 +30,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      */
     private N lastNamespace;
 
-    // Resize coordination
-    private volatile boolean resizeInProgress = false;
-
     /**
      * Constructor with basic parameters (backward compatible).
      * Uses default CLOCK replacement policy and 1.5 load factor threshold.
      */
     public ForL0StateMap(L0MemoryAllocator l0Allocator,
-                         int mainTableInitPow2,
                          int l0CacheSizePow2,
                          TypeSerializer<K> keySerializer,
                          TypeSerializer<N> namespaceSerializer,
@@ -51,7 +42,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          boolean l0CacheEnabled) {
         this(
             l0Allocator,
-            mainTableInitPow2,
             l0CacheSizePow2,
             keySerializer,
             namespaceSerializer,
@@ -67,7 +57,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * Uses default 1.5 load factor threshold.
      */
     public ForL0StateMap(L0MemoryAllocator l0Allocator,
-                         int mainTableInitPow2,
                          int l0CacheSizePow2,
                          TypeSerializer<K> keySerializer,
                          TypeSerializer<N> namespaceSerializer,
@@ -76,7 +65,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          L0Table.ReplacementPolicy l0Policy) {
         this(
             l0Allocator,
-            mainTableInitPow2,
             l0CacheSizePow2,
             keySerializer,
             namespaceSerializer,
@@ -91,7 +79,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * Full constructor with all configurable parameters.
      *
      * @param l0Allocator L0 memory allocator for L0Table (can be null if L0 disabled)
-     * @param mainTableInitPow2 MainTable initial bucket count as power of 2
      * @param l0CacheSizePow2 L0Table bucket count as power of 2
      * @param keySerializer Key serializer (unused, kept for API compatibility)
      * @param namespaceSerializer Namespace serializer (unused, kept for API compatibility)
@@ -101,7 +88,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * @param loadFactorThreshold MainTable load factor threshold for resize
      */
     public ForL0StateMap(L0MemoryAllocator l0Allocator,
-                         int mainTableInitPow2,
                          int l0CacheSizePow2,
                          TypeSerializer<K> keySerializer,
                          TypeSerializer<N> namespaceSerializer,
@@ -109,27 +95,24 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          boolean l0CacheEnabled,
                          L0Table.ReplacementPolicy l0Policy,
                          double loadFactorThreshold) {
-        this.l0CacheEnabled = l0CacheEnabled;
-
         this.heapEntryStore = new HeapEntryStore<>();
-        this.mainTable = new MainTable<>(mainTableInitPow2, loadFactorThreshold);
-        this.l0Table = (l0CacheEnabled && l0Allocator != null) 
+        
+        // Create L0Table if enabled, then pass to MainTable
+        L0Table<K, N, S> l0Table = (l0CacheEnabled && l0Allocator != null) 
             ? new L0Table<>(l0Allocator, l0CacheSizePow2, l0Policy) 
             : null;
+        this.mainTable = new MainTable<>(loadFactorThreshold, l0Table);
 
-        LOG.debug("ForL0StateMap initialized with mainTable={} buckets, " +
+        LOG.debug("ForL0StateMap initialized with mainTable=65536 buckets, " +
                   "l0Cache={} buckets, cache={}, policy={}, loadFactor={}",
-                1 << mainTableInitPow2, l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, 
+                l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, 
                 l0CacheEnabled, l0Policy, loadFactorThreshold);
     }
 
     @Override
     public void close() throws Exception {
         LOG.debug("Closing ForL0StateMap");
-        mainTable.close();
-        if (l0Table != null) {
-            l0Table.close();
-        }
+        mainTable.close();  // MainTable closes L0Table internally
         heapEntryStore.close();
         LOG.debug("ForL0StateMap closed");
     }
@@ -141,148 +124,70 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public S get(K key, N namespace) {
-        if (key == null || namespace == null) { return null; }
-
-        // Hot path: inline hash computation, zero serialization
         int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-
-        int ptr;
-        if (l0CacheEnabled) {
-            ptr = l0Table.get(hash, key, namespace, heapEntryStore);
-            if (ptr > 0) {
-                return heapEntryStore.get(ptr).getState();
-            }
-        }
-        ptr = mainTable.get(hash, key, namespace, heapEntryStore);
-        if (ptr > 0) {
-            if (l0CacheEnabled) {
-                l0Table.put(hash, ptr, key, namespace, heapEntryStore);
-            }
-            return heapEntryStore.get(ptr).getState();
-        }
-        return null;
+        HeapStateEntry<K, N, S> entry = mainTable.get(hash, key, namespace, heapEntryStore);
+        return entry != null ? entry.state : null;
     }
 
     @Override
     public boolean containsKey(K key, N namespace) {
-        if (key == null || namespace == null) { return false; }
-
         int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
+        return mainTable.get(hash, key, namespace, heapEntryStore) != null;
+    }
 
-        if (l0CacheEnabled && l0Table.get(hash, key, namespace, heapEntryStore) > 0) {
-            return true;
+    /**
+     * Helper method that is the basis for operations that add mappings.
+     * Returns the entry (existing or newly created with state=null).
+     * If a new entry is created, size is incremented.
+     */
+    private HeapStateEntry<K, N, S> putEntry(K key, N namespace) {
+        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
+        
+        // Deduplicate namespace object to improve identity comparison hit rate
+        if (namespace.equals(lastNamespace)) {
+            namespace = lastNamespace;
+        } else {
+            lastNamespace = namespace;
         }
-        return mainTable.get(hash, key, namespace, heapEntryStore) > 0;
+        
+        HeapStateEntry<K, N, S> entry = mainTable.put(hash, key, namespace, heapEntryStore);
+        if (entry.state == null) {
+            // New entry (put creates Entry with state=null)
+            size++;
+        }
+        return entry;
     }
 
     @Override
     public void put(K key, N namespace, S state) {
-        if (key == null || namespace == null) { return; }
-
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-
-        if (mainTable.needsResize() && !resizeInProgress) {
-            performResize();
-        }
-
-        int existingPtr = mainTable.put(hash, 0, key, namespace, heapEntryStore);
-
-        if (existingPtr == 0) {
-            // Deduplicate namespace object to improve identity comparison hit rate
-            if (namespace.equals(lastNamespace)) {
-                namespace = lastNamespace;
-            } else {
-                lastNamespace = namespace;
-            }
-            // New entry: allocate in HeapEntryStore
-            int ptr = (int) heapEntryStore.allocate(key, namespace, state);
-            mainTable.setSlot(hash, ptr);
-            size++;
-            if (l0CacheEnabled && !resizeInProgress) {
-                l0Table.put(hash, ptr, key, namespace, heapEntryStore);
-            }
-        } else if (existingPtr == -1) {
-            // MainTable full, resize and retry
-            performResize();
-            put(key, namespace, state);
-        } else {
-            // Update existing entry
-            heapEntryStore.updateState(existingPtr, state);
-        }
+        HeapStateEntry<K, N, S> entry = putEntry(key, namespace);
+        entry.state = state;
     }
 
     @Override
     public S putAndGetOld(K key, N namespace, S state) {
-        if (key == null || namespace == null) {
-            return null;
-        }
-
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-
-        if (mainTable.needsResize() && !resizeInProgress) {
-            performResize();
-        }
-
-        int existingPtr = mainTable.put(hash, 0, key, namespace, heapEntryStore);
-
-        if (existingPtr == 0) {
-            // Deduplicate namespace object
-            if (namespace.equals(lastNamespace)) {
-                namespace = lastNamespace;
-            } else {
-                lastNamespace = namespace;
-            }
-            int ptr = (int) heapEntryStore.allocate(key, namespace, state);
-            mainTable.setSlot(hash, ptr);
-            size++;
-            if (l0CacheEnabled && !resizeInProgress) {
-                l0Table.put(hash, ptr, key, namespace, heapEntryStore);
-            }
-            return null;
-        } else if (existingPtr == -1) {
-            performResize();
-            return putAndGetOld(key, namespace, state);
-        } else {
-            // Update existing entry, return old value
-            S oldValue = heapEntryStore.get(existingPtr).getState();
-            heapEntryStore.updateState(existingPtr, state);
-            return oldValue;
-        }
+        HeapStateEntry<K, N, S> entry = putEntry(key, namespace);
+        S oldValue = entry.state;
+        entry.state = state;
+        return oldValue;
     }
 
     @Override
     public void remove(K key, N namespace) {
-        if (key == null || namespace == null) { return; }
-
         int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-
-        int removedPtr = mainTable.remove(hash, key, namespace, heapEntryStore);
-        if (removedPtr > 0) {
+        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace, heapEntryStore);
+        if (removed != null) {
             size--;
-            if (l0CacheEnabled) {
-                l0Table.remove(hash, key, namespace, heapEntryStore);
-            }
-            heapEntryStore.remove(removedPtr);
         }
     }
 
     @Override
     public S removeAndGetOld(K key, N namespace) {
-        if (key == null || namespace == null) {
-            return null;
-        }
-
         int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-
-        int removedPtr = mainTable.remove(hash, key, namespace, heapEntryStore);
-        if (removedPtr > 0) {
+        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace, heapEntryStore);
+        if (removed != null) {
             size--;
-            if (l0CacheEnabled) {
-                l0Table.remove(hash, key, namespace, heapEntryStore);
-            }
-            S oldValue = heapEntryStore.get(removedPtr).getState();
-            heapEntryStore.remove(removedPtr);
-            return oldValue;
+            return removed.state;
         }
         return null;
     }
@@ -291,10 +196,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     public int sizeOfNamespace(Object namespace) {
         int[] cnt = new int[1];
         mainTable.forEachEntry((ptr, hash) -> {
-            HeapStateEntry<K, N, S> entry = heapEntryStore.get(ptr);
+            int idx = ptr - 1;
+            HeapStateEntry<K, N, S> entry = heapEntryStore.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
             if (entry != null) {
-                N n = entry.getNamespace();
-                if ((namespace == null && n == null) || (namespace != null && namespace.equals(n))) {
+                N n = entry.namespace;
+                if (namespace != null && namespace.equals(n)) {
                     cnt[0]++;
                 }
             }
@@ -342,17 +248,42 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Nonnull
     @Override
     public Iterator<StateEntry<K, N, S>> iterator() {
-        // 构造一次性快照列表，避免并发修改影响
-        ArrayList<StateEntry<K, N, S>> list = new ArrayList<>(Math.max(16, size));
-        mainTable.forEachEntry((ptr, hash) -> {
-            HeapStateEntry<K, N, S> entry = heapEntryStore.get(ptr);
-            if (entry != null && entry.getState() != null) {
-                list.add(new StateEntry.SimpleStateEntry<>(
-                    entry.getKey(), entry.getNamespace(), entry.getState()));
-            }
-        });
+        // Return a lazy iterator that traverses mainTable directly
+        return new MainTableIterator();
+    }
 
-        return list.iterator();
+    /**
+     * Lazy iterator over all entries in the MainTable.
+     */
+    private class MainTableIterator implements Iterator<StateEntry<K, N, S>> {
+        private final int[] ptrs;
+        private int index = 0;
+        
+        MainTableIterator() {
+            // Collect all pointers first (just ints, minimal allocation)
+            ptrs = new int[size];
+            int[] count = {0};
+            mainTable.forEachEntry((ptr, hash) -> {
+                if (count[0] < ptrs.length) {
+                    ptrs[count[0]++] = ptr;
+                }
+            });
+        }
+        
+        @Override
+        public boolean hasNext() {
+            return index < ptrs.length;
+        }
+        
+        @Override
+        public StateEntry<K, N, S> next() {
+            if (!hasNext()) {
+                throw new java.util.NoSuchElementException();
+            }
+            int ptr = ptrs[index++];
+            int idx = ptr - 1;
+            return heapEntryStore.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
+        }
     }
 
     @Nonnull
@@ -363,16 +294,14 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public Stream<K> getKeys(N namespace) {
-        if (namespace == null) {
-            return Stream.empty();
-        }
         java.util.ArrayList<K> keys = new java.util.ArrayList<>();
         mainTable.forEachEntry((ptr, hash) -> {
-            HeapStateEntry<K, N, S> entry = heapEntryStore.get(ptr);
+            int idx = ptr - 1;
+            HeapStateEntry<K, N, S> entry = heapEntryStore.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
             if (entry != null) {
-                N n = entry.getNamespace();
-                if (n != null && n.equals(namespace)) {
-                    keys.add(entry.getKey());
+                N n = entry.namespace;
+                if (n.equals(namespace)) {
+                    keys.add(entry.key);
                 }
             }
         });
@@ -382,63 +311,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public <T> void transform(K key, N namespace, T value, StateTransformationFunction<S, T> transformation)
             throws Exception {
-        if (key == null || namespace == null) { return; }
-
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-
-        if (mainTable.needsResize() && !resizeInProgress) {
-            performResize();
-        }
-
-        int existingPtr = mainTable.put(hash, 0, key, namespace, heapEntryStore);
-
-        if (existingPtr == 0) {
-            // Deduplicate namespace object
-            if (namespace.equals(lastNamespace)) {
-                namespace = lastNamespace;
-            } else {
-                lastNamespace = namespace;
-            }
-            S newState = transformation.apply(null, value);
-            int ptr = (int) heapEntryStore.allocate(key, namespace, newState);
-            mainTable.setSlot(hash, ptr);
-            size++;
-            if (l0CacheEnabled && !resizeInProgress) {
-                l0Table.put(hash, ptr, key, namespace, heapEntryStore);
-            }
-        } else if (existingPtr == -1) {
-            performResize();
-            transform(key, namespace, value, transformation);
-        } else {
-            S oldState = heapEntryStore.get(existingPtr).getState();
-            S newState = transformation.apply(oldState, value);
-            heapEntryStore.updateState(existingPtr, newState);
-        }
-    }
-
-    // ================== Private helper methods ==================
-
-    /**
-     * Performs the main table resize with L0 cache coordination.
-     */
-    private void performResize() {
-        if (resizeInProgress || !mainTable.needsResize()) {
-            return;
-        }
-        resizeInProgress = true;
-        if (l0CacheEnabled) {
-            l0Table.clear();
-        }
-        mainTable.tryResize(heapEntryStore);
-        resizeInProgress = false;
-    }
-
-    /**
-     * Returns the HeapEntryStore for Checkpoint/Snapshot access.
-     * Package-private for use by ForL0StateMapSnapshot.
-     */
-    HeapEntryStore<K, N, S> getHeapEntryStore() {
-        return heapEntryStore;
+        HeapStateEntry<K, N, S> entry = putEntry(key, namespace);
+        entry.state = transformation.apply(entry.state, value);
     }
 
     // ================== Statistics (for benchmark/testing) ==================
@@ -448,7 +322,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * Returns null if L0 cache is disabled.
      */
     public L0Table.L0TableStats getL0Stats() {
-        return l0CacheEnabled ? l0Table.getStats() : null;
+        return mainTable.getL0Stats();
     }
 
     /**
@@ -463,10 +337,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      */
     public DetailedStats getDetailedStats() {
         return new DetailedStats(
-                l0CacheEnabled ? l0Table.getStats() : null,
+                mainTable.getL0Stats(),
                 mainTable.getStats(),
-                size,
-                resizeInProgress
+                size
         );
     }
 
@@ -477,21 +350,19 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         public final L0Table.L0TableStats l0Stats;
         public final MainTable.TableStats mainTableStats;
         public final int totalEntries;
-        public final boolean resizeInProgress;
 
         public DetailedStats(L0Table.L0TableStats l0Stats, MainTable.TableStats mainTableStats,
-                             int totalEntries, boolean resizeInProgress) {
+                             int totalEntries) {
             this.l0Stats = l0Stats;
             this.mainTableStats = mainTableStats;
             this.totalEntries = totalEntries;
-            this.resizeInProgress = resizeInProgress;
         }
 
         @Override
         public String toString() {
             return String.format(
-                    "DetailedStats{l0Stats=%s, mainTable=%s, entries=%d, resizing=%s}",
-                    l0Stats, mainTableStats, totalEntries, resizeInProgress
+                    "DetailedStats{l0Stats=%s, mainTable=%s, entries=%d}",
+                    l0Stats, mainTableStats, totalEntries
             );
         }
     }

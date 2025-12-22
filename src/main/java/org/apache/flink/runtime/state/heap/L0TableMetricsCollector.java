@@ -10,8 +10,6 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import java.io.Closeable;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
@@ -23,8 +21,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * [BENCHMARK_TEST] Collects L0Table metrics at regular intervals.
  * 
  * This collector runs in an independent thread and periodically samples
- * L0Table statistics. The samples are output to the log with a special
- * prefix (L0TABLE_METRICS) for easy parsing by benchmark scripts.
+ * L0Table statistics via ForL0StateMap.getL0Stats(). The samples are 
+ * output to the log with a special prefix (L0TABLE_METRICS) for easy 
+ * parsing by benchmark scripts.
  * 
  * <p>Thread Safety: The collector uses volatile/atomic counters in L0Table
  * for thread-safe reads. Flink state access is single-threaded, so the
@@ -43,10 +42,7 @@ public class L0TableMetricsCollector implements Closeable {
     /** Default sampling interval in milliseconds */
     private static final long DEFAULT_SAMPLE_INTERVAL_MS = 1000;
     
-    /** List of L0Tables to collect metrics from */
-    private final CopyOnWriteArrayList<L0Table> l0Tables;
-    
-    /** List of ForL0StateMaps to collect cache stats from */
+    /** List of ForL0StateMaps to collect stats from (includes L0 stats) */
     private final CopyOnWriteArrayList<ForL0StateMap<?, ?, ?>> stateMaps;
     
     /** Scheduled executor for periodic sampling */
@@ -86,25 +82,13 @@ public class L0TableMetricsCollector implements Closeable {
     public L0TableMetricsCollector(String backendId, long sampleIntervalMs) {
         this.backendId = backendId;
         this.sampleIntervalMs = sampleIntervalMs;
-        this.l0Tables = new CopyOnWriteArrayList<>();
         this.stateMaps = new CopyOnWriteArrayList<>();
         this.running = new AtomicBoolean(false);
         this.sampleCount = 0;
     }
     
     /**
-     * Registers an L0Table for metrics collection.
-     * Thread-safe, can be called while collector is running.
-     */
-    public void registerL0Table(L0Table l0Table) {
-        if (l0Table != null) {
-            l0Tables.add(l0Table);
-            LOG.debug("[{}] Registered L0Table for metrics collection", LOG_PREFIX);
-        }
-    }
-    
-    /**
-     * Registers a ForL0StateMap for cache stats collection.
+     * Registers a ForL0StateMap for stats collection.
      * Thread-safe, can be called while collector is running.
      */
     public void registerStateMap(ForL0StateMap<?, ?, ?> stateMap) {
@@ -115,7 +99,7 @@ public class L0TableMetricsCollector implements Closeable {
     }
     
     /**
-     * Extracts L0Tables from registered StateTables in the backend.
+     * Extracts ForL0StateMaps from registered StateTables in the backend.
      * Call this after all states have been registered.
      */
     public <K> void extractFromRegisteredStates(Map<String, StateTable<K, ?, ?>> registeredKVStates) {
@@ -125,14 +109,11 @@ public class L0TableMetricsCollector implements Closeable {
                 extractFromStateTable(forL0StateTable);
             }
         }
-        LOG.info("[{}] Extracted metrics sources: {} L0Tables, {} StateMaps", 
-                LOG_PREFIX, l0Tables.size(), stateMaps.size());
+        LOG.info("[{}] Extracted {} StateMaps for metrics collection", LOG_PREFIX, stateMaps.size());
     }
     
     @SuppressWarnings("unchecked")
     private <K, N, S> void extractFromStateTable(ForL0StateTable<K, N, S> stateTable) {
-        // Access keyGroupedStateMaps via reflection or getter if available
-        // For now, we rely on the StateTable's snapshot method structure
         try {
             // ForL0StateTable extends StateTable which has protected keyGroupedStateMaps
             java.lang.reflect.Field field = StateTable.class.getDeclaredField("keyGroupedStateMaps");
@@ -141,18 +122,11 @@ public class L0TableMetricsCollector implements Closeable {
             
             for (StateMap<K, N, S> map : maps) {
                 if (map instanceof ForL0StateMap) {
-                    ForL0StateMap<K, N, S> forL0Map = (ForL0StateMap<K, N, S>) map;
-                    registerStateMap(forL0Map);
-                    
-                    // Extract L0Table from ForL0StateMap
-                    java.lang.reflect.Field l0Field = ForL0StateMap.class.getDeclaredField("l0Table");
-                    l0Field.setAccessible(true);
-                    L0Table l0Table = (L0Table) l0Field.get(forL0Map);
-                    registerL0Table(l0Table);
+                    registerStateMap((ForL0StateMap<K, N, S>) map);
                 }
             }
         } catch (NoSuchFieldException | IllegalAccessException e) {
-            LOG.warn("[{}] Failed to extract L0Tables via reflection: {}", LOG_PREFIX, e.getMessage());
+            LOG.warn("[{}] Failed to extract StateMaps via reflection: {}", LOG_PREFIX, e.getMessage());
         }
     }
     
@@ -183,11 +157,11 @@ public class L0TableMetricsCollector implements Closeable {
     }
     
     /**
-     * Collects metrics from all registered L0Tables and logs them.
+     * Collects metrics from all registered StateMaps and logs them.
      * Called periodically by the scheduler.
      */
     private void collectAndLogMetrics() {
-        if (!running.get()) {
+        if (!running.get() || stateMaps.isEmpty()) {
             return;
         }
         
@@ -195,65 +169,60 @@ public class L0TableMetricsCollector implements Closeable {
         long elapsedMs = currentTimeMs - startTimeMs;
         sampleCount++;
         
-        // Collect L0Table stats
-        List<L0TableSample> l0Samples = new ArrayList<>();
-        for (int i = 0; i < l0Tables.size(); i++) {
-            L0Table table = l0Tables.get(i);
-            if (table != null) {
-                try {
-                    L0Table.L0TableStats stats = table.getStats();
-                    l0Samples.add(new L0TableSample(i, stats));
-                } catch (Exception e) {
-                    // Ignore - table might be closed
-                }
-            }
-        }
+        // Aggregate L0Table stats from all StateMaps
+        long totalAccessCount = 0;
+        long totalHitCount = 0;
+        long totalMissCount = 0;
+        long totalEvictionCount = 0;
+        int totalValidSlots = 0;
+        int l0TableCount = 0;
         
-        // Output aggregated metrics
-        if (!l0Samples.isEmpty()) {
-            // Aggregate L0Table stats
-            long totalAccessCount = 0;
-            long totalHitCount = 0;
-            long totalMissCount = 0;
-            long totalEvictionCount = 0;
-            int totalValidSlots = 0;
-            
-            for (L0TableSample sample : l0Samples) {
-                totalAccessCount += sample.stats.accessCount;
-                totalHitCount += sample.stats.hitCount;
-                totalMissCount += sample.stats.missCount;
-                totalEvictionCount += sample.stats.evictionCount;
-                totalValidSlots += sample.stats.validSlots;
-            }
-            
-            double hitRate = totalAccessCount > 0 ? (double) totalHitCount / totalAccessCount : 0.0;
-            
-            // Output in parseable JSON format
-            String json = String.format(
-                    "{\"type\":\"l0table\",\"backend\":\"%s\",\"sample\":%d,\"elapsed_ms\":%d," +
-                    "\"access_count\":%d,\"hit_count\":%d,\"miss_count\":%d,\"eviction_count\":%d," +
-                    "\"valid_slots\":%d,\"hit_rate\":%.4f,\"table_count\":%d}",
-                    backendId, sampleCount, elapsedMs,
-                    totalAccessCount, totalHitCount, totalMissCount, totalEvictionCount,
-                    totalValidSlots, hitRate, l0Samples.size());
-            
-            LOG.info("{}|{}", LOG_PREFIX, json);
-        }
+        // Aggregate StateMap stats
+        int totalEntries = 0;
         
-        // Output state map stats (entry count)
-        if (!stateMaps.isEmpty()) {
-            int totalEntries = 0;
-            for (ForL0StateMap<?, ?, ?> map : stateMaps) {
+        for (ForL0StateMap<?, ?, ?> map : stateMaps) {
+            try {
                 totalEntries += map.size();
+                
+                // Get L0 stats if available
+                L0Table.L0TableStats l0Stats = map.getL0Stats();
+                if (l0Stats != null) {
+                    totalAccessCount += l0Stats.accessCount;
+                    totalHitCount += l0Stats.hitCount;
+                    totalMissCount += l0Stats.missCount;
+                    totalEvictionCount += l0Stats.evictionCount;
+                    totalValidSlots += l0Stats.validSlots;
+                    l0TableCount++;
+                }
+            } catch (Exception e) {
+                // Ignore - map might be closed
             }
+        }
+        
+        // Output L0Table metrics if L0 is enabled
+        if (l0TableCount > 0) {
+            double hitRate = totalAccessCount > 0 ? (double) totalHitCount / totalAccessCount : 0.0;
+            double timeSeconds = elapsedMs / 1000.0;
             
             String json = String.format(
-                    "{\"type\":\"statemap\",\"backend\":\"%s\",\"sample\":%d,\"elapsed_ms\":%d," +
-                    "\"total_entries\":%d,\"map_count\":%d}",
-                    backendId, sampleCount, elapsedMs, totalEntries, stateMaps.size());
+                    "{\"type\":\"l0table\",\"backend_id\":\"%s\",\"sample\":%d,\"time_seconds\":%.3f," +
+                    "\"accesses\":%d,\"hits\":%d,\"misses\":%d,\"evictions\":%d," +
+                    "\"valid_slots\":%d,\"hit_rate\":%.4f,\"table_count\":%d}",
+                    backendId, sampleCount, timeSeconds,
+                    totalAccessCount, totalHitCount, totalMissCount, totalEvictionCount,
+                    totalValidSlots, hitRate, l0TableCount);
             
             LOG.info("{}|{}", LOG_PREFIX, json);
         }
+        
+        // Output StateMap stats
+        double stateMapTimeSeconds = elapsedMs / 1000.0;
+        String stateMapJson = String.format(
+                "{\"type\":\"statemap\",\"backend_id\":\"%s\",\"sample\":%d,\"time_seconds\":%.3f," +
+                "\"total_entries\":%d,\"map_count\":%d}",
+                backendId, sampleCount, stateMapTimeSeconds, totalEntries, stateMaps.size());
+        
+        LOG.info("{}|{}", LOG_PREFIX, stateMapJson);
     }
     
     /**
@@ -263,45 +232,58 @@ public class L0TableMetricsCollector implements Closeable {
     private void outputFinalSummary() {
         long elapsedMs = System.currentTimeMillis() - startTimeMs;
         
-        // Collect final L0Table stats
-        for (int i = 0; i < l0Tables.size(); i++) {
-            L0Table table = l0Tables.get(i);
-            if (table != null) {
-                try {
-                    L0Table.L0TableStats stats = table.getStats();
-                    String json = String.format(
-                            "{\"type\":\"l0table_final\",\"backend\":\"%s\",\"table_index\":%d," +
-                            "\"total_elapsed_ms\":%d,\"total_samples\":%d," +
-                            "\"access_count\":%d,\"hit_count\":%d,\"miss_count\":%d,\"eviction_count\":%d," +
-                            "\"valid_slots\":%d,\"load_factor\":%.4f,\"hit_rate\":%.4f,\"miss_rate\":%.4f}",
-                            backendId, i, elapsedMs, sampleCount,
-                            stats.accessCount, stats.hitCount, stats.missCount, stats.evictionCount,
-                            stats.validSlots, stats.loadFactor, stats.hitRate, stats.missRate);
-                    
-                    LOG.info("{}|{}", LOG_PREFIX, json);
-                } catch (Exception e) {
-                    // Ignore
+        // Aggregate final stats
+        long totalAccessCount = 0;
+        long totalHitCount = 0;
+        long totalMissCount = 0;
+        long totalEvictionCount = 0;
+        int totalValidSlots = 0;
+        int l0TableCount = 0;
+        int totalEntries = 0;
+        
+        for (ForL0StateMap<?, ?, ?> map : stateMaps) {
+            try {
+                totalEntries += map.size();
+                
+                L0Table.L0TableStats l0Stats = map.getL0Stats();
+                if (l0Stats != null) {
+                    totalAccessCount += l0Stats.accessCount;
+                    totalHitCount += l0Stats.hitCount;
+                    totalMissCount += l0Stats.missCount;
+                    totalEvictionCount += l0Stats.evictionCount;
+                    totalValidSlots += l0Stats.validSlots;
+                    l0TableCount++;
                 }
+            } catch (Exception e) {
+                // Ignore
             }
         }
         
-        // Collect final state map stats
-        for (int i = 0; i < stateMaps.size(); i++) {
-            ForL0StateMap<?, ?, ?> map = stateMaps.get(i);
-            if (map != null) {
-                try {
-                    ForL0StateMap.DetailedStats stats = map.getDetailedStats();
-                    String json = String.format(
-                            "{\"type\":\"statemap_final\",\"backend\":\"%s\",\"map_index\":%d," +
-                            "\"total_elapsed_ms\":%d,\"total_samples\":%d,\"total_entries\":%d}",
-                            backendId, i, elapsedMs, sampleCount, stats.totalEntries);
-                    
-                    LOG.info("{}|{}", LOG_PREFIX, json);
-                } catch (Exception e) {
-                    // Ignore
-                }
-            }
+        // Output final L0Table summary
+        if (l0TableCount > 0) {
+            double hitRate = totalAccessCount > 0 ? (double) totalHitCount / totalAccessCount : 0.0;
+            double missRate = totalAccessCount > 0 ? (double) totalMissCount / totalAccessCount : 0.0;
+            double totalTimeSeconds = elapsedMs / 1000.0;
+            
+            String json = String.format(
+                    "{\"type\":\"l0table_final\",\"backend_id\":\"%s\",\"total_time_seconds\":%.3f,\"total_samples\":%d," +
+                    "\"accesses\":%d,\"hits\":%d,\"misses\":%d,\"evictions\":%d," +
+                    "\"valid_slots\":%d,\"hit_rate\":%.4f,\"miss_rate\":%.4f,\"table_count\":%d}",
+                    backendId, totalTimeSeconds, sampleCount,
+                    totalAccessCount, totalHitCount, totalMissCount, totalEvictionCount,
+                    totalValidSlots, hitRate, missRate, l0TableCount);
+            
+            LOG.info("{}|{}", LOG_PREFIX, json);
         }
+        
+        // Output final StateMap summary
+        double stateMapTimeSeconds = elapsedMs / 1000.0;
+        String stateMapJson = String.format(
+                "{\"type\":\"statemap_final\",\"backend_id\":\"%s\",\"total_time_seconds\":%.3f," +
+                "\"total_samples\":%d,\"total_entries\":%d,\"map_count\":%d}",
+                backendId, stateMapTimeSeconds, sampleCount, totalEntries, stateMaps.size());
+        
+        LOG.info("{}|{}", LOG_PREFIX, stateMapJson);
     }
     
     /**
@@ -332,7 +314,6 @@ public class L0TableMetricsCollector implements Closeable {
     @Override
     public void close() {
         stop();
-        l0Tables.clear();
         stateMaps.clear();
     }
     
@@ -348,17 +329,5 @@ public class L0TableMetricsCollector implements Closeable {
      */
     public long getSampleCount() {
         return sampleCount;
-    }
-    
-    // Helper classes for collecting samples
-    
-    private static class L0TableSample {
-        final int index;
-        final L0Table.L0TableStats stats;
-        
-        L0TableSample(int index, L0Table.L0TableStats stats) {
-            this.index = index;
-            this.stats = stats;
-        }
     }
 }

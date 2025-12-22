@@ -104,24 +104,6 @@ public class ForL0StateBackendOptions {
     // ========== MainTable Configuration ==========
 
     /**
-     * Initial size of MainTable as a power of 2 (bucket count).
-     * Actual bucket count = 2^n, each bucket is 64 bytes with 6 slots.
-     * The table will automatically resize when load factor threshold is exceeded.
-     */
-    public static final ConfigOption<Integer> MAIN_TABLE_INITIAL_SIZE =
-            ConfigOptions.key(PREFIX + "main-table.initial-size")
-                    .intType()
-                    .defaultValue(10)
-                    .withDescription(
-                            Description.builder()
-                                    .text("Initial size of MainTable as a power of 2 (bucket count). ")
-                                    .text("Actual bucket count = 2^n, each bucket is 64 bytes with 6 slots. ")
-                                    .text("Example: size=10 means 1024 initial buckets. ")
-                                    .text("The table will automatically resize when load factor threshold is exceeded. ")
-                                    .text("Valid range: 1-20.")
-                                    .build());
-
-    /**
      * Load factor threshold that triggers MainTable resize.
      * When (entries / buckets) exceeds this value, the table will double in size.
      */
@@ -149,19 +131,6 @@ public class ForL0StateBackendOptions {
         if (size < 1 || size > 20) {
             throw new IllegalArgumentException(
                     String.format("Invalid L0 cache size: %d. Valid range is 1-20 (2^1 to 2^20 buckets).", size));
-        }
-    }
-
-    /**
-     * Validates the MainTable initial size parameter.
-     *
-     * @param size The configured size value
-     * @throws IllegalArgumentException if the value is out of valid range
-     */
-    public static void validateMainTableInitialSize(int size) {
-        if (size < 1 || size > 20) {
-            throw new IllegalArgumentException(
-                    String.format("Invalid MainTable initial size: %d. Valid range is 1-20 (2^1 to 2^20 buckets).", size));
         }
     }
 

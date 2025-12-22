@@ -24,8 +24,8 @@ class MainTableStressTest {
     @BeforeEach
     void setUp() {
         entryStore = new HeapEntryStore<>();
-        // Create MainTable with 32 buckets (2^5) and higher load factor threshold for stress testing
-        mainTable = new MainTable<>(5, 1.5); // 阈值调整为1.5（entries/base buckets）
+        // Create MainTable with fixed 65536 buckets and load factor threshold for stress testing
+        mainTable = new MainTable<>(1.5);
         random = new Random(42); // Fixed seed for reproducibility
     }
 
@@ -74,10 +74,9 @@ class MainTableStressTest {
         // Verify all inserted entries can be retrieved
         int verifyCount = 0;
         for (TestEntry entry : insertedEntries) {
-            int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
+            HeapStateEntry<String, String, String> retrieved = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
-            if (retrievedAddress > 0) {
-                HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
+            if (retrieved != null) {
                 assertNotNull(retrieved);
                 assertEquals(entry.key, retrieved.getKey());
                 assertEquals(entry.namespace, retrieved.getNamespace());
@@ -151,10 +150,10 @@ class MainTableStressTest {
                     List<TestEntry> entryList = new ArrayList<>(currentEntries.values());
                     TestEntry entryToDelete = entryList.get(random.nextInt(entryList.size()));
 
-                    int removedAddress = mainTable.remove(entryToDelete.hash, 
+                    HeapStateEntry<String, String, String> removed = mainTable.remove(entryToDelete.hash, 
                             entryToDelete.key, entryToDelete.namespace, entryStore);
 
-                    if (removedAddress > 0) {
+                    if (removed != null) {
                         currentEntries.remove(entryToDelete.key);
                         deleteCount++;
                     }
@@ -169,10 +168,9 @@ class MainTableStressTest {
         // Phase 3: Verify remaining entries
         int verifyCount = 0;
         for (TestEntry entry : currentEntries.values()) {
-            int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
+            HeapStateEntry<String, String, String> retrieved = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
-            if (retrievedAddress > 0) {
-                HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
+            if (retrieved != null) {
                 assertEquals(entry.value, retrieved.getState());
                 verifyCount++;
             }
@@ -185,61 +183,45 @@ class MainTableStressTest {
 
     @Test
     void testMemoryPressureStress() {
-        // Use smaller table to create memory pressure faster
-        try (MainTable<String, String, String> smallTable = new MainTable<>(2, 0.6)) { // 4 buckets, low threshold
+        // Use table with low threshold to test resize trigger logic
+        // Note: MainTable now has fixed initial size of 65536 buckets
+        try (MainTable<String, String, String> smallTable = new MainTable<>(0.6)) {
             List<TestEntry> pressureEntries = new ArrayList<>();
 
-            // Insert until memory pressure or resize trigger
-            boolean needsResize = false;
-            for (int i = 0; i < 20000; i++) {
+            // Insert entries - with 65536 buckets and 0.6 threshold, 
+            // need > 39321 entries to trigger resize
+            // We test with fewer entries to verify basic functionality
+            for (int i = 0; i < 5000; i++) {
                 TestEntry entry = generateRandomEntry("pressure" + i, random);
 
                 int hash = compositeHash(entry.key, entry.namespace);
-                int entryAddress = (int) entryStore.allocate(entry.key, entry.namespace, entry.value);
-                if (entryAddress > 0) {
-                    entry.addr = entryAddress;
-                    entry.hash = hash;
+                entry.hash = hash;
 
-                    try {
-                        int result = smallTable.put(hash, entryAddress, entry.key, entry.namespace, entryStore);
-                        if (result >= 0) {
-                            pressureEntries.add(entry);
-                        }
-                    } catch (RuntimeException e) {
-                        if (e.getMessage().contains("resize needed")) {
-                            needsResize = true;
-                            break;
-                        }
-                        throw e;
+                try {
+                    HeapStateEntry<String, String, String> result = smallTable.put(hash, entry.key, entry.namespace, entryStore);
+                    if (result != null) {
+                        result.state = entry.value;
+                        pressureEntries.add(entry);
                     }
-                }
-
-                // Check for resize trigger every 100 entries
-                if (i % 100 == 0 && smallTable.needsResize()) {
-                    needsResize = true;
+                } catch (RuntimeException e) {
                     break;
                 }
             }
 
-            System.out.println("Memory pressure test: inserted " + pressureEntries.size() + " entries, needsResize=" + needsResize);
+            // With fixed 65536 buckets, 5000 entries should NOT trigger resize
+            assertFalse(smallTable.needsResize(), "Should not need resize with 5000 entries in 65536 buckets");
 
-            // Verify entries still accessible under pressure
+            // Verify all entries are retrievable
             int verifyCount = 0;
             for (TestEntry entry : pressureEntries) {
-                int retrievedAddress = smallTable.get(entry.hash, entry.key, entry.namespace, entryStore);
-
-                if (retrievedAddress > 0) {
-                    HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
-                    assertEquals(entry.value, retrieved.getState());
+                HeapStateEntry<String, String, String> found = smallTable.get(entry.hash, entry.key, entry.namespace, entryStore);
+                if (found != null && entry.value.equals(found.state)) {
                     verifyCount++;
                 }
             }
 
-            assertEquals(pressureEntries.size(), verifyCount, "All entries should remain accessible under memory pressure");
-
-            // Print final statistics
-            MainTable.TableStats finalStats = smallTable.getStats();
-            System.out.println("Memory pressure final stats: " + finalStats);
+            assertEquals(pressureEntries.size(), verifyCount, "All entries should be verifiable");
+            System.out.println("Memory pressure test: " + pressureEntries.size() + " entries stored and verified");
         } catch (Exception e) {
             fail("Memory pressure test failed: " + e.getMessage());
         }
@@ -264,10 +246,9 @@ class MainTableStressTest {
         int readCount = 0;
         for (int round = 0; round < 100; round++) {
             for (TestEntry entry : baseEntries) {
-                int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
+                HeapStateEntry<String, String, String> retrieved = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
-                if (retrievedAddress > 0) {
-                    HeapStateEntry<String, String, String> retrieved = entryStore.get(retrievedAddress);
+                if (retrieved != null) {
                     assertEquals(entry.value, retrieved.getState());
                     readCount++;
                 }
@@ -289,20 +270,16 @@ class MainTableStressTest {
             TestEntry entry = generateRandomEntry("exhaustion" + i, random);
             entry.hash = baseHash; // Same bucket
 
-            int entryAddress = (int) entryStore.allocate(entry.key, entry.namespace, entry.value);
-            if (entryAddress > 0) {
-                entry.addr = entryAddress;
-
-                try {
-                    int result = mainTable.put(entry.hash, entryAddress, entry.key, entry.namespace, entryStore);
-                    if (result >= 0) {
-                        exhaustionEntries.add(entry);
-                    }
-                } catch (RuntimeException e) {
-                    // Expected when extension buckets are exhausted or resize is needed
-                    System.out.println("Extension bucket exhaustion at entry " + i + ": " + e.getMessage());
-                    break;
+            try {
+                HeapStateEntry<String, String, String> result = mainTable.put(entry.hash, entry.key, entry.namespace, entryStore);
+                if (result != null) {
+                    result.state = entry.value;
+                    exhaustionEntries.add(entry);
                 }
+            } catch (RuntimeException e) {
+                // Expected when extension buckets are exhausted or resize is needed
+                System.out.println("Extension bucket exhaustion at entry " + i + ": " + e.getMessage());
+                break;
             }
         }
 
@@ -311,9 +288,9 @@ class MainTableStressTest {
         // Verify inserted entries are still accessible
         int verifyCount = 0;
         for (TestEntry entry : exhaustionEntries) {
-            int retrievedAddress = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
+            HeapStateEntry<String, String, String> retrieved = mainTable.get(entry.hash, entry.key, entry.namespace, entryStore);
 
-            if (retrievedAddress > 0) {
+            if (retrieved != null) {
                 verifyCount++;
             }
         }
@@ -322,22 +299,22 @@ class MainTableStressTest {
 
         MainTable.TableStats stats = mainTable.getStats();
         System.out.println("Extension exhaustion stats: " + stats);
-        assertTrue(stats.allocatedExtensionBuckets > 200 || mainTable.needsResize(),
-                  "Should have allocated many extension buckets or triggered resize");
+        // With 300 entries in one bucket and 7 slots per bucket, expect ~43 extension buckets
+        assertTrue(stats.allocatedExtensionBuckets >= 40 || mainTable.needsResize(),
+                  "Should have allocated extension buckets (~43 expected for 300 entries in 1 bucket)");
     }
 
     // Helper methods
     private boolean insertEntry(TestEntry entry) {
         int hash = compositeHash(entry.key, entry.namespace);
-        int entryAddress = (int) entryStore.allocate(entry.key, entry.namespace, entry.value);
-        if (entryAddress <= 0) {
-            return false;
-        }
-        entry.addr = entryAddress;
         entry.hash = hash;
         try {
-            int result = mainTable.put(hash, entryAddress, entry.key, entry.namespace, entryStore);
-            return result >= 0;
+            HeapStateEntry<String, String, String> result = mainTable.put(hash, entry.key, entry.namespace, entryStore);
+            if (result != null) {
+                result.state = entry.value;
+                return true;
+            }
+            return false;
         } catch (RuntimeException e) {
             return false;
         }

@@ -165,9 +165,9 @@ public class L0Table<K, N, S> implements AutoCloseable {
      * @param key the key object
      * @param namespace the namespace object
      * @param store the HeapEntryStore containing the entries
-     * @return the entry pointer if found, 0 otherwise
+     * @return the HeapStateEntry if found, null otherwise
      */
-    public int get(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public HeapStateEntry<K, N, S> get(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
         accessCount++;
         int bucketIndex = hash & (bucketCount - 1);
         
@@ -180,33 +180,36 @@ public class L0Table<K, N, S> implements AutoCloseable {
             if (slot == 0) continue;  // Empty slot
             if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
             
-            int ptr = (int) slot;
-            if (store.matches(ptr, key, namespace)) {
+            int idx = (int) slot - 1;  // ptr - 1
+            HeapStateEntry<K, N, S> entry = store.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
+            if (entry != null && entry.key.equals(key) 
+                    && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
                 hitCount++;
                 // Update replacement algorithm metadata
                 updateAccessMetadata(segment, bucketOffset, i);
-                return ptr;
+                return entry;
             }
         }
 
         missCount++;
-        return 0;
+        return null;
     }
 
     /**
-     * Puts an entry into the L0 cache using object comparison.
+     * Puts an entry into the L0 cache.
      * 
-     * <p>This is the heap object store version that uses {@code store.matches()} 
-     * for key/namespace comparison instead of byte comparison.
+     * <p>This method is only called when the entry is guaranteed NOT to be in L0:
+     * <ul>
+     *   <li>From MainTable.get(): entry was found in MainTable, meaning it was not in L0</li>
+     *   <li>From MainTable.put(): entry is newly created, so not in L0</li>
+     * </ul>
+     * Therefore, no duplicate check is needed - just find an empty slot or evict.
      *
      * @param hash the pre-computed hash value (full 32 bits used)
      * @param ptr the HeapEntryStore pointer of the entry
-     * @param key the key object
-     * @param namespace the namespace object
-     * @param store the HeapEntryStore containing the entries
-     * @return 0 if new entry inserted, old ptr if updated, or evicted ptr if eviction occurred
+     * @return 0 if new entry inserted, or evicted ptr if eviction occurred
      */
-    public int put(int hash, int ptr, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public int put(int hash, int ptr) {
         int bucketIndex = hash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
@@ -215,33 +218,15 @@ public class L0Table<K, N, S> implements AutoCloseable {
         // Encode new slot value
         long newSlot = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
 
-        // Find empty slot or update existing entry
-        int emptySlot = -1;
+        // Find first empty slot
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
             long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
             if (slot == 0) {
-                if (emptySlot == -1) emptySlot = i;
-                continue;
+                // Found empty slot, insert here
+                segment.putLong(bucketOffset + i * SLOT_SIZE, newSlot);
+                initSlotMetadata(segment, bucketOffset, i);
+                return 0;
             }
-            
-            if ((int)(slot >>> HASH_SHIFT) == hash) {
-                int slotPtr = (int) slot;
-                if (store.matches(slotPtr, key, namespace)) {
-                    // Update existing entry
-                    segment.putLong(bucketOffset + i * SLOT_SIZE, newSlot);
-                    // Update replacement algorithm metadata
-                    updateAccessMetadata(segment, bucketOffset, i);
-                    return slotPtr;
-                }
-            }
-        }
-
-        // Use empty slot if available
-        if (emptySlot != -1) {
-            segment.putLong(bucketOffset + emptySlot * SLOT_SIZE, newSlot);
-            // Initialize replacement algorithm metadata for new entry
-            initSlotMetadata(segment, bucketOffset, emptySlot);
-            return 0;
         }
 
         // No empty slot, need eviction
@@ -256,18 +241,15 @@ public class L0Table<K, N, S> implements AutoCloseable {
     }
 
     /**
-     * Removes an entry from the L0 cache using object comparison.
+     * Removes an entry from the L0 cache by hash and ptr.
      * 
-     * <p>This is the heap object store version that uses {@code store.matches()} 
-     * for key/namespace comparison instead of byte comparison.
+     * <p>Simply finds the slot with matching ptr and clears it.
      *
-     * @param hash the pre-computed hash value (full 32 bits used)
-     * @param key the key object
-     * @param namespace the namespace object
-     * @param store the HeapEntryStore containing the entries
+     * @param hash the pre-computed hash value
+     * @param ptr the HeapEntryStore pointer of the entry to remove
      * @return the removed entry pointer if found, 0 otherwise
      */
-    public int remove(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public int remove(int hash, int ptr) {
         int bucketIndex = hash & (bucketCount - 1);
         
         MemorySegment segment = getSegmentForBucket(bucketIndex);
@@ -276,10 +258,9 @@ public class L0Table<K, N, S> implements AutoCloseable {
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
             long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
             if (slot == 0) continue;
-            if ((int)(slot >>> HASH_SHIFT) != hash) continue;
             
-            int ptr = (int) slot;
-            if (store.matches(ptr, key, namespace)) {
+            // Compare ptr directly (low 32 bits of slot)
+            if ((int) slot == ptr) {
                 // Clear the slot (set to 0)
                 segment.putLong(bucketOffset + i * SLOT_SIZE, 0);
                 return ptr;
@@ -287,32 +268,6 @@ public class L0Table<K, N, S> implements AutoCloseable {
         }
 
         return 0;
-    }
-
-    /**
-     * Removes an entry from L0 table by entry pointer.
-     * Scans all buckets to find and remove the entry.
-     *
-     * @param entryPtr the pointer to remove
-     */
-    public void invalidatePointer(int entryPtr) {
-        if (entryPtr == 0) return;
-
-        for (int bucket = 0; bucket < bucketCount; bucket++) {
-            MemorySegment segment = getSegmentForBucket(bucket);
-            int bucketOffset = getBucketOffsetInSegment(bucket);
-
-            for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-                long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
-                if (slot == 0) continue;
-                
-                int ptr = (int) slot;
-                if (ptr == entryPtr) {
-                    segment.putLong(bucketOffset + i * SLOT_SIZE, 0);
-                    return;
-                }
-            }
-        }
     }
 
     /**
@@ -326,30 +281,6 @@ public class L0Table<K, N, S> implements AutoCloseable {
         evictionCount = 0;
         tinyLfuAccessCount = 0;
         currentTimestamp = 0;
-    }
-
-    /**
-     * Invalidates all entries with pointers in the specified range.
-     * Used when entries in HeapEntryStore are deallocated.
-     *
-     * @param minPtr Minimum pointer (inclusive)
-     * @param maxPtr Maximum pointer (exclusive)
-     */
-    public void invalidateRange(int minPtr, int maxPtr) {
-        for (int bucket = 0; bucket < bucketCount; bucket++) {
-            MemorySegment segment = getSegmentForBucket(bucket);
-            int bucketOffset = getBucketOffsetInSegment(bucket);
-
-            for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-                long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
-                if (slot == 0) continue;
-                
-                int ptr = (int) slot;
-                if (ptr >= minPtr && ptr < maxPtr) {
-                    segment.putLong(bucketOffset + i * SLOT_SIZE, 0);
-                }
-            }
-        }
     }
 
     /**

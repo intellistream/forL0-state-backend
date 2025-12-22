@@ -60,20 +60,18 @@ class L0TableTest {
             int hash = compositeHash(key, namespace);
 
             // Store entry in HeapEntryStore
-            long entryAddress = entryStore.allocate(key, namespace, state);
+            long entryAddress = entryStore.allocate(key, namespace, state, hash);
             assertTrue(entryAddress > 0, "Entry should be stored successfully");
 
             // Put entry into L0Table
-            int result = l0Table.put(hash, (int) entryAddress, key, namespace, entryStore);
+            int result = l0Table.put(hash, (int) entryAddress);
             assertEquals(0, result, "Should return 0 for new insertion");
 
             // Get entry from L0Table
-            int retrievedAddress = l0Table.get(hash, key, namespace, entryStore);
-            assertEquals((int) entryAddress, retrievedAddress, "Should retrieve the same entry address");
+            HeapStateEntry<String, String, String> entry = l0Table.get(hash, key, namespace, entryStore);
+            assertNotNull(entry, "Should retrieve entry");
 
             // Verify entry data
-            HeapStateEntry<String, String, String> entry = entryStore.get(retrievedAddress);
-            assertNotNull(entry);
             assertEquals(key, entry.getKey());
             assertEquals(namespace, entry.getNamespace());
             assertEquals(state, entry.getState());
@@ -89,23 +87,21 @@ class L0TableTest {
             int hash = compositeHash(key, namespace);
 
             // Store initial entry
-            long entryAddress1 = entryStore.allocate(key, namespace, value1);
+            long entryAddress1 = entryStore.allocate(key, namespace, value1, hash);
 
             // Insert initial entry
-            int result1 = l0Table.put(hash, (int) entryAddress1, key, namespace, entryStore);
+            int result1 = l0Table.put(hash, (int) entryAddress1);
             assertEquals(0, result1, "Should return 0 for new insertion");
 
-            // Store updated entry
-            long entryAddress2 = entryStore.allocate(key, namespace, value2);
+            // Note: In production, put() is only called for entries NOT in L0.
+            // This test verifies that put() finds empty slots correctly.
+            // A second put with same key would create duplicate entries in L0
+            // (which won't happen in production due to MainTable logic).
 
-            // Update entry in L0Table
-            int result2 = l0Table.put(hash, (int) entryAddress2, key, namespace, entryStore);
-            assertEquals((int) entryAddress1, result2, "Should return previous entry address for update");
-
-            // Verify updated entry
-            int retrievedAddress = l0Table.get(hash, key, namespace, entryStore);
-            assertEquals((int) entryAddress2, retrievedAddress, "Should retrieve updated entry address");
-            assertEquals(value2, entryStore.get(retrievedAddress).getState());
+            // Verify entry is retrievable
+            HeapStateEntry<String, String, String> entry = l0Table.get(hash, key, namespace, entryStore);
+            assertNotNull(entry);
+            assertEquals(value1, entry.getState());
         }
 
         @Test
@@ -117,16 +113,16 @@ class L0TableTest {
             int hash = compositeHash(key, namespace);
 
             // Store and insert entry
-            long entryAddress = entryStore.allocate(key, namespace, state);
-            l0Table.put(hash, (int) entryAddress, key, namespace, entryStore);
+            int entryAddress = (int) entryStore.allocate(key, namespace, state, hash);
+            l0Table.put(hash, entryAddress);
 
             // Remove entry
-            int removedAddress = l0Table.remove(hash, key, namespace, entryStore);
-            assertEquals((int) entryAddress, removedAddress, "Should return removed entry address");
+            int removedAddress = l0Table.remove(hash, entryAddress);
+            assertEquals(entryAddress, removedAddress, "Should return removed entry address");
 
             // Verify entry is removed
-            int retrievedAddress = l0Table.get(hash, key, namespace, entryStore);
-            assertEquals(0, retrievedAddress, "Entry should not be found after removal");
+            HeapStateEntry<String, String, String> entry = l0Table.get(hash, key, namespace, entryStore);
+            assertNull(entry, "Entry should not be found after removal");
         }
 
         @Test
@@ -135,8 +131,8 @@ class L0TableTest {
             String namespace = "nonExistentNamespace";
             int hash = compositeHash(key, namespace);
 
-            int result = l0Table.get(hash, key, namespace, entryStore);
-            assertEquals(0, result, "Should return 0 for non-existent entry");
+            HeapStateEntry<String, String, String> result = l0Table.get(hash, key, namespace, entryStore);
+            assertNull(result, "Should return null for non-existent entry");
         }
     }
 
@@ -156,14 +152,13 @@ class L0TableTest {
                     String ns = "ns";
                     int hash = 0x12340000 | (i << 2);
                     
-                    long addr = store.allocate(key, ns, i);
+                    long addr = store.allocate(key, ns, i, hash);
                     entries[i] = new TestEntry(key, ns, (int) addr, hash);
                 }
 
                 // Insert first 7 entries (fill bucket with 7 slots)
                 for (int i = 0; i < 7; i++) {
-                    long result = lruTable.put(entries[i].hash, entries[i].addr,
-                            entries[i].key, entries[i].namespace, store);
+                    long result = lruTable.put(entries[i].hash, entries[i].addr);
                     assertEquals(0, result, "Should insert successfully");
                 }
 
@@ -172,14 +167,13 @@ class L0TableTest {
                         entries[1].key, entries[1].namespace, store);
 
                 // Insert 8th entry - should evict LRU (entry 0)
-                long evictedAddress = lruTable.put(entries[7].hash,
-                        entries[7].addr, entries[7].key, entries[7].namespace, store);
+                long evictedAddress = lruTable.put(entries[7].hash, entries[7].addr);
                 assertEquals(entries[0].addr, evictedAddress, "Should evict least recently used entry");
 
                 // Verify entry 0 is gone, but entry 1 is still there
-                assertEquals(0, lruTable.get(entries[0].hash, 
+                assertNull(lruTable.get(entries[0].hash, 
                         entries[0].key, entries[0].namespace, store));
-                assertEquals(entries[1].addr, lruTable.get(entries[1].hash, 
+                assertNotNull(lruTable.get(entries[1].hash, 
                         entries[1].key, entries[1].namespace, store));
                 
                 store.close();
@@ -199,14 +193,13 @@ class L0TableTest {
                     String ns = "ns";
                     int hash = 0x12340000 | (i << 2);
                     
-                    long addr = store.allocate(key, ns, i);
+                    long addr = store.allocate(key, ns, i, hash);
                     entries[i] = new TestEntry(key, ns, (int) addr, hash);
                 }
 
                 // Insert first 7 entries (fill bucket with 7 slots)
                 for (int i = 0; i < 7; i++) {
-                    lfuTable.put(entries[i].hash, entries[i].addr,
-                            entries[i].key, entries[i].namespace, store);
+                    lfuTable.put(entries[i].hash, entries[i].addr);
                 }
 
                 // Access entry 1 multiple times to increase frequency
@@ -216,12 +209,11 @@ class L0TableTest {
                 }
 
                 // Insert 8th entry - should evict LFU
-                long evictedAddress = lfuTable.put(entries[7].hash,
-                        entries[7].addr, entries[7].key, entries[7].namespace, store);
+                long evictedAddress = lfuTable.put(entries[7].hash, entries[7].addr);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
                 // Entry 1 should still be there (highest frequency)
-                assertEquals(entries[1].addr, lfuTable.get(entries[1].hash, 
+                assertNotNull(lfuTable.get(entries[1].hash, 
                         entries[1].key, entries[1].namespace, store));
                 
                 store.close();
@@ -241,14 +233,13 @@ class L0TableTest {
                     String ns = "ns";
                     int hash = 0x12340000 | (i << 2);
                     
-                    long addr = store.allocate(key, ns, i);
+                    long addr = store.allocate(key, ns, i, hash);
                     entries[i] = new TestEntry(key, ns, (int) addr, hash);
                 }
 
                 // Insert first 7 entries (fill bucket with 7 slots)
                 for (int i = 0; i < 7; i++) {
-                    clockTable.put(entries[i].hash, entries[i].addr,
-                            entries[i].key, entries[i].namespace, store);
+                    clockTable.put(entries[i].hash, entries[i].addr);
                 }
 
                 // Access entries 1 and 2 to set their accessed bits
@@ -258,20 +249,19 @@ class L0TableTest {
                         entries[2].key, entries[2].namespace, store);
 
                 // Insert 8th entry
-                long evictedAddress = clockTable.put(entries[7].hash,
-                        entries[7].addr, entries[7].key, entries[7].namespace, store);
+                long evictedAddress = clockTable.put(entries[7].hash, entries[7].addr);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
                 // Verify 8th entry was inserted
-                assertEquals(entries[7].addr, clockTable.get(entries[7].hash, 
+                assertNotNull(clockTable.get(entries[7].hash, 
                         entries[7].key, entries[7].namespace, store));
 
                 // At least one accessed entry should remain
-                long addr1 = clockTable.get(entries[1].hash, 
+                HeapStateEntry<String, String, Integer> e1 = clockTable.get(entries[1].hash, 
                         entries[1].key, entries[1].namespace, store);
-                long addr2 = clockTable.get(entries[2].hash, 
+                HeapStateEntry<String, String, Integer> e2 = clockTable.get(entries[2].hash, 
                         entries[2].key, entries[2].namespace, store);
-                assertTrue(addr1 > 0 || addr2 > 0, "At least one accessed entry should remain");
+                assertTrue(e1 != null || e2 != null, "At least one accessed entry should remain");
                 
                 store.close();
             }
@@ -290,14 +280,13 @@ class L0TableTest {
                     String ns = "ns";
                     int hash = 0x12340000 | (i << 2);
                     
-                    long addr = store.allocate(key, ns, i);
+                    long addr = store.allocate(key, ns, i, hash);
                     entries[i] = new TestEntry(key, ns, (int) addr, hash);
                 }
 
                 // Insert first 7 entries (fill bucket with 7 slots)
                 for (int i = 0; i < 7; i++) {
-                    tinyLfuTable.put(entries[i].hash, entries[i].addr,
-                            entries[i].key, entries[i].namespace, store);
+                    tinyLfuTable.put(entries[i].hash, entries[i].addr);
                 }
 
                 // Access entry 1 multiple times
@@ -307,12 +296,11 @@ class L0TableTest {
                 }
 
                 // Insert 8th entry
-                long evictedAddress = tinyLfuTable.put(entries[7].hash,
-                        entries[7].addr, entries[7].key, entries[7].namespace, store);
+                long evictedAddress = tinyLfuTable.put(entries[7].hash, entries[7].addr);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
                 // High-frequency entry 1 should still be there
-                assertEquals(entries[1].addr, tinyLfuTable.get(entries[1].hash, 
+                assertNotNull(tinyLfuTable.get(entries[1].hash, 
                         entries[1].key, entries[1].namespace, store));
                 
                 store.close();
@@ -332,14 +320,13 @@ class L0TableTest {
                     String ns = "ns";
                     int hash = 0x12340000 | (i << 2);
                     
-                    long addr = store.allocate(key, ns, i);
+                    long addr = store.allocate(key, ns, i, hash);
                     entries[i] = new TestEntry(key, ns, (int) addr, hash);
                 }
 
                 // Insert first 7 entries (fill bucket with 7 slots)
                 for (int i = 0; i < 7; i++) {
-                    sampledLruTable.put(entries[i].hash, entries[i].addr,
-                            entries[i].key, entries[i].namespace, store);
+                    sampledLruTable.put(entries[i].hash, entries[i].addr);
                 }
 
                 // Access entry 6 to make it recently used
@@ -347,20 +334,19 @@ class L0TableTest {
                         entries[6].key, entries[6].namespace, store);
 
                 // Insert 8th entry
-                long evictedAddress = sampledLruTable.put(entries[7].hash,
-                        entries[7].addr, entries[7].key, entries[7].namespace, store);
+                long evictedAddress = sampledLruTable.put(entries[7].hash, entries[7].addr);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
                 // Verify 8th entry was inserted
-                assertEquals(entries[7].addr, sampledLruTable.get(entries[7].hash, 
+                assertNotNull(sampledLruTable.get(entries[7].hash, 
                         entries[7].key, entries[7].namespace, store));
 
                 // Verify that we still have 7 valid entries
                 int validCount = 0;
                 for (int i = 0; i < 8; i++) {
-                    int addr = sampledLruTable.get(entries[i].hash, 
+                    HeapStateEntry<String, String, Integer> e = sampledLruTable.get(entries[i].hash, 
                             entries[i].key, entries[i].namespace, store);
-                    if (addr > 0) validCount++;
+                    if (e != null) validCount++;
                 }
                 assertEquals(7, validCount, "Should have exactly 7 entries after eviction");
                 
@@ -381,10 +367,9 @@ class L0TableTest {
                     String ns = "ns";
                     int hash = 0x12340000 | (i << 2);
                     
-                    long addr = store.allocate(key, ns, i);
+                    long addr = store.allocate(key, ns, i, hash);
                     entries[i] = new TestEntry(key, ns, (int) addr, hash);
-                    lfuTable.put(entries[i].hash, entries[i].addr,
-                            entries[i].key, entries[i].namespace, store);
+                    lfuTable.put(entries[i].hash, entries[i].addr);
                 }
 
                 // Access entry 0 many times to test frequency saturation
@@ -394,7 +379,7 @@ class L0TableTest {
                 }
 
                 // Verify entry is still accessible
-                assertEquals(entries[0].addr, lfuTable.get(entries[0].hash, 
+                assertNotNull(lfuTable.get(entries[0].hash, 
                         entries[0].key, entries[0].namespace, store));
                 
                 store.close();
@@ -414,29 +399,26 @@ class L0TableTest {
                     String ns = "ns";
                     int hash = 0x12340000 | (i << 2);
                     
-                    long addr = store.allocate(key, ns, i);
+                    long addr = store.allocate(key, ns, i, hash);
                     entries[i] = new TestEntry(key, ns, (int) addr, hash);
                 }
 
                 // Insert 7 entries (fill bucket with 7 slots)
                 for (int i = 0; i < 7; i++) {
-                    clockTable.put(entries[i].hash, entries[i].addr,
-                            entries[i].key, entries[i].namespace, store);
+                    clockTable.put(entries[i].hash, entries[i].addr);
                 }
 
                 // Access all entries to set accessed bits
                 for (int i = 0; i < 7; i++) {
-                    clockTable.get(entries[i].hash, 
-                            entries[i].key, entries[i].namespace, store);
+                    clockTable.get(entries[i].hash, entries[i].key, entries[i].namespace, store);
                 }
 
                 // Insert 8th entry
-                long evictedAddress = clockTable.put(entries[7].hash,
-                        entries[7].addr, entries[7].key, entries[7].namespace, store);
+                long evictedAddress = clockTable.put(entries[7].hash, entries[7].addr);
                 assertTrue(evictedAddress > 0, "Should evict an entry");
 
                 // New entry should be inserted
-                assertEquals(entries[7].addr, clockTable.get(entries[7].hash, 
+                assertNotNull(clockTable.get(entries[7].hash, 
                         entries[7].key, entries[7].namespace, store));
                 
                 store.close();
@@ -448,77 +430,19 @@ class L0TableTest {
     class CacheManagementTests {
 
         @Test
-        void testInvalidatePointer() {
-            String key1 = "invalidatePtr1";
-            String key2 = "invalidatePtr2";
-            String ns = "ns";
-            
-            long addr1 = entryStore.allocate(key1, ns, "value1");
-            long addr2 = entryStore.allocate(key2, ns, "value2");
-            
-            int hash1 = compositeHash(key1, ns);
-            int hash2 = compositeHash(key2, ns);
-
-            l0Table.put(hash1, (int) addr1, key1, ns, entryStore);
-            l0Table.put(hash2, (int) addr2, key2, ns, entryStore);
-
-            // Invalidate by pointer
-            l0Table.invalidatePointer((int) addr1);
-
-            // Verify entry1 is removed, entry2 remains
-            assertEquals(0, l0Table.get(hash1, key1, ns, entryStore));
-            assertEquals((int) addr2, l0Table.get(hash2, key2, ns, entryStore));
-        }
-
-        @Test
-        void testInvalidateRange() {
-            String key1 = "range1";
-            String key2 = "range2";
-            String key3 = "range3";
-            String ns = "ns";
-            
-            long addr1 = entryStore.allocate(key1, ns, "value1");
-            long addr2 = entryStore.allocate(key2, ns, "value2");
-            long addr3 = entryStore.allocate(key3, ns, "value3");
-            
-            int hash1 = compositeHash(key1, ns);
-            int hash2 = compositeHash(key2, ns);
-            int hash3 = compositeHash(key3, ns);
-
-            l0Table.put(hash1, (int) addr1, key1, ns, entryStore);
-            l0Table.put(hash2, (int) addr2, key2, ns, entryStore);
-            l0Table.put(hash3, (int) addr3, key3, ns, entryStore);
-
-            // Invalidate range that includes entry1 and entry2
-            int minAddr = (int) Math.min(addr1, addr2);
-            int maxAddr = (int) Math.max(addr1, addr2) + 1;
-
-            l0Table.invalidateRange(minAddr, maxAddr);
-
-            // Verify affected entries are invalidated
-            assertEquals(0, l0Table.get(hash1, key1, ns, entryStore));
-            assertEquals(0, l0Table.get(hash2, key2, ns, entryStore));
-
-            // Entry3 might still be there if outside range
-            if (addr3 < minAddr || addr3 >= maxAddr) {
-                assertEquals((int) addr3, l0Table.get(hash3, key3, ns, entryStore));
-            }
-        }
-
-        @Test
         void testClear() {
             String key1 = "clear1";
             String key2 = "clear2";
             String ns = "ns";
             
-            long addr1 = entryStore.allocate(key1, ns, "value1");
-            long addr2 = entryStore.allocate(key2, ns, "value2");
-            
             int hash1 = compositeHash(key1, ns);
             int hash2 = compositeHash(key2, ns);
+            
+            long addr1 = entryStore.allocate(key1, ns, "value1", hash1);
+            long addr2 = entryStore.allocate(key2, ns, "value2", hash2);
 
-            l0Table.put(hash1, (int) addr1, key1, ns, entryStore);
-            l0Table.put(hash2, (int) addr2, key2, ns, entryStore);
+            l0Table.put(hash1, (int) addr1);
+            l0Table.put(hash2, (int) addr2);
 
             // Clear all entries
             l0Table.clear();
@@ -532,8 +456,8 @@ class L0TableTest {
             assertEquals(0, stats.evictionCount);
 
             // Verify all entries are removed
-            assertEquals(0, l0Table.get(hash1, key1, ns, entryStore));
-            assertEquals(0, l0Table.get(hash2, key2, ns, entryStore));
+            assertNull(l0Table.get(hash1, key1, ns, entryStore));
+            assertNull(l0Table.get(hash2, key2, ns, entryStore));
         }
     }
 
@@ -550,8 +474,8 @@ class L0TableTest {
             l0Table.get(hash, key, ns, entryStore);
 
             // Hit: insert then get
-            long addr = entryStore.allocate(key, ns, "value");
-            l0Table.put(hash, (int) addr, key, ns, entryStore);
+            long addr = entryStore.allocate(key, ns, "value", hash);
+            l0Table.put(hash, (int) addr);
             l0Table.get(hash, key, ns, entryStore);
 
             L0Table.L0TableStats stats = l0Table.getStats();
@@ -571,14 +495,14 @@ class L0TableTest {
             String key2 = "load2";
             String ns = "ns";
             
-            long addr1 = entryStore.allocate(key1, ns, "value1");
-            long addr2 = entryStore.allocate(key2, ns, "value2");
-            
             int hash1 = compositeHash(key1, ns);
             int hash2 = compositeHash(key2, ns);
+            
+            long addr1 = entryStore.allocate(key1, ns, "value1", hash1);
+            long addr2 = entryStore.allocate(key2, ns, "value2", hash2);
 
-            l0Table.put(hash1, (int) addr1, key1, ns, entryStore);
-            l0Table.put(hash2, (int) addr2, key2, ns, entryStore);
+            l0Table.put(hash1, (int) addr1);
+            l0Table.put(hash2, (int) addr2);
 
             L0Table.L0TableStats stats = l0Table.getStats();
             assertEquals(2, stats.validSlots, "Should have 2 valid slots");
@@ -596,19 +520,17 @@ class L0TableTest {
                 String ns = "ns";
                 int hash = 0x12340000; // Force same bucket
                 
-                long addr = store.allocate(key, ns, "value" + i);
+                long addr = store.allocate(key, ns, "value" + i, hash);
                 entries[i] = new TestEntry(key, ns, (int) addr, hash);
             }
 
             // Insert first 7 (no eviction) - fill bucket with 7 slots
             for (int i = 0; i < 7; i++) {
-                l0Table.put(entries[i].hash, entries[i].addr,
-                        entries[i].key, entries[i].namespace, store);
+                l0Table.put(entries[i].hash, entries[i].addr);
             }
 
             // Insert 8th (should cause eviction)
-            l0Table.put(entries[7].hash, entries[7].addr,
-                    entries[7].key, entries[7].namespace, store);
+            l0Table.put(entries[7].hash, entries[7].addr);
 
             L0Table.L0TableStats stats = l0Table.getStats();
             assertEquals(1, stats.evictionCount, "Should have 1 eviction");
@@ -620,10 +542,10 @@ class L0TableTest {
         void testStatsToString() {
             String key = "toStringKey";
             String ns = "ns";
-            long addr = entryStore.allocate(key, ns, "value");
             int hash = compositeHash(key, ns);
+            long addr = entryStore.allocate(key, ns, "value", hash);
             
-            l0Table.put(hash, (int) addr, key, ns, entryStore);
+            l0Table.put(hash, (int) addr);
 
             L0Table.L0TableStats stats = l0Table.getStats();
             String statsString = stats.toString();
@@ -657,48 +579,40 @@ class L0TableTest {
             // Force same hash
             int sameHash = 0x12345678;
 
-            long addr1 = entryStore.allocate(key1, namespace, value1);
-            long addr2 = entryStore.allocate(key2, namespace, value2);
+            long addr1 = entryStore.allocate(key1, namespace, value1, sameHash);
+            long addr2 = entryStore.allocate(key2, namespace, value2, sameHash);
 
             // Insert both entries
-            int result1 = l0Table.put(sameHash, (int) addr1, key1, namespace, entryStore);
-            int result2 = l0Table.put(sameHash, (int) addr2, key2, namespace, entryStore);
+            int result1 = l0Table.put(sameHash, (int) addr1);
+            int result2 = l0Table.put(sameHash, (int) addr2);
 
             assertEquals(0, result1, "First entry should insert successfully");
             assertEquals(0, result2, "Second entry should insert successfully");
 
             // Verify both can be retrieved correctly
-            assertEquals((int) addr1, l0Table.get(sameHash, key1, namespace, entryStore));
-            assertEquals((int) addr2, l0Table.get(sameHash, key2, namespace, entryStore));
+            assertNotNull(l0Table.get(sameHash, key1, namespace, entryStore));
+            assertNotNull(l0Table.get(sameHash, key2, namespace, entryStore));
         }
 
         @Test
         void testMultipleUpdates() {
+            // Note: In the new design, L0Table.put() does NOT check for duplicates
+            // because it's only called when the entry is guaranteed NOT in L0.
+            // This test now verifies that insertion and eviction work correctly.
+            
             String key = "updateKey";
             String ns = "ns";
             int hash = compositeHash(key, ns);
 
             // Insert initial entry
-            long currentAddr = entryStore.allocate(key, ns, "initialValue");
-            l0Table.put(hash, (int) currentAddr, key, ns, entryStore);
+            long addr = entryStore.allocate(key, ns, "initialValue", hash);
+            int result = l0Table.put(hash, (int) addr);
+            assertEquals(0, result, "First insert should return 0");
 
-            // Update multiple times
-            for (int i = 1; i <= 3; i++) {
-                String newValue = "updatedValue" + i;
-                long newAddr = entryStore.allocate(key, ns, newValue);
-
-                int oldAddress = l0Table.put(hash, (int) newAddr, key, ns, entryStore);
-                assertEquals((int) currentAddr, oldAddress, "Should return previous address for update");
-
-                // Verify updated value
-                int retrievedAddress = l0Table.get(hash, key, ns, entryStore);
-                assertEquals((int) newAddr, retrievedAddress, "Should get updated entry");
-                HeapStateEntry<String, String, String> entry = entryStore.get(retrievedAddress);
-                assertNotNull(entry);
-                assertEquals(newValue, entry.getState());
-
-                currentAddr = newAddr; // Update for next iteration
-            }
+            // Verify entry is retrievable
+            HeapStateEntry<String, String, String> entry = l0Table.get(hash, key, ns, entryStore);
+            assertNotNull(entry, "Should get entry after insert");
+            assertEquals("initialValue", entry.getState());
         }
     }
 
@@ -710,10 +624,10 @@ class L0TableTest {
             // Insert some entries
             String key = "closeKey";
             String ns = "ns";
-            long addr = entryStore.allocate(key, ns, "closeValue");
             int hash = compositeHash(key, ns);
+            long addr = entryStore.allocate(key, ns, "closeValue", hash);
             
-            l0Table.put(hash, (int) addr, key, ns, entryStore);
+            l0Table.put(hash, (int) addr);
 
             // Close should not throw exception
             assertDoesNotThrow(() -> l0Table.close());

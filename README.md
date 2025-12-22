@@ -135,7 +135,6 @@ ForL0StateBackendConfig config = ForL0StateBackendConfig.builder()
     .setL0CacheSize(12)  // 4096 buckets
     .setL0ReplacementPolicy(L0Table.ReplacementPolicy.CLOCK)
     .setL0MemoryMaxBytes(256 * 1024 * 1024L)  // 256MB
-    .setMainTableInitialSize(10)
     .setMainTableLoadFactorThreshold(1.5)
     .build();
 ForL0StateBackend stateBackend = new ForL0StateBackend(config);
@@ -151,7 +150,6 @@ env.setStateBackend(stateBackend);
 | `state.backend.forl0.l0-cache.size` | Integer | `10` | 单个 L0Table 大小（2的幂次，范围 1-20） |
 | `state.backend.forl0.l0-cache.replacement-policy` | String | `CLOCK` | 缓存替换策略 |
 | `state.backend.forl0.l0-memory.max-size` | MemorySize | `0` (无限制) | L0 内存池总容量 |
-| `state.backend.forl0.main-table.initial-size` | Integer | `10` | MainTable 初始大小（2的幂次） |
 | `state.backend.forl0.main-table.load-factor-threshold` | Double | `1.5` | MainTable 扩容负载因子 |
 
 #### 3. 验证部署

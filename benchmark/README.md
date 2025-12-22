@@ -307,7 +307,6 @@ backends:
       l0_cache_size: 10
       l0_cache_replacement_policy: CLOCK
       l0_memory_max_size: "256mb"
-      main_table_initial_size: 10
       main_table_load_factor_threshold: 1.5
 ```
 
@@ -321,8 +320,9 @@ backends:
 | `l0_cache_size` | `state.backend.forl0.l0-cache.size` | Integer | `10` | 单个 L0Table 大小（2的幂次，范围 1-20）<br>例如：10 表示 1024 buckets = 64KB |
 | `l0_cache_replacement_policy` | `state.backend.forl0.l0-cache.replacement-policy` | String | `CLOCK` | 缓存替换策略 |
 | `l0_memory_max_size` | `state.backend.forl0.l0-memory.max-size` | MemorySize | `0` | L0 内存池总容量（0=无限制）<br>例如：256mb, 1gb |
-| `main_table_initial_size` | `state.backend.forl0.main-table.initial-size` | Integer | `10` | MainTable 初始大小（2的幂次） |
 | `main_table_load_factor_threshold` | `state.backend.forl0.main-table.load-factor-threshold` | Double | `1.5` | MainTable 扩容负载因子阈值 |
+
+> 注意：MainTable 初始大小已固定为 65536 buckets (4MB)，无需配置。
 
 **缓存替换策略说明**：
 
