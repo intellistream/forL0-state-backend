@@ -9,8 +9,6 @@ import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
 import org.apache.flink.queryablestate.client.state.serialization.KvStateSerializer;
 import org.apache.flink.runtime.state.internal.InternalListState;
 import org.apache.flink.util.Preconditions;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -19,8 +17,6 @@ import java.util.List;
 
 class ForL0ListState<K, N, V> extends AbstractHeapMergingState<K, N, V, List<V>, Iterable<V>>
         implements InternalListState<K, N, V> {
-
-    private static final Logger LOG = LoggerFactory.getLogger(ForL0ListState.class);
 
     /**
      * Creates a new key/value state for the given hash map of key/value pairs.
@@ -38,7 +34,6 @@ class ForL0ListState<K, N, V> extends AbstractHeapMergingState<K, N, V, List<V>,
             TypeSerializer<N> namespaceSerializer,
             List<V> defaultValue) {
         super(stateTable, keySerializer, valueSerializer, namespaceSerializer, defaultValue);
-        LOG.info("+++++++++++++++++ A forL0 list state is created ++++++++++++++++++++++");
     }
 
     @Override
@@ -70,10 +65,9 @@ class ForL0ListState<K, N, V> extends AbstractHeapMergingState<K, N, V, List<V>,
 
         if (list == null) {
             list = new ArrayList<>();
-            map.put(namespace, list);
         }
         list.add(value);
-        // 显式写回，确保底层 StateTable 能看到变更
+        // Single put operation - only write back once
         map.put(namespace, list);
     }
 

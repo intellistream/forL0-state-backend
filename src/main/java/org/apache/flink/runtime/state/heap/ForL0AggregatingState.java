@@ -8,14 +8,10 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalAggregatingState;
 import org.apache.flink.util.Preconditions;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 class ForL0AggregatingState<K, N, IN, ACC, OUT> extends AbstractHeapMergingState<K, N, IN, ACC, OUT>
         implements InternalAggregatingState<K, N, IN, ACC, OUT> {
-
-    private static final Logger LOG = LoggerFactory.getLogger(ForL0AggregatingState.class);
 
     private AggregateTransformation<IN, ACC, OUT> aggregateTransformation;
 
@@ -39,7 +35,6 @@ class ForL0AggregatingState<K, N, IN, ACC, OUT> extends AbstractHeapMergingState
 
         super(stateTable, keySerializer, valueSerializer, namespaceSerializer, defaultValue);
         this.aggregateTransformation = new AggregateTransformation<>(aggregateFunction);
-        LOG.info("++++++++++++++++++ A forL0 aggregating state is created ++++++++++++++++++++");
     }
 
     @Override

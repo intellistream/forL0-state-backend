@@ -155,19 +155,23 @@ public class L0Table<K, N, S> implements AutoCloseable {
         }
     }
 
+    // Entry chunk constants (must match MainTable)  
+    private static final int ENTRY_CHUNK_BITS = 16;
+    private static final int ENTRY_CHUNK_MASK = (1 << ENTRY_CHUNK_BITS) - 1;
+
     /**
      * Gets an entry from the L0 cache using object comparison.
      * 
-     * <p>This is the heap object store version that uses {@code store.matches()} 
-     * for key/namespace comparison instead of byte comparison.
+     * <p>This is the heap object store version that uses direct object comparison
+     * for key/namespace matching.
      *
      * @param hash the pre-computed hash value (full 32 bits used)
      * @param key the key object
      * @param namespace the namespace object
-     * @param store the HeapEntryStore containing the entries
+     * @param entryChunks the entry chunks array from MainTable
      * @return the HeapStateEntry if found, null otherwise
      */
-    public HeapStateEntry<K, N, S> get(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public HeapStateEntry<K, N, S> get(int hash, K key, N namespace, HeapStateEntry<K, N, S>[][] entryChunks) {
         accessCount++;
         int bucketIndex = hash & (bucketCount - 1);
         
@@ -181,7 +185,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
             if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
             
             int idx = (int) slot - 1;  // ptr - 1
-            HeapStateEntry<K, N, S> entry = store.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
+            HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
             if (entry != null && entry.key.equals(key) 
                     && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
                 hitCount++;

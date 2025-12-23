@@ -8,8 +8,6 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.queryablestate.client.state.serialization.KvStateSerializer;
 import org.apache.flink.runtime.state.internal.InternalMapState;
 import org.apache.flink.util.Preconditions;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -18,8 +16,6 @@ import java.util.Map;
 
 class ForL0MapState<K, N, UK, UV> extends AbstractHeapState<K, N, Map<UK, UV>>
         implements InternalMapState<K, N, UK, UV> {
-
-    private static final Logger LOG = LoggerFactory.getLogger(ForL0MapState.class);
 
     /**
      * Creates a new key/value state for the given hash map of key/value pairs.
@@ -40,8 +36,6 @@ class ForL0MapState<K, N, UK, UV> extends AbstractHeapState<K, N, Map<UK, UV>>
 
         Preconditions.checkState(
                 valueSerializer instanceof MapSerializer, "Unexpected serializer type.");
-
-        LOG.info("++++++++++++++++++ A forL0 map state is created ++++++++++++++++++++");
     }
 
     @Override

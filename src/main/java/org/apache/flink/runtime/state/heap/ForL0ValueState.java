@@ -4,13 +4,9 @@ import org.apache.flink.api.common.state.State;
 import org.apache.flink.api.common.state.StateDescriptor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.internal.InternalValueState;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 class ForL0ValueState<K, N, V> extends AbstractHeapState<K, N, V>
         implements InternalValueState<K, N, V> {
-
-    private static final Logger LOG = LoggerFactory.getLogger(ForL0ValueState.class);
 
     private ForL0ValueState(
             StateTable<K, N, V> stateTable,
@@ -19,7 +15,6 @@ class ForL0ValueState<K, N, V> extends AbstractHeapState<K, N, V>
             TypeSerializer<N> namespaceSerializer,
             V defaultValue) {
         super(stateTable, keySerializer, valueSerializer, namespaceSerializer, defaultValue);
-        LOG.info("+++++++++++++++++ A forL0 value state has been created ++++++++++++++++++++++");
     }
 
     @Override

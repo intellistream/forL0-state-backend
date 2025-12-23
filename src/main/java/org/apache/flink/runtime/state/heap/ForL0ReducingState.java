@@ -8,13 +8,9 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalReducingState;
 import org.apache.flink.util.Preconditions;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 class ForL0ReducingState<K, N, V> extends AbstractHeapMergingState<K, N, V, V, V>
     implements InternalReducingState<K, N, V> {
-
-    private static final Logger LOG = LoggerFactory.getLogger(ForL0ReducingState.class);
 
     private ReduceTransformation<V> reduceTransformation;
 
@@ -38,7 +34,6 @@ class ForL0ReducingState<K, N, V> extends AbstractHeapMergingState<K, N, V, V, V
 
         super(stateTable, keySerializer, valueSerializer, namespaceSerializer, defaultValue);
         this.reduceTransformation = new ReduceTransformation<>(reduceFunction);
-        LOG.info("++++++++++++++++++ A forL0 reducing state is created ++++++++++++++++++++");
     }
 
     @Override

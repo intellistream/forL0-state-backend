@@ -17,9 +17,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMap.class);
 
-    // Core storage components
-    private final HeapEntryStore<K, N, S> heapEntryStore;  // Heap-based entry storage (zero serialization)
-    private final MainTable<K, N, S> mainTable;            // MainTable manages L0Table internally
+    // Core storage component (MainTable now manages entry storage internally)
+    private final MainTable<K, N, S> mainTable;
 
     // Size tracking
     private int size = 0;
@@ -95,8 +94,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                          boolean l0CacheEnabled,
                          L0Table.ReplacementPolicy l0Policy,
                          double loadFactorThreshold) {
-        this.heapEntryStore = new HeapEntryStore<>();
-        
         // Create L0Table if enabled, then pass to MainTable
         L0Table<K, N, S> l0Table = (l0CacheEnabled && l0Allocator != null) 
             ? new L0Table<>(l0Allocator, l0CacheSizePow2, l0Policy) 
@@ -111,9 +108,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public void close() throws Exception {
-        LOG.debug("Closing ForL0StateMap");
-        mainTable.close();  // MainTable closes L0Table internally
-        heapEntryStore.close();
+        LOG.info("ForL0StateMap closing - {}", mainTable.getStats());
+        mainTable.close();  // MainTable.close() is idempotent
         LOG.debug("ForL0StateMap closed");
     }
 
@@ -124,15 +120,27 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public S get(K key, N namespace) {
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-        HeapStateEntry<K, N, S> entry = mainTable.get(hash, key, namespace, heapEntryStore);
+        // Deduplicate namespace object to improve identity comparison hit rate
+        if (namespace.equals(lastNamespace)) {
+            namespace = lastNamespace;
+        } else {
+            lastNamespace = namespace;
+        }
+        int hash = compositeHash(key, namespace);
+        HeapStateEntry<K, N, S> entry = mainTable.get(hash, key, namespace);
         return entry != null ? entry.state : null;
     }
 
     @Override
     public boolean containsKey(K key, N namespace) {
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-        return mainTable.get(hash, key, namespace, heapEntryStore) != null;
+        // Deduplicate namespace object to improve identity comparison hit rate
+        if (namespace.equals(lastNamespace)) {
+            namespace = lastNamespace;
+        } else {
+            lastNamespace = namespace;
+        }
+        int hash = compositeHash(key, namespace);
+        return mainTable.get(hash, key, namespace) != null;
     }
 
     /**
@@ -141,7 +149,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * If a new entry is created, size is incremented.
      */
     private HeapStateEntry<K, N, S> putEntry(K key, N namespace) {
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
+        int hash = compositeHash(key, namespace);
         
         // Deduplicate namespace object to improve identity comparison hit rate
         if (namespace.equals(lastNamespace)) {
@@ -150,7 +158,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             lastNamespace = namespace;
         }
         
-        HeapStateEntry<K, N, S> entry = mainTable.put(hash, key, namespace, heapEntryStore);
+        HeapStateEntry<K, N, S> entry = mainTable.put(hash, key, namespace);
         if (entry.state == null) {
             // New entry (put creates Entry with state=null)
             size++;
@@ -174,8 +182,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public void remove(K key, N namespace) {
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace, heapEntryStore);
+        int hash = compositeHash(key, namespace);
+        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace);
         if (removed != null) {
             size--;
         }
@@ -183,8 +191,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public S removeAndGetOld(K key, N namespace) {
-        int hash = MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
-        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace, heapEntryStore);
+        int hash = compositeHash(key, namespace);
+        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace);
         if (removed != null) {
             size--;
             return removed.state;
@@ -197,7 +205,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         int[] cnt = new int[1];
         mainTable.forEachEntry((ptr, hash) -> {
             int idx = ptr - 1;
-            HeapStateEntry<K, N, S> entry = heapEntryStore.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
+            HeapStateEntry<K, N, S> entry = mainTable.entryChunks[idx >> MainTable.ENTRY_CHUNK_BITS][idx & MainTable.ENTRY_CHUNK_MASK];
             if (entry != null) {
                 N n = entry.namespace;
                 if (namespace != null && namespace.equals(n)) {
@@ -282,7 +290,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             }
             int ptr = ptrs[index++];
             int idx = ptr - 1;
-            return heapEntryStore.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
+            return mainTable.entryChunks[idx >> MainTable.ENTRY_CHUNK_BITS][idx & MainTable.ENTRY_CHUNK_MASK];
         }
     }
 
@@ -297,7 +305,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         java.util.ArrayList<K> keys = new java.util.ArrayList<>();
         mainTable.forEachEntry((ptr, hash) -> {
             int idx = ptr - 1;
-            HeapStateEntry<K, N, S> entry = heapEntryStore.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
+            HeapStateEntry<K, N, S> entry = mainTable.entryChunks[idx >> MainTable.ENTRY_CHUNK_BITS][idx & MainTable.ENTRY_CHUNK_MASK];
             if (entry != null) {
                 N n = entry.namespace;
                 if (n.equals(namespace)) {
@@ -365,6 +373,20 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                     l0Stats, mainTableStats, totalEntries
             );
         }
+    }
+
+    /**
+     * Computes composite hash for key and namespace.
+     * Uses double bitMix with XOR for better hash distribution.
+     * 
+     * @param key the key object
+     * @param namespace the namespace object
+     * @return scrambled composite hash value
+     */
+    private static int compositeHash(Object key, Object namespace) {
+        // Apply bitMix to each hash separately, then XOR them
+        // This provides better distribution than single bitMix on combined value
+        return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
     }
 
 }

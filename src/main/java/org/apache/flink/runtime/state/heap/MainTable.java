@@ -3,6 +3,7 @@ package org.apache.flink.runtime.state.heap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Arrays;
 
@@ -14,6 +15,9 @@ import java.util.Arrays;
  * 
  * <p>64-byte aligned buckets with 7 data slots + 1 extension long.
  * Supports tree-like expansion and global resize.
+ * 
+ * <p>Entry storage is integrated directly into MainTable (previously HeapEntryStore),
+ * avoiding indirect access overhead.
  * 
  * <p>Optionally manages an L0Table as a hot cache layer. When L0Table is present,
  * get() checks L0 first and put() updates L0 cache automatically.
@@ -32,7 +36,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private static final int SLOTS_PER_BUCKET = 7;       // 7 data slots
     private static final int EXTENSION_SLOT_INDEX = 7;   // 8th long for extension pointers
     
-    // Chunk configuration
+    // Chunk configuration for bucket storage
     private static final int CHUNK_SIZE_BITS = 16;       // 65536 buckets per chunk
     private static final int CHUNK_SIZE = 1 << CHUNK_SIZE_BITS;
     private static final int CHUNK_MASK = CHUNK_SIZE - 1;
@@ -52,7 +56,30 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private static final double DEFAULT_LOAD_FACTOR_THRESHOLD = 1.5;
     private static final int EXTENSION_POOL_GROW_SIZE = 32;  // Grow 32 extension areas at a time
 
-    // Heap storage: chunked long arrays
+    // ========== Entry Storage (integrated from HeapEntryStore) ==========
+    
+    /** Entry chunk configuration: 65536 entries per chunk. */
+    static final int ENTRY_CHUNK_BITS = 16;
+    static final int ENTRY_CHUNK_SIZE = 1 << ENTRY_CHUNK_BITS;
+    static final int ENTRY_CHUNK_MASK = ENTRY_CHUNK_SIZE - 1;
+    private static final int INITIAL_FREE_LIST_SIZE = 1024;
+
+    /** Chunked entry storage: entryChunks[chunkIndex][slotIndex]. */
+    HeapStateEntry<K, N, S>[][] entryChunks;
+    
+    /** Current number of allocated entry chunks. */
+    private int entryChunkCount;
+    
+    /** Next allocation index for entries (max valid ptr = nextEntryAllocIndex). */
+    int nextEntryAllocIndex;
+    
+    /** Free list for deleted entry slots. */
+    private int[] freeList;
+    private int freeCount;
+
+    // ========== Bucket Index Storage ==========
+    
+    // Heap storage: chunked long arrays for bucket indices
     private long[][] chunks;
     private int bucketCount;
     
@@ -63,15 +90,23 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private int extensionPoolUsed;             // Extension areas allocated to main buckets
     
     private final double loadFactorThreshold;
-    private volatile boolean needsResize = false;
+    private boolean needsResize = false;
     private int totalEntries = 0;
     private int maxExtensionBucketsUsed = 0;
     private int maxExtensionDepth = 0;  // True tree depth (traversal count)
+    private boolean closed = false;
 
     // L0 cache layer (optional)
     @Nullable
     private final L0Table<K, N, S> l0Table;
     private final boolean l0CacheEnabled;  // Final flag for JIT branch elimination
+
+    // ========== Entry Chunk Cache (reduce pointer chasing) ==========
+    
+    /** Cached entry chunk to reduce entryChunks[i] indirection.
+     *  Exploits spatial locality: entries in same bucket often share same chunk. */
+    private HeapStateEntry<K, N, S>[] cachedEntryChunk = null;
+    private int cachedEntryChunkIndex = -1;
 
     /**
      * Creates a MainTable with default load factor threshold and no L0 cache.
@@ -95,6 +130,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
      * @param loadFactorThreshold the load factor threshold for triggering resize
      * @param l0Table optional L0 cache (can be null)
      */
+    @SuppressWarnings("unchecked")
     public MainTable(double loadFactorThreshold, @Nullable L0Table<K, N, S> l0Table) {
         this.loadFactorThreshold = loadFactorThreshold;
         this.l0Table = l0Table;
@@ -112,6 +148,36 @@ public class MainTable<K, N, S> implements AutoCloseable {
         this.extensionBucketCounts = new int[bucketCount];
         this.extensionPoolCapacity = 0;
         this.extensionPoolUsed = 0;
+        
+        // Initialize entry storage (integrated from HeapEntryStore)
+        this.entryChunks = (HeapStateEntry<K, N, S>[][]) new HeapStateEntry[1][];
+        this.entryChunks[0] = (HeapStateEntry<K, N, S>[]) new HeapStateEntry[ENTRY_CHUNK_SIZE];
+        this.entryChunkCount = 1;
+        this.nextEntryAllocIndex = 0;
+        this.freeList = new int[INITIAL_FREE_LIST_SIZE];
+        this.freeCount = 0;
+    }
+
+    /**
+     * Fast entry access with chunk caching.
+     * Reduces one level of indirection by caching the most recently accessed entry chunk.
+     * 
+     * @param ptr the entry pointer (1-based)
+     * @return the HeapStateEntry
+     */
+    private HeapStateEntry<K, N, S> getEntry(int ptr) {
+        int idx = ptr - 1;
+        int chunkIdx = idx >> ENTRY_CHUNK_BITS;
+        
+        // Fast path: cache hit
+        if (chunkIdx == cachedEntryChunkIndex) {
+            return cachedEntryChunk[idx & ENTRY_CHUNK_MASK];
+        }
+        
+        // Slow path: cache miss, update cache
+        cachedEntryChunk = entryChunks[chunkIdx];
+        cachedEntryChunkIndex = chunkIdx;
+        return cachedEntryChunk[idx & ENTRY_CHUNK_MASK];
     }
 
     /**
@@ -120,14 +186,12 @@ public class MainTable<K, N, S> implements AutoCloseable {
      * @param hash the pre-computed hash value
      * @param key the key object
      * @param namespace the namespace object
-     * @param store the HeapEntryStore containing the entries
      * @return the HeapStateEntry if found, null otherwise
      */
-    @SuppressWarnings("null")
-    public HeapStateEntry<K, N, S> get(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public HeapStateEntry<K, N, S> get(int hash, K key, N namespace) {
         // Check L0 cache first (JIT can eliminate this branch if l0CacheEnabled is false)
         if (l0CacheEnabled) {
-            HeapStateEntry<K, N, S> entry = l0Table.get(hash, key, namespace, store);
+            HeapStateEntry<K, N, S> entry = l0Table.get(hash, key, namespace, entryChunks);
             if (entry != null) {
                 return entry;
             }
@@ -142,19 +206,16 @@ public class MainTable<K, N, S> implements AutoCloseable {
             int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
             long[] chunk = chunks[chunkIndex];
             
-            // Search 7 data slots
+            // Search slots with Early Exit: slots are contiguous, empty = end
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
                 long slot = chunk[offset + i];
-                if (slot == 0) continue;  // Empty slot
+                if (slot == 0) break;  // Early exit: no more entries in this bucket
                 if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
 
                 int ptr = (int) slot;
-                int idx = ptr - 1;
-                HeapStateEntry<K, N, S> entry = store.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
-                // Entry is guaranteed non-null when slot != 0
+                HeapStateEntry<K, N, S> entry = getEntry(ptr);
                 if (entry.key.equals(key) 
                         && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
-                    // Found in MainTable, update L0 cache
                     if (l0CacheEnabled) {
                         l0Table.put(hash, ptr);
                     }
@@ -175,20 +236,18 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     /**
-     * Inserts or finds an entry. If new, creates an Entry in store with state=null.
+     * Inserts or finds an entry. If new, creates an Entry with state=null.
      * Automatically resizes the table if needed and updates L0 cache.
      *
      * @param hash the pre-computed hash value
      * @param key the key object
      * @param namespace the namespace object
-     * @param store the HeapEntryStore containing the entries
      * @return the HeapStateEntry (existing or newly created with state=null)
      */
-    @SuppressWarnings("null")
-    public HeapStateEntry<K, N, S> put(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public HeapStateEntry<K, N, S> put(int hash, K key, N namespace) {
         // Auto-resize before insertion if needed
         if (needsResize) {
-            resize(store);
+            resize();
         }
         
         int bucketIndex = hash & (bucketCount - 1);
@@ -199,47 +258,31 @@ public class MainTable<K, N, S> implements AutoCloseable {
             int chunkIndex = bucketIndex >>> CHUNK_SIZE_BITS;
             int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
             long[] chunk = chunks[chunkIndex];
-            int emptySlot = -1;
-            
-            // Search 7 data slots
+            // Search with Early Exit: slots are contiguous, empty = insert position
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
                 long slot = chunk[offset + i];
                 
                 if (slot == 0) {
-                    if (emptySlot == -1) emptySlot = i;
-                    continue;
+                    // Empty slot found: insert here (maintains contiguity)
+                    int ptr = allocateEntry(key, namespace, null, hash);
+                    chunk[offset + i] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
+                    HeapStateEntry<K, N, S> entry = getEntry(ptr);
+                    if (l0CacheEnabled) {
+                        l0Table.put(hash, ptr);
+                    }
+                    totalEntries++;
+                    checkResizeNeeded();
+                    return entry;
                 }
                 
                 if ((int)(slot >>> HASH_SHIFT) == hash) {
                     int ptr = (int) slot;
-                    int idx = ptr - 1;
-                    HeapStateEntry<K, N, S> entry = store.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
-                    // Entry is guaranteed non-null when slot != 0
+                    HeapStateEntry<K, N, S> entry = getEntry(ptr);
                     if (entry.key.equals(key) 
                             && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
-                        // Existing entry found
                         return entry;
                     }
                 }
-            }
-            
-            if (emptySlot != -1) {
-                // New entry: allocate in store with pre-computed hash
-                int ptr = (int) store.allocate(key, namespace, null, hash);
-                chunk[offset + emptySlot] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
-                
-                // Get the newly created entry
-                int idx = ptr - 1;
-                HeapStateEntry<K, N, S> entry = store.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
-                
-                // Update L0 cache
-                if (l0CacheEnabled) {
-                    l0Table.put(hash, ptr);
-                }
-                
-                totalEntries++;
-                checkResizeNeeded();
-                return entry;
             }
             
             // Current bucket full, find/allocate extension bucket
@@ -252,8 +295,8 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 extOffset = allocateExtensionBucket(mainBucketIndex);
                 if (extOffset == 0) {
                     // Extension limit reached, resize and retry
-                    resize(store);
-                    return put(hash, key, namespace, store);
+                    resize();
+                    return put(hash, key, namespace);
                 }
                 // Set extension pointer
                 int shift = extIndex << 3;
@@ -280,11 +323,9 @@ public class MainTable<K, N, S> implements AutoCloseable {
      * @param hash the pre-computed hash value
      * @param key the key object
      * @param namespace the namespace object
-     * @param store the HeapEntryStore containing the entries
      * @return the removed HeapStateEntry if found, null otherwise
      */
-    @SuppressWarnings("null")
-    public HeapStateEntry<K, N, S> remove(int hash, K key, N namespace, HeapEntryStore<K, N, S> store) {
+    public HeapStateEntry<K, N, S> remove(int hash, K key, N namespace) {
         int bucketIndex = hash & (bucketCount - 1);
         int mainBucketIndex = bucketIndex;
         
@@ -293,30 +334,31 @@ public class MainTable<K, N, S> implements AutoCloseable {
             int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
             long[] chunk = chunks[chunkIndex];
             
-            // Search 7 data slots
+            // Search with Early Exit and maintain contiguity on delete
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
                 long slot = chunk[offset + i];
-                if (slot == 0) continue;
+                if (slot == 0) break;  // Early exit: no more entries
                 if ((int)(slot >>> HASH_SHIFT) != hash) continue;
                 
                 int ptr = (int) slot;
-                int idx = ptr - 1;
-                HeapStateEntry<K, N, S> entry = store.chunks[idx >> HeapEntryStore.CHUNK_BITS][idx & HeapEntryStore.CHUNK_MASK];
-                // Entry is guaranteed non-null when slot != 0
+                HeapStateEntry<K, N, S> entry = getEntry(ptr);
                 if (entry.key.equals(key) 
                         && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
-                    // Found: clear slot
-                    chunk[offset + i] = 0;
-                    totalEntries--;
+                    // Found: maintain contiguity by shifting forward from i+1
+                    // Since average load is ~1.5, forward search is more efficient
+                    int next = i + 1;
+                    while (next < SLOTS_PER_BUCKET && chunk[offset + next] != 0) {
+                        chunk[offset + next - 1] = chunk[offset + next];
+                        next++;
+                    }
+                    // Clear the last occupied position
+                    chunk[offset + next - 1] = 0;
                     
-                    // Remove from L0 cache
+                    totalEntries--;
                     if (l0CacheEnabled) {
                         l0Table.remove(hash, ptr);
                     }
-                    
-                    // Remove from store
-                    store.remove(ptr);
-                    
+                    removeEntry(ptr);
                     return entry;
                 }
             }
@@ -331,6 +373,70 @@ public class MainTable<K, N, S> implements AutoCloseable {
             
             bucketIndex = extensionBucketBaseIndices[mainBucketIndex] + extOffset - 1;
         }
+    }
+
+    // ========== Entry Allocation (integrated from HeapEntryStore) ==========
+
+    /**
+     * Allocates a new entry and returns its address (ptr).
+     * Address is guaranteed to be > 0 (0 is reserved as NULL).
+     */
+    private int allocateEntry(@Nonnull K key, @Nonnull N namespace, @Nullable S state, int hash) {
+        int index;
+        
+        // Prefer reusing freed slots (LIFO for cache efficiency)
+        if (freeCount > 0) {
+            index = freeList[--freeCount];
+        } else {
+            // Check if we need to expand entry chunks
+            if (nextEntryAllocIndex >= entryChunkCount * ENTRY_CHUNK_SIZE) {
+                expandEntryChunks();
+            }
+            index = nextEntryAllocIndex++;
+        }
+        
+        // Create and store the entry
+        HeapStateEntry<K, N, S> entry = new HeapStateEntry<>(key, namespace, state, hash);
+        entryChunks[index >> ENTRY_CHUNK_BITS][index & ENTRY_CHUNK_MASK] = entry;
+        
+        // Return index + 1 to reserve 0 as NULL
+        return index + 1;
+    }
+
+    /**
+     * Removes an entry by its ptr (address) and adds slot to free list.
+     */
+    private void removeEntry(int ptr) {
+        if (ptr <= 0) return;
+        
+        int index = ptr - 1;
+        int chunkIndex = index >> ENTRY_CHUNK_BITS;
+        
+        if (chunkIndex < entryChunkCount && entryChunks[chunkIndex][index & ENTRY_CHUNK_MASK] != null) {
+            entryChunks[chunkIndex][index & ENTRY_CHUNK_MASK] = null;
+            
+            // Add to free list (expand if necessary)
+            if (freeCount >= freeList.length) {
+                freeList = Arrays.copyOf(freeList, freeList.length * 2);
+            }
+            freeList[freeCount++] = index;
+        }
+    }
+
+    /**
+     * Expands the entry chunk array when more capacity is needed.
+     */
+    @SuppressWarnings("unchecked")
+    private void expandEntryChunks() {
+        int newChunkCount = entryChunkCount + 1;
+        
+        if (newChunkCount > entryChunks.length) {
+            int newLength = Math.max(entryChunks.length * 2, newChunkCount);
+            entryChunks = Arrays.copyOf(entryChunks, newLength);
+        }
+        
+        entryChunks[entryChunkCount] = (HeapStateEntry<K, N, S>[]) new HeapStateEntry[ENTRY_CHUNK_SIZE];
+        entryChunkCount = newChunkCount;
     }
 
     // --- Iteration support ---
@@ -445,6 +551,9 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     public TableStats getStats() {
+        if (closed) {
+            return new TableStats(0, 0, 0.0, 0, 0, 0, 0, 0, false);
+        }
         return new TableStats(bucketCount, totalEntries, getLoadFactor(),
                              getMaxExtensionBucketsUsed(), getAllocatedExtensionBuckets(), 
                              extensionPoolUsed, getBucketsNeedingExtension(), maxExtensionDepth, needsResize);
@@ -491,7 +600,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
     /**
      * Resizes the main table by doubling the bucket count.
      */
-    public void resize(HeapEntryStore<K, N, S> entryStore) {
+    public void resize() {
         int newBucketCount = bucketCount * 2;
         
         // Create new table structure
@@ -510,10 +619,9 @@ public class MainTable<K, N, S> implements AutoCloseable {
         int newExtensionPoolUsed = 0;
         int newMaxExtensionBucketsUsed = 0;  // Track max during migration
         
-        // Migrate all entries from HeapEntryStore
-        long maxAddr = entryStore.getMaxAddress();
-        for (int index = 0; index < maxAddr; index++) {
-            HeapStateEntry<K, N, S> entry = entryStore.getByIndex(index);
+        // Migrate all entries from entryChunks
+        for (int index = 0; index < nextEntryAllocIndex; index++) {
+            HeapStateEntry<K, N, S> entry = entryChunks[index >> ENTRY_CHUNK_BITS][index & ENTRY_CHUNK_MASK];
             if (entry == null) continue;
             
             int hash = entry.hash;
@@ -648,10 +756,26 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        if (closed) {
+            return;  // Idempotent: safe to call multiple times
+        }
+        closed = true;
+        
         // Close L0 table if present
         if (l0Table != null) {
             l0Table.close();
         }
+        // Clear entry storage
+        if (entryChunks != null) {
+            for (int i = 0; i < entryChunkCount; i++) {
+                if (entryChunks[i] != null) {
+                    Arrays.fill(entryChunks[i], null);
+                    entryChunks[i] = null;
+                }
+            }
+            entryChunks = null;
+        }
+        freeList = null;
         // Heap arrays are automatically managed by GC, no manual cleanup needed
         chunks = null;
         extensionBucketBaseIndices = null;

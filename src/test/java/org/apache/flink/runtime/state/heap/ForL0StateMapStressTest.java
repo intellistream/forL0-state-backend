@@ -1020,6 +1020,7 @@ public class ForL0StateMapStressTest {
             MainTable.TableStats mainTableStats = null;
             if (stateMap instanceof ForL0StateMap) {
                 mainTableStats = ((ForL0StateMap<String, String, Integer>) stateMap).getMainTableStats();
+                LOG.info("{} MainTable统计: {}", name, mainTableStats);
             }
 
             return new BenchmarkResult(name, putResult, getResult, transformResult, stateMap.size(), memoryUsed, mainTableStats);
