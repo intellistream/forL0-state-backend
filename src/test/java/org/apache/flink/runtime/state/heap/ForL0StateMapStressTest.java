@@ -898,7 +898,7 @@ public class ForL0StateMapStressTest {
     }
 
     @Nested
-    @Disabled
+    //@Disabled
     @DisplayName("Put/Get操作性能基准测试")
     class PutGetBenchmarkTests {
 
@@ -1016,7 +1016,13 @@ public class ForL0StateMapStressTest {
 
             logTransformResults(name, transformResult);
 
-            return new BenchmarkResult(name, putResult, getResult, transformResult, stateMap.size(), memoryUsed);
+            // Get MainTable stats for ForL0StateMap
+            MainTable.TableStats mainTableStats = null;
+            if (stateMap instanceof ForL0StateMap) {
+                mainTableStats = ((ForL0StateMap<String, String, Integer>) stateMap).getMainTableStats();
+            }
+
+            return new BenchmarkResult(name, putResult, getResult, transformResult, stateMap.size(), memoryUsed, mainTableStats);
         }
 
         /**
@@ -1249,6 +1255,7 @@ public class ForL0StateMapStressTest {
             LOG.info("  ForL0StateMap实际记录数: {}, 内存使用: {}MB, 平均每条记录: {}bytes",
                     forL0.recordCount, forL0.memoryUsed / 1024 / 1024,
                     forL0.recordCount > 0 ? forL0.memoryUsed / forL0.recordCount : 0);
+            LOG.info("  ForL0StateMap MainTable统计: {}", forL0.mainTableStats);
             LOG.info("  CopyOnWriteStateMap实际记录数: {} (使用堆内存，无法精确测量内存使用)",
                     cow.recordCount);
         }
@@ -1339,15 +1346,18 @@ public class ForL0StateMapStressTest {
             final TransformBenchmarkResult transformResult;
             final int recordCount;
             final long memoryUsed;
+            final MainTable.TableStats mainTableStats;  // For ForL0StateMap only
 
             BenchmarkResult(String name, PutBenchmarkResult putResult, GetBenchmarkResult getResult,
-                          TransformBenchmarkResult transformResult, int recordCount, long memoryUsed) {
+                          TransformBenchmarkResult transformResult, int recordCount, long memoryUsed,
+                          MainTable.TableStats mainTableStats) {
                 this.name = name;
                 this.putResult = putResult;
                 this.getResult = getResult;
                 this.transformResult = transformResult;
                 this.recordCount = recordCount;
                 this.memoryUsed = memoryUsed;
+                this.mainTableStats = mainTableStats;
             }
         }
     }

@@ -1,5 +1,8 @@
 package org.apache.flink.runtime.state.heap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.annotation.Nullable;
 import java.util.Arrays;
 
@@ -20,6 +23,8 @@ import java.util.Arrays;
  * @param <S> type of state
  */
 public class MainTable<K, N, S> implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(MainTable.class);
 
     // Bucket layout constants
     private static final int BUCKET_SIZE_BITS = 3;       // 8 longs = 2^3
@@ -61,6 +66,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private volatile boolean needsResize = false;
     private int totalEntries = 0;
     private int maxExtensionBucketsUsed = 0;
+    private int maxExtensionDepth = 0;  // True tree depth (traversal count)
 
     // L0 cache layer (optional)
     @Nullable
@@ -187,6 +193,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
         
         int bucketIndex = hash & (bucketCount - 1);
         int mainBucketIndex = bucketIndex;
+        int depth = 0;  // Track extension depth for this lookup
         
         while (true) {
             int chunkIndex = bucketIndex >>> CHUNK_SIZE_BITS;
@@ -255,6 +262,15 @@ public class MainTable<K, N, S> implements AutoCloseable {
             }
             
             bucketIndex = extensionBucketBaseIndices[mainBucketIndex] + extOffset - 1;
+            // depth tracks extension level: 1=first extension bucket, 2=second, etc.
+            // Increment BEFORE entering extension bucket so we count the level correctly
+            depth++;
+            if (depth > maxExtensionDepth) {
+                maxExtensionDepth = depth;
+                if (maxExtensionDepth >= 3) {
+                    LOG.info("⚠️ MainTable extension tree depth reached {}! Consider increasing bucket count or checking hash distribution.", maxExtensionDepth);
+                }
+            }
         }
     }
 
@@ -424,10 +440,14 @@ public class MainTable<K, N, S> implements AutoCloseable {
         return maxExtensionBucketsUsed;
     }
 
+    public int getMaxExtensionDepth() {
+        return maxExtensionDepth;
+    }
+
     public TableStats getStats() {
         return new TableStats(bucketCount, totalEntries, getLoadFactor(),
                              getMaxExtensionBucketsUsed(), getAllocatedExtensionBuckets(), 
-                             extensionPoolUsed, getBucketsNeedingExtension(), needsResize);
+                             extensionPoolUsed, getBucketsNeedingExtension(), maxExtensionDepth, needsResize);
     }
 
     /**
@@ -602,11 +622,12 @@ public class MainTable<K, N, S> implements AutoCloseable {
         public final int allocatedExtensionBuckets;
         public final int extensionAreasUsed;
         public final int bucketsNeedingExtension;
+        public final int maxExtensionDepth;
         public final boolean needsResize;
 
         public TableStats(int bucketCount, int totalEntries, double loadFactor,
                          int maxExtensionBuckets, int allocatedExtensionBuckets, 
-                         int extensionAreasUsed, int bucketsNeedingExtension, boolean needsResize) {
+                         int extensionAreasUsed, int bucketsNeedingExtension, int maxExtensionDepth, boolean needsResize) {
             this.bucketCount = bucketCount;
             this.totalEntries = totalEntries;
             this.loadFactor = loadFactor;
@@ -614,13 +635,14 @@ public class MainTable<K, N, S> implements AutoCloseable {
             this.allocatedExtensionBuckets = allocatedExtensionBuckets;
             this.extensionAreasUsed = extensionAreasUsed;
             this.bucketsNeedingExtension = bucketsNeedingExtension;
+            this.maxExtensionDepth = maxExtensionDepth;
             this.needsResize = needsResize;
         }
 
         @Override
         public String toString() {
-            return String.format("MainTable[buckets=%d, entries=%d, load=%.2f, maxExt=%d, extAreas=%d, bucketsNeedExt=%d, needsResize=%s]",
-                bucketCount, totalEntries, loadFactor, maxExtensionBuckets, extensionAreasUsed, bucketsNeedingExtension, needsResize);
+            return String.format("MainTable[buckets=%d, entries=%d, load=%.2f, maxExt=%d, maxDepth=%d, extAreas=%d, bucketsNeedExt=%d, needsResize=%s]",
+                bucketCount, totalEntries, loadFactor, maxExtensionBuckets, maxExtensionDepth, extensionAreasUsed, bucketsNeedingExtension, needsResize);
         }
     }
 
