@@ -86,19 +86,21 @@ public class ForL0StateBackendOptions {
     /**
      * Maximum total capacity of L0 memory pool shared by all L0Tables.
      * This is the global memory budget for all L0 caches in the StateBackend.
-     * Set to 0 for unlimited (not recommended in production).
-     * Default is 0 (unlimited).
+     * IMPORTANT: L0 is CPU Cache memory, not regular memory. Typical range is 32MB-256MB.
+     * Set to 0 to use native default (64MB).
+     * Default is 0 (use native default 64MB).
      */
     public static final ConfigOption<MemorySize> L0_MEMORY_MAX_SIZE =
             ConfigOptions.key(PREFIX + "l0-memory.max-size")
                     .memoryType()
-                    .defaultValue(MemorySize.ZERO) // 0 means unlimited
+                    .defaultValue(MemorySize.ZERO) // 0 means use native default (64MB)
                     .withDescription(
                             Description.builder()
                                     .text("Maximum total capacity of L0 memory pool shared by all L0Tables. ")
-                                    .text("This is the global memory budget for all L0 caches in the StateBackend. ")
-                                    .text("Set to 0 for unlimited (not recommended in production). ")
-                                    .text("Example: 256mb, 1gb")
+                                    .text("IMPORTANT: L0 is CPU Cache memory on Kunpeng servers, not regular memory. ")
+                                    .text("Typical capacity range is 32MB-256MB. ")
+                                    .text("Set to 0 to use native default (64MB). ")
+                                    .text("Example: 64mb, 128mb, 256mb")
                                     .build());
 
     // ========== MainTable Configuration ==========

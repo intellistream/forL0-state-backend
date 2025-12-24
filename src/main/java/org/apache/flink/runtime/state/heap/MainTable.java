@@ -101,13 +101,6 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private final L0Table<K, N, S> l0Table;
     private final boolean l0CacheEnabled;  // Final flag for JIT branch elimination
 
-    // ========== Entry Chunk Cache (reduce pointer chasing) ==========
-    
-    /** Cached entry chunk to reduce entryChunks[i] indirection.
-     *  Exploits spatial locality: entries in same bucket often share same chunk. */
-    private HeapStateEntry<K, N, S>[] cachedEntryChunk = null;
-    private int cachedEntryChunkIndex = -1;
-
     /**
      * Creates a MainTable with default load factor threshold and no L0 cache.
      */
@@ -159,28 +152,6 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     /**
-     * Fast entry access with chunk caching.
-     * Reduces one level of indirection by caching the most recently accessed entry chunk.
-     * 
-     * @param ptr the entry pointer (1-based)
-     * @return the HeapStateEntry
-     */
-    private HeapStateEntry<K, N, S> getEntry(int ptr) {
-        int idx = ptr - 1;
-        int chunkIdx = idx >> ENTRY_CHUNK_BITS;
-        
-        // Fast path: cache hit
-        if (chunkIdx == cachedEntryChunkIndex) {
-            return cachedEntryChunk[idx & ENTRY_CHUNK_MASK];
-        }
-        
-        // Slow path: cache miss, update cache
-        cachedEntryChunk = entryChunks[chunkIdx];
-        cachedEntryChunkIndex = chunkIdx;
-        return cachedEntryChunk[idx & ENTRY_CHUNK_MASK];
-    }
-
-    /**
      * Gets an entry from the table. Checks L0 cache first if present.
      *
      * @param hash the pre-computed hash value
@@ -213,7 +184,8 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
 
                 int ptr = (int) slot;
-                HeapStateEntry<K, N, S> entry = getEntry(ptr);
+                int idx = ptr - 1;
+                HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
                 if (entry.key.equals(key) 
                         && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
                     if (l0CacheEnabled) {
@@ -266,7 +238,8 @@ public class MainTable<K, N, S> implements AutoCloseable {
                     // Empty slot found: insert here (maintains contiguity)
                     int ptr = allocateEntry(key, namespace, null, hash);
                     chunk[offset + i] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
-                    HeapStateEntry<K, N, S> entry = getEntry(ptr);
+                    int idx = ptr - 1;
+                    HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
                     if (l0CacheEnabled) {
                         l0Table.put(hash, ptr);
                     }
@@ -277,7 +250,8 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 
                 if ((int)(slot >>> HASH_SHIFT) == hash) {
                     int ptr = (int) slot;
-                    HeapStateEntry<K, N, S> entry = getEntry(ptr);
+                    int idx = ptr - 1;
+                    HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
                     if (entry.key.equals(key) 
                             && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
                         return entry;
@@ -341,7 +315,8 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 if ((int)(slot >>> HASH_SHIFT) != hash) continue;
                 
                 int ptr = (int) slot;
-                HeapStateEntry<K, N, S> entry = getEntry(ptr);
+                int idx = ptr - 1;
+                HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
                 if (entry.key.equals(key) 
                         && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
                     // Found: maintain contiguity by shifting forward from i+1

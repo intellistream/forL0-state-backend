@@ -68,6 +68,9 @@ static cache_tuner *global_tuner = NULL;
 /* 0 = not initialized, 1 = simulation mode, 2 = L0 mode */
 static volatile int g_mode = 0;
 
+/* User-configured capacity (0 = use default) */
+static size_t g_user_capacity = 0;
+
 /* Check if L0 device exists */
 static int check_l0_device(void) {
 #ifdef L0_NOT_SUPPORTED
@@ -134,8 +137,8 @@ static void init_mode(void) {
         return; /* Already initialized */
     }
 
-    /* Default max capacity: 1GB */
-    size_t default_capacity = 1024UL * 1024UL * 1024UL;
+    /* Use user-configured capacity, or default to 64MB (reasonable L0 cache size) */
+    size_t capacity = g_user_capacity > 0 ? g_user_capacity : (64UL * 1024UL * 1024UL);
 
     /* Check if L0 device exists */
     if (check_l0_device()) {
@@ -146,7 +149,7 @@ static void init_mode(void) {
             fprintf(stdout, "[ForL0] L0 library loaded successfully\n");
             
             /* Initialize L0 mode */
-            if (init_l0_mode(default_capacity)) {
+            if (init_l0_mode(capacity)) {
                 g_mode = 2; /* L0 mode */
                 fprintf(stdout, "[ForL0] Running in L0 MODE\n");
                 return;
@@ -192,6 +195,48 @@ static void do_free(void *ptr) {
 #endif
 
     free(ptr);
+}
+
+/* Create raw memory pool */
+static void* do_create_raw_pool(const char *name, size_t size) {
+    init_mode();
+    
+#ifndef L0_NOT_SUPPORTED
+    if (g_mode == 2 && global_tuner && p_mem_pool_create_raw) {
+        void *pool = p_mem_pool_create_raw(global_tuner, name, size);
+        if (pool) {
+            fprintf(stdout, "[ForL0] Created raw pool '%s' of size %zu at 0x%lx\n", 
+                    name, size, (unsigned long)pool);
+            return pool;
+        }
+        fprintf(stderr, "[ForL0] Failed to create raw pool '%s', falling back to malloc\n", name);
+    }
+#endif
+
+    /* Fall back to malloc in simulation mode or if L0 pool creation fails */
+    void *ptr = malloc(size);
+    if (ptr) {
+        fprintf(stdout, "[ForL0] Created simulated pool '%s' of size %zu at 0x%lx (malloc)\n", 
+                name, size, (unsigned long)ptr);
+    }
+    return ptr;
+}
+
+/* Release raw memory pool */
+static void do_release_raw_pool(void *pool) {
+    if (!pool) return;
+    
+#ifndef L0_NOT_SUPPORTED
+    if (g_mode == 2 && global_tuner && p_mem_pool_release_raw) {
+        p_mem_pool_release_raw(&pool);
+        fprintf(stdout, "[ForL0] Released raw pool at 0x%lx\n", (unsigned long)pool);
+        return;
+    }
+#endif
+
+    /* Fall back to free in simulation mode */
+    free(pool);
+    fprintf(stdout, "[ForL0] Released simulated pool at 0x%lx (free)\n", (unsigned long)pool);
 }
 
 static void* do_malloc_aligned(size_t size, size_t alignment) {
@@ -312,10 +357,8 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
         return;
     }
     
-#ifndef L0_NOT_SUPPORTED
-    /* Store capacity for init_l0_mode to use */
-    /* For now we use default, but could add global variable for custom capacity */
-#endif
+    /* Store capacity for init_mode to use */
+    g_user_capacity = (size_t)capacity;
     
     fprintf(stdout, "[ForL0] setMaxCapacity(%lld) - will be applied on init\n", (long long)capacity);
 }
@@ -469,5 +512,38 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 {
     if (destAddress != 0 && srcAddress != 0 && length > 0) {
         memcpy((void *)(uintptr_t)destAddress, (void *)(uintptr_t)srcAddress, (size_t)length);
+    }
+}
+
+/*
+ * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Method:    createRawPool
+ * Signature: (Ljava/lang/String;J)J
+ */
+JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_createRawPool
+  (JNIEnv *env, jclass cls, jstring name, jlong size)
+{
+    const char *pool_name = (*env)->GetStringUTFChars(env, name, NULL);
+    if (!pool_name) {
+        return 0;
+    }
+    
+    void *pool = do_create_raw_pool(pool_name, (size_t)size);
+    
+    (*env)->ReleaseStringUTFChars(env, name, pool_name);
+    
+    return (jlong)(uintptr_t)pool;
+}
+
+/*
+ * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Method:    releaseRawPool
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_releaseRawPool
+  (JNIEnv *env, jclass cls, jlong poolAddress)
+{
+    if (poolAddress != 0) {
+        do_release_raw_pool((void *)(uintptr_t)poolAddress);
     }
 }

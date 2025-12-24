@@ -237,6 +237,24 @@ public final class NativeL0Memory {
     public static native long mallocAligned(long size, int alignment);
 
     /**
+     * Creates a raw memory pool with fixed size.
+     * In L0 mode, uses mem_pool_create_raw(); in simulation mode, uses malloc.
+     * 
+     * @param name Pool name for debugging
+     * @param size Pool size in bytes
+     * @return Native pool address, or 0 if creation failed
+     */
+    public static native long createRawPool(String name, long size);
+
+    /**
+     * Releases a raw memory pool.
+     * In L0 mode, uses mem_pool_release_raw(); in simulation mode, uses free.
+     * 
+     * @param poolAddress Native pool address returned by createRawPool
+     */
+    public static native void releaseRawPool(long poolAddress);
+
+    /**
      * Copies data from a byte array to native memory.
      *
      * @param destAddress Destination native memory address

@@ -55,6 +55,12 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
                 ". Please ensure the native library is in java.library.path.");
         }
         this.maxCapacity = maxCapacity;
+        
+        // Pass capacity to native layer BEFORE any allocation
+        if (maxCapacity > 0) {
+            NativeL0Memory.setMaxCapacity(maxCapacity);
+        }
+        
         LOG.info("Created NativeL0MemoryAllocator with maxCapacity={}",
                  maxCapacity == -1 ? "unlimited" : maxCapacity);
     }
@@ -74,6 +80,56 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
                               bytes, maxCapacity - usedBytes, usedBytes, maxCapacity));
         }
 
+        // Try to use raw pool if in L0 mode (more efficient for fixed-size allocations)
+        if (NativeL0Memory.isL0Mode()) {
+            return allocateRawPool(bytes);
+        }
+
+        // Fall back to dynamic allocation (simulation mode or fallback)
+        return allocateWithMalloc(bytes);
+    }
+
+    /**
+     * Allocates memory using raw memory pool (more efficient in L0 mode).
+     * Each allocation gets a dedicated raw pool from L0 library.
+     *
+     * @param bytes Number of bytes to allocate
+     * @return L0Allocation handle
+     * @throws L0MemoryAllocationException if allocation fails
+     */
+    private L0Allocation allocateRawPool(int bytes) throws L0MemoryAllocationException {
+        // Generate unique pool name
+        String poolName = String.format("l0table_%d_%d", System.nanoTime(), bytes);
+
+        // Create raw pool (returns address of the memory block)
+        long address = NativeL0Memory.createRawPool(poolName, bytes);
+        if (address == 0) {
+            throw new L0MemoryAllocationException(
+                "Failed to create raw pool for " + bytes + " bytes. L0 memory may be exhausted.");
+        }
+
+        // Zero-initialize the memory
+        NativeL0Memory.memset(address, (byte) 0, bytes);
+
+        // Create allocation handle
+        L0Allocation allocation = new L0Allocation(address, bytes);
+
+        // Track allocation (mark as raw pool with negative address)
+        allocations.put(allocation, -address); // negative indicates raw pool
+        usedBytes += bytes;
+
+        LOG.debug("Allocated {} bytes raw pool '{}' at address 0x{}", bytes, poolName, Long.toHexString(address));
+        return allocation;
+    }
+
+    /**
+     * Allocates memory using malloc (for simulation mode or fallback).
+     *
+     * @param bytes Number of bytes to allocate
+     * @return L0Allocation handle
+     * @throws L0MemoryAllocationException if allocation fails
+     */
+    private L0Allocation allocateWithMalloc(int bytes) throws L0MemoryAllocationException {
         // Allocate aligned native memory
         long address = NativeL0Memory.mallocAligned(bytes, DEFAULT_ALIGNMENT);
         if (address == 0) {
@@ -84,14 +140,14 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
         // Zero-initialize the memory
         NativeL0Memory.memset(address, (byte) 0, bytes);
 
-        // Create allocation handle (no MemorySegment wrapper needed!)
+        // Create allocation handle
         L0Allocation allocation = new L0Allocation(address, bytes);
 
         // Track allocation
         allocations.put(allocation, address);
         usedBytes += bytes;
 
-        LOG.debug("Allocated {} bytes of native L0 memory at address 0x{}", bytes, Long.toHexString(address));
+        LOG.debug("Allocated {} bytes of native L0 memory (malloc) at address 0x{}", bytes, Long.toHexString(address));
         return allocation;
     }
 
@@ -103,13 +159,21 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
             return;
         }
 
-        Long address = allocations.remove(allocation);
-        if (address != null) {
-            // Free native memory
-            NativeL0Memory.free(address);
+        Long trackedAddress = allocations.remove(allocation);
+        if (trackedAddress != null) {
+            if (trackedAddress < 0) {
+                // Negative address indicates raw pool
+                long poolAddress = -trackedAddress;
+                NativeL0Memory.releaseRawPool(poolAddress);
+                LOG.debug("Released {} bytes raw pool at address 0x{}", 
+                         allocation.totalSize, Long.toHexString(poolAddress));
+            } else {
+                // Positive address indicates malloc'd memory
+                NativeL0Memory.free(trackedAddress);
+                LOG.debug("Released {} bytes of native L0 memory (malloc) at address 0x{}", 
+                         allocation.totalSize, Long.toHexString(trackedAddress));
+            }
             usedBytes -= allocation.totalSize;
-            LOG.debug("Released {} bytes of native L0 memory at address 0x{}", 
-                     allocation.totalSize, Long.toHexString(address));
         } else {
             LOG.warn("Attempted to release untracked memory allocation");
         }
@@ -138,11 +202,21 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
 
             // Release all remaining allocations
             for (Map.Entry<L0Allocation, Long> entry : allocations.entrySet()) {
-                Long address = entry.getValue();
+                Long trackedAddress = entry.getValue();
                 L0Allocation allocation = entry.getKey();
-                NativeL0Memory.free(address);
-                LOG.debug("Released unreleased native memory at 0x{} ({} bytes)",
-                         Long.toHexString(address), allocation.totalSize);
+                
+                if (trackedAddress < 0) {
+                    // Negative address indicates raw pool
+                    long poolAddress = -trackedAddress;
+                    NativeL0Memory.releaseRawPool(poolAddress);
+                    LOG.debug("Released unreleased raw pool at 0x{} ({} bytes)",
+                             Long.toHexString(poolAddress), allocation.totalSize);
+                } else {
+                    // Positive address indicates malloc'd memory
+                    NativeL0Memory.free(trackedAddress);
+                    LOG.debug("Released unreleased native memory (malloc) at 0x{} ({} bytes)",
+                             Long.toHexString(trackedAddress), allocation.totalSize);
+                }
             }
             allocations.clear();
             usedBytes = 0;

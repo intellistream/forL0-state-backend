@@ -83,8 +83,9 @@ backends:
       l0_cache_size: 14
       # Cache replacement policy: CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU
       l0_cache_replacement_policy: CLOCK
-      # Maximum L0 memory pool size (0 = unlimited)
-      # Examples: 256mb, 1gb, 0
+      # Maximum L0 memory pool size (L0 is CPU Cache, not regular memory!)
+      # 0 = use native default (64MB), recommended range: 32mb-256mb
+      # Examples: 64mb, 128mb, 256mb
       l0_memory_max_size: "0"
       # MainTable resize load factor threshold (0.5-4.0)
       # Note: MainTable initial size is now fixed at 65536 buckets (4MB per table)
