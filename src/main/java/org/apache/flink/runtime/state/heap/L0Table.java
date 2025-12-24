@@ -1,9 +1,10 @@
 package org.apache.flink.runtime.state.heap;
 
-import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
+import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator.L0Allocation;
+import sun.misc.Unsafe;
 
-import java.util.List;
+import java.lang.reflect.Field;
 import java.util.Random;
 
 /**
@@ -39,14 +40,11 @@ import java.util.Random;
  *   <li>LRU: 7 × 9 bits = relative timestamps (0-511 per slot)</li>
  * </ul>
  *
- * <p>Uses L0MemoryAllocator for memory allocation, which is separate from the
- * MemoryManager-managed memory used by MainTable. L0 memory may be backed by
- * specialized hardware (CXL memory, PMEM) via JNI native methods.
- *
  * @param <K> type of key
  * @param <N> type of namespace
  * @param <S> type of state
  */
+@SuppressWarnings("restriction")
 public class L0Table<K, N, S> implements AutoCloseable {
 
     // Bucket configuration
@@ -90,12 +88,25 @@ public class L0Table<K, N, S> implements AutoCloseable {
         SAMPLED_LRU
     }
 
+    // UNSAFE instance for direct memory access without boundary checks
+    private static final Unsafe UNSAFE;
+    
+    static {
+        try {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            UNSAFE = (Unsafe) field.get(null);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to get Unsafe instance", e);
+        }
+    }
+    
     private final L0MemoryAllocator l0Allocator;
     private final int bucketCount;
-    private final MemorySegment[] memorySegments;  // Array for O(1) access
+    private final long[] segmentAddresses;  // Native memory addresses for O(1) access
     private final int segmentSizeBits;  // log2(segmentSize) for bit-shift division
     private final int segmentMask;       // segmentSize - 1 for bit-mask modulo
-    private final List<MemorySegment> originalAllocation;  // Keep reference for release
+    private final L0Allocation allocation;  // Keep reference to prevent premature release
     private final ReplacementPolicy replacementPolicy;
     private final Random random;  // For SAMPLED_LRU
 
@@ -136,14 +147,16 @@ public class L0Table<K, N, S> implements AutoCloseable {
         this.random = (replacementPolicy == ReplacementPolicy.SAMPLED_LRU) ? new Random() : null;
 
         try {
-            // Allocate memory segments for L0 table using L0 memory allocator
+            // Allocate memory for L0 table using L0 memory allocator (pure native, no MemorySegment!)
             long totalSize = (long) bucketCount * BUCKET_SIZE;
-            List<MemorySegment> allocation = l0Allocator.allocate((int) totalSize);
-            this.originalAllocation = allocation;  // Keep for release
-            this.memorySegments = allocation.toArray(new MemorySegment[0]);
+            L0Allocation alloc = l0Allocator.allocate((int) totalSize);
+            this.allocation = alloc;  // Keep reference to prevent premature release
+            
+            // Use native addresses directly (zero wrapper overhead!)
+            this.segmentAddresses = alloc.addresses;
             
             // Initialize bit operation fields (segmentSize guaranteed to be power of 2)
-            int segmentSize = this.memorySegments[0].size();
+            int segmentSize = alloc.segmentSize;
             this.segmentSizeBits = Integer.numberOfTrailingZeros(segmentSize);
             this.segmentMask = segmentSize - 1;
 
@@ -175,12 +188,11 @@ public class L0Table<K, N, S> implements AutoCloseable {
         accessCount++;
         int bucketIndex = hash & (bucketCount - 1);
         
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        long baseAddress = getAddressForBucket(bucketIndex);
 
         // Check all 7 slots
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            long slot = UNSAFE.getLong(baseAddress + i * SLOT_SIZE);
             if (slot == 0) continue;  // Empty slot
             if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
             
@@ -190,7 +202,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
                     && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
                 hitCount++;
                 // Update replacement algorithm metadata
-                updateAccessMetadata(segment, bucketOffset, i);
+                updateAccessMetadata(baseAddress, i);
                 return entry;
             }
         }
@@ -216,29 +228,28 @@ public class L0Table<K, N, S> implements AutoCloseable {
     public int put(int hash, int ptr) {
         int bucketIndex = hash & (bucketCount - 1);
         
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        long baseAddress = getAddressForBucket(bucketIndex);
 
         // Encode new slot value
         long newSlot = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
 
         // Find first empty slot
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            long slot = UNSAFE.getLong(baseAddress + i * SLOT_SIZE);
             if (slot == 0) {
                 // Found empty slot, insert here
-                segment.putLong(bucketOffset + i * SLOT_SIZE, newSlot);
-                initSlotMetadata(segment, bucketOffset, i);
+                UNSAFE.putLong(baseAddress + i * SLOT_SIZE, newSlot);
+                initSlotMetadata(baseAddress, i);
                 return 0;
             }
         }
 
         // No empty slot, need eviction
-        int victimSlot = selectVictimSlot(segment, bucketOffset);
-        long oldSlot = segment.getLong(bucketOffset + victimSlot * SLOT_SIZE);
-        segment.putLong(bucketOffset + victimSlot * SLOT_SIZE, newSlot);
+        int victimSlot = selectVictimSlot(baseAddress);
+        long oldSlot = UNSAFE.getLong(baseAddress + victimSlot * SLOT_SIZE);
+        UNSAFE.putLong(baseAddress + victimSlot * SLOT_SIZE, newSlot);
         // Initialize replacement algorithm metadata for new entry
-        initSlotMetadata(segment, bucketOffset, victimSlot);
+        initSlotMetadata(baseAddress, victimSlot);
         evictionCount++;
 
         return (int) oldSlot;  // Return evicted pointer
@@ -256,17 +267,16 @@ public class L0Table<K, N, S> implements AutoCloseable {
     public int remove(int hash, int ptr) {
         int bucketIndex = hash & (bucketCount - 1);
         
-        MemorySegment segment = getSegmentForBucket(bucketIndex);
-        int bucketOffset = getBucketOffsetInSegment(bucketIndex);
+        long baseAddress = getAddressForBucket(bucketIndex);
 
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            long slot = UNSAFE.getLong(baseAddress + i * SLOT_SIZE);
             if (slot == 0) continue;
             
             // Compare ptr directly (low 32 bits of slot)
             if ((int) slot == ptr) {
                 // Clear the slot (set to 0)
-                segment.putLong(bucketOffset + i * SLOT_SIZE, 0);
+                UNSAFE.putLong(baseAddress + i * SLOT_SIZE, 0);
                 return ptr;
             }
         }
@@ -305,20 +315,17 @@ public class L0Table<K, N, S> implements AutoCloseable {
     // ==================== Helper methods ====================
 
     /**
-     * Gets the MemorySegment containing the specified bucket.
+     * Gets the native memory address for the specified bucket.
      * Uses bit operations for O(1) access without division.
+     * 
+     * @param bucketIndex the bucket index
+     * @return the absolute native memory address of the bucket
      */
-    private MemorySegment getSegmentForBucket(int bucketIndex) {
+    private long getAddressForBucket(int bucketIndex) {
         long byteOffset = (long) bucketIndex << BUCKET_SIZE_BITS;
-        return memorySegments[(int) (byteOffset >>> segmentSizeBits)];
-    }
-
-    /**
-     * Gets the offset within the segment for the specified bucket.
-     * Uses bit mask for O(1) access without modulo.
-     */
-    private int getBucketOffsetInSegment(int bucketIndex) {
-        return (int) (((long) bucketIndex << BUCKET_SIZE_BITS) & segmentMask);
+        int segmentIndex = (int) (byteOffset >>> segmentSizeBits);
+        int offsetInSegment = (int) (byteOffset & segmentMask);
+        return segmentAddresses[segmentIndex] + offsetInSegment;
     }
 
     /**
@@ -327,11 +334,10 @@ public class L0Table<K, N, S> implements AutoCloseable {
      */
     private void clearAllSlots() {
         for (int bucket = 0; bucket < bucketCount; bucket++) {
-            MemorySegment segment = getSegmentForBucket(bucket);
-            int bucketOffset = getBucketOffsetInSegment(bucket);
+            long baseAddress = getAddressForBucket(bucket);
             // Zero out all 8 longs in the bucket
             for (int i = 0; i < 8; i++) {
-                segment.putLong(bucketOffset + i * 8, 0L);
+                UNSAFE.putLong(baseAddress + i * 8, 0L);
             }
         }
     }
@@ -340,9 +346,12 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     /**
      * Updates metadata when a slot is accessed (hit or update).
+     * 
+     * @param baseAddress the base address of the bucket
+     * @param slotIndex the slot index within the bucket
      */
-    private void updateAccessMetadata(MemorySegment segment, int bucketOffset, int slotIndex) {
-        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+    private void updateAccessMetadata(long baseAddress, int slotIndex) {
+        long extLong = UNSAFE.getLong(baseAddress + EXTENSION_OFFSET);
         long newExtLong;
 
         switch (replacementPolicy) {
@@ -375,7 +384,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
                     } else {
                         newExtLong = extLong;
                     }
-                    segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+                    UNSAFE.putLong(baseAddress + EXTENSION_OFFSET, newExtLong);
                     // Check and perform decay
                     if (++tinyLfuAccessCount >= DECAY_INTERVAL) {
                         decayAllFrequencies();
@@ -397,14 +406,17 @@ public class L0Table<K, N, S> implements AutoCloseable {
                 newExtLong = extLong;
         }
 
-        segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+        UNSAFE.putLong(baseAddress + EXTENSION_OFFSET, newExtLong);
     }
 
     /**
      * Initializes metadata when a new entry is inserted into a slot.
+     * 
+     * @param baseAddress the base address of the bucket
+     * @param slotIndex the slot index within the bucket
      */
-    private void initSlotMetadata(MemorySegment segment, int bucketOffset, int slotIndex) {
-        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+    private void initSlotMetadata(long baseAddress, int slotIndex) {
+        long extLong = UNSAFE.getLong(baseAddress + EXTENSION_OFFSET);
         long newExtLong;
 
         switch (replacementPolicy) {
@@ -436,23 +448,26 @@ public class L0Table<K, N, S> implements AutoCloseable {
                 newExtLong = extLong;
         }
 
-        segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+        UNSAFE.putLong(baseAddress + EXTENSION_OFFSET, newExtLong);
     }
 
     /**
      * Selects a victim slot for eviction based on replacement policy.
+     * 
+     * @param baseAddress the base address of the bucket
+     * @return the index of the victim slot
      */
-    private int selectVictimSlot(MemorySegment segment, int bucketOffset) {
+    private int selectVictimSlot(long baseAddress) {
         switch (replacementPolicy) {
             case CLOCK:
-                return selectClockVictim(segment, bucketOffset);
+                return selectClockVictim(baseAddress);
             case LRU:
-                return selectLruVictim(segment, bucketOffset);
+                return selectLruVictim(baseAddress);
             case LFU:
             case TINY_LFU:
-                return selectLfuVictim(segment, bucketOffset);
+                return selectLfuVictim(baseAddress);
             case SAMPLED_LRU:
-                return selectSampledLruVictim(segment, bucketOffset);
+                return selectSampledLruVictim(baseAddress);
             default:
                 return 0;
         }
@@ -460,31 +475,37 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     /**
      * CLOCK: find empty or unaccessed slot, else clear all and return slot 0.
+     * 
+     * @param baseAddress the base address of the bucket
+     * @return the index of the victim slot
      */
-    private int selectClockVictim(MemorySegment segment, int bucketOffset) {
-        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+    private int selectClockVictim(long baseAddress) {
+        long extLong = UNSAFE.getLong(baseAddress + EXTENSION_OFFSET);
 
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            long slot = UNSAFE.getLong(baseAddress + i * SLOT_SIZE);
             if (slot == 0) return i;
             if ((extLong & (1L << i)) == 0) return i;
         }
 
-        segment.putLong(bucketOffset + EXTENSION_OFFSET, extLong & ~ACCESSED_MASK_ALL);
+        UNSAFE.putLong(baseAddress + EXTENSION_OFFSET, extLong & ~ACCESSED_MASK_ALL);
         return 0;
     }
 
     /**
      * LRU: find slot with oldest timestamp.
+     * 
+     * @param baseAddress the base address of the bucket
+     * @return the index of the victim slot
      */
-    private int selectLruVictim(MemorySegment segment, int bucketOffset) {
-        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+    private int selectLruVictim(long baseAddress) {
+        long extLong = UNSAFE.getLong(baseAddress + EXTENSION_OFFSET);
         int now = currentTimestamp & LRU_TS_MASK;
         int oldestSlot = 0;
         int oldestAge = -1;
 
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            long slot = UNSAFE.getLong(baseAddress + i * SLOT_SIZE);
             if (slot == 0) return i;
 
             int ts = (int) ((extLong >>> (i * LRU_TS_BITS)) & LRU_TS_MASK);
@@ -499,14 +520,17 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     /**
      * LFU: find slot with lowest frequency.
+     * 
+     * @param baseAddress the base address of the bucket
+     * @return the index of the victim slot
      */
-    private int selectLfuVictim(MemorySegment segment, int bucketOffset) {
-        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+    private int selectLfuVictim(long baseAddress) {
+        long extLong = UNSAFE.getLong(baseAddress + EXTENSION_OFFSET);
         int minSlot = 0;
         int minFreq = 256;
 
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-            long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+            long slot = UNSAFE.getLong(baseAddress + i * SLOT_SIZE);
             if (slot == 0) return i;
 
             int freq = (int) ((extLong >>> (i * LFU_FREQ_BITS)) & LFU_FREQ_MASK);
@@ -520,17 +544,20 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     /**
      * SAMPLED_LRU: randomly sample 2 slots and pick the unaccessed one.
+     * 
+     * @param baseAddress the base address of the bucket
+     * @return the index of the victim slot
      */
-    private int selectSampledLruVictim(MemorySegment segment, int bucketOffset) {
-        long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+    private int selectSampledLruVictim(long baseAddress) {
+        long extLong = UNSAFE.getLong(baseAddress + EXTENSION_OFFSET);
 
         int s1 = random.nextInt(SLOTS_PER_BUCKET);
         int s2 = random.nextInt(SLOTS_PER_BUCKET);
 
-        long slot1 = segment.getLong(bucketOffset + s1 * SLOT_SIZE);
+        long slot1 = UNSAFE.getLong(baseAddress + s1 * SLOT_SIZE);
         if (slot1 == 0) return s1;
 
-        long slot2 = segment.getLong(bucketOffset + s2 * SLOT_SIZE);
+        long slot2 = UNSAFE.getLong(baseAddress + s2 * SLOT_SIZE);
         if (slot2 == 0) return s2;
 
         boolean acc1 = (extLong & (1L << s1)) != 0;
@@ -546,16 +573,15 @@ public class L0Table<K, N, S> implements AutoCloseable {
      */
     private void decayAllFrequencies() {
         for (int bucket = 0; bucket < bucketCount; bucket++) {
-            MemorySegment segment = getSegmentForBucket(bucket);
-            int bucketOffset = getBucketOffsetInSegment(bucket);
-            long extLong = segment.getLong(bucketOffset + EXTENSION_OFFSET);
+            long baseAddress = getAddressForBucket(bucket);
+            long extLong = UNSAFE.getLong(baseAddress + EXTENSION_OFFSET);
 
             long newExtLong = 0;
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
                 int freq = (int) ((extLong >>> (i * LFU_FREQ_BITS)) & LFU_FREQ_MASK);
                 newExtLong |= ((long) (freq >>> 1) << (i * LFU_FREQ_BITS));
             }
-            segment.putLong(bucketOffset + EXTENSION_OFFSET, newExtLong);
+            UNSAFE.putLong(baseAddress + EXTENSION_OFFSET, newExtLong);
         }
     }
 
@@ -602,11 +628,10 @@ public class L0Table<K, N, S> implements AutoCloseable {
     public int getEntryCount() {
         int count = 0;
         for (int bucket = 0; bucket < bucketCount; bucket++) {
-            MemorySegment segment = getSegmentForBucket(bucket);
-            int bucketOffset = getBucketOffsetInSegment(bucket);
+            long baseAddress = getAddressForBucket(bucket);
             
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-                long slot = segment.getLong(bucketOffset + i * SLOT_SIZE);
+                long slot = UNSAFE.getLong(baseAddress + i * SLOT_SIZE);
                 if (slot != 0) {
                     count++;
                 }
@@ -624,7 +649,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
 
     @Override
     public void close() {
-        l0Allocator.release(originalAllocation);
+        l0Allocator.release(allocation);
     }
 
     /**

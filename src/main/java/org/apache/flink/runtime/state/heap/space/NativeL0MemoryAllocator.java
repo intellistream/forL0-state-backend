@@ -1,15 +1,9 @@
 package org.apache.flink.runtime.state.heap.space;
 
-import org.apache.flink.core.memory.MemorySegment;
-import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Constructor;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.IdentityHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -17,8 +11,8 @@ import java.util.Map;
  * This allocator uses C malloc/free for memory allocation, providing
  * direct access to native memory outside the JVM heap.
  *
- * <p>This implementation wraps native memory addresses in Flink's MemorySegment
- * for compatibility with existing code that uses MemorySegment operations.
+ * <p>This implementation provides raw native memory addresses without any
+ * wrapper overhead. Memory is accessed directly via UNSAFE for maximum performance.
  *
  * <p>The native library must be available for this allocator to work.
  * If the native library is not available, an {@link IllegalStateException} will be thrown.
@@ -36,8 +30,8 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
     private long usedBytes = 0;
     private boolean closed = false;
 
-    /** Track allocated memory: segment list -> (address, size) pairs */
-    private final Map<List<MemorySegment>, AllocationInfo> allocations = new IdentityHashMap<>();
+    /** Track allocated memory: allocation -> address/size info */
+    private final Map<L0Allocation, Long> allocations = new IdentityHashMap<>();
 
     /**
      * Creates a NativeL0MemoryAllocator with unlimited capacity.
@@ -66,7 +60,7 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
     }
 
     @Override
-    public List<MemorySegment> allocate(int bytes) throws L0MemoryAllocationException {
+    public L0Allocation allocate(int bytes) throws L0MemoryAllocationException {
         ensureOpen();
 
         if (bytes <= 0) {
@@ -90,56 +84,34 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
         // Zero-initialize the memory
         NativeL0Memory.memset(address, (byte) 0, bytes);
 
-        // Create a DirectByteBuffer pointing to the native memory
-        ByteBuffer directBuffer = createDirectByteBuffer(address, bytes);
-        
-        // Wrap in MemorySegment using Flink's factory
-        MemorySegment segment = MemorySegmentFactory.wrapOffHeapMemory(directBuffer);
-
-        List<MemorySegment> segments = new ArrayList<>(1);
-        segments.add(segment);
+        // Create allocation handle (no MemorySegment wrapper needed!)
+        L0Allocation allocation = new L0Allocation(address, bytes);
 
         // Track allocation
-        allocations.put(segments, new AllocationInfo(address, bytes));
+        allocations.put(allocation, address);
         usedBytes += bytes;
 
         LOG.debug("Allocated {} bytes of native L0 memory at address 0x{}", bytes, Long.toHexString(address));
-        return segments;
+        return allocation;
     }
 
-    /**
-     * Creates a DirectByteBuffer that wraps the given native memory address.
-     * Uses reflection to create a DirectByteBuffer pointing to existing memory.
-     */
-    private static ByteBuffer createDirectByteBuffer(long address, int capacity) throws L0MemoryAllocationException {
-        try {
-            // Get the DirectByteBuffer class and its constructor
-            Class<?> directByteBufferClass = Class.forName("java.nio.DirectByteBuffer");
-            Constructor<?> constructor = directByteBufferClass.getDeclaredConstructor(long.class, int.class);
-            constructor.setAccessible(true);
-            
-            return (ByteBuffer) constructor.newInstance(address, capacity);
-        } catch (Exception e) {
-            throw new L0MemoryAllocationException(
-                "Failed to create DirectByteBuffer for native memory at 0x" + Long.toHexString(address), e);
-        }
-    }
+
 
     @Override
-    public void release(List<MemorySegment> segments) {
-        if (segments == null || segments.isEmpty()) {
+    public void release(L0Allocation allocation) {
+        if (allocation == null) {
             return;
         }
 
-        AllocationInfo info = allocations.remove(segments);
-        if (info != null) {
+        Long address = allocations.remove(allocation);
+        if (address != null) {
             // Free native memory
-            NativeL0Memory.free(info.address);
-            usedBytes -= info.size;
+            NativeL0Memory.free(address);
+            usedBytes -= allocation.totalSize;
             LOG.debug("Released {} bytes of native L0 memory at address 0x{}", 
-                     info.size, Long.toHexString(info.address));
+                     allocation.totalSize, Long.toHexString(address));
         } else {
-            LOG.warn("Attempted to release untracked memory segments");
+            LOG.warn("Attempted to release untracked memory allocation");
         }
     }
 
@@ -165,11 +137,12 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
             LOG.debug("Closing NativeL0MemoryAllocator");
 
             // Release all remaining allocations
-            for (Map.Entry<List<MemorySegment>, AllocationInfo> entry : allocations.entrySet()) {
-                AllocationInfo info = entry.getValue();
-                NativeL0Memory.free(info.address);
+            for (Map.Entry<L0Allocation, Long> entry : allocations.entrySet()) {
+                Long address = entry.getValue();
+                L0Allocation allocation = entry.getKey();
+                NativeL0Memory.free(address);
                 LOG.debug("Released unreleased native memory at 0x{} ({} bytes)",
-                         Long.toHexString(info.address), info.size);
+                         Long.toHexString(address), allocation.totalSize);
             }
             allocations.clear();
             usedBytes = 0;
@@ -199,19 +172,6 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
     private void ensureOpen() {
         if (closed) {
             throw new IllegalStateException("NativeL0MemoryAllocator is closed");
-        }
-    }
-
-    /**
-     * Information about a native memory allocation.
-     */
-    private static class AllocationInfo {
-        final long address;
-        final int size;
-
-        AllocationInfo(long address, int size) {
-            this.address = address;
-            this.size = size;
         }
     }
 

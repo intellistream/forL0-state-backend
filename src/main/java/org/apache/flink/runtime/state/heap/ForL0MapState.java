@@ -71,11 +71,10 @@ class ForL0MapState<K, N, UK, UV> extends AbstractHeapState<K, N, Map<UK, UV>>
         Map<UK, UV> userMap = stateTable.get(currentNamespace);
         if (userMap == null) {
             userMap = new HashMap<>();
+            stateTable.put(currentNamespace, userMap);
         }
 
         userMap.put(userKey, userValue);
-        // 显式写回，确保持久化
-        stateTable.put(currentNamespace, userMap);
     }
 
     @Override
@@ -85,11 +84,10 @@ class ForL0MapState<K, N, UK, UV> extends AbstractHeapState<K, N, Map<UK, UV>>
 
         if (userMap == null) {
             userMap = new HashMap<>();
+            stateTable.put(currentNamespace, userMap);
         }
 
         userMap.putAll(value);
-        // 显式写回
-        stateTable.put(currentNamespace, userMap);
     }
 
     @Override
@@ -104,9 +102,6 @@ class ForL0MapState<K, N, UK, UV> extends AbstractHeapState<K, N, Map<UK, UV>>
 
         if (userMap.isEmpty()) {
             clear();
-        } else {
-            // 显式写回
-            stateTable.put(currentNamespace, userMap);
         }
     }
 

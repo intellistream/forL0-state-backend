@@ -65,10 +65,9 @@ class ForL0ListState<K, N, V> extends AbstractHeapMergingState<K, N, V, List<V>,
 
         if (list == null) {
             list = new ArrayList<>();
+            map.put(namespace, list);
         }
         list.add(value);
-        // Single put operation - only write back once
-        map.put(namespace, list);
     }
 
     @Override

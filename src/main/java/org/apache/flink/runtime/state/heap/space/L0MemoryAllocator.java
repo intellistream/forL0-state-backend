@@ -1,9 +1,5 @@
 package org.apache.flink.runtime.state.heap.space;
 
-import org.apache.flink.core.memory.MemorySegment;
-
-import java.util.List;
-
 /**
  * Interface for L0 memory allocation.
  * L0 memory is specialized memory (e.g., CXL memory, PMEM) allocated via JNI native methods.
@@ -22,20 +18,20 @@ import java.util.List;
 public interface L0MemoryAllocator extends AutoCloseable {
 
     /**
-     * Allocates L0 memory segments for the specified number of bytes.
+     * Allocates L0 memory for the specified number of bytes.
      *
      * @param bytes Number of bytes to allocate
-     * @return List of memory segments backed by L0 memory
+     * @return Allocation handle for the native memory region
      * @throws L0MemoryAllocationException if allocation fails
      */
-    List<MemorySegment> allocate(int bytes) throws L0MemoryAllocationException;
+    L0Allocation allocate(int bytes) throws L0MemoryAllocationException;
 
     /**
-     * Releases previously allocated L0 memory segments.
+     * Releases previously allocated L0 memory.
      *
-     * @param segments Memory segments to release
+     * @param allocation Memory allocation to release
      */
-    void release(List<MemorySegment> segments);
+    void release(L0Allocation allocation);
 
     /**
      * Gets the current L0 memory usage in bytes.
@@ -58,6 +54,32 @@ public interface L0MemoryAllocator extends AutoCloseable {
      * @return true if closed, false otherwise
      */
     boolean isClosed();
+
+    /**
+     * Represents an allocated native memory region.
+     * Provides direct access to memory addresses without MemorySegment wrapper.
+     */
+    class L0Allocation {
+        /** Array of native memory addresses (one per segment if memory is split) */
+        public final long[] addresses;
+        /** Size of each segment in bytes */
+        public final int segmentSize;
+        /** Total allocated size in bytes */
+        public final int totalSize;
+        
+        public L0Allocation(long[] addresses, int segmentSize, int totalSize) {
+            this.addresses = addresses;
+            this.segmentSize = segmentSize;
+            this.totalSize = totalSize;
+        }
+        
+        /** Single-segment constructor */
+        public L0Allocation(long address, int size) {
+            this.addresses = new long[] { address };
+            this.segmentSize = size;
+            this.totalSize = size;
+        }
+    }
 
     /**
      * Exception thrown when L0 memory allocation fails.
