@@ -1,5 +1,6 @@
 package org.apache.flink.runtime.state.heap;
 
+import org.apache.flink.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,14 +11,14 @@ import java.util.Arrays;
 /**
  * Main Table implementation for ForL0 State Backend.
  * 
- * <p>This is the heap-based version using chunked long[][] arrays for O(1) access.
+ * <p>This is the heap-based version using flattened one-dimensional arrays for optimal cache performance.
  * Each slot is a single long: [Hash(32b) | Ptr(32b)].
  * 
  * <p>64-byte aligned buckets with 7 data slots + 1 extension long.
  * Supports tree-like expansion and global resize.
  * 
- * <p>Entry storage is integrated directly into MainTable (previously HeapEntryStore),
- * avoiding indirect access overhead.
+ * <p>Entry storage uses flattened AoS (Array of Structures) layout: entries are stored as
+ * consecutive K, N, S triplets in Object[] for spatial locality, avoiding object overhead.
  * 
  * <p>Optionally manages an L0Table as a hot cache layer. When L0Table is present,
  * get() checks L0 first and put() updates L0 cache automatically.
@@ -32,14 +33,11 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     // Bucket layout constants
     private static final int BUCKET_SIZE_BITS = 3;       // 8 longs = 2^3
-    private static final int BUCKET_SIZE_LONGS = 8;      // 64 bytes = 8 longs
     private static final int SLOTS_PER_BUCKET = 7;       // 7 data slots
     private static final int EXTENSION_SLOT_INDEX = 7;   // 8th long for extension pointers
     
-    // Chunk configuration for bucket storage
-    private static final int CHUNK_SIZE_BITS = 16;       // 65536 buckets per chunk
-    private static final int CHUNK_SIZE = 1 << CHUNK_SIZE_BITS;
-    private static final int CHUNK_MASK = CHUNK_SIZE - 1;
+    // Initial table size: 32K buckets = 256K longs = 2MB (balance between memory and resize cost)
+    static final int INITIAL_BUCKET_COUNT = 32 * 1024;  // Package-private for testing
     
     // Slot bit operations (Hash in high 32 bits, Ptr in low 32 bits)
     private static final int HASH_SHIFT = 32;
@@ -56,22 +54,28 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private static final double DEFAULT_LOAD_FACTOR_THRESHOLD = 1.5;
     private static final int EXTENSION_POOL_GROW_SIZE = 32;  // Grow 32 extension areas at a time
 
-    // ========== Entry Storage (integrated from HeapEntryStore) ==========
+    // ========== Entry Storage (Flattened AoS Layout) ==========
     
-    /** Entry chunk configuration: 65536 entries per chunk. */
-    static final int ENTRY_CHUNK_BITS = 16;
-    static final int ENTRY_CHUNK_SIZE = 1 << ENTRY_CHUNK_BITS;
-    static final int ENTRY_CHUNK_MASK = ENTRY_CHUNK_SIZE - 1;
-    private static final int INITIAL_FREE_LIST_SIZE = 1024;
+    /** Entry storage stride: K, N, S stored consecutively (3 references per entry). */
+    private static final int ENTRY_STRIDE = 3;
+    
+    /** Initial entry capacity: 32K entries to match bucket count. */
+    private static final int INITIAL_ENTRY_CAPACITY = 32 * 1024;
+    
+    /** Initial free list size. */
+    private static final int INITIAL_FREE_LIST_SIZE = 512;
 
-    /** Chunked entry storage: entryChunks[chunkIndex][slotIndex]. */
-    HeapStateEntry<K, N, S>[][] entryChunks;
+    /** Flattened entry storage: [K0, N0, S0, K1, N1, S1, ...]. */
+    Object[] entries;
     
-    /** Current number of allocated entry chunks. */
-    private int entryChunkCount;
+    /** Hash values stored separately (only accessed during rehash). */
+    private int[] hashes;
     
-    /** Next allocation index for entries (max valid ptr = nextEntryAllocIndex). */
-    int nextEntryAllocIndex;
+    /** Current capacity (entries.length / ENTRY_STRIDE). */
+    private int entryCapacity;
+    
+    /** Next allocation index for entries. */
+    private int nextEntryIndex;
     
     /** Free list for deleted entry slots. */
     private int[] freeList;
@@ -79,9 +83,11 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     // ========== Bucket Index Storage ==========
     
-    // Heap storage: chunked long arrays for bucket indices
-    private long[][] chunks;
+    // Flattened bucket table: one-dimensional array for better cache performance
+    private long[] table;            // Main bucket table
+    private long[] extensions;       // Extension bucket area (separate for locality)
     private int bucketCount;
+    private int bucketMask;  // bucketCount - 1, cached for fast modulo
     
     // Extension bucket management
     private int[] extensionBucketCounts;       // Number of extension buckets per main bucket
@@ -123,82 +129,131 @@ public class MainTable<K, N, S> implements AutoCloseable {
      * @param loadFactorThreshold the load factor threshold for triggering resize
      * @param l0Table optional L0 cache (can be null)
      */
-    @SuppressWarnings("unchecked")
     public MainTable(double loadFactorThreshold, @Nullable L0Table<K, N, S> l0Table) {
         this.loadFactorThreshold = loadFactorThreshold;
         this.l0Table = l0Table;
         this.l0CacheEnabled = (l0Table != null);  // Final for JIT optimization
         
-        // Fixed initial size: one full chunk (65536 buckets = 4MB)
-        this.bucketCount = CHUNK_SIZE;
+        // Initialize bucket table: 32K buckets = 2MB (balance between initial cost and resize overhead)
+        this.bucketCount = INITIAL_BUCKET_COUNT;
+        this.bucketMask = INITIAL_BUCKET_COUNT - 1;
+        this.table = new long[bucketCount << BUCKET_SIZE_BITS];
+        this.extensions = null;  // Allocated on demand
         
-        // Allocate exactly one chunk (4MB) initially
-        this.chunks = new long[1][];
-        this.chunks[0] = new long[CHUNK_SIZE * BUCKET_SIZE_LONGS];
-        
-        // Initialize management arrays
+        // Initialize extension management arrays
         this.extensionBucketBaseIndices = new int[bucketCount];
         this.extensionBucketCounts = new int[bucketCount];
         this.extensionPoolCapacity = 0;
         this.extensionPoolUsed = 0;
         
-        // Initialize entry storage (integrated from HeapEntryStore)
-        this.entryChunks = (HeapStateEntry<K, N, S>[][]) new HeapStateEntry[1][];
-        this.entryChunks[0] = (HeapStateEntry<K, N, S>[]) new HeapStateEntry[ENTRY_CHUNK_SIZE];
-        this.entryChunkCount = 1;
-        this.nextEntryAllocIndex = 0;
+        // Initialize flattened entry storage: 32K entries (96K Object refs + 32K ints)
+        this.entryCapacity = INITIAL_ENTRY_CAPACITY;
+        this.entries = new Object[entryCapacity * ENTRY_STRIDE];
+        this.hashes = new int[entryCapacity];
+        this.nextEntryIndex = 0;
         this.freeList = new int[INITIAL_FREE_LIST_SIZE];
         this.freeCount = 0;
     }
 
+    // ========== Hash Computation ==========
+
     /**
-     * Gets an entry from the table. Checks L0 cache first if present.
-     *
-     * @param hash the pre-computed hash value
+     * Computes composite hash for key and namespace.
+     * Uses double bitMix with XOR for better hash distribution.
+     * 
      * @param key the key object
      * @param namespace the namespace object
-     * @return the HeapStateEntry if found, null otherwise
+     * @return scrambled composite hash value
      */
-    public HeapStateEntry<K, N, S> get(int hash, K key, N namespace) {
+    public static int computeHash(Object key, Object namespace) {
+        // Apply bitMix to each hash separately, then XOR them
+        // This provides better distribution than single bitMix on combined value
+        return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
+    }
+
+    // ========== Core Operations ==========
+
+    /**
+     * Gets the state value from the table. Checks L0 cache first if present.
+     *
+     * @param key the key object
+     * @param namespace the namespace object
+     * @return the state value if found, null otherwise
+     */
+    @Nullable
+    @SuppressWarnings("unchecked")
+    public S get(K key, N namespace) {
+        int hash = computeHash(key, namespace);
+        
         // Check L0 cache first (JIT can eliminate this branch if l0CacheEnabled is false)
         if (l0CacheEnabled) {
-            HeapStateEntry<K, N, S> entry = l0Table.get(hash, key, namespace, entryChunks);
-            if (entry != null) {
-                return entry;
+            int ptr = l0Table.get(hash, key, namespace, entries);
+            if (ptr > 0) {
+                int base = (ptr - 1) * ENTRY_STRIDE;
+                return (S) entries[base + 2];  // Return state
             }
         }
         
-        // Search in MainTable
-        int bucketIndex = hash & (bucketCount - 1);
-        int mainBucketIndex = bucketIndex;
+        // Search in MainTable - Fast path: search main bucket first
+        int mainBucketIndex = hash & bucketMask;
+        int tableOffset = mainBucketIndex << BUCKET_SIZE_BITS;
         
-        while (true) {
-            int chunkIndex = bucketIndex >>> CHUNK_SIZE_BITS;
-            int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
-            long[] chunk = chunks[chunkIndex];
+        // Search main bucket slots with Early Exit
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = table[tableOffset + i];
+            if (slot == 0) break;  // Early exit: no more entries in this bucket
+            if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
+
+            int ptr = (int) slot;
+            int base = (ptr - 1) * ENTRY_STRIDE;
+            Object entryKey = entries[base];
+            Object entryNs = entries[base + 1];
             
-            // Search slots with Early Exit: slots are contiguous, empty = end
+            if (entryKey.equals(key) 
+                    && (entryNs == namespace || entryNs.equals(namespace))) {
+                if (l0CacheEnabled) {
+                    l0Table.put(hash, ptr);
+                }
+                return (S) entries[base + 2];  // Return state
+            }
+        }
+        
+        // Check if main bucket has extension
+        long extLong = table[tableOffset + EXTENSION_SLOT_INDEX];
+        int extIndex = (hash >>> EXT_INDEX_SHIFT) & EXT_INDEX_MASK;
+        int extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
+        if (extOffset == 0) {
+            return null;  // Not found, no extension
+        }
+        
+        // Slow path: search extension buckets
+        int bucketIndex = extensionBucketBaseIndices[mainBucketIndex] + extOffset - 1;
+        while (true) {
+            int extTableOffset = (bucketIndex - bucketCount) << BUCKET_SIZE_BITS;
+            
+            // Search extension bucket slots
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-                long slot = chunk[offset + i];
-                if (slot == 0) break;  // Early exit: no more entries in this bucket
-                if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
+                long slot = extensions[extTableOffset + i];
+                if (slot == 0) break;
+                if ((int)(slot >>> HASH_SHIFT) != hash) continue;
 
                 int ptr = (int) slot;
-                int idx = ptr - 1;
-                HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
-                if (entry.key.equals(key) 
-                        && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
+                int base = (ptr - 1) * ENTRY_STRIDE;
+                Object entryKey = entries[base];
+                Object entryNs = entries[base + 1];
+                
+                if (entryKey.equals(key) 
+                        && (entryNs == namespace || entryNs.equals(namespace))) {
                     if (l0CacheEnabled) {
                         l0Table.put(hash, ptr);
                     }
-                    return entry;
+                    return (S) entries[base + 2];
                 }
             }
             
-            // Check extension bucket
-            long extLong = chunk[offset + EXTENSION_SLOT_INDEX];
-            int extIndex = (hash >>> EXT_INDEX_SHIFT) & EXT_INDEX_MASK;
-            int extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
+            // Check next level extension
+            extLong = extensions[extTableOffset + EXTENSION_SLOT_INDEX];
+            extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
             if (extOffset == 0) {
                 return null;  // Not found
             }
@@ -208,61 +263,117 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     /**
-     * Inserts or finds an entry. If new, creates an Entry with state=null.
-     * Automatically resizes the table if needed and updates L0 cache.
+     * Inserts or finds an entry and returns its ptr.
+     * State is initialized to null for new entries.
      *
-     * @param hash the pre-computed hash value
      * @param key the key object
      * @param namespace the namespace object
-     * @return the HeapStateEntry (existing or newly created with state=null)
+     * @return ptr of the entry (always positive)
      */
-    public HeapStateEntry<K, N, S> put(int hash, K key, N namespace) {
+    public int put(K key, N namespace) {
+        int hash = computeHash(key, namespace);
         // Auto-resize before insertion if needed
         if (needsResize) {
             resize();
         }
         
-        int bucketIndex = hash & (bucketCount - 1);
-        int mainBucketIndex = bucketIndex;
-        int depth = 0;  // Track extension depth for this lookup
+        int mainBucketIndex = hash & bucketMask;
+        int tableOffset = mainBucketIndex << BUCKET_SIZE_BITS;
+        
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = table[tableOffset + i];
+            
+            if (slot == 0) {
+                // Empty slot found: insert here
+                int ptr = allocateEntry(key, namespace, null, hash);
+                table[tableOffset + i] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
+                if (l0CacheEnabled) {
+                    l0Table.put(hash, ptr);
+                }
+                totalEntries++;
+                checkResizeNeeded();
+                return ptr;
+            }
+            
+            if ((int)(slot >>> HASH_SHIFT) == hash) {
+                int ptr = (int) slot;
+                int base = (ptr - 1) * ENTRY_STRIDE;
+                Object entryKey = entries[base];
+                Object entryNs = entries[base + 1];
+                
+                if (entryKey.equals(key) 
+                        && (entryNs == namespace || entryNs.equals(namespace))) {
+                    // Already exists: return existing ptr
+                    if (l0CacheEnabled) {
+                        l0Table.put(hash, ptr);
+                    }
+                    return ptr;
+                }
+            }
+        }
+        
+        // Main bucket full, check/allocate extension
+        long extLong = table[tableOffset + EXTENSION_SLOT_INDEX];
+        int extIndex = (hash >>> EXT_INDEX_SHIFT) & EXT_INDEX_MASK;
+        int extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
+        
+        if (extOffset == 0) {
+            // Allocate new extension bucket
+            extOffset = allocateExtensionBucket(mainBucketIndex);
+            if (extOffset == 0) {
+                // Extension limit reached, resize and retry
+                resize();
+                return put(key, namespace);
+            }
+            // Set extension pointer
+            int shift = extIndex << 3;
+            table[tableOffset + EXTENSION_SLOT_INDEX] = 
+                (extLong & ~((long) EXT_PTR_MASK << shift)) | ((long) extOffset << shift);
+        }
+        
+        // search/insert in extension buckets
+        int bucketIndex = extensionBucketBaseIndices[mainBucketIndex] + extOffset - 1;
+        int depth = 0;
         
         while (true) {
-            int chunkIndex = bucketIndex >>> CHUNK_SIZE_BITS;
-            int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
-            long[] chunk = chunks[chunkIndex];
+            int extTableOffset = (bucketIndex - bucketCount) << BUCKET_SIZE_BITS;
+            
             // Search with Early Exit: slots are contiguous, empty = insert position
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-                long slot = chunk[offset + i];
+                long slot = extensions[extTableOffset + i];
                 
                 if (slot == 0) {
-                    // Empty slot found: insert here (maintains contiguity)
+                    // Empty slot found: insert here
                     int ptr = allocateEntry(key, namespace, null, hash);
-                    chunk[offset + i] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
-                    int idx = ptr - 1;
-                    HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
+                    extensions[extTableOffset + i] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
                     if (l0CacheEnabled) {
                         l0Table.put(hash, ptr);
                     }
                     totalEntries++;
                     checkResizeNeeded();
-                    return entry;
+                    return ptr;
                 }
                 
                 if ((int)(slot >>> HASH_SHIFT) == hash) {
                     int ptr = (int) slot;
-                    int idx = ptr - 1;
-                    HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
-                    if (entry.key.equals(key) 
-                            && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
-                        return entry;
+                    int base = (ptr - 1) * ENTRY_STRIDE;
+                    Object entryKey = entries[base];
+                    Object entryNs = entries[base + 1];
+                    
+                    if (entryKey.equals(key) 
+                            && (entryNs == namespace || entryNs.equals(namespace))) {
+                        // Already exists: return existing ptr
+                        if (l0CacheEnabled) {
+                            l0Table.put(hash, ptr);
+                        }
+                        return ptr;
                     }
                 }
             }
             
             // Current bucket full, find/allocate extension bucket
-            long extLong = chunk[offset + EXTENSION_SLOT_INDEX];
-            int extIndex = (hash >>> EXT_INDEX_SHIFT) & EXT_INDEX_MASK;
-            int extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
+            extLong = extensions[extTableOffset + EXTENSION_SLOT_INDEX];
+            extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
             
             if (extOffset == 0) {
                 // Allocate new extension bucket
@@ -270,17 +381,15 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 if (extOffset == 0) {
                     // Extension limit reached, resize and retry
                     resize();
-                    return put(hash, key, namespace);
+                    return put(key, namespace);
                 }
                 // Set extension pointer
                 int shift = extIndex << 3;
-                chunk[offset + EXTENSION_SLOT_INDEX] = 
+                extensions[extTableOffset + EXTENSION_SLOT_INDEX] = 
                     (extLong & ~((long) EXT_PTR_MASK << shift)) | ((long) extOffset << shift);
             }
             
             bucketIndex = extensionBucketBaseIndices[mainBucketIndex] + extOffset - 1;
-            // depth tracks extension level: 1=first extension bucket, 2=second, etc.
-            // Increment BEFORE entering extension bucket so we count the level correctly
             depth++;
             if (depth > maxExtensionDepth) {
                 maxExtensionDepth = depth;
@@ -294,54 +403,99 @@ public class MainTable<K, N, S> implements AutoCloseable {
     /**
      * Removes an entry from the table and L0 cache.
      *
-     * @param hash the pre-computed hash value
      * @param key the key object
      * @param namespace the namespace object
-     * @return the removed HeapStateEntry if found, null otherwise
+     * @return the removed state value (S), or null if not found
      */
-    public HeapStateEntry<K, N, S> remove(int hash, K key, N namespace) {
-        int bucketIndex = hash & (bucketCount - 1);
-        int mainBucketIndex = bucketIndex;
+    @Nullable
+    @SuppressWarnings("unchecked")
+    public S remove(K key, N namespace) {
+        int hash = computeHash(key, namespace);
+        int mainBucketIndex = hash & bucketMask;
+        int tableOffset = mainBucketIndex << BUCKET_SIZE_BITS;
         
+        for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
+            long slot = table[tableOffset + i];
+            if (slot == 0) break;
+            if ((int)(slot >>> HASH_SHIFT) != hash) continue;
+            
+            int ptr = (int) slot;
+            int base = (ptr - 1) * ENTRY_STRIDE;
+            Object entryKey = entries[base];
+            Object entryNs = entries[base + 1];
+            
+            if (entryKey.equals(key) 
+                    && (entryNs == namespace || entryNs.equals(namespace))) {
+                // Found: get state value before deletion
+                S removedState = (S) entries[base + 2];
+                
+                // Maintain contiguity by shifting forward from i+1
+                int next = i + 1;
+                while (next < SLOTS_PER_BUCKET && table[tableOffset + next] != 0) {
+                    table[tableOffset + next - 1] = table[tableOffset + next];
+                    next++;
+                }
+                // Clear the last occupied position
+                table[tableOffset + next - 1] = 0;
+                
+                totalEntries--;
+                if (l0CacheEnabled) {
+                    l0Table.remove(hash, ptr);
+                }
+                removeEntry(ptr);
+                return removedState;
+            }
+        }
+        
+        // Check if main bucket has extension
+        long extLong = table[tableOffset + EXTENSION_SLOT_INDEX];
+        int extIndex = (hash >>> EXT_INDEX_SHIFT) & EXT_INDEX_MASK;
+        int extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
+        if (extOffset == 0) {
+            return null;  // Not found, no extension
+        }
+        
+        int bucketIndex = extensionBucketBaseIndices[mainBucketIndex] + extOffset - 1;
         while (true) {
-            int chunkIndex = bucketIndex >>> CHUNK_SIZE_BITS;
-            int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
-            long[] chunk = chunks[chunkIndex];
+            int extTableOffset = (bucketIndex - bucketCount) << BUCKET_SIZE_BITS;
             
             // Search with Early Exit and maintain contiguity on delete
             for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-                long slot = chunk[offset + i];
-                if (slot == 0) break;  // Early exit: no more entries
+                long slot = extensions[extTableOffset + i];
+                if (slot == 0) break;
                 if ((int)(slot >>> HASH_SHIFT) != hash) continue;
                 
                 int ptr = (int) slot;
-                int idx = ptr - 1;
-                HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
-                if (entry.key.equals(key) 
-                        && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
-                    // Found: maintain contiguity by shifting forward from i+1
-                    // Since average load is ~1.5, forward search is more efficient
+                int base = (ptr - 1) * ENTRY_STRIDE;
+                Object entryKey = entries[base];
+                Object entryNs = entries[base + 1];
+                
+                if (entryKey.equals(key) 
+                        && (entryNs == namespace || entryNs.equals(namespace))) {
+                    // Found: get state value before deletion
+                    S removedState = (S) entries[base + 2];
+                    
+                    // Maintain contiguity by shifting forward from i+1
                     int next = i + 1;
-                    while (next < SLOTS_PER_BUCKET && chunk[offset + next] != 0) {
-                        chunk[offset + next - 1] = chunk[offset + next];
+                    while (next < SLOTS_PER_BUCKET && extensions[extTableOffset + next] != 0) {
+                        extensions[extTableOffset + next - 1] = extensions[extTableOffset + next];
                         next++;
                     }
                     // Clear the last occupied position
-                    chunk[offset + next - 1] = 0;
+                    extensions[extTableOffset + next - 1] = 0;
                     
                     totalEntries--;
                     if (l0CacheEnabled) {
                         l0Table.remove(hash, ptr);
                     }
                     removeEntry(ptr);
-                    return entry;
+                    return removedState;
                 }
             }
             
-            // Check extension bucket
-            long extLong = chunk[offset + EXTENSION_SLOT_INDEX];
-            int extIndex = (hash >>> EXT_INDEX_SHIFT) & EXT_INDEX_MASK;
-            int extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
+            // Check next level extension
+            extLong = extensions[extTableOffset + EXTENSION_SLOT_INDEX];
+            extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
             if (extOffset == 0) {
                 return null;  // Not found
             }
@@ -350,32 +504,35 @@ public class MainTable<K, N, S> implements AutoCloseable {
         }
     }
 
-    // ========== Entry Allocation (integrated from HeapEntryStore) ==========
+    // ========== Entry Allocation (Flattened Storage) ==========
 
     /**
      * Allocates a new entry and returns its address (ptr).
      * Address is guaranteed to be > 0 (0 is reserved as NULL).
      */
     private int allocateEntry(@Nonnull K key, @Nonnull N namespace, @Nullable S state, int hash) {
-        int index;
+        int entryIndex;
         
         // Prefer reusing freed slots (LIFO for cache efficiency)
         if (freeCount > 0) {
-            index = freeList[--freeCount];
+            entryIndex = freeList[--freeCount];
         } else {
-            // Check if we need to expand entry chunks
-            if (nextEntryAllocIndex >= entryChunkCount * ENTRY_CHUNK_SIZE) {
-                expandEntryChunks();
+            // Check if we need to expand entries array
+            if (nextEntryIndex >= entryCapacity) {
+                expandEntries();
             }
-            index = nextEntryAllocIndex++;
+            entryIndex = nextEntryIndex++;
         }
         
-        // Create and store the entry
-        HeapStateEntry<K, N, S> entry = new HeapStateEntry<>(key, namespace, state, hash);
-        entryChunks[index >> ENTRY_CHUNK_BITS][index & ENTRY_CHUNK_MASK] = entry;
+        // Store K, N, S consecutively
+        int base = entryIndex * ENTRY_STRIDE;
+        entries[base] = key;
+        entries[base + 1] = namespace;
+        entries[base + 2] = state;
+        hashes[entryIndex] = hash;
         
         // Return index + 1 to reserve 0 as NULL
-        return index + 1;
+        return entryIndex + 1;
     }
 
     /**
@@ -384,34 +541,30 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private void removeEntry(int ptr) {
         if (ptr <= 0) return;
         
-        int index = ptr - 1;
-        int chunkIndex = index >> ENTRY_CHUNK_BITS;
+        int entryIndex = ptr - 1;
+        int base = entryIndex * ENTRY_STRIDE;
         
-        if (chunkIndex < entryChunkCount && entryChunks[chunkIndex][index & ENTRY_CHUNK_MASK] != null) {
-            entryChunks[chunkIndex][index & ENTRY_CHUNK_MASK] = null;
-            
-            // Add to free list (expand if necessary)
-            if (freeCount >= freeList.length) {
-                freeList = Arrays.copyOf(freeList, freeList.length * 2);
-            }
-            freeList[freeCount++] = index;
+        // Clear all three references
+        entries[base] = null;
+        entries[base + 1] = null;
+        entries[base + 2] = null;
+        // hashes[entryIndex] not cleared (only used in rehash)
+        
+        // Add to free list (expand if necessary)
+        if (freeCount >= freeList.length) {
+            freeList = Arrays.copyOf(freeList, freeList.length * 2);
         }
+        freeList[freeCount++] = entryIndex;
     }
 
     /**
-     * Expands the entry chunk array when more capacity is needed.
+     * Expands the entries array when more capacity is needed.
      */
-    @SuppressWarnings("unchecked")
-    private void expandEntryChunks() {
-        int newChunkCount = entryChunkCount + 1;
-        
-        if (newChunkCount > entryChunks.length) {
-            int newLength = Math.max(entryChunks.length * 2, newChunkCount);
-            entryChunks = Arrays.copyOf(entryChunks, newLength);
-        }
-        
-        entryChunks[entryChunkCount] = (HeapStateEntry<K, N, S>[]) new HeapStateEntry[ENTRY_CHUNK_SIZE];
-        entryChunkCount = newChunkCount;
+    private void expandEntries() {
+        int newCapacity = entryCapacity * 2;
+        entries = Arrays.copyOf(entries, newCapacity * ENTRY_STRIDE);
+        hashes = Arrays.copyOf(hashes, newCapacity);
+        entryCapacity = newCapacity;
     }
 
     // --- Iteration support ---
@@ -428,13 +581,14 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     private void visitBucketTree(int bucketIndex, int mainBucketIndex, EntryVisitor visitor) {
-        int chunkIndex = bucketIndex >>> CHUNK_SIZE_BITS;
-        int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
-        long[] chunk = chunks[chunkIndex];
+        // Determine if accessing main table or extension table
+        boolean isExtension = (bucketIndex >= bucketCount);
+        long[] currentTable = isExtension ? extensions : table;
+        int tableOffset = isExtension ? (bucketIndex - bucketCount) << BUCKET_SIZE_BITS : bucketIndex << BUCKET_SIZE_BITS;
         
         // Visit 7 data slots
         for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-            long slot = chunk[offset + i];
+            long slot = currentTable[tableOffset + i];
             if (slot != 0) {
                 int hash = (int)(slot >>> HASH_SHIFT);
                 int ptr = (int) slot;
@@ -447,7 +601,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
             return;
         }
         
-        long extLong = chunk[offset + EXTENSION_SLOT_INDEX];
+        long extLong = currentTable[tableOffset + EXTENSION_SLOT_INDEX];
         for (int i = 0; i < 8; i++) {
             int extOffset = (int)((extLong >>> (i << 3)) & EXT_PTR_MASK);
             if (extOffset != 0) {
@@ -487,24 +641,18 @@ public class MainTable<K, N, S> implements AutoCloseable {
         // Each extension area can hold MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET (255) buckets
         int bucketsToAdd = multiplyByExtAreaSize(EXTENSION_POOL_GROW_SIZE);
         
-        // Calculate how many new chunks we need
-        int currentTotalBuckets = bucketCount + multiplyByExtAreaSize(extensionPoolCapacity);
-        int newTotalBuckets = currentTotalBuckets + bucketsToAdd;
-        int currentChunks = (currentTotalBuckets + CHUNK_SIZE - 1) >>> CHUNK_SIZE_BITS;
-        int requiredChunks = (newTotalBuckets + CHUNK_SIZE - 1) >>> CHUNK_SIZE_BITS;
+        // Calculate new extension pool size needed
+        int currentExtBuckets = multiplyByExtAreaSize(extensionPoolCapacity);
+        int newExtBuckets = currentExtBuckets + bucketsToAdd;
         
-        if (requiredChunks > chunks.length) {
-            chunks = Arrays.copyOf(chunks, Math.max(chunks.length * 2, requiredChunks));
+        // Allocate or expand extensions array
+        if (extensions == null) {
+            extensions = new long[newExtBuckets << BUCKET_SIZE_BITS];
+        } else if (newExtBuckets << BUCKET_SIZE_BITS > extensions.length) {
+            extensions = Arrays.copyOf(extensions, newExtBuckets << BUCKET_SIZE_BITS);
         }
         
-        // Allocate new chunks as needed
-        for (int i = currentChunks; i < requiredChunks; i++) {
-            if (chunks[i] == null) {
-                chunks[i] = new long[CHUNK_SIZE * BUCKET_SIZE_LONGS];
-            }
-        }
-        
-        extensionPoolCapacity += MainTable.EXTENSION_POOL_GROW_SIZE;
+        extensionPoolCapacity += EXTENSION_POOL_GROW_SIZE;
     }
 
     // --- Public accessors ---
@@ -577,67 +725,71 @@ public class MainTable<K, N, S> implements AutoCloseable {
      */
     public void resize() {
         int newBucketCount = bucketCount * 2;
+        int newBucketMask = newBucketCount - 1;
         
-        // Create new table structure
-        int newRequiredChunks = (newBucketCount + CHUNK_SIZE - 1) >>> CHUNK_SIZE_BITS;
-        if (newRequiredChunks == 0) newRequiredChunks = 1;
-        
-        long[][] newChunks = new long[newRequiredChunks][];
-        for (int i = 0; i < newRequiredChunks; i++) {
-            // Always allocate full chunk size to leave room for extension buckets
-            newChunks[i] = new long[CHUNK_SIZE * BUCKET_SIZE_LONGS];
-        }
+        // Create new flattened table
+        long[] newTable = new long[newBucketCount << BUCKET_SIZE_BITS];
+        long[] newExtensions = null;  // Allocated on demand
         
         int[] newExtensionBucketBaseIndices = new int[newBucketCount];
         int[] newExtensionBucketCounts = new int[newBucketCount];
         int newExtensionPoolCapacity = 0;
         int newExtensionPoolUsed = 0;
-        int newMaxExtensionBucketsUsed = 0;  // Track max during migration
+        int newMaxExtensionBucketsUsed = 0;
         
-        // Migrate all entries from entryChunks
-        for (int index = 0; index < nextEntryAllocIndex; index++) {
-            HeapStateEntry<K, N, S> entry = entryChunks[index >> ENTRY_CHUNK_BITS][index & ENTRY_CHUNK_MASK];
-            if (entry == null) continue;
+        // Rehash all entries (using hashes[] array)
+        for (int entryIndex = 0; entryIndex < nextEntryIndex; entryIndex++) {
+            int base = entryIndex * ENTRY_STRIDE;
+            if (entries[base] == null) continue;  // Deleted entry
             
-            int hash = entry.hash;
-            int ptr = index + 1;
+            int hash = hashes[entryIndex];
+            int ptr = entryIndex + 1;
             
-            int bucketIndex = hash & (newBucketCount - 1);
+            int bucketIndex = hash & newBucketMask;
             int mainBucketIndex = bucketIndex;
             
-            // Put into new table (simplified inline logic)
+            // Insert into new table
             while (true) {
-                int chunkIndex = bucketIndex >>> CHUNK_SIZE_BITS;
-                int offset = (bucketIndex & CHUNK_MASK) << BUCKET_SIZE_BITS;
-                long[] chunk = newChunks[chunkIndex];
+                // Determine which table to use
+                boolean isExtension = (bucketIndex >= newBucketCount);
+                long[] currentTable = isExtension ? newExtensions : newTable;
+                int tableOffset = isExtension ? (bucketIndex - newBucketCount) << BUCKET_SIZE_BITS : bucketIndex << BUCKET_SIZE_BITS;
+                
                 int emptySlot = -1;
                 
+                // Find empty slot
                 for (int i = 0; i < SLOTS_PER_BUCKET; i++) {
-                    if (chunk[offset + i] == 0) {
+                    if (currentTable[tableOffset + i] == 0) {
                         emptySlot = i;
                         break;
                     }
                 }
                 
                 if (emptySlot != -1) {
-                    chunk[offset + emptySlot] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
+                    currentTable[tableOffset + emptySlot] = ((long) hash << HASH_SHIFT) | (ptr & PTR_MASK);
                     break;
                 }
                 
-                // Allocate extension bucket
-                long extLong = chunk[offset + EXTENSION_SLOT_INDEX];
+                // Need extension bucket
+                long extLong = currentTable[tableOffset + EXTENSION_SLOT_INDEX];
                 int extIndex = (hash >>> EXT_INDEX_SHIFT) & EXT_INDEX_MASK;
                 int extOffset = (int)((extLong >>> (extIndex << 3)) & EXT_PTR_MASK);
                 
                 if (extOffset == 0) {
-                    // Allocate new extension bucket for new table
+                    // Allocate new extension bucket
                     if (newExtensionBucketCounts[mainBucketIndex] >= MAX_EXTENSION_BUCKETS_PER_MAIN_BUCKET) {
-                        break;  // Should not happen in normal operation
+                        break;  // Should not happen
                     }
                     
                     if (newExtensionBucketBaseIndices[mainBucketIndex] == 0) {
                         if (newExtensionPoolUsed >= newExtensionPoolCapacity) {
                             newExtensionPoolCapacity += EXTENSION_POOL_GROW_SIZE;
+                            int newExtBuckets = multiplyByExtAreaSize(newExtensionPoolCapacity);
+                            if (newExtensions == null) {
+                                newExtensions = new long[newExtBuckets << BUCKET_SIZE_BITS];
+                            } else {
+                                newExtensions = Arrays.copyOf(newExtensions, newExtBuckets << BUCKET_SIZE_BITS);
+                            }
                         }
                         newExtensionBucketBaseIndices[mainBucketIndex] = 
                             newBucketCount + multiplyByExtAreaSize(newExtensionPoolUsed);
@@ -645,22 +797,12 @@ public class MainTable<K, N, S> implements AutoCloseable {
                     }
                     
                     extOffset = ++newExtensionBucketCounts[mainBucketIndex];
-                    // Track max extension buckets during migration
                     if (extOffset > newMaxExtensionBucketsUsed) {
                         newMaxExtensionBucketsUsed = extOffset;
                     }
                     
-                    // Ensure chunk exists for extension bucket
-                    int extChunkIndex = (newExtensionBucketBaseIndices[mainBucketIndex] + extOffset - 1) >>> CHUNK_SIZE_BITS;
-                    if (extChunkIndex >= newChunks.length) {
-                        newChunks = Arrays.copyOf(newChunks, Math.max(newChunks.length * 2, extChunkIndex + 1));
-                    }
-                    if (newChunks[extChunkIndex] == null) {
-                        newChunks[extChunkIndex] = new long[CHUNK_SIZE * BUCKET_SIZE_LONGS];
-                    }
-                    
                     int shift = extIndex << 3;
-                    chunk[offset + EXTENSION_SLOT_INDEX] = 
+                    currentTable[tableOffset + EXTENSION_SLOT_INDEX] = 
                         (extLong & ~((long) EXT_PTR_MASK << shift)) | ((long) extOffset << shift);
                 }
                 
@@ -669,8 +811,10 @@ public class MainTable<K, N, S> implements AutoCloseable {
         }
         
         // Switch to new table
-        this.chunks = newChunks;
+        this.table = newTable;
+        this.extensions = newExtensions;
         this.bucketCount = newBucketCount;
+        this.bucketMask = newBucketMask;
         this.extensionBucketBaseIndices = newExtensionBucketBaseIndices;
         this.extensionBucketCounts = newExtensionBucketCounts;
         this.extensionPoolCapacity = newExtensionPoolCapacity;
@@ -729,6 +873,15 @@ public class MainTable<K, N, S> implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the number of entries in the table.
+     *
+     * @return the number of entries
+     */
+    public int size() {
+        return totalEntries;
+    }
+
     @Override
     public void close() throws Exception {
         if (closed) {
@@ -740,19 +893,18 @@ public class MainTable<K, N, S> implements AutoCloseable {
         if (l0Table != null) {
             l0Table.close();
         }
-        // Clear entry storage
-        if (entryChunks != null) {
-            for (int i = 0; i < entryChunkCount; i++) {
-                if (entryChunks[i] != null) {
-                    Arrays.fill(entryChunks[i], null);
-                    entryChunks[i] = null;
-                }
-            }
-            entryChunks = null;
+        
+        // Clear flattened entry storage
+        if (entries != null) {
+            Arrays.fill(entries, null);
+            entries = null;
         }
+        hashes = null;
         freeList = null;
-        // Heap arrays are automatically managed by GC, no manual cleanup needed
-        chunks = null;
+        
+        // Clear bucket tables
+        table = null;
+        extensions = null;
         extensionBucketBaseIndices = null;
         extensionBucketCounts = null;
     }

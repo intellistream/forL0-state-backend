@@ -425,12 +425,26 @@ public class ForL0StateMapStressTest {
         @Timeout(value = 180, unit = TimeUnit.SECONDS)
         @DisplayName("高写入触发多次扩容并验证数据一致性")
         void testMultipleAutoResizes() throws Exception {
-            // MainTable 固定初始大小为 65536 buckets
-            // 负载因子阈值 1.5 意味着需要 > 98304 entries 才能触发扩容
+            // 使用较低的负载因子阈值以确保既定插入数量能触发扩容
+            // 默认阈值为 1.5（在 262144 buckets 下需要 > 393216 条），测试插入 150000 条不足以触发
+            // 这里重新初始化 stateMap，使阈值为 0.4（> 104857 条即可触发），保证测试稳定
+            stateMap.close();
+            stateMap = new ForL0StateMap<>(
+                l0Allocator,
+                10,
+                IntSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                true,
+                L0Table.ReplacementPolicy.CLOCK,
+                0.4
+            );
+            // MainTable 固定初始大小
+            // 负载因子阈值 1.5 意味着需要 > INITIAL_BUCKET_COUNT * 1.5 entries 才能触发扩容
             // 我们插入 150000 条数据来触发扩容
             
             int initialBucket = stateMap.getDetailedStats().mainTableStats.bucketCount;
-            assertEquals(65536, initialBucket, "初始应该是 65536 buckets");
+            assertEquals(MainTable.INITIAL_BUCKET_COUNT, initialBucket, "初始应该是 INITIAL_BUCKET_COUNT");
             
             LOG.info("开始自动扩容压力测试：目标插入 150000 条数据触发扩容");
 
@@ -466,9 +480,9 @@ public class ForL0StateMapStressTest {
             LOG.info("  耗时: {} 秒", duration / 1000.0);
             LOG.info("  QPS: {}", totalInsert / (duration / 1000.0));
 
-            // 验证已经扩容（从 65536 扩容到 131072）
-            assertTrue(stats.mainTableStats.bucketCount > 65536, 
-                    "应已扩容到 > 65536 buckets, 实际=" + stats.mainTableStats.bucketCount);
+            // 验证已经扩容
+            assertTrue(stats.mainTableStats.bucketCount > MainTable.INITIAL_BUCKET_COUNT, 
+                    "应已扩容到 > INITIAL_BUCKET_COUNT, 实际=" + stats.mainTableStats.bucketCount);
             assertEquals(totalInsert, stats.totalEntries, "应有 " + totalInsert + " 条数据");
 
             // 抽样验证数据完整性
@@ -498,6 +512,18 @@ public class ForL0StateMapStressTest {
         @Timeout(value = 120, unit = TimeUnit.SECONDS)
         @DisplayName("扩容过程中混合读写一致性验证")
         void testMixedOpsDuringResize() throws Exception {
+            // 同样使用较低负载因子阈值，确保基础插入数量能触发扩容
+            stateMap.close();
+            stateMap = new ForL0StateMap<>(
+                l0Allocator,
+                10,
+                IntSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                StringSerializer.INSTANCE,
+                true,
+                L0Table.ReplacementPolicy.CLOCK,
+                0.4
+            );
             // 目标：在扩容过程中进行混合读写删操作，验证数据一致性
             // 需要插入足够多的数据触发扩容（> 98304 条）
             // 由于有删除操作，需要更多的写入操作来确保最终条目数超过阈值
@@ -518,7 +544,7 @@ public class ForL0StateMapStressTest {
                     statsAfterBase.totalEntries, statsAfterBase.mainTableStats.bucketCount);
             
             // 验证已经扩容
-            assertTrue(statsAfterBase.mainTableStats.bucketCount > 65536, 
+            assertTrue(statsAfterBase.mainTableStats.bucketCount > MainTable.INITIAL_BUCKET_COUNT, 
                     "基础数据应已触发扩容");
             
             // 在扩容后继续进行混合操作

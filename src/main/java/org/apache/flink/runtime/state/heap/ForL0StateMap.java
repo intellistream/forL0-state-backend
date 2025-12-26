@@ -5,7 +5,6 @@ import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
-import org.apache.flink.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,9 +18,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     // Core storage component (MainTable now manages entry storage internally)
     private final MainTable<K, N, S> mainTable;
-
-    // Size tracking
-    private int size = 0;
 
     /**
      * The last namespace that was actually inserted. This is a small optimization to reduce
@@ -115,102 +111,69 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     @Override
     public int size() {
-        return size;
+        return mainTable.size();
     }
 
     @Override
     public S get(K key, N namespace) {
-        // Deduplicate namespace object to improve identity comparison hit rate
-        if (namespace.equals(lastNamespace)) {
-            namespace = lastNamespace;
-        } else {
-            lastNamespace = namespace;
-        }
-        int hash = compositeHash(key, namespace);
-        HeapStateEntry<K, N, S> entry = mainTable.get(hash, key, namespace);
-        return entry != null ? entry.state : null;
+        return mainTable.get(key, namespace);
     }
 
     @Override
     public boolean containsKey(K key, N namespace) {
-        // Deduplicate namespace object to improve identity comparison hit rate
-        if (namespace.equals(lastNamespace)) {
-            namespace = lastNamespace;
-        } else {
-            lastNamespace = namespace;
-        }
-        int hash = compositeHash(key, namespace);
-        return mainTable.get(hash, key, namespace) != null;
-    }
-
-    /**
-     * Helper method that is the basis for operations that add mappings.
-     * Returns the entry (existing or newly created with state=null).
-     * If a new entry is created, size is incremented.
-     */
-    private HeapStateEntry<K, N, S> putEntry(K key, N namespace) {
-        int hash = compositeHash(key, namespace);
-        
-        // Deduplicate namespace object to improve identity comparison hit rate
-        if (namespace.equals(lastNamespace)) {
-            namespace = lastNamespace;
-        } else {
-            lastNamespace = namespace;
-        }
-        
-        HeapStateEntry<K, N, S> entry = mainTable.put(hash, key, namespace);
-        if (entry.state == null) {
-            // New entry (put creates Entry with state=null)
-            size++;
-        }
-        return entry;
+        return get(key, namespace) != null;
     }
 
     @Override
     public void put(K key, N namespace, S state) {
-        HeapStateEntry<K, N, S> entry = putEntry(key, namespace);
-        entry.state = state;
+        // Deduplicate namespace object to reduce memory and improve identity comparison
+        if (namespace.equals(lastNamespace)) {
+            namespace = lastNamespace;
+        } else {
+            lastNamespace = namespace;
+        }
+        
+        int ptr = mainTable.put(key, namespace);
+        int base = (ptr - 1) * 3;
+        mainTable.entries[base + 2] = state;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public S putAndGetOld(K key, N namespace, S state) {
-        HeapStateEntry<K, N, S> entry = putEntry(key, namespace);
-        S oldValue = entry.state;
-        entry.state = state;
+        // Deduplicate namespace object to reduce memory and improve identity comparison
+        if (namespace.equals(lastNamespace)) {
+            namespace = lastNamespace;
+        } else {
+            lastNamespace = namespace;
+        }
+        
+        int ptr = mainTable.put(key, namespace);
+        int base = (ptr - 1) * 3;
+        S oldValue = (S) mainTable.entries[base + 2];
+        mainTable.entries[base + 2] = state;
         return oldValue;
     }
 
     @Override
     public void remove(K key, N namespace) {
-        int hash = compositeHash(key, namespace);
-        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace);
-        if (removed != null) {
-            size--;
-        }
+        mainTable.remove(key, namespace);
     }
 
     @Override
     public S removeAndGetOld(K key, N namespace) {
-        int hash = compositeHash(key, namespace);
-        HeapStateEntry<K, N, S> removed = mainTable.remove(hash, key, namespace);
-        if (removed != null) {
-            size--;
-            return removed.state;
-        }
-        return null;
+        return mainTable.remove(key, namespace);
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public int sizeOfNamespace(Object namespace) {
         int[] cnt = new int[1];
         mainTable.forEachEntry((ptr, hash) -> {
-            int idx = ptr - 1;
-            HeapStateEntry<K, N, S> entry = mainTable.entryChunks[idx >> MainTable.ENTRY_CHUNK_BITS][idx & MainTable.ENTRY_CHUNK_MASK];
-            if (entry != null) {
-                N n = entry.namespace;
-                if (namespace != null && namespace.equals(n)) {
-                    cnt[0]++;
-                }
+            int base = (ptr - 1) * 3;
+            N n = (N) mainTable.entries[base + 1];  // namespace
+            if (n != null && namespace != null && namespace.equals(n)) {
+                cnt[0]++;
             }
         });
         return cnt[0];
@@ -269,7 +232,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         
         MainTableIterator() {
             // Collect all pointers first (just ints, minimal allocation)
-            ptrs = new int[size];
+            ptrs = new int[size()];
             int[] count = {0};
             mainTable.forEachEntry((ptr, hash) -> {
                 if (count[0] < ptrs.length) {
@@ -284,13 +247,31 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         }
         
         @Override
+        @SuppressWarnings("unchecked")
         public StateEntry<K, N, S> next() {
             if (!hasNext()) {
                 throw new java.util.NoSuchElementException();
             }
             int ptr = ptrs[index++];
-            int idx = ptr - 1;
-            return mainTable.entryChunks[idx >> MainTable.ENTRY_CHUNK_BITS][idx & MainTable.ENTRY_CHUNK_MASK];
+            int base = (ptr - 1) * 3;
+            
+            // Return anonymous StateEntry implementation
+            return new StateEntry<K, N, S>() {
+                @Override
+                public K getKey() {
+                    return (K) mainTable.entries[base];
+                }
+                
+                @Override
+                public N getNamespace() {
+                    return (N) mainTable.entries[base + 1];
+                }
+                
+                @Override
+                public S getState() {
+                    return (S) mainTable.entries[base + 2];
+                }
+            };
         }
     }
 
@@ -301,26 +282,34 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public Stream<K> getKeys(N namespace) {
         java.util.ArrayList<K> keys = new java.util.ArrayList<>();
         mainTable.forEachEntry((ptr, hash) -> {
-            int idx = ptr - 1;
-            HeapStateEntry<K, N, S> entry = mainTable.entryChunks[idx >> MainTable.ENTRY_CHUNK_BITS][idx & MainTable.ENTRY_CHUNK_MASK];
-            if (entry != null) {
-                N n = entry.namespace;
-                if (n.equals(namespace)) {
-                    keys.add(entry.key);
-                }
+            int base = (ptr - 1) * 3;
+            K k = (K) mainTable.entries[base];        // key
+            N n = (N) mainTable.entries[base + 1];     // namespace
+            if (n != null && n.equals(namespace)) {
+                keys.add(k);
             }
         });
         return keys.stream();
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public <T> void transform(K key, N namespace, T value, StateTransformationFunction<S, T> transformation)
             throws Exception {
-        HeapStateEntry<K, N, S> entry = putEntry(key, namespace);
-        entry.state = transformation.apply(entry.state, value);
+        // Deduplicate namespace object to reduce memory and improve identity comparison
+        if (namespace.equals(lastNamespace)) {
+            namespace = lastNamespace;
+        } else {
+            lastNamespace = namespace;
+        }
+        
+        int ptr = mainTable.put(key, namespace);
+        int base = (ptr - 1) * 3;
+        mainTable.entries[base + 2] = transformation.apply((S) mainTable.entries[base + 2], value);
     }
 
     // ================== Statistics (for benchmark/testing) ==================
@@ -347,7 +336,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         return new DetailedStats(
                 mainTable.getL0Stats(),
                 mainTable.getStats(),
-                size
+                mainTable.size()
         );
     }
 
@@ -373,20 +362,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                     l0Stats, mainTableStats, totalEntries
             );
         }
-    }
-
-    /**
-     * Computes composite hash for key and namespace.
-     * Uses double bitMix with XOR for better hash distribution.
-     * 
-     * @param key the key object
-     * @param namespace the namespace object
-     * @return scrambled composite hash value
-     */
-    private static int compositeHash(Object key, Object namespace) {
-        // Apply bitMix to each hash separately, then XOR them
-        // This provides better distribution than single bitMix on combined value
-        return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
     }
 
 }

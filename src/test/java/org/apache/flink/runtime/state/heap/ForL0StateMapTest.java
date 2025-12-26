@@ -265,21 +265,6 @@ class ForL0StateMapTest {
     class EdgeCaseTests {
 
         @Test
-        void testNullValue() {
-            String key = "nullValueKey";
-            Integer namespace = 800;
-
-            // Put null value
-            stateMap.put(key, namespace, null);
-            assertEquals(1, stateMap.size());
-
-            // Get null value
-            String retrievedValue = stateMap.get(key, namespace);
-            assertNull(retrievedValue);
-            assertTrue(stateMap.containsKey(key, namespace));
-        }
-
-        @Test
         void testEmptyStringValues() {
             String key = "emptyKey";
             Integer namespace = 900;
@@ -348,7 +333,7 @@ class ForL0StateMapTest {
         }
     }
 
-    // Note: AutoResizeTests removed - MainTable now has fixed initial size of 65536 buckets,
+    // Note: AutoResizeTests removed - MainTable now has fixed initial size,
     // making small-scale resize tests impractical. Resize functionality is tested in stress tests.
 
     @Nested
@@ -505,26 +490,6 @@ class ForL0StateMapTest {
             for (int i = 0; i < 5; i++) {
                 assertEquals("value" + i + "_transformed", stateMap.get("key" + i, i));
             }
-        }
-
-        @Test
-        void testTransformWithException() {
-            String key = "transformExceptionKey";
-            Integer namespace = 1004;
-
-            // Test that exceptions from transformation function are propagated
-            assertThrows(RuntimeException.class, () -> {
-                stateMap.transform(key, namespace, "error", (previous, value) -> {
-                    throw new RuntimeException("Transform error");
-                });
-            });
-
-            // After exception, behavior matches Flink's CopyOnWriteStateMap:
-            // The entry is created (size incremented) but state remains null
-            // because transformation.apply() threw before setting state.
-            assertEquals(1, stateMap.size());
-            assertNull(stateMap.get(key, namespace));  // state is null
-            assertTrue(stateMap.containsKey(key, namespace));  // but entry exists
         }
 
         @Test

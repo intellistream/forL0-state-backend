@@ -103,6 +103,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
     
     private final L0MemoryAllocator l0Allocator;
     private final int bucketCount;
+    private final int bucketMask;  // bucketCount - 1, cached for fast modulo
     private final long[] segmentAddresses;  // Native memory addresses for O(1) access
     private final int segmentSizeBits;  // log2(segmentSize) for bit-shift division
     private final int segmentMask;       // segmentSize - 1 for bit-mask modulo
@@ -143,6 +144,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
     public L0Table(L0MemoryAllocator l0Allocator, int bucketCountPow2, ReplacementPolicy replacementPolicy) {
         this.l0Allocator = l0Allocator;
         this.bucketCount = 1 << bucketCountPow2;
+        this.bucketMask = this.bucketCount - 1;
         this.replacementPolicy = replacementPolicy;
         this.random = (replacementPolicy == ReplacementPolicy.SAMPLED_LRU) ? new Random() : null;
 
@@ -168,25 +170,22 @@ public class L0Table<K, N, S> implements AutoCloseable {
         }
     }
 
-    // Entry chunk constants (must match MainTable)  
-    private static final int ENTRY_CHUNK_BITS = 16;
-    private static final int ENTRY_CHUNK_MASK = (1 << ENTRY_CHUNK_BITS) - 1;
-
     /**
-     * Gets an entry from the L0 cache using object comparison.
+     * Gets a ptr (address) from L0 cache if the entry exists and matches key/namespace.
      * 
      * <p>This is the heap object store version that uses direct object comparison
-     * for key/namespace matching.
+     * for key/namespace matching with flattened entry storage.
      *
      * @param hash the pre-computed hash value (full 32 bits used)
      * @param key the key object
      * @param namespace the namespace object
-     * @param entryChunks the entry chunks array from MainTable
-     * @return the HeapStateEntry if found, null otherwise
+     * @param entries the flattened entries array from MainTable [K0, N0, S0, K1, N1, S1, ...]
+     * @return the ptr (address, >0) if found, 0 otherwise
      */
-    public HeapStateEntry<K, N, S> get(int hash, K key, N namespace, HeapStateEntry<K, N, S>[][] entryChunks) {
+    @SuppressWarnings("unchecked")
+    public int get(int hash, K key, N namespace, Object[] entries) {
         accessCount++;
-        int bucketIndex = hash & (bucketCount - 1);
+        int bucketIndex = hash & bucketMask;
         
         long baseAddress = getAddressForBucket(bucketIndex);
 
@@ -196,19 +195,22 @@ public class L0Table<K, N, S> implements AutoCloseable {
             if (slot == 0) continue;  // Empty slot
             if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
             
-            int idx = (int) slot - 1;  // ptr - 1
-            HeapStateEntry<K, N, S> entry = entryChunks[idx >> ENTRY_CHUNK_BITS][idx & ENTRY_CHUNK_MASK];
-            if (entry != null && entry.key.equals(key) 
-                    && (entry.namespace == namespace || entry.namespace.equals(namespace))) {
+            int ptr = (int) slot;
+            int base = (ptr - 1) * 3;  // ENTRY_STRIDE = 3
+            K entryKey = (K) entries[base];
+            N entryNs = (N) entries[base + 1];
+            
+            if (entryKey != null && entryKey.equals(key) 
+                    && (entryNs == namespace || entryNs.equals(namespace))) {
                 hitCount++;
                 // Update replacement algorithm metadata
                 updateAccessMetadata(baseAddress, i);
-                return entry;
+                return ptr;
             }
         }
 
         missCount++;
-        return null;
+        return 0;
     }
 
     /**
@@ -226,7 +228,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
      * @return 0 if new entry inserted, or evicted ptr if eviction occurred
      */
     public int put(int hash, int ptr) {
-        int bucketIndex = hash & (bucketCount - 1);
+        int bucketIndex = hash & bucketMask;
         
         long baseAddress = getAddressForBucket(bucketIndex);
 
@@ -265,7 +267,7 @@ public class L0Table<K, N, S> implements AutoCloseable {
      * @return the removed entry pointer if found, 0 otherwise
      */
     public int remove(int hash, int ptr) {
-        int bucketIndex = hash & (bucketCount - 1);
+        int bucketIndex = hash & bucketMask;
         
         long baseAddress = getAddressForBucket(bucketIndex);
 
