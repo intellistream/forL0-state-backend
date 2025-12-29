@@ -131,10 +131,12 @@ static int init_l0_mode(size_t max_capacity) {
         fprintf(stderr, "[ForL0] ERROR:   1. /dev/hisi_l0 device is accessible\n");
         fprintf(stderr, "[ForL0] ERROR:   2. L0 kernel module is loaded (lsmod | grep hisi_l0)\n");
         fprintf(stderr, "[ForL0] ERROR:   3. max_capacity is valid (current: %zu bytes)\n", max_capacity);
+        fflush(stderr);
         return 0;
     }
 
     fprintf(stdout, "[ForL0] SUCCESS: L0 cache tuner initialized at %p\n", (void*)global_tuner);
+    fflush(stdout);
     return 1;
 #endif
 }
@@ -239,6 +241,7 @@ static void* do_create_raw_pool(const char *name, size_t size) {
         if (pool) {
             fprintf(stdout, "[ForL0] SUCCESS: Created raw pool '%s' at address 0x%lx\n", 
                     name, (unsigned long)pool);
+            fflush(stdout);
         } else {
             fprintf(stderr, "[ForL0] ERROR: L0 mem_pool_create_raw() returned NULL for pool '%s' size=%zu\n", 
                     name, size);
@@ -246,6 +249,7 @@ static void* do_create_raw_pool(const char *name, size_t size) {
             fprintf(stderr, "[ForL0] ERROR:   1. L0 capacity exhausted (check init capacity)\n");
             fprintf(stderr, "[ForL0] ERROR:   2. L0 device error (check dmesg)\n");
             fprintf(stderr, "[ForL0] ERROR:   3. Pool size too large\n");
+            fflush(stderr);
         }
         return pool;
     }
