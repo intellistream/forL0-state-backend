@@ -406,6 +406,7 @@ class AsyncProfiler:
 def find_taskmanager_pids(flink_home: Optional[str] = None) -> List[int]:
     """
     Find PIDs of Flink TaskManager processes.
+    Uses multiple methods to handle different environments (standard JDK, BiSheng JDK, etc.)
     
     Args:
         flink_home: Flink home directory (optional, used for logging)
@@ -414,8 +415,28 @@ def find_taskmanager_pids(flink_home: Optional[str] = None) -> List[int]:
         List of TaskManager PIDs
     """
     pids = []
+    
+    # Method 1: Try pgrep first (most reliable, works even when jps shows UNKNOWN)
     try:
-        # Use jps to find TaskManagerRunner
+        result = subprocess.run(
+            ['pgrep', '-f', 'TaskManagerRunner'],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    pids.append(int(line))
+                except ValueError:
+                    pass
+        if pids:
+            print(f"Found {len(pids)} TaskManager process(es) using pgrep")
+            return pids
+    except Exception as e:
+        print(f"pgrep failed: {e}")
+    
+    # Method 2: Try jps with -l (standard approach)
+    try:
         result = subprocess.run(
             ['jps', '-l'],
             capture_output=True, text=True, timeout=10
@@ -429,8 +450,62 @@ def find_taskmanager_pids(flink_home: Optional[str] = None) -> List[int]:
                         pids.append(int(parts[0]))
                     except ValueError:
                         pass
+        if pids:
+            print(f"Found {len(pids)} TaskManager process(es) using jps -l")
+            return pids
     except Exception as e:
-        print(f"WARNING: Could not find TaskManager PIDs: {e}")
+        print(f"jps -l failed: {e}")
+    
+    # Method 3: jps shows UNKNOWN? Check each PID with ps
+    try:
+        result = subprocess.run(
+            ['jps'],
+            capture_output=True, text=True, timeout=10
+        )
+        
+        for line in result.stdout.splitlines():
+            if 'UNKNOWN' in line or 'Jps' not in line:
+                parts = line.strip().split()
+                if parts:
+                    try:
+                        pid = int(parts[0])
+                        # Verify this PID is TaskManager using ps
+                        ps_result = subprocess.run(
+                            ['ps', '-p', str(pid), '-o', 'cmd='],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if 'TaskManagerRunner' in ps_result.stdout:
+                            pids.append(pid)
+                    except (ValueError, subprocess.TimeoutExpired):
+                        pass
+        if pids:
+            print(f"Found {len(pids)} TaskManager process(es) using jps+ps verification")
+            return pids
+    except Exception as e:
+        print(f"jps+ps verification failed: {e}")
+    
+    # Method 4: Fall back to ps aux (most compatible but slower)
+    try:
+        result = subprocess.run(
+            ['ps', 'aux'],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.splitlines():
+            if 'TaskManagerRunner' in line and 'grep' not in line:
+                parts = line.split()
+                if len(parts) > 1:
+                    try:
+                        pids.append(int(parts[1]))  # PID is 2nd column
+                    except ValueError:
+                        pass
+        if pids:
+            print(f"Found {len(pids)} TaskManager process(es) using ps aux")
+            return pids
+    except Exception as e:
+        print(f"ps aux failed: {e}")
+    
+    if not pids:
+        print("WARNING: Could not find TaskManager PIDs using any method (pgrep, jps, ps)")
     
     return pids
 
