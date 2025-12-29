@@ -144,8 +144,7 @@ class MainTableStressTest {
                 try {
                     int ptr = smallTable.put(entry.key, entry.namespace);
                     if (ptr != 0) {
-                        int base = (ptr - 1) * 3;
-                        smallTable.entries[base + 2] = entry.value;
+                        smallTable.states[ptr - 1] = entry.value;
                         pressureEntries.add(entry);
                     }
                 } catch (RuntimeException e) {
@@ -207,8 +206,7 @@ class MainTableStressTest {
             try {
                 int ptr = mainTable.put(entry.key, entry.namespace);
                 if (ptr != 0) {
-                    int base = (ptr - 1) * 3;
-                    mainTable.entries[base + 2] = entry.value;
+                    mainTable.states[ptr - 1] = entry.value;
                     exhaustionEntries.add(entry);
                 }
             } catch (RuntimeException e) {
@@ -238,8 +236,7 @@ class MainTableStressTest {
         try {
             int ptr = mainTable.put(entry.key, entry.namespace);
             if (ptr != 0) {
-                int base = (ptr - 1) * 3;
-                mainTable.entries[base + 2] = entry.value;
+                mainTable.states[ptr - 1] = entry.value;
                 return true;
             }
             return false;

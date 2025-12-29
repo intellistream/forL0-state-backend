@@ -174,16 +174,16 @@ public class L0Table<K, N, S> implements AutoCloseable {
      * Gets a ptr (address) from L0 cache if the entry exists and matches key/namespace.
      * 
      * <p>This is the heap object store version that uses direct object comparison
-     * for key/namespace matching with flattened entry storage.
+     * for key/namespace matching with separated key/namespace storage.
      *
      * @param hash the pre-computed hash value (full 32 bits used)
      * @param key the key object
      * @param namespace the namespace object
-     * @param entries the flattened entries array from MainTable [K0, N0, S0, K1, N1, S1, ...]
+     * @param keyNs the key/namespace array from MainTable [K0, N0, K1, N1, ...]
      * @return the ptr (address, >0) if found, 0 otherwise
      */
     @SuppressWarnings("unchecked")
-    public int get(int hash, K key, N namespace, Object[] entries) {
+    public int get(int hash, K key, N namespace, Object[] keyNs) {
         accessCount++;
         int bucketIndex = hash & bucketMask;
         
@@ -196,9 +196,9 @@ public class L0Table<K, N, S> implements AutoCloseable {
             if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
             
             int ptr = (int) slot;
-            int base = (ptr - 1) * 3;  // ENTRY_STRIDE = 3
-            K entryKey = (K) entries[base];
-            N entryNs = (N) entries[base + 1];
+            int base = (ptr - 1) * 2;
+            K entryKey = (K) keyNs[base];
+            N entryNs = (N) keyNs[base + 1];
             
             if (entryKey != null && entryKey.equals(key) 
                     && (entryNs == namespace || entryNs.equals(namespace))) {

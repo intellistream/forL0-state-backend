@@ -37,8 +37,7 @@ class MainTableTest {
             assertTrue(ptr != 0, "Put should return non-zero ptr");
             
             // Set state
-            int base = (ptr - 1) * 3;
-            mainTable.entries[base + 2] = value;
+            mainTable.states[ptr - 1] = value;
             
             // Get state from MainTable
             String retrievedState = mainTable.get(key, namespace);
@@ -57,13 +56,12 @@ class MainTableTest {
             int ptr1 = mainTable.put(key, namespace);
             assertTrue(ptr1 != 0, "Should return non-zero ptr for new insertion");
             if (ptr1 < 0) ptr1 = -ptr1;  // Handle negative ptr for new entries
-            int base1 = (ptr1 - 1) * 3;
-            mainTable.entries[base1 + 2] = value1;
+            mainTable.states[ptr1 - 1] = value1;
             
             // Update same key/namespace - should return the same ptr
             int ptr2 = mainTable.put(key, namespace);
             assertEquals(ptr1, ptr2, "Should return the same ptr for same key/namespace");
-            mainTable.entries[base1 + 2] = value2;
+            mainTable.states[ptr1 - 1] = value2;
             
             // Verify updated state
             String retrieved = mainTable.get(key, namespace);
@@ -80,8 +78,7 @@ class MainTableTest {
             // Insert entry
             int ptr = mainTable.put(key, namespace);
             assertTrue(ptr != 0);
-            int base = (ptr - 1) * 3;
-            mainTable.entries[base + 2] = value;
+            mainTable.states[ptr - 1] = value;
             
             // Get state before removal
             String beforeRemove = mainTable.get(key, namespace);
@@ -118,8 +115,7 @@ class MainTableTest {
                 String value = "extValue" + i;
                 int ptr = mainTable.put(fixedKey, namespace);
                 assertTrue(ptr != 0, "Should insert successfully, using extension buckets if needed");
-                int base = (ptr - 1) * 3;
-                mainTable.entries[base + 2] = value;
+                mainTable.states[ptr - 1] = value;
             }
             // Verify extension buckets were allocated
             MainTable.TableStats stats = mainTable.getStats();
@@ -141,14 +137,12 @@ class MainTableTest {
             int ptr1 = mainTable.put(key1, namespace);
             assertTrue(ptr1 != 0);
             if (ptr1 < 0) ptr1 = -ptr1;  // Handle negative ptr for new entries
-            int base1 = (ptr1 - 1) * 3;
-            mainTable.entries[base1 + 2] = value1;
+            mainTable.states[ptr1 - 1] = value1;
             
             int ptr2 = mainTable.put(key2, namespace);
             assertTrue(ptr2 != 0);
             if (ptr2 < 0) ptr2 = -ptr2;  // Handle negative ptr for new entries
-            int base2 = (ptr2 - 1) * 3;
-            mainTable.entries[base2 + 2] = value2;
+            mainTable.states[ptr2 - 1] = value2;
             // Verify both entries can be retrieved
             assertNotNull(mainTable.get(key1, namespace));
             assertNotNull(mainTable.get(key2, namespace));
@@ -173,8 +167,7 @@ class MainTableTest {
                 String namespace = "loadNamespace";
                 String value = "loadValue" + i;
                 int ptr = mainTable.put(key, namespace);
-                int base = (ptr - 1) * 3;
-                mainTable.entries[base + 2] = value;
+                mainTable.states[ptr - 1] = value;
             }
             MainTable.TableStats stats = mainTable.getStats();
             assertTrue(stats.loadFactor > 0, "Load factor should increase after insertions");
@@ -192,8 +185,7 @@ class MainTableTest {
                     String namespace = "resizeNamespace";
                     String value = "resizeValue" + i;
                     int ptr = customTable.put(key, namespace);
-                    int base = (ptr - 1) * 3;
-                    customTable.entries[base + 2] = value;
+                    customTable.states[ptr - 1] = value;
                 }
                 // With INITIAL_BUCKET_COUNT and threshold 0.5, 100 entries should NOT trigger resize
                 assertFalse(customTable.needsResize(), "Should not need resize with only 100 entries");
@@ -219,8 +211,7 @@ class MainTableTest {
                 String namespace = "ns" + (i % 10);
                 String value = "value" + i;
                 int ptr = mainTable.put(key, namespace);
-                int base = (ptr - 1) * 3;
-                mainTable.entries[base + 2] = value;
+                mainTable.states[ptr - 1] = value;
             }
             MainTable.TableStats stats = mainTable.getStats();
             System.out.println("Stats after 1000 insertions: " + stats);
@@ -240,8 +231,7 @@ class MainTableTest {
             String value = "emptyKeyValue";
             int ptr = mainTable.put(emptyKey, emptyNamespace);
             assertTrue(ptr != 0, "Should handle empty key and namespace");
-            int base = (ptr - 1) * 3;
-            mainTable.entries[base + 2] = value;
+            mainTable.states[ptr - 1] = value;
             String retrieved = mainTable.get(emptyKey, emptyNamespace);
             assertNotNull(retrieved, "Should retrieve entry with empty key/namespace");
             assertEquals(value, retrieved);
@@ -266,8 +256,7 @@ class MainTableTest {
             String largeValue = largeValueBuilder.toString();
             int ptr = mainTable.put(largeKey, largeNamespace);
             assertTrue(ptr != 0, "Should handle large entries");
-            int base = (ptr - 1) * 3;
-            mainTable.entries[base + 2] = largeValue;
+            mainTable.states[ptr - 1] = largeValue;
             String retrieved = mainTable.get(largeKey, largeNamespace);
             assertNotNull(retrieved, "Should retrieve large entry");
             assertEquals(largeValue, retrieved);
@@ -284,12 +273,10 @@ class MainTableTest {
             // Insert both entries with same hash
             int ptr1 = mainTable.put(key1, namespace);
             if (ptr1 < 0) ptr1 = -ptr1;  // Handle negative ptr for new entries
-            int base1 = (ptr1 - 1) * 3;
-            mainTable.entries[base1 + 2] = value1;
+            mainTable.states[ptr1 - 1] = value1;
             int ptr2 = mainTable.put(key2, namespace);
             if (ptr2 < 0) ptr2 = -ptr2;  // Handle negative ptr for new entries
-            int base2 = (ptr2 - 1) * 3;
-            mainTable.entries[base2 + 2] = value2;
+            mainTable.states[ptr2 - 1] = value2;
             assertTrue(ptr1 != 0, "First entry should insert successfully");
             assertTrue(ptr2 != 0, "Second entry should insert successfully");
             // Verify both can be retrieved correctly
@@ -308,8 +295,7 @@ class MainTableTest {
                 String namespace = "iterNamespace";
                 String value = "iterValue" + i;
                 int ptr = mainTable.put(key, namespace);
-                int base = (ptr - 1) * 3;
-                mainTable.entries[base + 2] = value;
+                mainTable.states[ptr - 1] = value;
             }
             // Verify entries were inserted
             MainTable.TableStats stats = mainTable.getStats();
@@ -323,8 +309,7 @@ class MainTableTest {
                 String namespace = "expandNamespace";
                 String value = "expandValue" + i;
                 int ptr = mainTable.put(key, namespace);
-                int base = (ptr - 1) * 3;
-                mainTable.entries[base + 2] = value;
+                mainTable.states[ptr - 1] = value;
             }
             // Verify entries can be retrieved
             for (int i = 0; i < 5; i++) {
@@ -344,8 +329,7 @@ class MainTableTest {
             String namespace = "closeNamespace";
             String value = "closeValue";
                 int ptr = mainTable.put(key, namespace);
-                int base = (ptr - 1) * 3;
-            mainTable.entries[base + 2] = value;
+            mainTable.states[ptr - 1] = value;
             // Close should not throw exception
             assertDoesNotThrow(() -> mainTable.close());
         }
@@ -372,8 +356,7 @@ class MainTableTest {
             String namespace = "statsNamespace";
             String value = "statsValue";
             int ptr = mainTable.put(key, namespace);
-            int base = (ptr - 1) * 3;
-            mainTable.entries[base + 2] = value;
+            mainTable.states[ptr - 1] = value;
             MainTable.TableStats updatedStats = mainTable.getStats();
             assertEquals(1, updatedStats.totalEntries, "Should have 1 entry after insertion");
             assertTrue(updatedStats.loadFactor > 0, "Load factor should be positive after insertion");

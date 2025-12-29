@@ -127,31 +127,28 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public void put(K key, N namespace, S state) {
         // Deduplicate namespace object to reduce memory and improve identity comparison
-        if (namespace.equals(lastNamespace)) {
+        if (namespace == lastNamespace || namespace.equals(lastNamespace)) {
             namespace = lastNamespace;
         } else {
             lastNamespace = namespace;
         }
         
         int ptr = mainTable.put(key, namespace);
-        int base = (ptr - 1) * 3;
-        mainTable.entries[base + 2] = state;
+        mainTable.states[ptr - 1] = state;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public S putAndGetOld(K key, N namespace, S state) {
         // Deduplicate namespace object to reduce memory and improve identity comparison
-        if (namespace.equals(lastNamespace)) {
+        if (namespace == lastNamespace || namespace.equals(lastNamespace)) {
             namespace = lastNamespace;
         } else {
             lastNamespace = namespace;
         }
         
         int ptr = mainTable.put(key, namespace);
-        int base = (ptr - 1) * 3;
-        S oldValue = (S) mainTable.entries[base + 2];
-        mainTable.entries[base + 2] = state;
+        S oldValue = (S) mainTable.states[ptr - 1];
+        mainTable.states[ptr - 1] = state;
         return oldValue;
     }
 
@@ -166,12 +163,27 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     @Override
+    public <T> void transform(K key, N namespace, T value, StateTransformationFunction<S, T> transformation)
+            throws Exception {
+        // Deduplicate namespace object to reduce memory and improve identity comparison
+        if (namespace == lastNamespace || namespace.equals(lastNamespace)) {
+            namespace = lastNamespace;
+        } else {
+            lastNamespace = namespace;
+        }
+        
+        int ptr = mainTable.put(key, namespace);
+        S oldState = (S) mainTable.states[ptr - 1];
+        mainTable.states[ptr - 1] = transformation.apply(oldState, value);
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public int sizeOfNamespace(Object namespace) {
         int[] cnt = new int[1];
         mainTable.forEachEntry((ptr, hash) -> {
-            int base = (ptr - 1) * 3;
-            N n = (N) mainTable.entries[base + 1];  // namespace
+            int base = (ptr - 1) * 2;
+            N n = (N) mainTable.keyNs[base + 1];  // namespace
             if (n != null && namespace != null && namespace.equals(n)) {
                 cnt[0]++;
             }
@@ -189,7 +201,10 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 java.util.ArrayList<StateEntry<K, N, S>> batch = new java.util.ArrayList<>(batchSize);
                 int i = 0;
                 while (i < batchSize && iter.hasNext()) {
-                    batch.add(iter.next());
+                    // Copy current entry data into lightweight POJO
+                    // (iterator returns reusable view, must copy here)
+                    StateEntry<K, N, S> entry = iter.next();
+                    batch.add(new StateEntryImpl<>(entry.getKey(), entry.getNamespace(), entry.getState()));
                     i++;
                 }
                 return batch;
@@ -224,54 +239,173 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     /**
-     * Lazy iterator over all entries in the MainTable.
+     * Lightweight StateEntry implementation for batch operations.
+     * Used by StateIncrementalVisitor to avoid anonymous class overhead.
+     */
+    private static class StateEntryImpl<K, N, S> implements StateEntry<K, N, S> {
+        private final K key;
+        private final N namespace;
+        private final S state;
+
+        StateEntryImpl(K key, N namespace, S state) {
+            this.key = key;
+            this.namespace = namespace;
+            this.state = state;
+        }
+
+        @Override
+        public K getKey() { return key; }
+
+        @Override
+        public N getNamespace() { return namespace; }
+
+        @Override
+        public S getState() { return state; }
+    }
+
+    /**
+     * Cursor-based iterator over all entries in the MainTable (zero pre-allocation).
+     * Uses simple state machine: scan main buckets sequentially, then their extensions.
      */
     private class MainTableIterator implements Iterator<StateEntry<K, N, S>> {
-        private final int[] ptrs;
-        private int index = 0;
+        private int bucketIdx = 0;        // Current main bucket index
+        private int slotIdx = 0;          // Current slot in bucket (0-6 for data)
+        private int extPath = -1;         // Current extension path (-1 = in main bucket)
+        private int extBucket = 0;        // Current extension bucket in chain
+        private long extSlot = 0;         // Cached extension slot for current bucket
         
-        MainTableIterator() {
-            // Collect all pointers first (just ints, minimal allocation)
-            ptrs = new int[size()];
-            int[] count = {0};
-            mainTable.forEachEntry((ptr, hash) -> {
-                if (count[0] < ptrs.length) {
-                    ptrs[count[0]++] = ptr;
-                }
-            });
-        }
+        private int nextPtr = 0;
+        private boolean hasNextCached = false;
+        private final ReusableEntry reusableEntry = new ReusableEntry();
         
         @Override
         public boolean hasNext() {
-            return index < ptrs.length;
+            if (hasNextCached) return true;
+            nextPtr = findNext();
+            hasNextCached = (nextPtr > 0);
+            return hasNextCached;
         }
         
         @Override
-        @SuppressWarnings("unchecked")
         public StateEntry<K, N, S> next() {
-            if (!hasNext()) {
-                throw new java.util.NoSuchElementException();
-            }
-            int ptr = ptrs[index++];
-            int base = (ptr - 1) * 3;
+            if (!hasNext()) throw new java.util.NoSuchElementException();
+            hasNextCached = false;
+            reusableEntry.pointTo(nextPtr);
+            return reusableEntry;
+        }
+        
+        /**
+         * Reusable entry view. WARNING: reused across next() calls.
+         * Caches index calculations to avoid repeated computation.
+         */
+        private class ReusableEntry implements StateEntry<K, N, S> {
+            private int stateIndex;
+            private int base;
             
-            // Return anonymous StateEntry implementation
-            return new StateEntry<K, N, S>() {
-                @Override
-                public K getKey() {
-                    return (K) mainTable.entries[base];
+            void pointTo(int ptr) {
+                this.stateIndex = ptr - 1;
+                this.base = stateIndex << 1;  // (ptr - 1) * 2
+            }
+            
+            @Override @SuppressWarnings("unchecked")
+            public K getKey() { return (K) mainTable.keyNs[base]; }
+            
+            @Override @SuppressWarnings("unchecked")
+            public N getNamespace() { return (N) mainTable.keyNs[base + 1]; }
+            
+            @Override @SuppressWarnings("unchecked")
+            public S getState() { return (S) mainTable.states[stateIndex]; }
+        }
+        
+        /**
+         * Finds next non-zero ptr by advancing through buckets and extensions.
+         */
+        private int findNext() {
+            while (bucketIdx < mainTable.bucketCount) {
+                // Try main bucket first
+                if (extPath < 0) {
+                    int ptr = scanBucket(mainTable.table, bucketIdx << 3);
+                    if (ptr > 0) return ptr;
+                    
+                    // Read and cache extension slot for this bucket
+                    extSlot = mainTable.table[(bucketIdx << 3) + 7];
+                    if (extSlot == 0) {
+                        // All 8 paths empty, skip to next main bucket
+                        bucketIdx++;
+                        slotIdx = 0;
+                        continue;
+                    }
+                    
+                    // Find first non-zero path
+                    extPath = 0;
+                    while (extPath < 8 && ((extSlot >>> (extPath << 3)) & 0xFF) == 0) {
+                        extPath++;
+                    }
+                    extBucket = 0;
+                    slotIdx = 0;
                 }
                 
-                @Override
-                public N getNamespace() {
-                    return (N) mainTable.entries[base + 1];
+                // Scan current path
+                if (extPath < 8) {
+                    int ptr = scanExtensionPath();
+                    if (ptr > 0) return ptr;
+                    
+                    // Find next non-zero path
+                    extPath++;
+                    while (extPath < 8 && ((extSlot >>> (extPath << 3)) & 0xFF) == 0) {
+                        extPath++;
+                    }
+                    extBucket = 0;
+                    slotIdx = 0;
+                    continue;
                 }
                 
-                @Override
-                public S getState() {
-                    return (S) mainTable.entries[base + 2];
-                }
-            };
+                // Next main bucket
+                bucketIdx++;
+                extPath = -1;
+                slotIdx = 0;
+            }
+            return 0;
+        }
+        
+        /**
+         * Scans one bucket (main or extension) starting from current slotIdx.
+         */
+        private int scanBucket(long[] table, int offset) {
+            while (slotIdx < 7) {
+                long slot = table[offset + slotIdx++];
+                if (slot == 0) { slotIdx = 7; break; }  // Early exit
+                return (int) slot;  // Found non-zero slot
+            }
+            return 0;
+        }
+        
+        /**
+         * Scans current extension path (follows chain of buckets).
+         * Assumes extSlot is already cached and extPath points to a non-zero path.
+         */
+        private int scanExtensionPath() {
+            // Get first/next bucket in this path
+            if (extBucket == 0) {
+                // Use cached extSlot instead of re-reading from table
+                int offset = (int)((extSlot >>> (extPath << 3)) & 0xFF);
+                if (offset == 0) return 0;  // Should not happen (findNext ensures non-zero)
+                extBucket = mainTable.extensionBucketBaseIndices[bucketIdx] + offset - 1;
+            }
+            
+            // Scan extension buckets in chain
+            while (extBucket >= mainTable.bucketCount) {
+                int ptr = scanBucket(mainTable.extensions, (extBucket - mainTable.bucketCount) << 3);
+                if (ptr > 0) return ptr;
+                
+                // Follow chain
+                long extPtr = mainTable.extensions[(extBucket - mainTable.bucketCount) << 3 | 7];
+                int offset = (int)((extPtr >>> (extPath << 3)) & 0xFF);
+                if (offset == 0) break;
+                extBucket = mainTable.extensionBucketBaseIndices[bucketIdx] + offset - 1;
+                slotIdx = 0;
+            }
+            return 0;
         }
     }
 
@@ -286,30 +420,14 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     public Stream<K> getKeys(N namespace) {
         java.util.ArrayList<K> keys = new java.util.ArrayList<>();
         mainTable.forEachEntry((ptr, hash) -> {
-            int base = (ptr - 1) * 3;
-            K k = (K) mainTable.entries[base];        // key
-            N n = (N) mainTable.entries[base + 1];     // namespace
+            int base = (ptr - 1) * 2;
+            K k = (K) mainTable.keyNs[base];        // key
+            N n = (N) mainTable.keyNs[base + 1];     // namespace
             if (n != null && n.equals(namespace)) {
                 keys.add(k);
             }
         });
         return keys.stream();
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> void transform(K key, N namespace, T value, StateTransformationFunction<S, T> transformation)
-            throws Exception {
-        // Deduplicate namespace object to reduce memory and improve identity comparison
-        if (namespace.equals(lastNamespace)) {
-            namespace = lastNamespace;
-        } else {
-            lastNamespace = namespace;
-        }
-        
-        int ptr = mainTable.put(key, namespace);
-        int base = (ptr - 1) * 3;
-        mainTable.entries[base + 2] = transformation.apply((S) mainTable.entries[base + 2], value);
     }
 
     // ================== Statistics (for benchmark/testing) ==================

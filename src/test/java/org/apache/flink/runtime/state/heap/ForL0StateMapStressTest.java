@@ -924,7 +924,7 @@ public class ForL0StateMapStressTest {
     }
 
     @Nested
-    //@Disabled
+    @Disabled
     @DisplayName("Put/Get操作性能基准测试")
     class PutGetBenchmarkTests {
 

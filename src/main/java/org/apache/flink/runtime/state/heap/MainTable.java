@@ -54,10 +54,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
     private static final double DEFAULT_LOAD_FACTOR_THRESHOLD = 1.5;
     private static final int EXTENSION_POOL_GROW_SIZE = 32;  // Grow 32 extension areas at a time
 
-    // ========== Entry Storage (Flattened AoS Layout) ==========
-    
-    /** Entry storage stride: K, N, S stored consecutively (3 references per entry). */
-    private static final int ENTRY_STRIDE = 3;
+    // ========== Entry Storage (Key/Namespace separated from State) ==========
     
     /** Initial entry capacity: 32K entries to match bucket count. */
     private static final int INITIAL_ENTRY_CAPACITY = 32 * 1024;
@@ -65,8 +62,11 @@ public class MainTable<K, N, S> implements AutoCloseable {
     /** Initial free list size. */
     private static final int INITIAL_FREE_LIST_SIZE = 512;
 
-    /** Flattened entry storage: [K0, N0, S0, K1, N1, S1, ...]. */
-    Object[] entries;
+    /** Key and namespace storage: [K0, N0, K1, N1, ...]. Package-private for direct access. */
+    Object[] keyNs;
+    
+    /** State storage: [S0, S1, ...]. Package-private for direct access. */
+    Object[] states;
     
     /** Hash values stored separately (only accessed during rehash). */
     private int[] hashes;
@@ -84,14 +84,14 @@ public class MainTable<K, N, S> implements AutoCloseable {
     // ========== Bucket Index Storage ==========
     
     // Flattened bucket table: one-dimensional array for better cache performance
-    private long[] table;            // Main bucket table
-    private long[] extensions;       // Extension bucket area (separate for locality)
-    private int bucketCount;
+    long[] table;            // Main bucket table (package-private for iterator)
+    long[] extensions;       // Extension bucket area (package-private for iterator)
+    int bucketCount;         // Package-private for iterator
     private int bucketMask;  // bucketCount - 1, cached for fast modulo
     
     // Extension bucket management
     private int[] extensionBucketCounts;       // Number of extension buckets per main bucket
-    private int[] extensionBucketBaseIndices;  // Base bucket index for each main bucket's extension area
+    int[] extensionBucketBaseIndices;  // Base bucket index (package-private for iterator)
     private int extensionPoolCapacity;         // Total extension areas available
     private int extensionPoolUsed;             // Extension areas allocated to main buckets
     
@@ -146,9 +146,10 @@ public class MainTable<K, N, S> implements AutoCloseable {
         this.extensionPoolCapacity = 0;
         this.extensionPoolUsed = 0;
         
-        // Initialize flattened entry storage: 32K entries (96K Object refs + 32K ints)
+        // Initialize entry storage: keyNs (64K Object refs) + states (32K refs) + hashes (32K ints)
         this.entryCapacity = INITIAL_ENTRY_CAPACITY;
-        this.entries = new Object[entryCapacity * ENTRY_STRIDE];
+        this.keyNs = new Object[entryCapacity * 2];
+        this.states = new Object[entryCapacity];
         this.hashes = new int[entryCapacity];
         this.nextEntryIndex = 0;
         this.freeList = new int[INITIAL_FREE_LIST_SIZE];
@@ -159,16 +160,16 @@ public class MainTable<K, N, S> implements AutoCloseable {
 
     /**
      * Computes composite hash for key and namespace.
-     * Uses double bitMix with XOR for better hash distribution.
-     * 
      * @param key the key object
      * @param namespace the namespace object
      * @return scrambled composite hash value
      */
     public static int computeHash(Object key, Object namespace) {
-        // Apply bitMix to each hash separately, then XOR them
-        // This provides better distribution than single bitMix on combined value
-        return MathUtils.bitMix(key.hashCode()) ^ MathUtils.bitMix(namespace.hashCode());
+        int keyHash = key.hashCode();
+        int nsHash = namespace.hashCode();
+        // Mix using golden ratio constant (0x9e3779b9) with bit shifts
+        keyHash ^= nsHash + 0x9e3779b9 + (keyHash << 6) + (keyHash >>> 2);
+        return MathUtils.bitMix(keyHash);
     }
 
     // ========== Core Operations ==========
@@ -181,16 +182,14 @@ public class MainTable<K, N, S> implements AutoCloseable {
      * @return the state value if found, null otherwise
      */
     @Nullable
-    @SuppressWarnings("unchecked")
     public S get(K key, N namespace) {
         int hash = computeHash(key, namespace);
         
         // Check L0 cache first (JIT can eliminate this branch if l0CacheEnabled is false)
         if (l0CacheEnabled) {
-            int ptr = l0Table.get(hash, key, namespace, entries);
+            int ptr = l0Table.get(hash, key, namespace, keyNs);
             if (ptr > 0) {
-                int base = (ptr - 1) * ENTRY_STRIDE;
-                return (S) entries[base + 2];  // Return state
+                return (S) states[ptr - 1];  // Return state
             }
         }
         
@@ -205,17 +204,16 @@ public class MainTable<K, N, S> implements AutoCloseable {
             if ((int)(slot >>> HASH_SHIFT) != hash) continue;  // Hash mismatch
 
             int ptr = (int) slot;
-            int base = (ptr - 1) * ENTRY_STRIDE;
-            Object entryKey = entries[base];
-            Object entryNs = entries[base + 1];
-            
-            if (entryKey.equals(key) 
-                    && (entryNs == namespace || entryNs.equals(namespace))) {
-                if (l0CacheEnabled) {
-                    l0Table.put(hash, ptr);
-                }
-                return (S) entries[base + 2];  // Return state
+            int base = (ptr - 1) * 2;
+            Object entryKey = keyNs[base];
+            if (entryKey != key && !entryKey.equals(key)) continue;
+
+            Object entryNs = keyNs[base + 1];
+            if ((entryNs != namespace && !entryNs.equals(namespace))) continue;
+            if (l0CacheEnabled) {
+                l0Table.put(hash, ptr);
             }
+            return (S) states[ptr - 1]; // Found
         }
         
         // Check if main bucket has extension
@@ -238,17 +236,16 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 if ((int)(slot >>> HASH_SHIFT) != hash) continue;
 
                 int ptr = (int) slot;
-                int base = (ptr - 1) * ENTRY_STRIDE;
-                Object entryKey = entries[base];
-                Object entryNs = entries[base + 1];
-                
-                if (entryKey.equals(key) 
-                        && (entryNs == namespace || entryNs.equals(namespace))) {
-                    if (l0CacheEnabled) {
-                        l0Table.put(hash, ptr);
-                    }
-                    return (S) entries[base + 2];
+                int base = (ptr - 1) * 2;
+                Object entryKey = keyNs[base];
+                if (entryKey != key && !entryKey.equals(key)) continue;
+
+                Object entryNs = keyNs[base + 1];
+                if ((entryNs != namespace && !entryNs.equals(namespace))) continue;
+                if (l0CacheEnabled) {
+                    l0Table.put(hash, ptr);
                 }
+                return (S) states[ptr - 1];
             }
             
             // Check next level extension
@@ -297,18 +294,17 @@ public class MainTable<K, N, S> implements AutoCloseable {
             
             if ((int)(slot >>> HASH_SHIFT) == hash) {
                 int ptr = (int) slot;
-                int base = (ptr - 1) * ENTRY_STRIDE;
-                Object entryKey = entries[base];
-                Object entryNs = entries[base + 1];
-                
-                if (entryKey.equals(key) 
-                        && (entryNs == namespace || entryNs.equals(namespace))) {
-                    // Already exists: return existing ptr
-                    if (l0CacheEnabled) {
-                        l0Table.put(hash, ptr);
-                    }
-                    return ptr;
+                int base = (ptr - 1) * 2;
+                Object entryKey = keyNs[base];
+                if (entryKey != key && !entryKey.equals(key)) continue;
+
+                Object entryNs = keyNs[base + 1];
+                if ((entryNs != namespace && !entryNs.equals(namespace))) continue;
+                // Already exists: return existing ptr
+                if (l0CacheEnabled) {
+                    l0Table.put(hash, ptr);
                 }
+                return ptr;
             }
         }
         
@@ -356,18 +352,17 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 
                 if ((int)(slot >>> HASH_SHIFT) == hash) {
                     int ptr = (int) slot;
-                    int base = (ptr - 1) * ENTRY_STRIDE;
-                    Object entryKey = entries[base];
-                    Object entryNs = entries[base + 1];
-                    
-                    if (entryKey.equals(key) 
-                            && (entryNs == namespace || entryNs.equals(namespace))) {
-                        // Already exists: return existing ptr
-                        if (l0CacheEnabled) {
-                            l0Table.put(hash, ptr);
-                        }
-                        return ptr;
+                    int base = (ptr - 1) * 2;
+                    Object entryKey = keyNs[base];
+                    if (entryKey != key && !entryKey.equals(key)) continue;
+
+                    Object entryNs = keyNs[base + 1];
+                    if ((entryNs != namespace && !entryNs.equals(namespace))) continue;
+                    // Already exists: return existing ptr
+                    if (l0CacheEnabled) {
+                        l0Table.put(hash, ptr);
                     }
+                    return ptr;
                 }
             }
             
@@ -393,7 +388,7 @@ public class MainTable<K, N, S> implements AutoCloseable {
             depth++;
             if (depth > maxExtensionDepth) {
                 maxExtensionDepth = depth;
-                if (maxExtensionDepth >= 3) {
+                if (maxExtensionDepth >= 2) {
                     LOG.info("⚠️ MainTable extension tree depth reached {}! Consider increasing bucket count or checking hash distribution.", maxExtensionDepth);
                 }
             }
@@ -408,7 +403,6 @@ public class MainTable<K, N, S> implements AutoCloseable {
      * @return the removed state value (S), or null if not found
      */
     @Nullable
-    @SuppressWarnings("unchecked")
     public S remove(K key, N namespace) {
         int hash = computeHash(key, namespace);
         int mainBucketIndex = hash & bucketMask;
@@ -420,31 +414,31 @@ public class MainTable<K, N, S> implements AutoCloseable {
             if ((int)(slot >>> HASH_SHIFT) != hash) continue;
             
             int ptr = (int) slot;
-            int base = (ptr - 1) * ENTRY_STRIDE;
-            Object entryKey = entries[base];
-            Object entryNs = entries[base + 1];
+            int base = (ptr - 1) * 2;
+            Object entryKey = keyNs[base];
+            if (entryKey != key && !entryKey.equals(key)) continue;
+
+            Object entryNs = keyNs[base + 1];
+            if ((entryNs != namespace && !entryNs.equals(namespace))) continue;
             
-            if (entryKey.equals(key) 
-                    && (entryNs == namespace || entryNs.equals(namespace))) {
-                // Found: get state value before deletion
-                S removedState = (S) entries[base + 2];
-                
-                // Maintain contiguity by shifting forward from i+1
-                int next = i + 1;
-                while (next < SLOTS_PER_BUCKET && table[tableOffset + next] != 0) {
-                    table[tableOffset + next - 1] = table[tableOffset + next];
-                    next++;
-                }
-                // Clear the last occupied position
-                table[tableOffset + next - 1] = 0;
-                
-                totalEntries--;
-                if (l0CacheEnabled) {
-                    l0Table.remove(hash, ptr);
-                }
-                removeEntry(ptr);
-                return removedState;
+            // Found: get state value before deletion
+            S removedState = (S) states[ptr - 1];
+            
+            // Maintain contiguity by shifting forward from i+1
+            int next = i + 1;
+            while (next < SLOTS_PER_BUCKET && table[tableOffset + next] != 0) {
+                table[tableOffset + next - 1] = table[tableOffset + next];
+                next++;
             }
+            // Clear the last occupied position
+            table[tableOffset + next - 1] = 0;
+            
+            totalEntries--;
+            if (l0CacheEnabled) {
+                l0Table.remove(hash, ptr);
+            }
+            removeEntry(ptr);
+            return removedState;
         }
         
         // Check if main bucket has extension
@@ -466,31 +460,31 @@ public class MainTable<K, N, S> implements AutoCloseable {
                 if ((int)(slot >>> HASH_SHIFT) != hash) continue;
                 
                 int ptr = (int) slot;
-                int base = (ptr - 1) * ENTRY_STRIDE;
-                Object entryKey = entries[base];
-                Object entryNs = entries[base + 1];
+                int base = (ptr - 1) * 2;
+                Object entryKey = keyNs[base];
+                if (entryKey != key && !entryKey.equals(key)) continue;
+
+                Object entryNs = keyNs[base + 1];
+                if ((entryNs != namespace && !entryNs.equals(namespace))) continue;
                 
-                if (entryKey.equals(key) 
-                        && (entryNs == namespace || entryNs.equals(namespace))) {
-                    // Found: get state value before deletion
-                    S removedState = (S) entries[base + 2];
-                    
-                    // Maintain contiguity by shifting forward from i+1
-                    int next = i + 1;
-                    while (next < SLOTS_PER_BUCKET && extensions[extTableOffset + next] != 0) {
-                        extensions[extTableOffset + next - 1] = extensions[extTableOffset + next];
-                        next++;
-                    }
-                    // Clear the last occupied position
-                    extensions[extTableOffset + next - 1] = 0;
-                    
-                    totalEntries--;
-                    if (l0CacheEnabled) {
-                        l0Table.remove(hash, ptr);
-                    }
-                    removeEntry(ptr);
-                    return removedState;
+                // Found: get state value before deletion
+                S removedState = (S) states[ptr - 1];
+                
+                // Maintain contiguity by shifting forward from i+1
+                int next = i + 1;
+                while (next < SLOTS_PER_BUCKET && extensions[extTableOffset + next] != 0) {
+                    extensions[extTableOffset + next - 1] = extensions[extTableOffset + next];
+                    next++;
                 }
+                // Clear the last occupied position
+                extensions[extTableOffset + next - 1] = 0;
+                
+                totalEntries--;
+                if (l0CacheEnabled) {
+                    l0Table.remove(hash, ptr);
+                }
+                removeEntry(ptr);
+                return removedState;
             }
             
             // Check next level extension
@@ -524,11 +518,11 @@ public class MainTable<K, N, S> implements AutoCloseable {
             entryIndex = nextEntryIndex++;
         }
         
-        // Store K, N, S consecutively
-        int base = entryIndex * ENTRY_STRIDE;
-        entries[base] = key;
-        entries[base + 1] = namespace;
-        entries[base + 2] = state;
+        // Store K, N in keyNs array, S in states array
+        int base = entryIndex * 2;
+        keyNs[base] = key;
+        keyNs[base + 1] = namespace;
+        states[entryIndex] = state;
         hashes[entryIndex] = hash;
         
         // Return index + 1 to reserve 0 as NULL
@@ -542,12 +536,12 @@ public class MainTable<K, N, S> implements AutoCloseable {
         if (ptr <= 0) return;
         
         int entryIndex = ptr - 1;
-        int base = entryIndex * ENTRY_STRIDE;
+        int base = entryIndex * 2;
         
-        // Clear all three references
-        entries[base] = null;
-        entries[base + 1] = null;
-        entries[base + 2] = null;
+        // Clear all references
+        keyNs[base] = null;
+        keyNs[base + 1] = null;
+        states[entryIndex] = null;
         // hashes[entryIndex] not cleared (only used in rehash)
         
         // Add to free list (expand if necessary)
@@ -558,11 +552,12 @@ public class MainTable<K, N, S> implements AutoCloseable {
     }
 
     /**
-     * Expands the entries array when more capacity is needed.
+     * Expands the keyNs and states arrays when more capacity is needed.
      */
     private void expandEntries() {
         int newCapacity = entryCapacity * 2;
-        entries = Arrays.copyOf(entries, newCapacity * ENTRY_STRIDE);
+        keyNs = Arrays.copyOf(keyNs, newCapacity * 2);
+        states = Arrays.copyOf(states, newCapacity);
         hashes = Arrays.copyOf(hashes, newCapacity);
         entryCapacity = newCapacity;
     }
@@ -739,8 +734,8 @@ public class MainTable<K, N, S> implements AutoCloseable {
         
         // Rehash all entries (using hashes[] array)
         for (int entryIndex = 0; entryIndex < nextEntryIndex; entryIndex++) {
-            int base = entryIndex * ENTRY_STRIDE;
-            if (entries[base] == null) continue;  // Deleted entry
+            int base = entryIndex * 2;
+            if (keyNs[base] == null) continue;  // Deleted entry
             
             int hash = hashes[entryIndex];
             int ptr = entryIndex + 1;
@@ -894,10 +889,14 @@ public class MainTable<K, N, S> implements AutoCloseable {
             l0Table.close();
         }
         
-        // Clear flattened entry storage
-        if (entries != null) {
-            Arrays.fill(entries, null);
-            entries = null;
+        // Clear entry storage
+        if (keyNs != null) {
+            Arrays.fill(keyNs, null);
+            keyNs = null;
+        }
+        if (states != null) {
+            Arrays.fill(states, null);
+            states = null;
         }
         hashes = null;
         freeList = null;
