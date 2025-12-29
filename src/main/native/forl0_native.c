@@ -117,16 +117,24 @@ static int init_l0_mode(size_t max_capacity) {
     return 0;
 #else
     if (!p_cache_tuner_init) {
+        fprintf(stderr, "[ForL0] ERROR: cache_tuner_init function not available\n");
         return 0;
     }
 
+    fprintf(stdout, "[ForL0] Initializing L0 cache tuner with max_capacity=%zu (%.2f MB)...\n", 
+            max_capacity, max_capacity / (1024.0 * 1024.0));
+    
     int ret = p_cache_tuner_init(&global_tuner, max_capacity);
     if (ret != RET_SUCCESS) {
-        fprintf(stderr, "[ForL0] Failed to initialize cache tuner: %d\n", ret);
+        fprintf(stderr, "[ForL0] ERROR: cache_tuner_init failed with return code: %d\n", ret);
+        fprintf(stderr, "[ForL0] ERROR: Check if:\n");
+        fprintf(stderr, "[ForL0] ERROR:   1. /dev/hisi_l0 device is accessible\n");
+        fprintf(stderr, "[ForL0] ERROR:   2. L0 kernel module is loaded (lsmod | grep hisi_l0)\n");
+        fprintf(stderr, "[ForL0] ERROR:   3. max_capacity is valid (current: %zu bytes)\n", max_capacity);
         return 0;
     }
 
-    fprintf(stdout, "[ForL0] L0 mode initialized with max_capacity=%zu\n", max_capacity);
+    fprintf(stdout, "[ForL0] SUCCESS: L0 cache tuner initialized at %p\n", (void*)global_tuner);
     return 1;
 #endif
 }
@@ -215,16 +223,29 @@ static void* do_create_raw_pool(const char *name, size_t size) {
 #ifndef L0_NOT_SUPPORTED
     if (g_mode == 2) {
         /* L0 mode: ONLY use L0 pool creation */
-        if (!global_tuner || !p_mem_pool_create_raw) {
-            fprintf(stderr, "[ForL0] ERROR: L0 mode but pool functions not available\n");
+        if (!global_tuner) {
+            fprintf(stderr, "[ForL0] ERROR: L0 mode but global_tuner is NULL (not initialized)\n");
             return NULL;
         }
+        if (!p_mem_pool_create_raw) {
+            fprintf(stderr, "[ForL0] ERROR: L0 mode but mem_pool_create_raw function not available\n");
+            return NULL;
+        }
+        
+        fprintf(stdout, "[ForL0] Creating raw pool '%s' size=%zu (%.2f KB) tuner=%p\n", 
+                name, size, size / 1024.0, (void*)global_tuner);
+        
         void *pool = p_mem_pool_create_raw(global_tuner, name, size);
         if (pool) {
-            fprintf(stdout, "[ForL0] Created raw pool '%s' of size %zu at 0x%lx\n", 
-                    name, size, (unsigned long)pool);
+            fprintf(stdout, "[ForL0] SUCCESS: Created raw pool '%s' at address 0x%lx\n", 
+                    name, (unsigned long)pool);
         } else {
-            fprintf(stderr, "[ForL0] ERROR: Failed to create raw pool '%s'\n", name);
+            fprintf(stderr, "[ForL0] ERROR: L0 mem_pool_create_raw() returned NULL for pool '%s' size=%zu\n", 
+                    name, size);
+            fprintf(stderr, "[ForL0] ERROR: Possible causes:\n");
+            fprintf(stderr, "[ForL0] ERROR:   1. L0 capacity exhausted (check init capacity)\n");
+            fprintf(stderr, "[ForL0] ERROR:   2. L0 device error (check dmesg)\n");
+            fprintf(stderr, "[ForL0] ERROR:   3. Pool size too large\n");
         }
         return pool;
     }
