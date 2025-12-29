@@ -104,8 +104,10 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
         // Create raw pool (returns address of the memory block)
         long address = NativeL0Memory.createRawPool(poolName, bytes);
         if (address == 0) {
+            String mode = NativeL0Memory.isL0Mode() ? "L0 mode" : "Simulation mode";
             throw new L0MemoryAllocationException(
-                "Failed to create raw pool for " + bytes + " bytes. L0 memory may be exhausted.");
+                String.format("Failed to create raw pool for %d bytes (%s). Memory may be exhausted. Check native logs for details.",
+                    bytes, mode));
         }
 
         // Zero-initialize the memory
@@ -133,8 +135,10 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
         // Allocate aligned native memory
         long address = NativeL0Memory.mallocAligned(bytes, DEFAULT_ALIGNMENT);
         if (address == 0) {
+            String mode = NativeL0Memory.isL0Mode() ? "L0 mode" : "Simulation mode";
             throw new L0MemoryAllocationException(
-                "Native malloc failed for " + bytes + " bytes. System may be out of memory.");
+                String.format("Native malloc failed for %d bytes (%s). System may be out of memory. Check native logs for details.",
+                    bytes, mode));
         }
 
         // Zero-initialize the memory

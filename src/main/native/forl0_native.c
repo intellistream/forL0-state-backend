@@ -168,16 +168,21 @@ static void* do_malloc(size_t size) {
     init_mode();
     
 #ifndef L0_NOT_SUPPORTED
-    if (g_mode == 2 && global_tuner && p_l0_mem_alloc) {
-        void *ptr = p_l0_mem_alloc(global_tuner, size);
-        if (ptr) {
-            return ptr;
+    if (g_mode == 2) {
+        /* L0 mode: ONLY use L0 memory, no fallback */
+        if (!global_tuner || !p_l0_mem_alloc) {
+            fprintf(stderr, "[ForL0] ERROR: L0 mode but tuner not initialized\n");
+            return NULL;
         }
-        /* Fall through to malloc if L0 alloc fails */
-        fprintf(stderr, "[ForL0] L0 alloc failed, falling back to malloc\n");
+        void *ptr = p_l0_mem_alloc(global_tuner, size);
+        if (!ptr) {
+            fprintf(stderr, "[ForL0] ERROR: L0 allocation failed for size=%zu\n", size);
+        }
+        return ptr; /* Return NULL if allocation fails */
     }
 #endif
 
+    /* Simulation mode: use malloc */
     return malloc(size);
 }
 
@@ -185,15 +190,21 @@ static void do_free(void *ptr) {
     if (!ptr) return;
     
 #ifndef L0_NOT_SUPPORTED
-    if (g_mode == 2 && global_tuner && p_l0_mem_free) {
-        int ret = p_l0_mem_free(global_tuner, ptr);
-        if (ret == RET_SUCCESS) {
+    if (g_mode == 2) {
+        /* L0 mode: ONLY use L0 free */
+        if (!global_tuner || !p_l0_mem_free) {
+            fprintf(stderr, "[ForL0] ERROR: L0 mode but tuner not initialized for free\n");
             return;
         }
-        /* If L0 free fails, try regular free (might be malloc'd memory) */
+        int ret = p_l0_mem_free(global_tuner, ptr);
+        if (ret != RET_SUCCESS) {
+            fprintf(stderr, "[ForL0] ERROR: L0 free failed for ptr=%p\n", ptr);
+        }
+        return;
     }
 #endif
 
+    /* Simulation mode: use free */
     free(ptr);
 }
 
@@ -202,18 +213,24 @@ static void* do_create_raw_pool(const char *name, size_t size) {
     init_mode();
     
 #ifndef L0_NOT_SUPPORTED
-    if (g_mode == 2 && global_tuner && p_mem_pool_create_raw) {
+    if (g_mode == 2) {
+        /* L0 mode: ONLY use L0 pool creation */
+        if (!global_tuner || !p_mem_pool_create_raw) {
+            fprintf(stderr, "[ForL0] ERROR: L0 mode but pool functions not available\n");
+            return NULL;
+        }
         void *pool = p_mem_pool_create_raw(global_tuner, name, size);
         if (pool) {
             fprintf(stdout, "[ForL0] Created raw pool '%s' of size %zu at 0x%lx\n", 
                     name, size, (unsigned long)pool);
-            return pool;
+        } else {
+            fprintf(stderr, "[ForL0] ERROR: Failed to create raw pool '%s'\n", name);
         }
-        fprintf(stderr, "[ForL0] Failed to create raw pool '%s', falling back to malloc\n", name);
+        return pool;
     }
 #endif
 
-    /* Fall back to malloc in simulation mode or if L0 pool creation fails */
+    /* Simulation mode: use malloc */
     void *ptr = malloc(size);
     if (ptr) {
         fprintf(stdout, "[ForL0] Created simulated pool '%s' of size %zu at 0x%lx (malloc)\n", 
@@ -243,13 +260,17 @@ static void* do_malloc_aligned(size_t size, size_t alignment) {
     init_mode();
     
 #ifndef L0_NOT_SUPPORTED
-    if (g_mode == 2 && global_tuner && p_l0_mem_alloc) {
-        /* L0 memory is already aligned, just allocate */
-        void *ptr = p_l0_mem_alloc(global_tuner, size);
-        if (ptr) {
-            return ptr;
+    if (g_mode == 2) {
+        /* L0 mode: ONLY use L0 memory (L0 memory is naturally aligned) */
+        if (!global_tuner || !p_l0_mem_alloc) {
+            fprintf(stderr, "[ForL0] ERROR: L0 mode but tuner not initialized\n");
+            return NULL;
         }
-        fprintf(stderr, "[ForL0] L0 aligned alloc failed, falling back to posix_memalign\n");
+        void *ptr = p_l0_mem_alloc(global_tuner, size);
+        if (!ptr) {
+            fprintf(stderr, "[ForL0] ERROR: L0 aligned allocation failed for size=%zu\n", size);
+        }
+        return ptr;
     }
 #endif
 
