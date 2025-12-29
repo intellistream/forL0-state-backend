@@ -96,10 +96,17 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             : null;
         this.mainTable = new MainTable<>(loadFactorThreshold, l0Table);
 
-        LOG.debug("ForL0StateMap initialized with mainTable=65536 buckets, " +
-                  "l0Cache={} buckets, cache={}, policy={}, loadFactor={}",
-                l0CacheEnabled ? 1 << l0CacheSizePow2 : 0, 
-                l0CacheEnabled, l0Policy, loadFactorThreshold);
+        // Log L0 mode information (INFO level to ensure visibility)
+        if (l0CacheEnabled && l0Allocator != null) {
+            String modeInfo = org.apache.flink.runtime.state.heap.space.NativeL0Memory.getModeDescription();
+            LOG.info("[ForL0] StateMap initialized - L0 Cache ENABLED, Mode: {}, Buckets: {}, Policy: {}, LoadFactor: {}",
+                    modeInfo, 1 << l0CacheSizePow2, l0Policy, loadFactorThreshold);
+            // Also print to stdout to ensure visibility even if logging is misconfigured
+            System.out.println("[ForL0] L0 Cache Enabled - " + modeInfo);
+        } else {
+            LOG.info("[ForL0] StateMap initialized - L0 Cache DISABLED, MainTable only");
+            System.out.println("[ForL0] L0 Cache Disabled - using MainTable only");
+        }
     }
 
     @Override

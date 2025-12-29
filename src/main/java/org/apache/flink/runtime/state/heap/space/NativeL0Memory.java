@@ -59,7 +59,12 @@ public final class NativeL0Memory {
         try {
             System.loadLibrary(LIBRARY_NAME);
             nativeAvailable = true;
-            LOG.info("Successfully loaded native L0 memory library from system path: {}", LIBRARY_NAME);
+            String modeDesc = getModeDescription();
+            LOG.info("Successfully loaded native L0 memory library from system path: {} - {}", LIBRARY_NAME, modeDesc);
+            // Print to stdout for visibility
+            System.out.println("[ForL0] Native library loaded successfully");
+            System.out.println("[ForL0] Running mode: " + modeDesc);
+            System.out.println("[ForL0] L0 device: " + (isL0Mode() ? "/dev/hisi_l0 (AVAILABLE)" : "NOT AVAILABLE"));
             return;
         } catch (UnsatisfiedLinkError e) {
             LOG.debug("Native library not found in system path, trying to extract from JAR: {}", e.getMessage());
@@ -71,7 +76,12 @@ public final class NativeL0Memory {
             if (extractedLib != null) {
                 System.load(extractedLib.getAbsolutePath());
                 nativeAvailable = true;
-                LOG.info("Successfully loaded native L0 memory library from JAR: {}", extractedLib.getAbsolutePath());
+                String modeDesc = getModeDescription();
+                LOG.info("Successfully loaded native L0 memory library from JAR: {} - {}", extractedLib.getAbsolutePath(), modeDesc);
+                // Print to stdout for visibility
+                System.out.println("[ForL0] Native library loaded from JAR: " + extractedLib.getAbsolutePath());
+                System.out.println("[ForL0] Running mode: " + modeDesc);
+                System.out.println("[ForL0] L0 device: " + (isL0Mode() ? "/dev/hisi_l0 (AVAILABLE)" : "NOT AVAILABLE"));
                 return;
             }
         } catch (Exception e) {
@@ -82,6 +92,7 @@ public final class NativeL0Memory {
         nativeAvailable = false;
         LOG.warn("Failed to load native L0 memory library '{}': {}. L0Table will not be available.", 
                  LIBRARY_NAME, loadError);
+        System.err.println("[ForL0] WARNING: Failed to load native library - L0Table will not be available");
     }
 
     /**
