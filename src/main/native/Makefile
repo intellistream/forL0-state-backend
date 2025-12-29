@@ -29,6 +29,13 @@ else ifeq ($(UNAME_S),Linux)
     JNI_INCLUDE += -I"$(JAVA_HOME)/include/linux"
     LIB_EXT = so
     LDFLAGS = -shared
+    # Link L0 memory pool library (check if exists)
+    ifneq ($(wildcard /usr/lib64/libl0mempool.so),)
+        LDFLAGS += -L/usr/lib64 -ll0mempool
+        $(info Found libl0mempool.so - enabling L0 mode)
+    else
+        $(info libl0mempool.so not found - will use simulation mode)
+    endif
 else
     $(error Unsupported OS: $(UNAME_S))
 endif
