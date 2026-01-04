@@ -90,8 +90,16 @@ public class NativeL0MemoryAllocator implements L0MemoryAllocator {
     }
 
     /**
-     * Allocates memory using raw memory pool (more efficient in L0 mode).
-     * Each allocation gets a dedicated raw pool from L0 library.
+     * Allocates memory using L0 memory allocation (efficient in L0 mode).
+     * 
+     * <p>In L0 mode, this uses l0_mem_alloc() which efficiently manages memory using:
+     * <ul>
+     *   <li>Fix Allocator for small objects (≤8KB) - provides fast, cache-friendly allocation</li>
+     *   <li>Buddy System for large objects (>8KB) - efficient large block management</li>
+     * </ul>
+     * 
+     * <p>This approach avoids the issue with mem_pool_create_raw() which allocates
+     * each pool as a separate 2MB mmap block, causing ENOMEM when many pools are created.
      *
      * @param bytes Number of bytes to allocate
      * @return L0Allocation handle

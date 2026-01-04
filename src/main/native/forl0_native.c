@@ -218,40 +218,46 @@ static void do_free(void *ptr) {
     free(ptr);
 }
 
-/* Create raw memory pool */
+/* 
+ * Create "raw pool" - for L0 mode, we now use l0_mem_alloc() instead of mem_pool_create_raw().
+ * 
+ * IMPORTANT: mem_pool_create_raw() allocates each pool as a separate 2MB mmap block,
+ * which causes ENOMEM when many pools are created (e.g., 128 KeyGroups = 256MB).
+ * 
+ * l0_mem_alloc() uses the internal Fix Allocator (for size <= 8KB) or Buddy System
+ * (for size > 8KB), which efficiently reuses memory within already allocated 2MB blocks.
+ * This avoids the excessive mmap calls that cause ENOMEM.
+ */
 static void* do_create_raw_pool(const char *name, size_t size) {
     init_mode();
     
 #ifndef L0_NOT_SUPPORTED
     if (g_mode == 2) {
-        /* L0 mode: ONLY use L0 pool creation */
+        /* L0 mode: Use l0_mem_alloc() for efficient memory reuse */
         if (!global_tuner) {
             fprintf(stderr, "[ForL0] ERROR: L0 mode but global_tuner is NULL (not initialized)\n");
             return NULL;
         }
-        if (!p_mem_pool_create_raw) {
-            fprintf(stderr, "[ForL0] ERROR: L0 mode but mem_pool_create_raw function not available\n");
+        if (!p_l0_mem_alloc) {
+            fprintf(stderr, "[ForL0] ERROR: L0 mode but l0_mem_alloc function not available\n");
             return NULL;
         }
         
-        fprintf(stdout, "[ForL0] Creating raw pool '%s' size=%zu (%.2f KB) tuner=%p\n", 
-                name, size, size / 1024.0, (void*)global_tuner);
-        
-        void *pool = p_mem_pool_create_raw(global_tuner, name, size);
-        if (pool) {
-            fprintf(stdout, "[ForL0] SUCCESS: Created raw pool '%s' at address 0x%lx\n", 
-                    name, (unsigned long)pool);
+        /* Use l0_mem_alloc() which efficiently manages memory from the shared pool */
+        void *ptr = p_l0_mem_alloc(global_tuner, size);
+        if (ptr) {
+            fprintf(stdout, "[ForL0] SUCCESS: Allocated L0 memory '%s' size=%zu (%.2f KB) at 0x%lx\n", 
+                    name, size, size / 1024.0, (unsigned long)ptr);
             fflush(stdout);
         } else {
-            fprintf(stderr, "[ForL0] ERROR: L0 mem_pool_create_raw() returned NULL for pool '%s' size=%zu\n", 
+            fprintf(stderr, "[ForL0] ERROR: l0_mem_alloc() failed for '%s' size=%zu\n", 
                     name, size);
             fprintf(stderr, "[ForL0] ERROR: Possible causes:\n");
-            fprintf(stderr, "[ForL0] ERROR:   1. L0 capacity exhausted (check init capacity)\n");
-            fprintf(stderr, "[ForL0] ERROR:   2. L0 device error (check dmesg)\n");
-            fprintf(stderr, "[ForL0] ERROR:   3. Pool size too large\n");
+            fprintf(stderr, "[ForL0] ERROR:   1. L0 capacity exhausted (check cache_tuner_init capacity)\n");
+            fprintf(stderr, "[ForL0] ERROR:   2. L0 device memory limit reached (check dmesg)\n");
             fflush(stderr);
         }
-        return pool;
+        return ptr;
     }
 #endif
 
@@ -264,14 +270,23 @@ static void* do_create_raw_pool(const char *name, size_t size) {
     return ptr;
 }
 
-/* Release raw memory pool */
+/* 
+ * Release "raw pool" - now uses l0_mem_free() to match the change in do_create_raw_pool().
+ * Since we now use l0_mem_alloc() instead of mem_pool_create_raw(),
+ * we must use l0_mem_free() instead of mem_pool_release_raw() for proper cleanup.
+ */
 static void do_release_raw_pool(void *pool) {
     if (!pool) return;
     
 #ifndef L0_NOT_SUPPORTED
-    if (g_mode == 2 && global_tuner && p_mem_pool_release_raw) {
-        p_mem_pool_release_raw(&pool);
-        fprintf(stdout, "[ForL0] Released raw pool at 0x%lx\n", (unsigned long)pool);
+    if (g_mode == 2 && global_tuner && p_l0_mem_free) {
+        int ret = p_l0_mem_free(global_tuner, pool);
+        if (ret == RET_SUCCESS) {
+            fprintf(stdout, "[ForL0] Released L0 memory at 0x%lx\n", (unsigned long)pool);
+        } else {
+            fprintf(stderr, "[ForL0] ERROR: l0_mem_free failed for ptr=0x%lx, ret=%d\n", 
+                    (unsigned long)pool, ret);
+        }
         return;
     }
 #endif
