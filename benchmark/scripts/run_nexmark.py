@@ -29,12 +29,6 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.config import load_config
 from utils.profiler import AsyncProfiler
-from utils.l0_metrics import (
-    parse_l0table_metrics_by_time,
-    normalize_metrics_time,
-    save_l0table_metrics,
-    get_l0_metrics_summary
-)
 from utils.hardware_metrics import HardwareMetricsCollector
 
 
@@ -73,9 +67,6 @@ class NexMarkRunner:
         # Results directory (can be overridden by run_all.py)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.results_dir = self.benchmark_root / "results" / f"nexmark_{timestamp}"
-        
-        # L0 metrics results directory (shared across runs)
-        self.l0_metrics_dir = self.benchmark_root / "results" / "l0metrics"
         
         # Hardware metrics results directory
         self.hw_metrics_dir = self.benchmark_root / "results" / "hardware"
@@ -322,51 +313,6 @@ parallelism.default: {parallelism}
         except Exception as e:
             print(f"[NexMark] Warning: Failed to cleanup CPU monitor: {e}")
     
-    def _collect_l0_metrics_for_query(self, query: str, start_time: datetime):
-        """
-        [BENCHMARK_TEST] Collect L0 metrics for a specific NexMark query.
-        
-        Args:
-            query: Query name (e.g., "q5", "q8")
-            start_time: Query start timestamp - only collect metrics after this time
-        """
-        if not self.current_backend:
-            return
-            
-        end_time = datetime.now()
-        
-        # Parse metrics within time window
-        metrics = parse_l0table_metrics_by_time(
-            str(self.flink_home), 
-            start_time, 
-            end_time
-        )
-        
-        if not metrics:
-            print(f"  [L0 Metrics] No metrics found for {query}")
-            return
-        
-        # Normalize time to be relative to query start
-        metrics = normalize_metrics_time(metrics, start_time)
-        
-        # Create L0 metrics directory
-        self.l0_metrics_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save to file with consistent naming
-        filepath = save_l0table_metrics(
-            metrics, 
-            self.current_backend, 
-            query, 
-            self.l0_metrics_dir
-        )
-        
-        # Print summary
-        summary = get_l0_metrics_summary(metrics)
-        print(f"  [L0 Metrics] Collected {len(metrics)} samples for {query}")
-        if summary:
-            print(f"  [L0 Metrics] Overall hit rate: {summary.get('overall_hit_rate', 0):.1f}%")
-        print(f"  [L0 Metrics] Saved to: {filepath}")
-    
     def _start_cpu_monitor(self):
         """Start NexMark CPU metric monitor (CpuMetricSender)"""
         import platform
@@ -535,10 +481,6 @@ parallelism.default: {parallelism}
                 # [BENCHMARK_TEST] Stop per-query memory collection
                 if self.hw_collector:
                     self.hw_collector.stop_memory_collection()
-                
-                # [BENCHMARK_TEST] Collect L0 metrics for this query if using forl0 backend
-                if self.current_backend == 'forl0':
-                    self._collect_l0_metrics_for_query(query, query_start_time)
                 
                 # Parse results from both log file and by re-reading stderr output
                 # NexMark prints summary table to stderr

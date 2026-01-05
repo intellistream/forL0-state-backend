@@ -10,45 +10,30 @@ import java.io.Serializable;
 import static org.apache.flink.runtime.state.heap.ForL0StateBackendOptions.*;
 
 /**
- * Holds the configuration for ForL0StateBackend.
- * This class parses and validates configuration from Flink's ReadableConfig
- * and provides type-safe access to all configuration values.
+ * Holds the configuration for ForL0StateBackend with SwissMap architecture.
+ * 
+ * <p>The new SwissMap architecture uses adaptive directory expansion and
+ * requires minimal configuration. Most options from the previous design
+ * are deprecated but kept for backward compatibility.
  *
  * <p>This class is Serializable to support transmission between TaskManagers.
  */
 public class ForL0StateBackendConfig implements Serializable {
 
-    private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 2L;
 
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateBackendConfig.class);
 
     // ========== Configuration Values ==========
 
-    /** Whether L0 cache is enabled. */
-    private final boolean l0CacheEnabled;
-
-    /** Size of L0Table as power of 2 (bucket count = 2^size). */
-    private final int l0CacheSize;
-
-    /** Replacement policy for L0 cache. */
-    private final L0Table.ReplacementPolicy l0ReplacementPolicy;
-
-    /** Maximum L0 memory pool capacity in bytes. -1 means unlimited. */
+    /** Maximum native memory pool capacity in bytes. -1 means unlimited. */
     private final long l0MemoryMaxBytes;
-
-    /** Load factor threshold for MainTable resize. */
-    private final double mainTableLoadFactorThreshold;
 
     /**
      * Creates a default configuration with all default values.
      */
     public ForL0StateBackendConfig() {
-        this.l0CacheEnabled = L0_CACHE_ENABLED.defaultValue();
-        this.l0CacheSize = L0_CACHE_SIZE.defaultValue();
-        this.l0ReplacementPolicy = parseReplacementPolicy(L0_CACHE_REPLACEMENT_POLICY.defaultValue());
         this.l0MemoryMaxBytes = -1; // unlimited
-        this.mainTableLoadFactorThreshold = MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
-
         LOG.debug("ForL0StateBackendConfig created with default values: {}", this);
     }
 
@@ -56,63 +41,26 @@ public class ForL0StateBackendConfig implements Serializable {
      * Creates a configuration by parsing values from Flink's ReadableConfig.
      *
      * @param config The Flink configuration to read from
-     * @throws IllegalArgumentException if any configuration value is invalid
      */
     public ForL0StateBackendConfig(ReadableConfig config) {
-        // Parse L0 cache settings
-        this.l0CacheEnabled = config.get(L0_CACHE_ENABLED);
-
-        int cacheSize = config.get(L0_CACHE_SIZE);
-        validateL0CacheSize(cacheSize);
-        this.l0CacheSize = cacheSize;
-
-        String policyStr = config.get(L0_CACHE_REPLACEMENT_POLICY);
-        this.l0ReplacementPolicy = parseReplacementPolicy(policyStr);
-
-        // Parse L0 memory pool settings
+        // Parse native memory pool settings
         MemorySize memorySize = config.get(L0_MEMORY_MAX_SIZE);
         this.l0MemoryMaxBytes = (memorySize == null || memorySize.getBytes() <= 0) ? -1 : memorySize.getBytes();
-
-        // Parse MainTable load factor setting
-        double loadFactor = config.get(MAIN_TABLE_LOAD_FACTOR_THRESHOLD);
-        validateLoadFactorThreshold(loadFactor);
-        this.mainTableLoadFactorThreshold = loadFactor;
 
         LOG.info("ForL0StateBackendConfig created from config: {}", this);
     }
 
     /**
-     * Private constructor for builder pattern or copying.
+     * Private constructor for builder pattern.
      */
-    private ForL0StateBackendConfig(
-            boolean l0CacheEnabled,
-            int l0CacheSize,
-            L0Table.ReplacementPolicy l0ReplacementPolicy,
-            long l0MemoryMaxBytes,
-            double mainTableLoadFactorThreshold) {
-        this.l0CacheEnabled = l0CacheEnabled;
-        this.l0CacheSize = l0CacheSize;
-        this.l0ReplacementPolicy = l0ReplacementPolicy;
+    private ForL0StateBackendConfig(long l0MemoryMaxBytes) {
         this.l0MemoryMaxBytes = l0MemoryMaxBytes;
-        this.mainTableLoadFactorThreshold = mainTableLoadFactorThreshold;
     }
 
     // ========== Getters ==========
 
-    public boolean isL0CacheEnabled() {
-        return l0CacheEnabled;
-    }
-
-    public int getL0CacheSize() {
-        return l0CacheSize;
-    }
-
-    public L0Table.ReplacementPolicy getL0ReplacementPolicy() {
-        return l0ReplacementPolicy;
-    }
-
     /**
-     * Gets the maximum L0 memory pool capacity in bytes.
+     * Gets the maximum native memory pool capacity in bytes.
      *
      * @return Maximum capacity in bytes, or -1 if unlimited
      */
@@ -120,23 +68,30 @@ public class ForL0StateBackendConfig implements Serializable {
         return l0MemoryMaxBytes;
     }
 
-    public double getMainTableLoadFactorThreshold() {
-        return mainTableLoadFactorThreshold;
-    }
-
-    // ========== Utility Methods ==========
+    // ========== Deprecated getters for backward compatibility ==========
 
     /**
-     * Creates a new config with L0 cache disabled.
-     * Other values are copied from this config.
+     * @deprecated Always returns true. L0 cache concept removed in SwissMap architecture.
      */
-    public ForL0StateBackendConfig withL0CacheDisabled() {
-        return new ForL0StateBackendConfig(
-                false,
-                this.l0CacheSize,
-                this.l0ReplacementPolicy,
-                this.l0MemoryMaxBytes,
-                this.mainTableLoadFactorThreshold);
+    @Deprecated
+    public boolean isL0CacheEnabled() {
+        return true;
+    }
+
+    /**
+     * @deprecated Returns default value. L0 cache concept removed in SwissMap architecture.
+     */
+    @Deprecated
+    public int getL0CacheSize() {
+        return L0_CACHE_SIZE.defaultValue();
+    }
+
+    /**
+     * @deprecated Returns default value. No effect in SwissMap architecture.
+     */
+    @Deprecated
+    public double getMainTableLoadFactorThreshold() {
+        return MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
     }
 
     /**
@@ -149,11 +104,7 @@ public class ForL0StateBackendConfig implements Serializable {
     @Override
     public String toString() {
         return "ForL0StateBackendConfig{" +
-                "l0CacheEnabled=" + l0CacheEnabled +
-                ", l0CacheSize=" + l0CacheSize + " (=" + (1 << l0CacheSize) + " buckets)" +
-                ", l0ReplacementPolicy=" + l0ReplacementPolicy +
-                ", l0MemoryMaxBytes=" + (l0MemoryMaxBytes == -1 ? "unlimited" : l0MemoryMaxBytes + " bytes") +
-                ", mainTableLoadFactorThreshold=" + mainTableLoadFactorThreshold +
+                "l0MemoryMaxBytes=" + (l0MemoryMaxBytes == -1 ? "unlimited" : l0MemoryMaxBytes + " bytes") +
                 '}';
     }
 
@@ -163,32 +114,7 @@ public class ForL0StateBackendConfig implements Serializable {
      * Builder for programmatic configuration.
      */
     public static class Builder {
-        private boolean l0CacheEnabled = L0_CACHE_ENABLED.defaultValue();
-        private int l0CacheSize = L0_CACHE_SIZE.defaultValue();
-        private L0Table.ReplacementPolicy l0ReplacementPolicy = L0Table.ReplacementPolicy.CLOCK;
         private long l0MemoryMaxBytes = -1;
-        private double mainTableLoadFactorThreshold = MAIN_TABLE_LOAD_FACTOR_THRESHOLD.defaultValue();
-
-        public Builder setL0CacheEnabled(boolean enabled) {
-            this.l0CacheEnabled = enabled;
-            return this;
-        }
-
-        public Builder setL0CacheSize(int size) {
-            validateL0CacheSize(size);
-            this.l0CacheSize = size;
-            return this;
-        }
-
-        public Builder setL0ReplacementPolicy(L0Table.ReplacementPolicy policy) {
-            this.l0ReplacementPolicy = policy;
-            return this;
-        }
-
-        public Builder setL0ReplacementPolicy(String policyString) {
-            this.l0ReplacementPolicy = parseReplacementPolicy(policyString);
-            return this;
-        }
 
         public Builder setL0MemoryMaxBytes(long bytes) {
             this.l0MemoryMaxBytes = bytes;
@@ -200,19 +126,37 @@ public class ForL0StateBackendConfig implements Serializable {
             return this;
         }
 
+        // ========== Deprecated setters for backward compatibility ==========
+
+        /**
+         * @deprecated No effect in SwissMap architecture.
+         */
+        @Deprecated
+        public Builder setL0CacheEnabled(boolean enabled) {
+            // No-op, kept for backward compatibility
+            return this;
+        }
+
+        /**
+         * @deprecated No effect in SwissMap architecture.
+         */
+        @Deprecated
+        public Builder setL0CacheSize(int size) {
+            // No-op, kept for backward compatibility
+            return this;
+        }
+
+        /**
+         * @deprecated No effect in SwissMap architecture.
+         */
+        @Deprecated
         public Builder setMainTableLoadFactorThreshold(double threshold) {
-            validateLoadFactorThreshold(threshold);
-            this.mainTableLoadFactorThreshold = threshold;
+            // No-op, kept for backward compatibility
             return this;
         }
 
         public ForL0StateBackendConfig build() {
-            return new ForL0StateBackendConfig(
-                    l0CacheEnabled,
-                    l0CacheSize,
-                    l0ReplacementPolicy,
-                    l0MemoryMaxBytes,
-                    mainTableLoadFactorThreshold);
+            return new ForL0StateBackendConfig(l0MemoryMaxBytes);
         }
     }
 }

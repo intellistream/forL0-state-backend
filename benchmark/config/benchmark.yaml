@@ -39,11 +39,11 @@ cluster:
   
   wordcount:
     num_keys: 1000000         # 100万 key
-    num_records: 100000000    # 10亿条
+    num_records: 1000000000    # 10亿条
     arrival_rate: 0 
     skew_factor: 1.0         # Zipf s parameter
     window_size: 5000         # milliseconds (10s)
-    slide_size: 200          # milliseconds (10s)
+    slide_size: 5000          # milliseconds (10s)
     warmup_duration: 20       # warmup duration in seconds (0 to disable)
   
   nexmark:
@@ -72,29 +72,12 @@ backends:
   
   - name: forl0
     class: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
-    description: "ForL0 StateBackend with L0 cache"
-    # ForL0 backend specific configuration
-    config:
-      # Whether L0 cache (hot key cache) is enabled
-      l0_cache_enabled: false
-      # Size of each L0Table as a power of 2 (bucket count), range 1-20
-      # Actual bucket count = 2^n, each bucket = 64 bytes
-      # Example: size=10 means 1024 buckets = 64KB per L0Table
-      l0_cache_size: 14
-      # Cache replacement policy: CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU
-      l0_cache_replacement_policy: CLOCK
-      # Maximum L0 memory pool size (L0 is CPU Cache, not regular memory!)
-      # 0 = use native default (64MB), recommended range: 32mb-256mb
-      # Examples: 64mb, 128mb, 256mb
-      l0_memory_max_size: "0"
-      # MainTable resize load factor threshold (0.5-4.0)
-      # Note: MainTable initial size is now fixed at 65536 buckets (4MB per table)
-      main_table_load_factor_threshold: 1.5
+    description: "ForL0 StateBackend with SwissMap architecture"
 
 # Metrics collection settings
 metrics:
-  # Whether to collect L0 cache stats (only for ForL0 backend)
-  collect_l0_stats: true
+  # Reserved for future metrics options
+  enabled: true
 
 # Output settings
 output:

@@ -13,10 +13,12 @@ NC='\033[0m' # No Color
 
 # Parse command line arguments
 ENABLE_PROFILING=false
-while getopts "p" opt; do
+SKIP_BUILD=false
+while getopts "ps" opt; do
   case $opt in
     p) ENABLE_PROFILING=true ;;
-    *) echo "Usage: $0 [-p]"; echo "  -p: Enable async-profiler for flame graph generation"; exit 1 ;;
+    s) SKIP_BUILD=true ;;
+    *) echo "Usage: $0 [-p] [-s]"; echo "  -p: Enable async-profiler for flame graph generation"; echo "  -s: Skip Maven build (use existing benchmarks.jar)"; exit 1 ;;
   esac
 done
 
@@ -26,11 +28,15 @@ echo -e "${BLUE}Excluding TTL tests${NC}"
 if [ "$ENABLE_PROFILING" = true ]; then
     echo -e "${YELLOW}Profiling: ENABLED${NC}"
 fi
+if [ "$SKIP_BUILD" = true ]; then
+    echo -e "${YELLOW}Build: SKIPPED (using existing jar)${NC}"
+fi
 echo -e "${BLUE}======================================${NC}"
 echo ""
 
-# Navigate to flink-benchmarks directory
-cd "$(dirname "$0")"
+# Navigate to flink-benchmarks directory and save absolute path
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # Check async-profiler if profiling is enabled
 PROFILER_ARGS=""
@@ -59,10 +65,21 @@ if [ "$ENABLE_PROFILING" = true ]; then
 fi
 
 # Clean and build
-echo -e "${GREEN}Step 1: Building benchmarks...${NC}"
-mvn clean package -DskipTests -q
-echo -e "${GREEN}✓ Build completed${NC}"
-echo ""
+if [ "$SKIP_BUILD" = false ]; then
+    echo -e "${GREEN}Step 1: Building benchmarks...${NC}"
+    mvn clean package -DskipTests -q -B
+    echo -e "${GREEN}✓ Build completed${NC}"
+    echo ""
+else
+    echo -e "${YELLOW}Skipping build, checking for existing jar...${NC}"
+    if [ ! -f "target/benchmarks.jar" ]; then
+        echo -e "${RED}Error: target/benchmarks.jar not found!${NC}"
+        echo -e "${YELLOW}Please build first with: mvn clean package -DskipTests${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Found existing benchmarks.jar${NC}"
+    echo ""
+fi
 
 # Define specific benchmark methods to run (matching the chart)
 # Format: "ClassName.methodName"
@@ -71,10 +88,8 @@ BENCHMARKS=(
     "org.apache.flink.state.benchmark.ValueStateBenchmark.valueGet"
     "org.apache.flink.state.benchmark.ValueStateBenchmark.valueUpdate"
     "org.apache.flink.state.benchmark.ListStateBenchmark.listAdd"
-    "org.apache.flink.state.benchmark.ListStateBenchmark.listAddAll"
     "org.apache.flink.state.benchmark.ListStateBenchmark.listAppend"
     "org.apache.flink.state.benchmark.ListStateBenchmark.listGet"
-    "org.apache.flink.state.benchmark.ListStateBenchmark.listGetAndIterate"
     "org.apache.flink.state.benchmark.ListStateBenchmark.listUpdate"
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapAdd"
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapContains"
@@ -116,7 +131,8 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
         echo -e "${GREEN}Backend: $BACKEND${NC}"
         OUTPUT_FILE="$RESULTS_DIR/${BENCH_NAME}_${BACKEND}_${TIMESTAMP}.csv"
         
-        # Run benchmark
+        # Run benchmark (use absolute path to jar)
+        cd "$SCRIPT_DIR"
         java -jar target/benchmarks.jar "$BENCHMARK" \
             -p "backendType=$BACKEND" \
             -rf csv -rff "$OUTPUT_FILE" \
@@ -171,7 +187,7 @@ echo -e "${GREEN}Summary saved to: $SUMMARY_FILE${NC}"
 # Generate comparison chart
 echo ""
 echo -e "${GREEN}Generating comparison chart...${NC}"
-CHART_SCRIPT="../../benchmark/scripts/plot_comparison.py"
+CHART_SCRIPT="$SCRIPT_DIR/../scripts/plot_comparison.py"
 if [ -f "$CHART_SCRIPT" ]; then
     python3 "$CHART_SCRIPT" "$SUMMARY_FILE" "$RESULTS_DIR/comparison_chart_${TIMESTAMP}.png"
     if [ $? -eq 0 ]; then

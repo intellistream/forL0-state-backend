@@ -5,16 +5,10 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.*;
-import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
-import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -24,16 +18,12 @@ import static org.apache.flink.runtime.state.SnapshotExecutionType.SYNCHRONOUS;
 
 public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendBuilder<K> {
     
-    private static final Logger LOG = LoggerFactory.getLogger(ForL0KeyedStateBackendBuilder.class);
-    
     /** The configuration of local recovery. */
     private final LocalRecoveryConfig localRecoveryConfig;
     /** Factory for state that is organized as priority queue. */
     private final HeapPriorityQueueSetFactory priorityQueueSetFactory;
     /** Whether asynchronous snapshot is enabled. */
     private final boolean asynchronousSnapshots;
-    /** ForL0 StateBackend configuration. */
-    private final ForL0StateBackendConfig forl0Config;
 
     /**
      * Main constructor with ForL0StateBackendConfig.
@@ -70,7 +60,6 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.localRecoveryConfig = localRecoveryConfig;
         this.priorityQueueSetFactory = priorityQueueSetFactory;
         this.asynchronousSnapshots = asynchronousSnapshots;
-        this.forl0Config = forl0Config;
     }
 
     /**
@@ -108,9 +97,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 priorityQueueSetFactory,
                 asynchronousSnapshots,
                 cancelStreamRegistry,
-                l0CacheEnabled 
-                    ? new ForL0StateBackendConfig() 
-                    : new ForL0StateBackendConfig().withL0CacheDisabled());
+                new ForL0StateBackendConfig());  // L0 cache flag ignored in SwissMap architecture
     }
 
     /**
@@ -161,38 +148,13 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         InternalKeyContext<K> keyContext =
                 new InternalKeyContextImpl<>(keyGroupRange, numberOfKeyGroups);
 
-        // Extract configuration values
-        final boolean l0CacheEnabled = forl0Config.isL0CacheEnabled();
-        final long l0MemoryMaxBytes = forl0Config.getL0MemoryMaxBytes();
-
-        // Create shared L0Allocator for the entire backend (if L0 cache is enabled)
-        @Nullable
-        final L0MemoryAllocator sharedL0Allocator;
-        if (l0CacheEnabled) {
-            try {
-                sharedL0Allocator = new NativeL0MemoryAllocator(l0MemoryMaxBytes);
-                LOG.info("Created shared L0Allocator with capacity {} for ForL0KeyedStateBackend",
-                        l0MemoryMaxBytes == -1 ? "unlimited" : l0MemoryMaxBytes + " bytes");
-            } catch (Exception e) {
-                throw new BackendBuildingException("Failed to create L0MemoryAllocator", e);
-            }
-        } else {
-            sharedL0Allocator = null;
-            LOG.info("L0 cache is disabled, ForL0KeyedStateBackend will not use L0 memory");
-        }
-
-        // Capture configuration for StateTableFactory
-        final L0MemoryAllocator capturedL0Allocator = sharedL0Allocator;
-        final ForL0StateBackendConfig capturedConfig = this.forl0Config;
-        
+        // Create StateTableFactory using SwissMap architecture
         final StateTableFactory<K> stateTableFactory = new StateTableFactory<K>() {
             @Override
             public <N, V> StateTable<K, N, V> newStateTable(InternalKeyContext<K> keyContext,
                                                             RegisteredKeyValueStateBackendMetaInfo<N, V> keyValueStateMetaInfo,
                                                             TypeSerializer<K> keySerializer) {
-                // Use the static factory method - no MemoryManager needed after refactoring
-                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer, 
-                        capturedConfig, capturedL0Allocator);
+                return ForL0StateTable.create(keyContext, keyValueStateMetaInfo, keySerializer);
             }
         };
 
@@ -214,7 +176,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 asynchronousSnapshots ? ASYNCHRONOUS : SYNCHRONOUS,
                 stateTableFactory,
                 keyContext,
-                sharedL0Allocator);
+                null);  // No L0Allocator needed with SwissMap architecture
     }
 
     // Below methods are copied from heap state, may need to be modified

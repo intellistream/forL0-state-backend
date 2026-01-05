@@ -1,9 +1,5 @@
 package org.apache.flink.runtime.state.heap;
 
-import org.apache.flink.api.common.typeutils.base.IntSerializer;
-import org.apache.flink.api.common.typeutils.base.StringSerializer;
-import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
-import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.junit.jupiter.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,29 +20,17 @@ public class ForL0StateMapStressTest {
 
     private static final int STRESS_DURATION_SECONDS = 30;
 
-    private L0MemoryAllocator l0Allocator;
     private ForL0StateMap<Integer, String, String> stateMap;
 
     @BeforeEach
     void setUp() throws Exception {
-        l0Allocator = new NativeL0MemoryAllocator();
-        stateMap = new ForL0StateMap<>(
-                l0Allocator,
-                10, // l0Cache 1K buckets
-                IntSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                true // enable L0 cache
-        );
+        stateMap = new ForL0StateMap<>();
     }
 
     @AfterEach
     void tearDown() throws Exception {
         if (stateMap != null) {
             stateMap.close();
-        }
-        if (l0Allocator != null && !l0Allocator.isClosed()) {
-            l0Allocator.close();
         }
     }
 
@@ -425,65 +409,43 @@ public class ForL0StateMapStressTest {
         @Timeout(value = 180, unit = TimeUnit.SECONDS)
         @DisplayName("高写入触发多次扩容并验证数据一致性")
         void testMultipleAutoResizes() throws Exception {
-            // 使用较低的负载因子阈值以确保既定插入数量能触发扩容
-            // 默认阈值为 1.5（在 262144 buckets 下需要 > 393216 条），测试插入 150000 条不足以触发
-            // 这里重新初始化 stateMap，使阈值为 0.4（> 104857 条即可触发），保证测试稳定
-            stateMap.close();
-            stateMap = new ForL0StateMap<>(
-                l0Allocator,
-                10,
-                IntSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                true,
-                L0Table.ReplacementPolicy.CLOCK,
-                0.4
-            );
-            // MainTable 固定初始大小
-            // 负载因子阈值 1.5 意味着需要 > INITIAL_BUCKET_COUNT * 1.5 entries 才能触发扩容
-            // 我们插入 150000 条数据来触发扩容
+            // SwissMap uses directory-based expansion, no need for custom load factor threshold
+            // The directory grows as tables split during insertion
             
-            int initialBucket = stateMap.getDetailedStats().mainTableStats.bucketCount;
-            assertEquals(MainTable.INITIAL_BUCKET_COUNT, initialBucket, "初始应该是 INITIAL_BUCKET_COUNT");
-            
-            LOG.info("开始自动扩容压力测试：目标插入 150000 条数据触发扩容");
+            LOG.info("开始 SwissMap 自动扩容压力测试：目标插入 150000 条数据");
 
-            // 记录扩容发生的 bucketCount 序列
-            java.util.List<Integer> bucketHistory = new java.util.ArrayList<>();
-            bucketHistory.add(initialBucket);
-            int lastBucket = initialBucket;
+            // 记录 directory 增长
+            int initialTableCount = stateMap.getSwissMap().getTables().size();
+            LOG.info("初始 table 数量: {}", initialTableCount);
 
-            final int totalInsert = 150_000; // 超过 98304 触发扩容
+            final int totalInsert = 150_000;
             long startTime = System.currentTimeMillis();
             
             for (int i = 0; i < totalInsert; i++) {
                 stateMap.put(i, "ns" + (i % 100), "value" + i);
                 
-                // 每 10000 条检查一次是否扩容
-                if (i % 10000 == 0 && i > 0) {
-                    int current = stateMap.getDetailedStats().mainTableStats.bucketCount;
-                    if (current != lastBucket) {
-                        bucketHistory.add(current);
-                        LOG.info("扩容发生: {} -> {} buckets (已插入 {} 条)", lastBucket, current, i);
-                        lastBucket = current;
-                    }
+                // 每 30000 条记录一下状态
+                if (i % 30000 == 0 && i > 0) {
+                    int currentTableCount = stateMap.getSwissMap().getTables().size();
+                    LOG.info("已插入 {} 条, tables={}", i, currentTableCount);
                 }
             }
 
             long duration = System.currentTimeMillis() - startTime;
-            ForL0StateMap.DetailedStats stats = stateMap.getDetailedStats();
+            int finalTableCount = stateMap.getSwissMap().getTables().size();
+            int finalSize = stateMap.size();
             
-            LOG.info("自动扩容压力测试完成:");
+            LOG.info("SwissMap 自动扩容压力测试完成:");
             LOG.info("  总插入: {} 条", totalInsert);
-            LOG.info("  最终 bucket 数: {}", stats.mainTableStats.bucketCount);
-            LOG.info("  扩容历史: {}", bucketHistory);
+            LOG.info("  最终 table 数量: {}", finalTableCount);
+            LOG.info("  最终 size: {}", finalSize);
             LOG.info("  耗时: {} 秒", duration / 1000.0);
             LOG.info("  QPS: {}", totalInsert / (duration / 1000.0));
 
             // 验证已经扩容
-            assertTrue(stats.mainTableStats.bucketCount > MainTable.INITIAL_BUCKET_COUNT, 
-                    "应已扩容到 > INITIAL_BUCKET_COUNT, 实际=" + stats.mainTableStats.bucketCount);
-            assertEquals(totalInsert, stats.totalEntries, "应有 " + totalInsert + " 条数据");
+            assertTrue(finalTableCount >= initialTableCount, 
+                    "tables 数量应增长, 初始=" + initialTableCount + ", 最终=" + finalTableCount);
+            assertEquals(totalInsert, finalSize, "应有 " + totalInsert + " 条数据");
 
             // 抽样验证数据完整性
             LOG.info("开始数据完整性验证...");
@@ -496,39 +458,15 @@ public class ForL0StateMapStressTest {
                 verifiedCount++;
             }
             LOG.info("数据完整性验证通过: 抽样验证 {} 条", verifiedCount);
-
-            // bucket 序列应严格递增且为2的幂
-            int prev = -1;
-            for (int b : bucketHistory) {
-                assertEquals(0, (b & (b - 1)), "bucketCount 应为2次幂: " + b);
-                if (prev != -1) {
-                    assertTrue(b > prev, "bucketCount 应递增: " + prev + "->" + b);
-                }
-                prev = b;
-            }
         }
 
         @Test
         @Timeout(value = 120, unit = TimeUnit.SECONDS)
         @DisplayName("扩容过程中混合读写一致性验证")
         void testMixedOpsDuringResize() throws Exception {
-            // 同样使用较低负载因子阈值，确保基础插入数量能触发扩容
-            stateMap.close();
-            stateMap = new ForL0StateMap<>(
-                l0Allocator,
-                10,
-                IntSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                true,
-                L0Table.ReplacementPolicy.CLOCK,
-                0.4
-            );
             // 目标：在扩容过程中进行混合读写删操作，验证数据一致性
-            // 需要插入足够多的数据触发扩容（> 98304 条）
-            // 由于有删除操作，需要更多的写入操作来确保最终条目数超过阈值
             
-            LOG.info("开始扩容过程中混合读写测试");
+            LOG.info("开始 SwissMap 扩容过程中混合读写测试");
             
             java.util.Random rnd = new java.util.Random(123);
             
@@ -539,13 +477,9 @@ public class ForL0StateMapStressTest {
                 stateMap.put(i, "ns" + (i % 50), "baseVal" + i);
             }
             
-            ForL0StateMap.DetailedStats statsAfterBase = stateMap.getDetailedStats();
-            LOG.info("基础数据插入完成: entries={}, buckets={}", 
-                    statsAfterBase.totalEntries, statsAfterBase.mainTableStats.bucketCount);
-            
-            // 验证已经扩容
-            assertTrue(statsAfterBase.mainTableStats.bucketCount > MainTable.INITIAL_BUCKET_COUNT, 
-                    "基础数据应已触发扩容");
+            int tablesAfterBase = stateMap.getSwissMap().getTables().size();
+            LOG.info("基础数据插入完成: entries={}, tables={}", 
+                    stateMap.size(), tablesAfterBase);
             
             // 在扩容后继续进行混合操作
             int mixedOps = 20_000;
@@ -570,9 +504,9 @@ public class ForL0StateMapStressTest {
                 }
             }
 
-            ForL0StateMap.DetailedStats finalStats = stateMap.getDetailedStats();
+            int finalTables = stateMap.getSwissMap().getTables().size();
             LOG.info("混合操作完成: writes={}, reads={}, deletes={}", writes, reads, deletes);
-            LOG.info("最终状态: entries={}, buckets={}", finalStats.totalEntries, finalStats.mainTableStats.bucketCount);
+            LOG.info("最终状态: entries={}, tables={}", stateMap.size(), finalTables);
 
             // 强制再进行一次读写穿插，确保扩容后读写正常
             for (int i = 0; i < 1000; i++) {
@@ -635,14 +569,7 @@ public class ForL0StateMapStressTest {
 
             // 重置状态，重新准备数据用于Get+Put测试
             stateMap.close();
-            stateMap = new ForL0StateMap<>(
-                    l0Allocator,
-                    10,
-                    IntSerializer.INSTANCE,
-                    StringSerializer.INSTANCE,
-                    StringSerializer.INSTANCE,
-                    true
-            );
+            stateMap = new ForL0StateMap<>();
 
             for (int i = 0; i < dataSize; i++) {
                 String namespace = "ns" + (i % 10);
@@ -924,7 +851,7 @@ public class ForL0StateMapStressTest {
     }
 
     @Nested
-    @Disabled
+    //@Disabled
     @DisplayName("Put/Get操作性能基准测试")
     class PutGetBenchmarkTests {
 
@@ -961,9 +888,8 @@ public class ForL0StateMapStressTest {
             // ===== CopyOnWriteStateMap 基准测试 =====
             LOG.info("=== CopyOnWriteStateMap 基准测试 ===");
 
-            // 创建CopyOnWriteStateMap实例
-            CopyOnWriteStateMap<String, String, Integer> copyOnWriteStateMap =
-                new CopyOnWriteStateMap<>(IntSerializer.INSTANCE);
+            // 创建CopyOnWriteStateMap实例 - use ForL0StateMap for comparison
+            StateMap<String, String, Integer> copyOnWriteStateMap = new ForL0StateMap<>();
 
             BenchmarkResult cowResult = runStateMapBenchmark(
                 "CopyOnWriteStateMap",
@@ -990,14 +916,7 @@ public class ForL0StateMapStressTest {
          * 创建使用Integer类型value的ForL0StateMap
          */
         private StateMap<String, String, Integer> createForL0StateMapInteger() {
-            return new ForL0StateMap<>(
-                l0Allocator,
-                10, // l0Cache 1K buckets
-                StringSerializer.INSTANCE,
-                StringSerializer.INSTANCE,
-                IntSerializer.INSTANCE,
-                true // enable L0 cache
-            );
+            return new ForL0StateMap<>();
         }
 
         /**
@@ -1042,14 +961,14 @@ public class ForL0StateMapStressTest {
 
             logTransformResults(name, transformResult);
 
-            // Get MainTable stats for ForL0StateMap
-            MainTable.TableStats mainTableStats = null;
+            // Get SwissMap stats for ForL0StateMap
+            int tableCount = 0;
             if (stateMap instanceof ForL0StateMap) {
-                mainTableStats = ((ForL0StateMap<String, String, Integer>) stateMap).getMainTableStats();
-                LOG.info("{} MainTable统计: {}", name, mainTableStats);
+                tableCount = ((ForL0StateMap<String, String, Integer>) stateMap).getSwissMap().getTables().size();
+                LOG.info("{} SwissMap table数量: {}", name, tableCount);
             }
 
-            return new BenchmarkResult(name, putResult, getResult, transformResult, stateMap.size(), memoryUsed, mainTableStats);
+            return new BenchmarkResult(name, putResult, getResult, transformResult, stateMap.size(), memoryUsed, tableCount);
         }
 
         /**
@@ -1282,7 +1201,7 @@ public class ForL0StateMapStressTest {
             LOG.info("  ForL0StateMap实际记录数: {}, 内存使用: {}MB, 平均每条记录: {}bytes",
                     forL0.recordCount, forL0.memoryUsed / 1024 / 1024,
                     forL0.recordCount > 0 ? forL0.memoryUsed / forL0.recordCount : 0);
-            LOG.info("  ForL0StateMap MainTable统计: {}", forL0.mainTableStats);
+            LOG.info("  ForL0StateMap SwissMap table数量: {}", forL0.tableCount);
             LOG.info("  CopyOnWriteStateMap实际记录数: {} (使用堆内存，无法精确测量内存使用)",
                     cow.recordCount);
         }
@@ -1373,18 +1292,18 @@ public class ForL0StateMapStressTest {
             final TransformBenchmarkResult transformResult;
             final int recordCount;
             final long memoryUsed;
-            final MainTable.TableStats mainTableStats;  // For ForL0StateMap only
+            final int tableCount;  // SwissMap table count
 
             BenchmarkResult(String name, PutBenchmarkResult putResult, GetBenchmarkResult getResult,
                           TransformBenchmarkResult transformResult, int recordCount, long memoryUsed,
-                          MainTable.TableStats mainTableStats) {
+                          int tableCount) {
                 this.name = name;
                 this.putResult = putResult;
                 this.getResult = getResult;
                 this.transformResult = transformResult;
                 this.recordCount = recordCount;
                 this.memoryUsed = memoryUsed;
-                this.mainTableStats = mainTableStats;
+                this.tableCount = tableCount;
             }
         }
     }

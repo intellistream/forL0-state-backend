@@ -6,7 +6,6 @@
 - ✅ NexMark 流处理标准基准测试
 - ✅ HashMapStateBackend vs ForL0StateBackend 自动对比
 - ✅ 论文级别的图表和 HTML 报告生成
-- ✅ L0Table 内部指标采集 (命中率、淘汰率、时序图)
 - ✅ 火焰图采集 (CPU、内存分配，需 Async Profiler)
 - ✅ CPU Cache 统计 (仅 Linux，需 perf_events)
 
@@ -31,7 +30,6 @@ benchmark/
 │   ├── figures/            # PDF/PNG 图表
 │   ├── reports/            # HTML 报告
 │   ├── latency/            # 延迟采样数据
-│   ├── l0metrics/          # L0Table 指标数据
 │   └── profiles/           # 火焰图 HTML 文件
 ├── tools/                  # 外部工具 (如 Async Profiler)
 ├── docs/                   # 设计文档
@@ -181,39 +179,6 @@ ls results/profiles/
 
 ---
 
-## L0Table 指标采集
-
-L0Table 指标会在使用 ForL0 StateBackend 时自动采集，无需额外配置。
-
-### 采集的指标
-
-| 指标 | 说明 |
-|------|------|
-| `hit_rate` | L0 缓存命中率 (0.0 ~ 1.0) |
-| `access_count` | 总访问次数 |
-| `hit_count` | 命中次数 |
-| `miss_count` | 未命中次数 |
-| `eviction_count` | 淘汰次数 |
-| `valid_slots` | 当前有效 slot 数 |
-
-### 输出格式
-
-指标通过 TaskManager 日志输出，格式为：
-```
-L0TABLE_METRICS|{"type":"l0table","timestamp":1702...,"backend_id":"...","hit_rate":0.92,...}
-```
-
-Python 脚本会自动解析这些日志并保存到 `results/l0metrics/`。
-
-### 报告展示
-
-生成的 HTML 报告会包含：
-1. **L0Table 统计卡片** - 命中率、访问量、淘汰量
-2. **时序图表** - 命中率随时间变化
-3. **缓存对比图** - L0 vs MainTable 命中率对比
-
----
-
 ## 配置文件详解
 
 配置文件位于 `config/benchmark.yaml`，主要分为以下几个部分：
@@ -300,60 +265,17 @@ backends:
   
   - name: forl0
     class: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
-    description: "ForL0 StateBackend (L0 缓存优化)"
-    # ForL0 专属配置参数
-    config:
-      l0_cache_enabled: true
-      l0_cache_size: 10
-      l0_cache_replacement_policy: CLOCK
-      l0_memory_max_size: "256mb"
-      main_table_load_factor_threshold: 1.5
+    description: "ForL0 StateBackend (SwissMap 架构)"
 ```
 
 ### 7. ForL0 StateBackend 配置参数
 
-通过 `benchmark.yaml` 中的 `backends[forl0].config` 可以配置 ForL0 StateBackend 的运行参数：
+ForL0 StateBackend 使用 Go 1.24 风格的 SwissMap 架构，不再需要额外的配置参数。
 
-| 配置项 (YAML) | Flink 配置键 | 类型 | 默认值 | 说明 |
-|---------------|--------------|------|--------|------|
-| `l0_cache_enabled` | `state.backend.forl0.l0-cache.enabled` | Boolean | `true` | 是否启用 L0 热点缓存 |
-| `l0_cache_size` | `state.backend.forl0.l0-cache.size` | Integer | `10` | 单个 L0Table 大小（2的幂次，范围 1-20）<br>例如：10 表示 1024 buckets = 64KB |
-| `l0_cache_replacement_policy` | `state.backend.forl0.l0-cache.replacement-policy` | String | `CLOCK` | 缓存替换策略 |
-| `l0_memory_max_size` | `state.backend.forl0.l0-memory.max-size` | MemorySize | `0` | L0 内存池总容量（0=无限制）<br>例如：256mb, 1gb |
-| `main_table_load_factor_threshold` | `state.backend.forl0.main-table.load-factor-threshold` | Double | `1.5` | MainTable 扩容负载因子阈值 |
-
-> 注意：MainTable 初始大小已固定为 65536 buckets (4MB)，无需配置。
-
-**缓存替换策略说明**：
-
-| 策略 | 说明 | 适用场景 |
-|------|------|----------|
-| `CLOCK` | Clock 算法，1-bit 访问标记 | **推荐**，低开销 |
-| `LRU` | Least Recently Used | 访问模式稳定 |
-| `LFU` | Least Frequently Used | 长期热点明显 |
-| `TINY_LFU` | TinyLFU with decay | 混合工作负载 |
-| `SAMPLED_LRU` | 随机采样 + LRU | 轻量级实现 |
-
-**配置示例**：
-
-```yaml
-# benchmark.yaml 中的 ForL0 配置
-backends:
-  - name: forl0
-    class: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
-    config:
-      # 禁用 L0 缓存（用于对比测试）
-      l0_cache_enabled: false
-      
-      # 增大缓存以提高命中率
-      l0_cache_size: 14          # 2^14 = 16384 buckets = 1MB
-      
-      # 限制 L0 内存使用
-      l0_memory_max_size: "512mb"
-      
-      # 使用 LFU 策略
-      l0_cache_replacement_policy: LFU
-```
+主要特性：
+- **SWAR 并行匹配**：使用 64 字节对齐的控制字节进行高效查找
+- **87.5% 负载因子**：高空间利用率
+- **渐进式扩容**：通过 Directory 分裂表，避免全量 rehash
 
 ---
 
@@ -403,13 +325,9 @@ results/
 │   ├── wordcount_throughput.pdf    # 吞吐量对比
 │   ├── latency_comparison.pdf      # 延迟对比
 │   ├── latency_cdf.pdf             # 延迟 CDF 分布
-│   ├── improvement_summary.pdf     # 提升汇总
-│   ├── l0table_timeline.pdf        # L0Table 时序图
-│   └── cache_hit_comparison.pdf    # 缓存命中对比
+│   └── improvement_summary.pdf     # 提升汇总
 ├── latency/                # 延迟采样数据
-│   └── latency_samples_forl0_*.csv
-├── l0metrics/              # L0Table 指标数据
-│   └── l0table_metrics_forl0_*.json
+│   └── latency_samples_*.csv
 ├── profiles/               # 火焰图 HTML
 │   ├── flamegraph_itimer_hashmap_*.html
 │   ├── flamegraph_itimer_forl0_*.html

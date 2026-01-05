@@ -1,45 +1,26 @@
 package org.apache.flink.runtime.state.heap;
 
-import org.apache.flink.api.common.typeutils.base.IntSerializer;
-import org.apache.flink.api.common.typeutils.base.StringSerializer;
-import org.apache.flink.runtime.state.heap.space.NativeL0MemoryAllocator;
-import org.apache.flink.runtime.state.heap.space.L0MemoryAllocator;
 import org.apache.flink.runtime.state.internal.InternalKvState;
 import org.junit.jupiter.api.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Test class for ForL0StateMap implementation.
- * Tests the core KV functionality including cache behavior and statistics.
+ * Test class for ForL0StateMap implementation with Swiss Tables architecture.
  */
 class ForL0StateMapTest {
 
-    private L0MemoryAllocator l0Allocator;
     private ForL0StateMap<String, Integer, String> stateMap;
 
     @BeforeEach
     void setUp() {
-        l0Allocator = new NativeL0MemoryAllocator();
-
-        // Create ForL0StateMap with L0 cache enabled
-        stateMap = new ForL0StateMap<>(
-            l0Allocator,
-            3, // L0Table: 8 buckets
-            StringSerializer.INSTANCE,
-            IntSerializer.INSTANCE,
-            StringSerializer.INSTANCE,
-            true // L0 cache enabled
-        );
+        stateMap = new ForL0StateMap<>();
     }
 
     @AfterEach
     void tearDown() throws Exception {
         if (stateMap != null) {
             stateMap.close();
-        }
-        if (l0Allocator != null && !l0Allocator.isClosed()) {
-            l0Allocator.close();
         }
     }
 
@@ -183,83 +164,8 @@ class ForL0StateMapTest {
         }
     }
 
-    @Nested
-    class CacheTests {
-
-        @Test
-        void testL0CacheHit() {
-            String key = "cacheKey";
-            Integer namespace = 600;
-            String value = "cacheValue";
-
-            // Put a value (should go to both MainTable and L0Cache)
-            stateMap.put(key, namespace, value);
-
-            // Get L0 statistics before first get
-            L0Table.L0TableStats statsBefore = stateMap.getL0Stats();
-
-            // Get the value (should hit L0 cache)
-            String retrievedValue = stateMap.get(key, namespace);
-            assertEquals(value, retrievedValue);
-
-            // Check L0 statistics after get
-            L0Table.L0TableStats statsAfter = stateMap.getL0Stats();
-            assertTrue(statsAfter.hitCount > statsBefore.hitCount);
-            assertTrue(statsAfter.hitRate > 0);
-        }
-
-        @Test
-        void testMainTableHitWithL0Promotion() {
-            // Create a state map without L0 cache first
-            try (ForL0StateMap<String, Integer, String> noCacheMap = new ForL0StateMap<>(
-                    null, 3, StringSerializer.INSTANCE, IntSerializer.INSTANCE, StringSerializer.INSTANCE, false)) {
-
-                String key = "promotionKey";
-                Integer namespace = 700;
-                String value = "promotionValue";
-
-                // Put in no-cache map
-                noCacheMap.put(key, namespace, value);
-                assertEquals(value, noCacheMap.get(key, namespace));
-                
-                // Verify no L0 stats for no-cache map
-                assertNull(noCacheMap.getL0Stats());
-            } catch (Exception e) {
-                fail("Exception in no-cache map test: " + e.getMessage());
-            }
-
-            // Now test with cache enabled
-            String key2 = "promotionKey2";
-            Integer namespace2 = 701;
-            String value2 = "promotionValue2";
-
-            stateMap.put(key2, namespace2, value2);
-            String retrieved = stateMap.get(key2, namespace2);
-            assertEquals(value2, retrieved);
-
-            L0Table.L0TableStats stats = stateMap.getL0Stats();
-            assertNotNull(stats);
-            assertTrue(stats.accessCount > 0);
-        }
-
-        @Test
-        void testConstructWithCustomL0Policy() throws Exception {
-            try (ForL0StateMap<String, Integer, String> custom = new ForL0StateMap<>(
-                    l0Allocator,
-                    3,
-                    StringSerializer.INSTANCE,
-                    IntSerializer.INSTANCE,
-                    StringSerializer.INSTANCE,
-                    true,
-                    L0Table.ReplacementPolicy.CLOCK
-            )) {
-                custom.put("pKey", 42, "v1");
-                assertEquals("v1", custom.get("pKey", 42));
-                custom.put("pKey", 42, "v2");
-                assertEquals("v2", custom.get("pKey", 42));
-            }
-        }
-    }
+    // Note: CacheTests removed - SwissMap architecture replaces L0Table caching
+    // with a unified directory-based Swiss Table structure
 
     @Nested
     class EdgeCaseTests {
@@ -301,21 +207,18 @@ class ForL0StateMapTest {
     class StatisticsTests {
 
         @Test
-        void testL0Statistics() {
+        void testSwissMapBasicStats() {
             // Put some values
             for (int i = 0; i < 5; i++) {
                 stateMap.put("key" + i, i, "value" + i);
             }
 
-            // Get some values (should increase hit counts)
+            // Verify all entries are accessible
             for (int i = 0; i < 5; i++) {
-                stateMap.get("key" + i, i);
+                assertEquals("value" + i, stateMap.get("key" + i, i));
             }
 
-            L0Table.L0TableStats l0Stats = stateMap.getL0Stats();
-            assertNotNull(l0Stats);
-            assertTrue(l0Stats.accessCount > 0);
-            assertTrue(l0Stats.hitRate > 0);
+            // Verify size
             assertEquals(5, stateMap.size());
         }
 
@@ -498,11 +401,8 @@ class ForL0StateMapTest {
             Integer namespace = 1005;
             String initialValue = "cache_test";
 
-            // Put initial value (should be in L0 cache)
+            // Put initial value
             stateMap.put(key, namespace, initialValue);
-
-            // Get L0 statistics before transform
-            L0Table.L0TableStats statsBefore = stateMap.getL0Stats();
 
             // Transform the entry
             stateMap.transform(key, namespace, "_cached", (previous, value) -> {
@@ -512,12 +412,6 @@ class ForL0StateMapTest {
 
             // Verify the transformation worked
             assertEquals("cache_test_cached", stateMap.get(key, namespace));
-
-            // Get L0 statistics after transform and get
-            L0Table.L0TableStats statsAfter = stateMap.getL0Stats();
-
-            // Verify L0 cache was accessed
-            assertTrue(statsAfter.accessCount > statsBefore.accessCount);
         }
 
         @Test

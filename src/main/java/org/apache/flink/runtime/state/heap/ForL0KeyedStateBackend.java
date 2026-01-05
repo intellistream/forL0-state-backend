@@ -78,14 +78,6 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     /** Shared L0 memory allocator for all StateTables/StateMaps in this backend. May be null if L0 cache is disabled. */
     @Nullable
     private final L0MemoryAllocator sharedL0Allocator;
-    
-    // [BENCHMARK_TEST] Metrics collector for L0Table monitoring
-    // Enable by setting system property: forL0.metricsCollector.enabled=true
-    @Nullable
-    private final L0TableMetricsCollector metricsCollector;
-    
-    // [BENCHMARK_TEST] Flag to track if metrics collection was started
-    private volatile boolean metricsCollectorStarted = false;
 
     public ForL0KeyedStateBackend (
             TaskKvStateRegistry kvStateRegistry,
@@ -132,18 +124,6 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
         if (sharedL0Allocator != null) {
             LOG.info("ForL0KeyedStateBackend initialized with shared L0Allocator (capacity: {} bytes)", 
                     sharedL0Allocator.getTotalCapacity());
-        }
-        
-        // [BENCHMARK_TEST] Initialize metrics collector - always enabled when L0 cache is active
-        // The overhead is negligible (1 sample per second, independent thread)
-        // To disable: set environment variable FORL0_METRICS_DISABLED=true
-        boolean metricsDisabled = "true".equalsIgnoreCase(System.getenv("FORL0_METRICS_DISABLED"));
-        if (!metricsDisabled && sharedL0Allocator != null) {
-            String backendId = "subtask-" + keyContext.getKeyGroupRange().getStartKeyGroup();
-            this.metricsCollector = new L0TableMetricsCollector(backendId);
-            LOG.info("[BENCHMARK_TEST] L0TableMetricsCollector created for backend: {}", backendId);
-        } else {
-            this.metricsCollector = null;
         }
     }
     
@@ -254,25 +234,10 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             stateTable = stateTableFactory.newStateTable(keyContext, newMetaInfo, keySerializer);
             registeredKVStates.put(stateDesc.getName(), stateTable);
         }
-        
-        // [BENCHMARK_TEST] Start metrics collector after first state is registered
-        maybeStartMetricsCollector();
 
         return stateTable;
     }
     
-    // [BENCHMARK_TEST] Starts metrics collector if not already started
-    @SuppressWarnings("null")
-    private void maybeStartMetricsCollector() {
-        if (metricsCollector != null && !metricsCollectorStarted) {
-            metricsCollectorStarted = true;
-            metricsCollector.extractFromRegisteredStates(registeredKVStates);
-            metricsCollector.start();
-            LOG.info("[BENCHMARK_TEST] L0TableMetricsCollector started with {} registered states", 
-                    registeredKVStates.size());
-        }
-    }
-
     @Override
     public void notifyCheckpointComplete(long l) throws Exception {
         // Nothing to do here
@@ -480,16 +445,6 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     @Override
     public void dispose() {
-        // [BENCHMARK_TEST] Stop metrics collector before disposing
-        if (metricsCollector != null) {
-            try {
-                metricsCollector.close();
-                LOG.info("[BENCHMARK_TEST] L0TableMetricsCollector stopped");
-            } catch (Exception e) {
-                LOG.warn("[BENCHMARK_TEST] Error stopping L0TableMetricsCollector", e);
-            }
-        }
-        
         super.dispose();
         
         // Close the shared L0 allocator to release L0 memory

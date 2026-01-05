@@ -32,12 +32,6 @@ from utils.config import (
     get_timestamp, parse_json_from_output, save_result
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
-from utils.l0_metrics import (
-    parse_l0table_metrics_by_time, 
-    normalize_metrics_time,
-    save_l0table_metrics as save_l0_metrics_file,
-    get_l0_metrics_summary
-)
 from utils.hardware_metrics import HardwareMetricsCollector
 
 
@@ -198,49 +192,6 @@ def parse_latency_file_path(output: str, flink_home: str) -> Optional[str]:
             pass
     
     return None
-
-
-def collect_l0_metrics_for_query(
-    flink_home: str, 
-    backend: str, 
-    query: str, 
-    start_time: datetime,
-    results_dir: Path
-) -> Optional[str]:
-    """
-    [BENCHMARK_TEST] Collect L0 metrics for a specific query run.
-    
-    Args:
-        flink_home: Path to Flink installation
-        backend: Backend name (e.g., "forl0")
-        query: Query name (e.g., "wordcount")
-        start_time: Job start timestamp - only collect metrics after this time
-        results_dir: Directory to save the metrics file
-        
-    Returns:
-        Path to the saved metrics file, or None if no metrics collected
-    """
-    end_time = datetime.now()
-    
-    # Parse metrics within time window
-    metrics = parse_l0table_metrics_by_time(flink_home, start_time, end_time)
-    if not metrics:
-        print(f"  [L0 Metrics] No metrics found for {query}")
-        return None
-    
-    # Normalize time to be relative to job start
-    metrics = normalize_metrics_time(metrics, start_time)
-    
-    # Save to file
-    filepath = save_l0_metrics_file(metrics, backend, query, results_dir)
-    
-    # Print summary
-    summary = get_l0_metrics_summary(metrics)
-    print(f"  [L0 Metrics] Collected {len(metrics)} samples for {query}")
-    if summary:
-        print(f"  [L0 Metrics] Overall hit rate: {summary.get('overall_hit_rate', 0):.1f}%")
-    
-    return filepath
 
 
 def parse_taskmanager_log(flink_home: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
@@ -602,25 +553,11 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         # Parse latency samples file path from output
         latency_file = parse_latency_file_path(output, flink_home)
         
-        # [BENCHMARK_TEST] Collect L0TABLE metrics for ForL0 backend with time filtering
-        l0_metrics_file = None
-        if backend == 'forl0':
-            l0_metrics_file = collect_l0_metrics_for_query(
-                flink_home=flink_home,
-                backend=backend,
-                query='wordcount',
-                start_time=job_start_time,
-                results_dir=get_results_dir('l0metrics')
-            )
-        
         if benchmark_result:
             benchmark_result['backend'] = backend
             benchmark_result['mode'] = mode
             if latency_file:
                 benchmark_result['latency_samples_file'] = latency_file
-            # [BENCHMARK_TEST] Include L0 metrics file path
-            if l0_metrics_file:
-                benchmark_result['l0_metrics_file'] = l0_metrics_file
             # [BENCHMARK_TEST] Include profiler output files
             if profiler_files:
                 benchmark_result['profiler_files'] = profiler_files
