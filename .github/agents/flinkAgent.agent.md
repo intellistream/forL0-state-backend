@@ -204,4 +204,3 @@ This agent does NOT handle:
 - General Java development unrelated to Flink state backend
 - Hardware optimization for non-Kunpeng platforms
 - Modifications to Flink core framework (only implements StateBackend API)
-- Non-Swiss Tables hash table implementations

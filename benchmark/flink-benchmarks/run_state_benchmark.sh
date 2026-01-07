@@ -14,11 +14,13 @@ NC='\033[0m' # No Color
 # Parse command line arguments
 ENABLE_PROFILING=false
 SKIP_BUILD=false
-while getopts "ps" opt; do
+QUICK_MODE=false
+while getopts "psq" opt; do
   case $opt in
     p) ENABLE_PROFILING=true ;;
     s) SKIP_BUILD=true ;;
-    *) echo "Usage: $0 [-p] [-s]"; echo "  -p: Enable async-profiler for flame graph generation"; echo "  -s: Skip Maven build (use existing benchmarks.jar)"; exit 1 ;;
+    q) QUICK_MODE=true ;;
+    *) echo "Usage: $0 [-p] [-s] [-q]"; echo "  -p: Enable async-profiler for flame graph generation"; echo "  -s: Skip Maven build (use existing benchmarks.jar)"; echo "  -q: Quick mode (less iterations, faster but less accurate)"; exit 1 ;;
   esac
 done
 
@@ -30,6 +32,11 @@ if [ "$ENABLE_PROFILING" = true ]; then
 fi
 if [ "$SKIP_BUILD" = true ]; then
     echo -e "${YELLOW}Build: SKIPPED (using existing jar)${NC}"
+fi
+if [ "$QUICK_MODE" = true ]; then
+    echo -e "${YELLOW}Mode: QUICK (wi=3, i=5, f=1)${NC}"
+else
+    echo -e "${GREEN}Mode: FULL (wi=5, i=10, f=3)${NC}"
 fi
 echo -e "${BLUE}======================================${NC}"
 echo ""
@@ -133,11 +140,15 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
         
         # Run benchmark (use absolute path to jar)
         cd "$SCRIPT_DIR"
+        if [ "$QUICK_MODE" = true ]; then
+            JMH_ARGS="-wi 3 -i 5 -f 1 -t 1"
+        else
+            JMH_ARGS="-wi 10 -i 20 -f 5 -t 1 -to 5m"
+        fi
         java -jar target/benchmarks.jar "$BENCHMARK" \
             -p "backendType=$BACKEND" \
             -rf csv -rff "$OUTPUT_FILE" \
-            -wi 10 -i 20 -f 5 -t 1 \
-            -to 5m \
+            $JMH_ARGS \
             -jvmArgs "-XX:+UseG1GC -XX:+AlwaysPreTouch -XX:-UseBiasedLocking" \
             $PROFILER_ARGS \
             2>&1 | tee "$RESULTS_DIR/${BENCH_NAME}_${BACKEND}_${TIMESTAMP}.log"

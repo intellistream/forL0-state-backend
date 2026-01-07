@@ -801,8 +801,10 @@ public class ForL0StateMapStressTest {
             // ===== CopyOnWriteStateMap 基准测试 =====
             LOG.info("=== CopyOnWriteStateMap 基准测试 ===");
 
-            // 创建CopyOnWriteStateMap实例 - use ForL0StateMap for comparison
-            StateMap<String, String, Integer> copyOnWriteStateMap = new ForL0StateMap<>();
+            // 创建CopyOnWriteStateMap实例
+            StateMap<String, String, Integer> copyOnWriteStateMap = new CopyOnWriteStateMap<>(
+                new org.apache.flink.api.common.typeutils.base.IntSerializer()
+            );
 
             BenchmarkResult cowResult = runStateMapBenchmark(
                 "CopyOnWriteStateMap",

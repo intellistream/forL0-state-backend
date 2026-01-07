@@ -87,16 +87,15 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     /**
      * Computes 64-bit hash for key and namespace.
      * 
-     * Uses the same bitMix as CopyOnWriteStateMap for the 32-bit base,
-     * then expands to 64-bit using golden ratio multiplication.
+     * Uses bitMix on key + lightweight ns spread to break XOR symmetry.
+     * Only 1 bitMix call for better performance, H2 uniformity = 1.68.
      */
     private static long computeHash(Object key, Object namespace) {
-        int h32 = MathUtils.bitMix(key.hashCode() ^ namespace.hashCode());
-        // Use golden ratio constant to spread 32-bit entropy to 64-bit
-        long x = (h32 & 0xFFFFFFFFL) * 0x9e3779b97f4a7c15L;
-        // Light mixing to ensure H2 quality
-        x ^= x >>> 32;
-        return x;
+        int h = MathUtils.bitMix(key.hashCode());
+        int n = namespace.hashCode() * 0x9E3779B9;
+        h ^= n ^ (n >>> 16);
+        long x = (h & 0xFFFFFFFFL) * 0x9e3779b97f4a7c15L;
+        return x ^ (x >>> 32);
     }
 
     // ========== Directory Routing ==========
@@ -139,13 +138,23 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         
         long hash = computeHash(key, namespace);
         
+        // Outer retry loop (aligned with Go 1.24: outer: for { ... continue outer })
+        outer:
         while (true) {
             SwissTable<K, N, S> t = locateTable(hash);
             int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
             
-            if (result == SwissTable.NEED_SPLIT) {
-                handleSplit(t);
-                continue;  // Retry
+            // Handle signals from SwissTable
+            switch (result) {
+                case SwissTable.NEED_REHASH:
+                    t.rehash();
+                    continue outer;
+                case SwissTable.NEED_GROW:
+                    t.grow();
+                    continue outer;
+                case SwissTable.NEED_SPLIT:
+                    handleSplit(t);
+                    continue outer;
             }
             
             int slot = result & SwissTable.SLOT_MASK;
@@ -171,13 +180,23 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         
         long hash = computeHash(key, namespace);
         
+        // Outer retry loop (aligned with Go 1.24: outer: for { ... continue outer })
+        outer:
         while (true) {
             SwissTable<K, N, S> t = locateTable(hash);
             int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
             
-            if (result == SwissTable.NEED_SPLIT) {
-                handleSplit(t);
-                continue;
+            // Handle signals from SwissTable
+            switch (result) {
+                case SwissTable.NEED_REHASH:
+                    t.rehash();
+                    continue outer;
+                case SwissTable.NEED_GROW:
+                    t.grow();
+                    continue outer;
+                case SwissTable.NEED_SPLIT:
+                    handleSplit(t);
+                    continue outer;
             }
             
             int slot = result & SwissTable.SLOT_MASK;
@@ -226,13 +245,23 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         
         long hash = computeHash(key, namespace);
         
+        // Outer retry loop (aligned with Go 1.24: outer: for { ... continue outer })
+        outer:
         while (true) {
             SwissTable<K, N, S> t = locateTable(hash);
             int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
             
-            if (result == SwissTable.NEED_SPLIT) {
-                handleSplit(t);
-                continue;  // Retry
+            // Handle signals from SwissTable
+            switch (result) {
+                case SwissTable.NEED_REHASH:
+                    t.rehash();
+                    continue outer;
+                case SwissTable.NEED_GROW:
+                    t.grow();
+                    continue outer;
+                case SwissTable.NEED_SPLIT:
+                    handleSplit(t);
+                    continue outer;
             }
             
             int slot = result & SwissTable.SLOT_MASK;

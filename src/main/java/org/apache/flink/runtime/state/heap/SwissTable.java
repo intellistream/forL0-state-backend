@@ -42,6 +42,10 @@ class SwissTable<K, N, S> {
     static final int SLOT_MASK = 0xFFFF;
     /** Special return value indicating the table needs to split */
     static final int NEED_SPLIT = -1;
+    /** Special return value indicating the table needs to rehash (clear tombstones) */
+    static final int NEED_REHASH = -2;
+    /** Special return value indicating the table needs to grow */
+    static final int NEED_GROW = -3;
 
     // ========== Control byte values ==========
     static final byte CTRL_EMPTY = (byte) 0x80;
@@ -164,10 +168,12 @@ class SwissTable<K, N, S> {
     /**
      * Finds or inserts an entry for the given key and namespace.
      * 
-     * <p>Return value encoding:
+     * <p>Return value encoding (aligned with Go 1.24 Swiss Tables):
      * <ul>
      *   <li>slot | NEW_FLAG: new entry inserted, caller should write values[slot]</li>
      *   <li>slot: existing entry found, caller can read/write values[slot]</li>
+     *   <li>NEED_REHASH: table needs rehash to clear tombstones, caller should call rehash() and retry</li>
+     *   <li>NEED_GROW: table needs to grow, caller should call grow() and retry</li>
      *   <li>NEED_SPLIT: table is at max capacity and needs to split</li>
      * </ul>
      * 
@@ -178,96 +184,90 @@ class SwissTable<K, N, S> {
      * @param key the key
      * @param namespace the namespace
      * @param maxTableCapacity maximum allowed table capacity before split
-     * @return slot encoding or NEED_SPLIT
+     * @return slot encoding or NEED_REHASH/NEED_GROW/NEED_SPLIT
      */
     int put(long hash, K key, N namespace, int maxTableCapacity) {
         int h2Hash = h2(hash);
+        int group = h1(hash) & groupMask;
+        int stride = 1;
+        int firstDeletedSlot = -1;
 
-        while (true) {  // Main loop for rehash/grow retry
-            int group = h1(hash) & groupMask;
-            int stride = 1;
-            int firstDeletedSlot = -1;
+        while (true) {  // Probe loop (aligned with Go 1.24: single loop, signals for retry)
+            long ctrlWord = loadCtrlWord(group);
+            int base = group << 3;
 
-            while (true) {  // Probe loop
-                long ctrlWord = loadCtrlWord(group);
-                int base = group << 3;
-
-                // 1. Look for existing key
-                long match = matchH2(ctrlWord, h2Hash);
-                while (match != 0) {
-                    int slot = base + laneFromTz(Long.numberOfTrailingZeros(match));
-                    int keyIdx = slot << 1;
-                    if (key.equals(keysNs[keyIdx]) && namespace.equals(keysNs[keyIdx + 1])) {
-                        // Found - return slot (no NEW_FLAG)
-                        return slot;
-                    }
-                    match = clearLowestBit(match);
+            // 1. Look for existing key
+            long match = matchH2(ctrlWord, h2Hash);
+            while (match != 0) {
+                int slot = base + laneFromTz(Long.numberOfTrailingZeros(match));
+                int keyIdx = slot << 1;
+                if (key.equals(keysNs[keyIdx]) && namespace.equals(keysNs[keyIdx + 1])) {
+                    // Found - return slot (no NEW_FLAG)
+                    return slot;
                 }
-
-                // 2. Record first DELETED position
-                if (firstDeletedSlot == -1) {
-                    long delMask = matchDeleted(ctrlWord);
-                    if (delMask != 0) {
-                        firstDeletedSlot = base + laneFromTz(Long.numberOfTrailingZeros(delMask));
-                    }
-                }
-
-                // 3. Check EMPTY (probe termination)
-                long emptyMask = matchEmpty(ctrlWord);
-                if (emptyMask != 0) {
-                    int emptySlot = base + laneFromTz(Long.numberOfTrailingZeros(emptyMask));
-
-                    // Determine insert position
-                    int insertSlot;
-                    boolean useDeleted;
-
-                    if (firstDeletedSlot != -1) {
-                        insertSlot = firstDeletedSlot;
-                        useDeleted = true;
-                    } else {
-                        insertSlot = emptySlot;
-                        useDeleted = false;
-
-                        // Using EMPTY requires budget check
-                        if (growthLeft == 0) {
-                            // O(1) check for tombstones
-                            if (tomb > 0) {
-                                rehash();
-                                break;  // Exit probe loop, continue main loop to retry
-                            }
-                            // No tombstones, need to grow
-                            if (capacity < maxTableCapacity) {
-                                grow();
-                                break;  // Exit probe loop, continue main loop to retry
-                            }
-                            // Already at max capacity, need split
-                            return NEED_SPLIT;
-                        }
-                    }
-
-                    // Execute insert (fill key/ns/ctrl/hash, caller writes value)
-                    int keyIdx = insertSlot << 1;
-                    keysNs[keyIdx] = key;
-                    keysNs[keyIdx + 1] = namespace;
-                    // values[insertSlot] is set by caller
-                    ctrl[insertSlot] = (byte) h2Hash;
-                    hashes[insertSlot] = hash;  // Store full hash for rehash/grow
-                    used++;
-
-                    if (useDeleted) {
-                        tomb--;  // Reusing tombstone, growthLeft unchanged
-                    } else {
-                        growthLeft--;
-                    }
-
-                    return insertSlot | NEW_FLAG;  // Return slot + new insert flag
-                }
-
-                // 4. Continue probing
-                group = (group + stride) & groupMask;
-                stride++;
+                match = clearLowestBit(match);
             }
-            // After rehash/grow, continue main loop to retry
+
+            // 2. Record first DELETED position
+            if (firstDeletedSlot == -1) {
+                long delMask = matchDeleted(ctrlWord);
+                if (delMask != 0) {
+                    firstDeletedSlot = base + laneFromTz(Long.numberOfTrailingZeros(delMask));
+                }
+            }
+
+            // 3. Check EMPTY (probe termination)
+            long emptyMask = matchEmpty(ctrlWord);
+            if (emptyMask != 0) {
+                int emptySlot = base + laneFromTz(Long.numberOfTrailingZeros(emptyMask));
+
+                // Determine insert position
+                int insertSlot;
+                boolean useDeleted;
+
+                if (firstDeletedSlot != -1) {
+                    insertSlot = firstDeletedSlot;
+                    useDeleted = true;
+                } else {
+                    insertSlot = emptySlot;
+                    useDeleted = false;
+
+                    // Using EMPTY requires budget check
+                    if (growthLeft == 0) {
+                        // O(1) check for tombstones - return signal for caller to handle
+                        if (tomb > 0) {
+                            return NEED_REHASH;
+                        }
+                        // No tombstones, need to grow
+                        if (capacity < maxTableCapacity) {
+                            return NEED_GROW;
+                        }
+                        // Already at max capacity, need split
+                        return NEED_SPLIT;
+                    }
+                }
+
+                // Execute insert (fill key/ns/ctrl/hash, caller writes value)
+                int keyIdx = insertSlot << 1;
+                keysNs[keyIdx] = key;
+                keysNs[keyIdx + 1] = namespace;
+                // values[insertSlot] is set by caller
+                ctrl[insertSlot] = (byte) h2Hash;
+                hashes[insertSlot] = hash;  // Store full hash for rehash/grow
+                used++;
+
+                if (useDeleted) {
+                    tomb--;  // Reusing tombstone, growthLeft unchanged
+                } else {
+                    growthLeft--;
+                }
+
+                return insertSlot | NEW_FLAG;  // Return slot + new insert flag
+            }
+
+            // 4. Continue probing
+            group = (group + stride) & groupMask;
+            stride++;
         }
     }
 
