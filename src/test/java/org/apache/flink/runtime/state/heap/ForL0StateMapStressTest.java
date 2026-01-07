@@ -235,94 +235,6 @@ public class ForL0StateMapStressTest {
     }
 
     @Nested
-    @DisplayName("缓存性能测试")
-    class CachePerformanceTests {
-
-        @Test
-        @DisplayName("L0缓存命中率测试")
-        void testL0CacheHitRate() throws Exception {
-            final int hotKeys = 100;
-            final int coldKeys = 1000;
-            final int hotAccesses = 5000;
-
-            // 插入冷数据
-            for (int i = 0; i < coldKeys; i++) {
-                stateMap.put(i + hotKeys, "ns", "cold-value-" + i);
-            }
-
-            // 插入热数据
-            for (int i = 0; i < hotKeys; i++) {
-                stateMap.put(i, "ns", "hot-value-" + i);
-            }
-
-            // 访问热数据多次以提高缓存命中率
-            Random random = new Random();
-            for (int i = 0; i < hotAccesses; i++) {
-                int hotKey = random.nextInt(hotKeys);
-                String value = stateMap.get(hotKey, "ns");
-                assertNotNull(value);
-                assertTrue(value.startsWith("hot-value-"));
-            }
-
-            // 获取缓存统计
-            LOG.info("L0缓存性能测试完成");
-            LOG.info("  热键数量: {}", hotKeys);
-            LOG.info("  冷键数量: {}", coldKeys);
-            LOG.info("  热访问次数: {}", hotAccesses);
-            LOG.info("  总状态数量: {}", stateMap.size());
-
-            assertEquals(hotKeys + coldKeys, stateMap.size());
-        }
-
-        @Test
-        @DisplayName("缓存替换策略测试")
-        void testCacheReplacementPolicy() throws Exception {
-            @SuppressWarnings("unused")
-            final int cacheSize = 1 << 12; // 4K buckets - Reserved for future cache size configuration
-            final int testKeys = 1000; // 适中的键数量
-
-            // 顺序插入数据，这会导致缓存替换
-            for (int i = 0; i < testKeys; i++) {
-                stateMap.put(i, "ns", "value-" + i);
-
-                if (i % 100 == 0) {
-                    LOG.info("已插入 {} 个键, 当前大小: {}", i + 1, stateMap.size());
-                }
-            }
-
-            // 访问期插入的键（可能已被替换出缓存）
-            int earlyAccessCount = 100;
-            int earlyHits = 0;
-            for (int i = 0; i < earlyAccessCount; i++) {
-                String value = stateMap.get(i, "ns");
-                if (value != null) {
-                    earlyHits++;
-                }
-            }
-
-            // 访问最近插入的键（应该在缓存中）
-            int recentAccessCount = 100;
-            int recentHits = 0;
-            int startKey = testKeys - recentAccessCount;
-            for (int i = startKey; i < testKeys; i++) {
-                String value = stateMap.get(i, "ns");
-                if (value != null) {
-                    recentHits++;
-                }
-            }
-
-            LOG.info("缓存替换策略测试结果:");
-            LOG.info("  测试键总数: {}", testKeys);
-            LOG.info("  早期键命中: {}/{}", earlyHits, earlyAccessCount);
-            LOG.info("  最近键命中: {}/{}", recentHits, recentAccessCount);
-            LOG.info("  最终状态数量: {}", stateMap.size());
-
-            assertEquals(testKeys, stateMap.size());
-            assertEquals(recentAccessCount, recentHits); // 最近的键应该全部命中
-        }
-    }
-
-    @Nested
     @DisplayName("长时间运行测试")
     class LongRunningTests {
 
@@ -415,7 +327,7 @@ public class ForL0StateMapStressTest {
             LOG.info("开始 SwissMap 自动扩容压力测试：目标插入 150000 条数据");
 
             // 记录 directory 增长
-            int initialTableCount = stateMap.getSwissMap().getTables().size();
+            int initialTableCount = stateMap.getTableCount();
             LOG.info("初始 table 数量: {}", initialTableCount);
 
             final int totalInsert = 150_000;
@@ -426,13 +338,13 @@ public class ForL0StateMapStressTest {
                 
                 // 每 30000 条记录一下状态
                 if (i % 30000 == 0 && i > 0) {
-                    int currentTableCount = stateMap.getSwissMap().getTables().size();
+                    int currentTableCount = stateMap.getTableCount();
                     LOG.info("已插入 {} 条, tables={}", i, currentTableCount);
                 }
             }
 
             long duration = System.currentTimeMillis() - startTime;
-            int finalTableCount = stateMap.getSwissMap().getTables().size();
+            int finalTableCount = stateMap.getTableCount();
             int finalSize = stateMap.size();
             
             LOG.info("SwissMap 自动扩容压力测试完成:");
@@ -477,7 +389,7 @@ public class ForL0StateMapStressTest {
                 stateMap.put(i, "ns" + (i % 50), "baseVal" + i);
             }
             
-            int tablesAfterBase = stateMap.getSwissMap().getTables().size();
+            int tablesAfterBase = stateMap.getTableCount();
             LOG.info("基础数据插入完成: entries={}, tables={}", 
                     stateMap.size(), tablesAfterBase);
             
@@ -504,7 +416,7 @@ public class ForL0StateMapStressTest {
                 }
             }
 
-            int finalTables = stateMap.getSwissMap().getTables().size();
+            int finalTables = stateMap.getTableCount();
             LOG.info("混合操作完成: writes={}, reads={}, deletes={}", writes, reads, deletes);
             LOG.info("最终状态: entries={}, tables={}", stateMap.size(), finalTables);
 
@@ -812,7 +724,8 @@ public class ForL0StateMapStressTest {
             LOG.info("  平均QPS: {}", operationsCount / duration);
 
             assertEquals(operationsCount, jsonOperations + aggregationOperations + conditionalOperations);
-            assertTrue(stateMap.size() <= keyRange * 3, "状态数量不应超过key范围 * namespace数量");
+            // 3种namespace前缀(json_ns, sum_ns, status_ns) * 5个变体(0-4) = 15种namespace
+            assertTrue(stateMap.size() <= keyRange * 15, "状态数量不应超过key范围 * namespace数量");
 
             // 验证部分数据的正确性
             int verificationCount = 0;
@@ -964,7 +877,7 @@ public class ForL0StateMapStressTest {
             // Get SwissMap stats for ForL0StateMap
             int tableCount = 0;
             if (stateMap instanceof ForL0StateMap) {
-                tableCount = ((ForL0StateMap<String, String, Integer>) stateMap).getSwissMap().getTables().size();
+                tableCount = ((ForL0StateMap<String, String, Integer>) stateMap).getTableCount();
                 LOG.info("{} SwissMap table数量: {}", name, tableCount);
             }
 

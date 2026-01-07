@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，旨在充分利用鲲鹏 CPU 的 L0 Cache 特性，通过缓存友好的数据结构和分层索引架构优化状态访问性能。
+ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，采用 Swiss Tables 架构（对齐 Go 1.24），通过 SWAR 并行匹配和 Extendible Hashing 实现高效的状态访问。
 
 ## 技术栈
 
@@ -16,14 +16,26 @@ ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实�
 
 ## 核心架构
 
-### 双层索引设计
+### Swiss Tables 架构 (对齐 Go 1.24)
 
 ```
-ForL0StateMap
-├── L0Table (热点缓存层, L0 Memory)
-│   └── 使用 NativeL0MemoryAllocator (JNI)
-└── MainTable (全量索引层, Flink MemoryManager)
-    └── 使用 MemoryManagerAllocator
+ForL0StateMap (StateMap 接口 + Directory 路由)
+├── directory[]         // Extendible Hashing 路由表
+├── tables: List        // 唯一 SwissTable 列表
+└── SwissTable          // 存储层
+    ├── ctrl[]          // 控制字节 (EMPTY=0x80, DELETED=0xFE, FULL=h2)
+    ├── keysNs[]        // key/namespace 存储 (slot i → keysNs[2i], keysNs[2i+1])
+    ├── values[]        // value 存储
+    └── hashes[]        // 64位 hash 存储 (用于 rehash/grow/split)
+```
+
+### Hash 位分配 (对齐 Go 1.24)
+
+```
+64 位 hash:
+├── H1 = hash >>> 7     // 高 57 位，用于探测起始 group
+├── H2 = hash & 0x7F    // 低 7 位，存入 ctrl 字节
+└── Directory 路由: hash >>> globalShift (高 globalDepth 位)
 ```
 
 ### 关键组件
@@ -32,19 +44,43 @@ ForL0StateMap
 |------|------|------|
 | `ForL0StateBackend` | StateBackend 入口 | `runtime/state/heap/` |
 | `ForL0KeyedStateBackend` | KeyedStateBackend 实现 | `runtime/state/heap/` |
-| `ForL0StateMap` | 核心状态存储,双层索引 | `runtime/state/heap/` |
-| `L0Table` | 热点缓存,多种替换策略 | `runtime/state/heap/` |
-| `MainTable` | 主索引表,支持局部扩展 | `runtime/state/heap/` |
-| `EntryStore` | 键值分离存储 (KeyNsPool + ValuePool) | `runtime/state/heap/entrystore/` |
-| `NativeL0Memory` | JNI 桥接类 | `runtime/state/heap/space/` |
+| `ForL0StateMap` | StateMap 接口 + Directory 路由 | `runtime/state/heap/` |
+| `SwissTable` | SWAR 并行匹配的哈希表存储 | `runtime/state/heap/` |
+| `NativeL0Memory` | JNI 桥接类 (L0 Cache) | `runtime/state/heap/space/` |
 | `forl0_native.c` | C 实现 (L0/模拟模式) | `src/main/native/` |
 
-### 内存管理
+### SwissTable 核心算法
 
-- **MainTable**: 使用 Flink `MemoryManager` 管理的堆外内存
-- **L0Table**: 使用 JNI 分配的 native 内存
-  - L0 模式: `libl0mempool.so` (鲲鹏 L0 硬件)
-  - 模拟模式: 标准 `malloc/free`
+```java
+// SWAR 并行匹配 (8 slots 同时比较)
+static long matchH2(long ctrlWord, int h2) {
+    long pattern = LSB * (h2 & 0xFFL);
+    long x = ctrlWord ^ pattern;
+    return (x - LSB) & ~x & MSB;
+}
+
+// put 返回值编码
+static final int NEW_FLAG = 1 << 16;   // 新插入标志
+static final int SLOT_MASK = 0xFFFF;   // 槽位掩码
+static final int NEED_SPLIT = -1;      // 需要 split
+
+// 使用示例
+int result = table.put(hash, key, namespace, MAX_CAPACITY);
+if (result == NEED_SPLIT) {
+    handleSplit(table);
+    continue; // 重试
+}
+int slot = result & SLOT_MASK;
+boolean isNew = (result & NEW_FLAG) != 0;
+table.values[slot] = value;
+```
+
+### Extendible Hashing
+
+- **globalDepth**: Directory 使用的 hash 位数
+- **localDepth**: 每个 Table 的深度
+- **split**: 当 Table 满载且 capacity = MAX_TABLE_CAPACITY 时触发
+- **Go 风格 index 去重**: `if (t.index == i) t.index = 2 * i`
 
 ## 代码规范
 
@@ -104,14 +140,16 @@ make install                # 复制到 resources/native/
 
 ### 内存布局
 
-- 所有索引结构 **64 字节对齐** (缓存行对齐)
-- L0Table slot: 16 bytes (Tag + Valid + Extension + Pointer)
-- MainTable slot: 10 bytes (Tag + Pointer)
-- MainTable bucket: 64 bytes (6 slots + 4 expansion pointers)
+- SwissTable ctrl[]: 每 slot 1 字节控制字节
+- SwissTable keysNs[]: slot i → keysNs[2*i] (key), keysNs[2*i+1] (namespace)
+- SwissTable values[]: slot i → values[i]
+- SwissTable hashes[]: slot i → 64位 hash (用于 rehash/grow/split)
+- Directory 默认大小: 1 (globalDepth=0)
+- Table 容量: INITIAL=64, MAX=1024, 负载因子 87.5%
 
 ### 错误处理
 
-- Native 库加载失败 → 抛出异常,L0Table 不可用
+- Native 库加载失败 → 抛出异常,L0 Cache 不可用
 - 内存分配失败 → 抛出 `L0MemoryAllocationException`
 - 不提供降级到堆内存的选项
 
@@ -170,7 +208,6 @@ python generate_report.py
 
 | 指标 | 说明 | 平台支持 |
 |------|------|----------|
-| L0Table 命中率 | L0 热点缓存命中率 | macOS ✅ / Linux ✅ |
 | 吞吐量/延迟 | 性能基准指标 | macOS ✅ / Linux ✅ |
 | 火焰图 (CPU/Alloc) | Async Profiler | macOS ✅ / Linux ✅ |
 | CPU Cache 统计 | cache-misses 等 | macOS ❌ / Linux ✅ |
@@ -179,7 +216,7 @@ python generate_report.py
 
 ## 贡献指南
 
-1. 修改前先理解双层索引架构
+1. 修改前先理解 Swiss Tables 架构和 SWAR 并行匹配
 2. Native 代码修改需要重新编译库
 3. 保持与 Flink 原生 API 的兼容性
 4. 测试代码使用 `[BENCHMARK_TEST]` 注释标注

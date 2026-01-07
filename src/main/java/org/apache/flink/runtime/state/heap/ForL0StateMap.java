@@ -3,12 +3,14 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
+import org.apache.flink.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.stream.Stream;
 
@@ -17,6 +19,19 @@ import java.util.stream.Stream;
  * 
  * <p>This implementation uses a directory-based Swiss Table structure for
  * high-performance key-value state storage with incremental expansion.
+ * 
+ * <p>Architecture (aligned with Go 1.24 Swiss Tables):
+ * <ul>
+ *   <li>ForL0StateMap: Directory routing + StateMap interface implementation</li>
+ *   <li>SwissTable: Self-contained storage with SWAR parallel matching</li>
+ * </ul>
+ * 
+ * <p>Hash bit allocation:
+ * <ul>
+ *   <li>H1 = hash >>> 7 (high 57 bits, for probe starting group)</li>
+ *   <li>H2 = hash & 0x7F (low 7 bits, stored in ctrl byte)</li>
+ *   <li>Directory routing uses high globalDepth bits</li>
+ * </ul>
  *
  * @param <K> key type
  * @param <N> namespace type
@@ -26,8 +41,18 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     private static final Logger LOG = LoggerFactory.getLogger(ForL0StateMap.class);
 
-    // Core storage using Swiss Tables
-    private final SwissMap<K, N, S> map;
+    // ========== Configuration ==========
+    private static final int INITIAL_TABLE_CAPACITY = 64;
+    private static final int MAX_TABLE_CAPACITY = 1024;
+
+    // ========== Global count ==========
+    private int size;
+
+    // ========== Directory ==========
+    private int globalDepth;
+    private int globalShift;  // 64 - globalDepth
+    private SwissTable<K, N, S>[] directory;
+    private final List<SwissTable<K, N, S>> tables;  // Unique table list for snapshot/iteration
 
     /**
      * The last namespace that was actually inserted. This is a small optimization to reduce
@@ -38,24 +63,64 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     /**
      * Creates a new ForL0StateMap with Swiss Tables architecture.
      */
+    @SuppressWarnings("unchecked")
     public ForL0StateMap() {
-        this.map = new SwissMap<>();
-        LOG.debug("[ForL0] StateMap initialized with Swiss Tables architecture");
+        this.size = 0;
+        this.globalDepth = 0;
+        this.globalShift = 64;
+        
+        // Create initial single table
+        SwissTable<K, N, S> initTable = new SwissTable<>(INITIAL_TABLE_CAPACITY, (byte) 0, 0);
+        this.directory = new SwissTable[] { initTable };
+        this.tables = new ArrayList<>();
+        this.tables.add(initTable);
+        
     }
 
     @Override
     public void close() throws Exception {
-        LOG.info("ForL0StateMap closing - size: {}", map.size());
+        LOG.info("ForL0StateMap closing - size: {}", size);
     }
+
+    // ========== Hash Computation ==========
+
+    /**
+     * Computes 64-bit hash for key and namespace.
+     * 
+     * Uses the same bitMix as CopyOnWriteStateMap for the 32-bit base,
+     * then expands to 64-bit using golden ratio multiplication.
+     */
+    private static long computeHash(Object key, Object namespace) {
+        int h32 = MathUtils.bitMix(key.hashCode() ^ namespace.hashCode());
+        // Use golden ratio constant to spread 32-bit entropy to 64-bit
+        long x = (h32 & 0xFFFFFFFFL) * 0x9e3779b97f4a7c15L;
+        // Light mixing to ensure H2 quality
+        x ^= x >>> 32;
+        return x;
+    }
+
+    // ========== Directory Routing ==========
+
+    /**
+     * Locates the table for the given hash.
+     */
+    private SwissTable<K, N, S> locateTable(long hash) {
+        int dirIdx = globalDepth == 0 ? 0 : (int)(hash >>> globalShift);
+        return directory[dirIdx];
+    }
+
+    // ========== StateMap Interface Implementation ==========
 
     @Override
     public int size() {
-        return map.size();
+        return size;
     }
 
     @Override
     public S get(K key, N namespace) {
-        return map.get(key, namespace);
+        long hash = computeHash(key, namespace);
+        SwissTable<K, N, S> t = locateTable(hash);
+        return t.get(hash, key, namespace);
     }
 
     @Override
@@ -71,8 +136,27 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         } else {
             lastNamespace = namespace;
         }
-        int ptr = map.put(key, namespace);
-        map.states[ptr - 1] = state;
+        
+        long hash = computeHash(key, namespace);
+        
+        while (true) {
+            SwissTable<K, N, S> t = locateTable(hash);
+            int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
+            
+            if (result == SwissTable.NEED_SPLIT) {
+                handleSplit(t);
+                continue;  // Retry
+            }
+            
+            int slot = result & SwissTable.SLOT_MASK;
+            boolean isNew = (result & SwissTable.NEW_FLAG) != 0;
+            
+            t.values[slot] = state;
+            if (isNew) {
+                size++;
+            }
+            return;
+        }
     }
 
     @Override
@@ -84,20 +168,49 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         } else {
             lastNamespace = namespace;
         }
-        int ptr = map.put(key, namespace);
-        S oldValue = (S) map.states[ptr - 1];
-        map.states[ptr - 1] = state;
-        return oldValue;
+        
+        long hash = computeHash(key, namespace);
+        
+        while (true) {
+            SwissTable<K, N, S> t = locateTable(hash);
+            int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
+            
+            if (result == SwissTable.NEED_SPLIT) {
+                handleSplit(t);
+                continue;
+            }
+            
+            int slot = result & SwissTable.SLOT_MASK;
+            boolean isNew = (result & SwissTable.NEW_FLAG) != 0;
+            
+            S oldState = isNew ? null : (S) t.values[slot];
+            t.values[slot] = state;
+            if (isNew) {
+                size++;
+            }
+            return oldState;
+        }
     }
 
     @Override
     public void remove(K key, N namespace) {
-        map.remove(key, namespace);
+        long hash = computeHash(key, namespace);
+        SwissTable<K, N, S> t = locateTable(hash);
+        S old = t.remove(hash, key, namespace);
+        if (old != null) {
+            size--;
+        }
     }
 
     @Override
     public S removeAndGetOld(K key, N namespace) {
-        return map.remove(key, namespace);
+        long hash = computeHash(key, namespace);
+        SwissTable<K, N, S> t = locateTable(hash);
+        S old = t.remove(hash, key, namespace);
+        if (old != null) {
+            size--;
+        }
+        return old;
     }
 
     @Override
@@ -110,21 +223,160 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         } else {
             lastNamespace = namespace;
         }
-        int ptr = map.put(key, namespace);
-        S oldState = (S) map.states[ptr - 1];
-        map.states[ptr - 1] = transformation.apply(oldState, value);
+        
+        long hash = computeHash(key, namespace);
+        
+        while (true) {
+            SwissTable<K, N, S> t = locateTable(hash);
+            int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
+            
+            if (result == SwissTable.NEED_SPLIT) {
+                handleSplit(t);
+                continue;  // Retry
+            }
+            
+            int slot = result & SwissTable.SLOT_MASK;
+            boolean isNew = (result & SwissTable.NEW_FLAG) != 0;
+            
+            S oldState = isNew ? null : (S) t.values[slot];
+            t.values[slot] = transformation.apply(oldState, value);
+            
+            if (isNew) {
+                size++;
+            }
+            return;
+        }
     }
 
     @Override
     public int sizeOfNamespace(Object namespace) {
-        int[] cnt = new int[1];
-        map.forEach((k, n, s) -> {
-            if (namespace != null && namespace.equals(n)) {
-                cnt[0]++;
-            }
-        });
-        return cnt[0];
+        int count = 0;
+        for (SwissTable<K, N, S> t : tables) {
+            count += t.countNamespace(namespace);
+        }
+        return count;
     }
+
+    @Override
+    public Stream<K> getKeys(N namespace) {
+        ArrayList<K> keys = new ArrayList<>();
+        for (SwissTable<K, N, S> t : tables) {
+            for (int i = 0; i < t.capacity; i++) {
+                if (SwissTable.isFull(t.ctrl[i])) {
+                    @SuppressWarnings("unchecked")
+                    N ns = (N) t.keysNs[(i << 1) + 1];
+                    if (namespace.equals(ns)) {
+                        @SuppressWarnings("unchecked")
+                        K key = (K) t.keysNs[i << 1];
+                        keys.add(key);
+                    }
+                }
+            }
+        }
+        return keys.stream();
+    }
+
+    // ========== Split Operations ==========
+
+    /**
+     * Handles NEED_SPLIT signal from a table.
+     */
+    private void handleSplit(SwissTable<K, N, S> t) {
+        // If localDepth == globalDepth, need to grow directory first
+        if (t.localDepth == globalDepth) {
+            growDirectory();
+        }
+        split(t);
+    }
+
+    /**
+     * Directory doubling.
+     * 
+     * Go-style deduplication: same table may be pointed to by multiple directory slots.
+     * By checking t.index == i, we ensure each table's index is updated only once.
+     */
+    @SuppressWarnings("unchecked")
+    private void growDirectory() {
+        SwissTable<K, N, S>[] newDir = new SwissTable[directory.length * 2];
+        for (int i = 0; i < directory.length; i++) {
+            SwissTable<K, N, S> t = directory[i];
+            newDir[2 * i] = t;
+            newDir[2 * i + 1] = t;
+            // Go-style deduplication: only update index on first encounter
+            if (t.index == i) {
+                t.index = 2 * i;
+            }
+        }
+        directory = newDir;
+        globalDepth++;
+        globalShift--;
+    }
+
+    /**
+     * Split a table into two new tables.
+     * 
+     * Key points:
+     * 1. New table capacity = old table capacity (same-capacity split)
+     * 2. Split bit must align with directory routing
+     * 3. Use oldTable.index to locate directory range
+     */
+    @SuppressWarnings("unchecked")
+    private void split(SwissTable<K, N, S> oldTable) {
+        byte newLocalDepth = (byte)(oldTable.localDepth + 1);
+        
+        // Calculate new table indices in directory
+        // oldTable covers directory range: [index, index + span)
+        int span = 1 << (globalDepth - oldTable.localDepth);
+        int leftIndex = oldTable.index;
+        int rightIndex = oldTable.index + (span >>> 1);
+        
+        // New tables have same capacity as old table
+        SwissTable<K, N, S> left = new SwissTable<>(oldTable.capacity, newLocalDepth, leftIndex);
+        SwissTable<K, N, S> right = new SwissTable<>(oldTable.capacity, newLocalDepth, rightIndex);
+        
+        // Split bit must align with directory routing rule
+        // Directory uses high globalDepth bits of hash
+        // Split adds 1 bit to distinguish left/right
+        int splitShift = 64 - newLocalDepth;
+        
+        // Iterate old table, distribute to new tables
+        for (int slot = 0; slot < oldTable.capacity; slot++) {
+            if (SwissTable.isFull(oldTable.ctrl[slot])) {
+                int keyIdx = slot << 1;
+                K key = (K) oldTable.keysNs[keyIdx];
+                N ns = (N) oldTable.keysNs[keyIdx + 1];
+                S value = (S) oldTable.values[slot];
+                
+                // Use stored hash (no need to recompute)
+                long hash = oldTable.hashes[slot];
+                
+                // Get split bit
+                int side = (int)((hash >>> splitShift) & 1L);
+                
+                SwissTable<K, N, S> target = (side == 0) ? left : right;
+                target.putDirect(hash, key, ns, value);
+            }
+        }
+        
+        // Update directory
+        // oldTable covers [index, index + span)
+        // left covers [index, index + span/2)
+        // right covers [index + span/2, index + span)
+        int mid = oldTable.index + (span >>> 1);
+        for (int i = oldTable.index; i < mid; i++) {
+            directory[i] = left;
+        }
+        for (int i = mid; i < oldTable.index + span; i++) {
+            directory[i] = right;
+        }
+        
+        // Update tables list
+        tables.remove(oldTable);
+        tables.add(left);
+        tables.add(right);
+    }
+
+    // ========== Iteration ==========
 
     @Override
     public InternalKvState.StateIncrementalVisitor<K, N, S> getStateIncrementalVisitor(int recommendedMaxNumberOfReturnedRecords) {
@@ -168,7 +420,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Nonnull
     @Override
     public Iterator<StateEntry<K, N, S>> iterator() {
-        return new SwissMapStateEntryIterator();
+        return new SwissTableIterator();
     }
 
     /**
@@ -191,45 +443,86 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     /**
-     * Iterator that wraps SwissMap's iterator to provide StateEntry interface.
+     * Iterator that traverses all SwissTables using SWAR matchFull.
      */
-    private class SwissMapStateEntryIterator implements Iterator<StateEntry<K, N, S>> {
-        private final Iterator<SwissMap.SwissMapEntry<K, N, S>> inner;
-        private final ReusableEntry reusable = new ReusableEntry();
+    private class SwissTableIterator implements Iterator<StateEntry<K, N, S>> {
+        private int tableIdx = 0;
+        private int groupIdx = -1;  // Start at -1 so first increment goes to 0
+        private long currentMask = 0;  // SWAR bitmask for current group
+        private K nextKey = null;
+        private N nextNamespace = null;
+        private S nextState = null;
 
-        SwissMapStateEntryIterator() {
-            this.inner = map.iterator();
+        SwissTableIterator() {
+            advance();
         }
 
         @Override
         public boolean hasNext() {
-            return inner.hasNext();
+            return nextKey != null;
         }
 
         @Override
         public StateEntry<K, N, S> next() {
-            if (!inner.hasNext()) {
+            if (nextKey == null) {
                 throw new NoSuchElementException();
             }
-            SwissMap.SwissMapEntry<K, N, S> entry = inner.next();
-            reusable.update(entry.getKey(), entry.getNamespace(), entry.getState());
-            return reusable;
+            // Capture current values before advancing
+            K key = nextKey;
+            N namespace = nextNamespace;
+            S state = nextState;
+            advance();
+            return new StateEntryImpl<>(key, namespace, state);
         }
 
-        private class ReusableEntry implements StateEntry<K, N, S> {
-            private K key;
-            private N namespace;
-            private S state;
+        @SuppressWarnings("unchecked")
+        private void advance() {
+            nextKey = null;
+            nextNamespace = null;
+            nextState = null;
 
-            void update(K key, N namespace, S state) {
-                this.key = key;
-                this.namespace = namespace;
-                this.state = state;
+            while (tableIdx < tables.size()) {
+                SwissTable<K, N, S> t = tables.get(tableIdx);
+                int groupCount = t.groupMask + 1;
+
+                // Process remaining bits in current group's mask
+                while (currentMask != 0) {
+                    int lane = SwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
+                    int slot = (groupIdx << 3) + lane;
+                    currentMask = SwissTable.clearLowestBit(currentMask);
+
+                    int keyIdx = slot << 1;
+                    nextKey = (K) t.keysNs[keyIdx];
+                    nextNamespace = (N) t.keysNs[keyIdx + 1];
+                    nextState = (S) t.values[slot];
+                    return;
+                }
+
+                // Move to next group with SWAR matchFull
+                groupIdx++;
+                while (groupIdx < groupCount) {
+                    long ctrlWord = t.loadCtrlWord(groupIdx);
+                    currentMask = SwissTable.matchFull(ctrlWord);
+                    if (currentMask != 0) {
+                        // Found a group with FULL slots, process first one
+                        int lane = SwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
+                        int slot = (groupIdx << 3) + lane;
+                        currentMask = SwissTable.clearLowestBit(currentMask);
+
+                        int keyIdx = slot << 1;
+                        nextKey = (K) t.keysNs[keyIdx];
+                        nextNamespace = (N) t.keysNs[keyIdx + 1];
+                        nextState = (S) t.values[slot];
+                        return;
+                    }
+                    groupIdx++;
+                }
+
+                // Move to next table
+                tableIdx++;
+                groupIdx = -1;  // Reset to -1 so first increment goes to 0
+                currentMask = 0;
             }
-
-            @Override public K getKey() { return key; }
-            @Override public N getNamespace() { return namespace; }
-            @Override public S getState() { return state; }
         }
     }
 
@@ -239,33 +532,29 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         return new ForL0StateMapSnapshot<>(this);
     }
 
-    @Override
-    public Stream<K> getKeys(N namespace) {
-        ArrayList<K> keys = new ArrayList<>();
-        map.forEach((k, n, s) -> {
-            if (namespace != null && namespace.equals(n)) {
-                keys.add(k);
-            }
-        });
-        return keys.stream();
-    }
-
-    // ================== For SwissMap access (used by snapshot) ==================
+    // ========== For snapshot access ==========
 
     /**
-     * Returns the underlying SwissMap for snapshot traversal.
+     * Returns the list of unique tables for snapshot traversal.
      */
-    SwissMap<K, N, S> getSwissMap() {
-        return map;
+    List<SwissTable<K, N, S>> getTables() {
+        return tables;
     }
 
-    // ================== Statistics (for benchmark/testing) ==================
+    /**
+     * Returns the number of tables for testing/monitoring.
+     */
+    public int getTableCount() {
+        return tables.size();
+    }
+
+    // ========== Statistics (for benchmark/testing) ==========
 
     /**
      * Gets detailed statistics about the state map.
      */
     public DetailedStats getDetailedStats() {
-        return new DetailedStats(map.size(), map.getTables().size());
+        return new DetailedStats(size, tables.size());
     }
 
     /**

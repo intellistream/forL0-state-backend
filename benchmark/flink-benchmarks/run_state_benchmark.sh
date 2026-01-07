@@ -136,7 +136,9 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
         java -jar target/benchmarks.jar "$BENCHMARK" \
             -p "backendType=$BACKEND" \
             -rf csv -rff "$OUTPUT_FILE" \
-            -wi 3 -i 5 -f 1 -t 1 \
+            -wi 10 -i 20 -f 5 -t 1 \
+            -to 5m \
+            -jvmArgs "-XX:+UseG1GC -XX:+AlwaysPreTouch -XX:-UseBiasedLocking" \
             $PROFILER_ARGS \
             2>&1 | tee "$RESULTS_DIR/${BENCH_NAME}_${BACKEND}_${TIMESTAMP}.log"
         
@@ -189,7 +191,8 @@ echo ""
 echo -e "${GREEN}Generating comparison chart...${NC}"
 CHART_SCRIPT="$SCRIPT_DIR/../scripts/plot_comparison.py"
 if [ -f "$CHART_SCRIPT" ]; then
-    python3 "$CHART_SCRIPT" "$SUMMARY_FILE" "$RESULTS_DIR/comparison_chart_${TIMESTAMP}.png"
+    # Use CSV directory mode with timestamp for error bars support
+    python3 "$CHART_SCRIPT" "$RESULTS_DIR" "$RESULTS_DIR/comparison_chart_${TIMESTAMP}.png" "$TIMESTAMP"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Chart generated: $RESULTS_DIR/comparison_chart_${TIMESTAMP}.png${NC}"
     else
