@@ -779,11 +779,23 @@ public class ForL0StateMapStressTest {
             LOG.info("PUT操作数: {}, GET操作数: {}, TRANSFORM操作数: {}", operationNum, operationNum, operationNum);
             LOG.info("Namespace范围: 0-{}, Key范围: 0-{}", namespaceRange - 1, keyRange - 1);
 
-            // ===== 生成测试数据 =====
-            LOG.info("=== 生成测试数据 ===");
+            // ===== 预生成所有 key 和 namespace 字符串，避免测试时的字符串拼接开销 =====
+            LOG.info("=== 预生成 key 和 namespace 字符串 ===");
+            String[] keys = new String[keyRange];
+            String[] namespaces = new String[namespaceRange];
+            for (int i = 0; i < keyRange; i++) {
+                keys[i] = "key" + i;
+            }
+            for (int i = 0; i < namespaceRange; i++) {
+                namespaces[i] = "ns" + i;
+            }
+            LOG.info("预生成完成: {} 个 key, {} 个 namespace", keyRange, namespaceRange);
+
+            // ===== 生成测试序列 =====
+            LOG.info("=== 生成测试序列 ===");
             int[] keySequence = createSequence(operationNum, keyRange);
             int[] namespaceSequence = createSequence(operationNum, namespaceRange);
-            int[] transformValues = createSequence(operationNum, 1000); // Transform增量值
+            int[] transformValues = createSequence(operationNum, 1000);
             LOG.info("=== 测试数据生成完成 ===");
 
             // ===== ForL0StateMap 基准测试 =====
@@ -792,6 +804,8 @@ public class ForL0StateMapStressTest {
             BenchmarkResult forL0Result = runStateMapBenchmark(
                 "ForL0StateMap",
                 createForL0StateMapInteger(),
+                keys,
+                namespaces,
                 keySequence,
                 namespaceSequence,
                 transformValues,
@@ -801,7 +815,6 @@ public class ForL0StateMapStressTest {
             // ===== CopyOnWriteStateMap 基准测试 =====
             LOG.info("=== CopyOnWriteStateMap 基准测试 ===");
 
-            // 创建CopyOnWriteStateMap实例
             StateMap<String, String, Integer> copyOnWriteStateMap = new CopyOnWriteStateMap<>(
                 new org.apache.flink.api.common.typeutils.base.IntSerializer()
             );
@@ -809,10 +822,12 @@ public class ForL0StateMapStressTest {
             BenchmarkResult cowResult = runStateMapBenchmark(
                 "CopyOnWriteStateMap",
                 copyOnWriteStateMap,
+                keys,
+                namespaces,
                 keySequence,
                 namespaceSequence,
                 transformValues,
-                ()-> 0L // CopyOnWriteStateMap使用堆内存，无法直接测量
+                ()-> 0L
             );
 
             // ===== 性能对比总结 =====
@@ -840,6 +855,8 @@ public class ForL0StateMapStressTest {
         private BenchmarkResult runStateMapBenchmark(
                 String name,
                 StateMap<String, String, Integer> stateMap,
+                String[] keys,
+                String[] namespaces,
                 int[] keySequence,
                 int[] namespaceSequence,
                 int[] transformValues,
@@ -850,7 +867,7 @@ public class ForL0StateMapStressTest {
             long startMemory = memorySupplier.get();
 
             PutBenchmarkResult putResult = runPutBenchmark(
-                name, stateMap, keySequence, namespaceSequence
+                name, stateMap, keys, namespaces, keySequence, namespaceSequence
             );
 
             long endMemory = memorySupplier.get();
@@ -862,7 +879,7 @@ public class ForL0StateMapStressTest {
             LOG.info("开始{} GET操作基准测试...", name);
 
             GetBenchmarkResult getResult = runGetBenchmark(
-                name, stateMap, keySequence, namespaceSequence
+                name, stateMap, keys, namespaces, keySequence, namespaceSequence
             );
 
             logGetResults(name, getResult);
@@ -871,7 +888,7 @@ public class ForL0StateMapStressTest {
             LOG.info("开始{} TRANSFORM操作基准测试...", name);
 
             TransformBenchmarkResult transformResult = runTransformBenchmark(
-                name, stateMap, keySequence, namespaceSequence, transformValues
+                name, stateMap, keys, namespaces, keySequence, namespaceSequence, transformValues
             );
 
             logTransformResults(name, transformResult);
@@ -887,21 +904,22 @@ public class ForL0StateMapStressTest {
         }
 
         /**
-         * 执行PUT操作基准测试
+         * 执行PUT操作基准测试 - 使用预生成的 key/namespace
          */
         private PutBenchmarkResult runPutBenchmark(
                 String name,
                 StateMap<String, String, Integer> stateMap,
+                String[] keys,
+                String[] namespaces,
                 int[] keySequence,
-                int[] namespaceSequence){
+                int[] namespaceSequence) {
             int operationNum = keySequence.length;
             long startTime = System.nanoTime();
 
             for (int i = 0; i < operationNum; i++) {
-                // key 使用String类型
-                String key = "key" + keySequence[i];
-                String namespace = "ns" + namespaceSequence[i];
-                stateMap.put(key, namespace, i); // 使用Integer值
+                String key = keys[keySequence[i]];
+                String namespace = namespaces[namespaceSequence[i]];
+                stateMap.put(key, namespace, i);
 
                 if (i % 10_000_000 == 0 && i > 0) {
                     LOG.info("{}已完成 {} 次PUT操作", name, i);
@@ -918,11 +936,13 @@ public class ForL0StateMapStressTest {
         }
 
         /**
-         * 执行GET操作基准测试
+         * 执行GET操作基准测试 - 使用预生成的 key/namespace
          */
         private GetBenchmarkResult runGetBenchmark(
                 String name,
                 StateMap<String, String, Integer> stateMap,
+                String[] keys,
+                String[] namespaces,
                 int[] keySequence,
                 int[] namespaceSequence) {
             int operationNum = keySequence.length;
@@ -930,8 +950,8 @@ public class ForL0StateMapStressTest {
             long hits = 0;
 
             for (int i = 0; i < operationNum; i++) {
-                String key = "key" + keySequence[i];
-                String namespace = "ns" + namespaceSequence[i];
+                String key = keys[keySequence[i]];
+                String namespace = namespaces[namespaceSequence[i]];
 
                 Integer value = stateMap.get(key, namespace);
                 if (value != null) {
@@ -954,11 +974,13 @@ public class ForL0StateMapStressTest {
         }
 
         /**
-         * 执行TRANSFORM操作基准测试
+         * 执行TRANSFORM操作基准测试 - 使用预生成的 key/namespace
          */
         private TransformBenchmarkResult runTransformBenchmark(
                 String name,
                 StateMap<String, String, Integer> stateMap,
+                String[] keys,
+                String[] namespaces,
                 int[] keySequence,
                 int[] namespaceSequence,
                 int[] transformValues) {
@@ -969,9 +991,8 @@ public class ForL0StateMapStressTest {
             AtomicLong newValues = new AtomicLong();
 
             for (int i = 0; i < operationNum; i++) {
-                // 使用与PUT操作相同的key生成逻辑
-                String key = "key" + keySequence[i];
-                String namespace = "ns" + namespaceSequence[i];
+                String key = keys[keySequence[i]];
+                String namespace = namespaces[namespaceSequence[i]];
                 int incrementValue = transformValues[i];
 
                 try {
@@ -985,7 +1006,6 @@ public class ForL0StateMapStressTest {
                     });
                     transformations++;
                 } catch (Exception e) {
-                    // 忽略异常，继续执行
                     LOG.info("Transform操作异常: {}", e.getMessage());
                 }
 

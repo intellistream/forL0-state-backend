@@ -44,30 +44,42 @@ def parse_csv_results(results_dir, timestamp=None):
             if len(lines) < 2:
                 continue
             
-            # Parse data line (skip header)
-            data_line = lines[1].strip()
-            # CSV format: "Benchmark","Mode","Threads","Samples","Score","Score Error (99.9%)","Unit","Param: backendType"
-            parts = data_line.split(',')
-            if len(parts) >= 6:
-                try:
-                    score = float(parts[4])
-                    error = float(parts[5])
-                except ValueError:
+            # Parse ALL data lines (skip header), CSV may contain multiple benchmarks
+            for data_line in lines[1:]:
+                data_line = data_line.strip()
+                if not data_line:
                     continue
                 
-                # Clean up benchmark name - keep original format for X-axis
-                # "ValueStateBenchmark.valueAdd" -> "ValueStateBenchmark.valueAdd"
-                name_parts = bench_name.split('.')
-                if len(name_parts) == 2:
-                    state_type = name_parts[0].replace('Benchmark', '')
-                    method = name_parts[1]
-                    clean_name = f"{state_type}.{method}"
-                else:
-                    clean_name = bench_name
-                
-                if clean_name not in results:
-                    results[clean_name] = {}
-                results[clean_name][backend] = {'score': score, 'error': error}
+                # CSV format: "Benchmark","Mode","Threads","Samples","Score","Score Error (99.9%)","Unit","Param: backendType"
+                parts = data_line.split(',')
+                if len(parts) >= 6:
+                    try:
+                        score = float(parts[4])
+                        error = float(parts[5])
+                    except ValueError:
+                        continue
+                    
+                    # Skip async profiler entries (NaN scores)
+                    if score != score:  # NaN check
+                        continue
+                    
+                    # Extract actual benchmark name from CSV content
+                    # e.g., "org.apache.flink.state.benchmark.ListStateBenchmark.listAddAll"
+                    full_bench_name = parts[0].strip('"')
+                    name_parts = full_bench_name.split('.')
+                    if len(name_parts) >= 2:
+                        state_type = name_parts[-2].replace('Benchmark', '')
+                        method = name_parts[-1]
+                        # Skip :async suffix entries
+                        if ':' in method:
+                            continue
+                        clean_name = f"{state_type}.{method}"
+                    else:
+                        clean_name = full_bench_name
+                    
+                    if clean_name not in results:
+                        results[clean_name] = {}
+                    results[clean_name][backend] = {'score': score, 'error': error}
     
     return results
 
@@ -124,7 +136,7 @@ def plot_chart(results, output_file):
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
     
-    fig, ax = plt.subplots(figsize=(16, 8))
+    fig, ax = plt.subplots(figsize=(20, 8))  # Wider figure for more benchmarks
     
     x = range(len(benchmarks))
     width = 0.35
@@ -137,20 +149,32 @@ def plot_chart(results, output_file):
                     label='Heap', color='#5B8DBE', edgecolor='none',
                     yerr=heap_errors, capsize=3, error_kw={'elinewidth': 1, 'capthick': 1})
     
-    # Add value labels inside bars (top of bar, vertical text to avoid overlap)
-    def add_value_labels(bars, color='white'):
-        for bar in bars:
+    # Add value labels - inside bar if tall enough, above bar if too short
+    def add_value_labels(bars, errors):
+        ymax = max(forl0_scores + heap_scores)
+        threshold = ymax * 0.15  # If bar is less than 15% of max, put label outside
+        
+        for bar, err in zip(bars, errors):
             height = bar.get_height()
             if height > 0:
-                # Place label inside bar, near top, with vertical rotation
-                ax.annotate(f'{height:.0f}',
-                           xy=(bar.get_x() + bar.get_width() / 2, height * 0.95),
-                           ha='center', va='top',
-                           fontsize=7, fontweight='bold',
-                           color=color, rotation=90)
+                if height >= threshold:
+                    # Tall bar: label inside, white text, vertical
+                    ax.annotate(f'{height:.0f}',
+                               xy=(bar.get_x() + bar.get_width() / 2, height * 0.95),
+                               ha='center', va='top',
+                               fontsize=7, fontweight='bold',
+                               color='white', rotation=90)
+                else:
+                    # Short bar: label above, dark text, horizontal
+                    label_y = height + err + (ymax * 0.02)
+                    ax.annotate(f'{height:.0f}',
+                               xy=(bar.get_x() + bar.get_width() / 2, label_y),
+                               ha='center', va='bottom',
+                               fontsize=7, fontweight='bold',
+                               color='#333333')
     
-    add_value_labels(bars1, 'white')
-    add_value_labels(bars2, 'white')
+    add_value_labels(bars1, forl0_errors)
+    add_value_labels(bars2, heap_errors)
     
     # Customize plot to match reference
     ax.set_ylabel('Throughput (ops/ms)', fontsize=13)

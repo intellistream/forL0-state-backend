@@ -1,8 +1,13 @@
 package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
+import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.state.InternalKeyContext;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
+import org.apache.flink.runtime.state.VoidNamespace;
+import org.apache.flink.runtime.state.VoidNamespaceSerializer;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
@@ -10,6 +15,9 @@ import java.util.List;
 
 /**
  * ForL0 implementation of StateTable using SwissMap architecture.
+ * 
+ * <p>Automatically selects the optimal SwissTable specialization based on
+ * key and namespace types for maximum performance.
  */
 public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
@@ -31,7 +39,46 @@ public class ForL0StateTable<K, N, S> extends StateTable<K, N, S> {
 
     @Override
     protected ForL0StateMap<K, N, S> createStateMap() {
-        return new ForL0StateMap<>();
+        // Resolve types from parent's fields (already initialized in super constructor)
+        Class<?> keyClass = resolveKeyClass(keySerializer);
+        Class<?> nsClass = resolveNamespaceClass(metaInfo.getNamespaceSerializer());
+        return new ForL0StateMap<>(keyClass, nsClass);
+    }
+
+    /**
+     * Resolves the key class from the serializer.
+     */
+    private static Class<?> resolveKeyClass(TypeSerializer<?> serializer) {
+        if (serializer instanceof LongSerializer) {
+            return Long.class;
+        }
+        if (serializer instanceof StringSerializer) {
+            return String.class;
+        }
+        return Object.class;  // fallback to generic
+    }
+
+    /**
+     * Resolves the namespace class from the serializer.
+     */
+    private static Class<?> resolveNamespaceClass(TypeSerializer<?> serializer) {
+        if (serializer instanceof VoidNamespaceSerializer) {
+            return VoidNamespace.class;
+        }
+        // TimeWindow.Serializer is inner class, check enclosing class or full name
+        if (serializer != null) {
+            Class<?> serializerClass = serializer.getClass();
+            // Check if it's TimeWindow$Serializer (inner class of TimeWindow)
+            Class<?> enclosing = serializerClass.getEnclosingClass();
+            if (enclosing != null && enclosing == TimeWindow.class) {
+                return TimeWindow.class;
+            }
+            // Fallback: check full class name
+            if (serializerClass.getName().contains("TimeWindow")) {
+                return TimeWindow.class;
+            }
+        }
+        return Object.class;  // fallback to generic
     }
 
     @Override

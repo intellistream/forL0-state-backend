@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-NexMark Benchmark Runner for ForL0 State Backend
+""" NexMark Benchmark Runner for ForL0 State Backend
 
 This script runs NexMark benchmark using the official NexMark benchmark tool.
 It reads configuration from benchmark.yaml and dynamically generates nexmark.yaml.
@@ -11,6 +10,8 @@ Usage:
     python run_nexmark.py --queries q5,q8       # Specific queries
     python run_nexmark.py --profile cpu         # Enable CPU flame graphs
     python run_nexmark.py --profile cache       # Enable cache statistics
+    python run_nexmark.py --profile uarch       # Enable VTune uarch analysis
+    python run_nexmark.py --profile memory      # Enable VTune memory analysis
 """
 
 import argparse
@@ -29,6 +30,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.config import load_config
 from utils.profiler import AsyncProfiler
+from utils.vtune_profiler import VTuneProfiler
 from utils.hardware_metrics import HardwareMetricsCollector
 
 
@@ -73,6 +75,9 @@ class NexMarkRunner:
         
         # Profiler (optional)
         self.profiler = None
+        
+        # VTune Profiler (optional)
+        self.vtune_profiler = None
         
         # Hardware metrics collector (optional)
         self.hw_collector = None
@@ -364,7 +369,7 @@ parallelism.default: {parallelism}
         
         Args:
             queries: Comma-separated query list
-            profile_mode: 'cpu' or 'cache' for per-query profiling
+            profile_mode: 'cpu', 'cache', 'uarch', or 'memory' for per-query profiling
         """
         query_list = [q.strip() for q in queries.split(',')]
         print(f"\n[NexMark] Running {len(query_list)} queries individually: {query_list}")
@@ -410,7 +415,32 @@ parallelism.default: {parallelism}
             tm_pid = self._find_taskmanager_pid()
             
             # [BENCHMARK_TEST] Start per-query profiling
-            if self.profiler and self.profiler.is_available() and profile_mode and tm_pid:
+            vtune_thread = None
+            vtune_result_dir = None
+            
+            # Handle VTune profiling (uarch/memory)
+            if self.vtune_profiler and profile_mode in ['uarch', 'memory'] and tm_pid:
+                import threading
+                
+                def start_vtune_delayed():
+                    """Start VTune profiling after 20 second delay."""
+                    nonlocal vtune_result_dir
+                    # VTune results will be saved to ~/vtune-results (default)
+                    vtune_result_dir = self.vtune_profiler.start(
+                        pid=tm_pid,
+                        analysis_type=profile_mode,
+                        backend=self.current_backend,
+                        query=query,
+                        duration=60,  # Profile for 60 seconds
+                        delay=20      # Wait 20 seconds before starting
+                    )
+                
+                vtune_thread = threading.Thread(target=start_vtune_delayed, daemon=True)
+                vtune_thread.start()
+                print(f"  VTune profiling will start in background for {query} (20s delay, PID: {tm_pid})")
+            
+            # Handle async-profiler (cpu/cache)
+            elif self.profiler and self.profiler.is_available() and profile_mode in ['cpu', 'cache'] and tm_pid:
                 if profile_mode == 'cpu':
                     self.profiler.start(
                         pid=tm_pid,
@@ -465,12 +495,19 @@ parallelism.default: {parallelism}
                 print(f"\n  Benchmark command completed in {elapsed:.1f}s (return code: {result.returncode})")
                 
                 # [BENCHMARK_TEST] Stop per-query profiling
-                if self.profiler and profile_mode and tm_pid:
+                if self.profiler and profile_mode in ['cpu', 'cache'] and tm_pid:
                     try:
                         self.profiler.stop(tm_pid)
                         print(f"  Profiler stopped for {query}")
                     except Exception as e:
                         print(f"  Profiler stop error for {query}: {e}")
+                
+                # [BENCHMARK_TEST] Wait for VTune thread to complete
+                if vtune_thread:
+                    print(f"  Waiting for VTune profiling to complete for {query}...")
+                    vtune_thread.join(timeout=120)  # Wait up to 2 minutes
+                    if vtune_result_dir:
+                        print(f"  VTune results for {query} saved to: {vtune_result_dir}")
                 
                 # [BENCHMARK_TEST] Stop per-query cache collection
                 if self.hw_collector and profile_mode == 'cache':
@@ -655,7 +692,9 @@ parallelism.default: {parallelism}
         Args:
             backends: List of backends to test ('hashmap', 'forl0')
             queries: Comma-separated list of queries (e.g., 'q5,q8')
-            profile_mode: 'cpu' for CPU flame graphs, 'cache' for cache statistics, None to disable
+            profile_mode: 'cpu' (async-profiler flame graphs), 'cache' (cache stats), 
+                         'uarch' (VTune uarch-exploration), 'memory' (VTune memory-access), 
+                         or None to disable
             restart_cluster: Restart Flink cluster between backends
         """
         
@@ -672,16 +711,31 @@ parallelism.default: {parallelism}
         
         # Setup profiler and hardware metrics collector if requested
         if profile_mode:
-            profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
-            self.profiler = AsyncProfiler(profiler_home)
-            
-            # Hardware metrics collection
-            if profile_mode == 'cache':
-                self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=self.profiler)
-                print(f"[NexMark] Cache profiling mode (perf available: {self.hw_collector.is_perf_available()})")
+            # Determine if using VTune or async-profiler
+            if profile_mode in ['uarch', 'memory']:
+                # VTune profiler
+                self.vtune_profiler = VTuneProfiler()
+                if self.vtune_profiler.is_available():
+                    print(f"[NexMark] Intel VTune: {self.vtune_profiler.get_version()}")
+                    analysis_type = self.vtune_profiler.ANALYSIS_TYPES[profile_mode]
+                    print(f"[NexMark] Analysis type: {analysis_type}")
+                    print(f"[NexMark] Note: VTune will start 20s after each query begins")
+                else:
+                    print("[NexMark] WARNING: Intel VTune Profiler not available")
+                    print("           Check if vtune is in PATH or set VTUNE_PROFILER_DIR")
+                    self.vtune_profiler = None
             else:
-                self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=None)
-                print(f"[NexMark] CPU profiling mode")
+                # Async profiler (cpu/cache)
+                profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
+                self.profiler = AsyncProfiler(profiler_home)
+                
+                # Hardware metrics collection
+                if profile_mode == 'cache':
+                    self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=self.profiler)
+                    print(f"[NexMark] Cache profiling mode (perf available: {self.hw_collector.is_perf_available()})")
+                else:
+                    self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=None)
+                    print(f"[NexMark] CPU profiling mode")
         
         # Backup configs
         self._backup_configs()

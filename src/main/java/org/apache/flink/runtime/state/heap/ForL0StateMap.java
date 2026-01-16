@@ -2,7 +2,9 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
+import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.internal.InternalKvState;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,8 +53,8 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     // ========== Directory ==========
     private int globalDepth;
     private int globalShift;  // 64 - globalDepth
-    private SwissTable<K, N, S>[] directory;
-    private final List<SwissTable<K, N, S>> tables;  // Unique table list for snapshot/iteration
+    private AbstractSwissTable<K, N, S>[] directory;
+    private final List<AbstractSwissTable<K, N, S>> tables;  // Unique table list for snapshot/iteration
 
     /**
      * The last namespace that was actually inserted. This is a small optimization to reduce
@@ -62,6 +64,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
     /**
      * Creates a new ForL0StateMap with Swiss Tables architecture.
+     * Uses generic SwissTable implementation (fallback).
      */
     @SuppressWarnings("unchecked")
     public ForL0StateMap() {
@@ -69,12 +72,72 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         this.globalDepth = 0;
         this.globalShift = 64;
         
-        // Create initial single table
-        SwissTable<K, N, S> initTable = new SwissTable<>(INITIAL_TABLE_CAPACITY, (byte) 0, 0);
-        this.directory = new SwissTable[] { initTable };
+        // Create initial single table (default to generic implementation)
+        AbstractSwissTable<K, N, S> initTable = new SwissTableGeneric<>(INITIAL_TABLE_CAPACITY, (byte) 0, 0);
+        this.directory = new AbstractSwissTable[] { initTable };
         this.tables = new ArrayList<>();
         this.tables.add(initTable);
         
+    }
+
+    /**
+     * Creates a new ForL0StateMap with specialized SwissTable based on key/namespace types.
+     * 
+     * <p>Usage examples:
+     * <pre>
+     *   new ForL0StateMap<>(Long.class, VoidNamespace.class)   // → SwissTableLongVoid
+     *   new ForL0StateMap<>(Long.class, TimeWindow.class)      // → SwissTableLongTimeWindow
+     *   new ForL0StateMap<>(String.class, VoidNamespace.class) // → SwissTableStringVoid
+     *   new ForL0StateMap<>(String.class, TimeWindow.class)    // → SwissTableStringTimeWindow
+     * </pre>
+     * 
+     * @param keyClass the key Class (e.g., Long.class, String.class)
+     * @param namespaceClass the namespace Class (e.g., VoidNamespace.class, TimeWindow.class)
+     */
+    @SuppressWarnings("unchecked")
+    public ForL0StateMap(Class<?> keyClass, Class<?> namespaceClass) {
+        this.size = 0;
+        this.globalDepth = 0;
+        this.globalShift = 64;
+        
+        AbstractSwissTable<K, N, S> initTable = createTable(keyClass, namespaceClass, 
+                INITIAL_TABLE_CAPACITY, (byte) 0, 0);
+        this.directory = new AbstractSwissTable[] { initTable };
+        this.tables = new ArrayList<>();
+        this.tables.add(initTable);
+        
+        LOG.info("ForL0StateMap created with {} (key={}, namespace={})",
+                initTable.getClass().getSimpleName(),
+                keyClass.getSimpleName(),
+                namespaceClass.getSimpleName());
+    }
+
+    /**
+     * Factory method to create the appropriate SwissTable specialization.
+     */
+    @SuppressWarnings("unchecked")
+    private static <K, N, S> AbstractSwissTable<K, N, S> createTable(
+            Class<?> keyClass, Class<?> nsClass, int capacity, byte localDepth, int index) {
+        
+        if (keyClass == Long.class) {
+            if (nsClass == VoidNamespace.class) {
+                return (AbstractSwissTable<K, N, S>) new SwissTableLongVoid<>(capacity, localDepth, index);
+            }
+            if (nsClass == TimeWindow.class) {
+                return (AbstractSwissTable<K, N, S>) new SwissTableLongTimeWindow<>(capacity, localDepth, index);
+            }
+        }
+        
+        if (keyClass == String.class) {
+            if (nsClass == VoidNamespace.class) {
+                return (AbstractSwissTable<K, N, S>) new SwissTableStringVoid<>(capacity, localDepth, index);
+            }
+            if (nsClass == TimeWindow.class) {
+                return (AbstractSwissTable<K, N, S>) new SwissTableStringTimeWindow<>(capacity, localDepth, index);
+            }
+        }
+        
+        return new SwissTableGeneric<>(capacity, localDepth, index);
     }
 
     @Override
@@ -88,7 +151,6 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * Computes 64-bit hash for key and namespace.
      * 
      * Uses bitMix on key + lightweight ns spread to break XOR symmetry.
-     * Only 1 bitMix call for better performance, H2 uniformity = 1.68.
      */
     private static long computeHash(Object key, Object namespace) {
         int h = MathUtils.bitMix(key.hashCode());
@@ -103,7 +165,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     /**
      * Locates the table for the given hash.
      */
-    private SwissTable<K, N, S> locateTable(long hash) {
+    private AbstractSwissTable<K, N, S> locateTable(long hash) {
         int dirIdx = globalDepth == 0 ? 0 : (int)(hash >>> globalShift);
         return directory[dirIdx];
     }
@@ -118,7 +180,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public S get(K key, N namespace) {
         long hash = computeHash(key, namespace);
-        SwissTable<K, N, S> t = locateTable(hash);
+        AbstractSwissTable<K, N, S> t = locateTable(hash);
         return t.get(hash, key, namespace);
     }
 
@@ -141,24 +203,24 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         // Outer retry loop (aligned with Go 1.24: outer: for { ... continue outer })
         outer:
         while (true) {
-            SwissTable<K, N, S> t = locateTable(hash);
+            AbstractSwissTable<K, N, S> t = locateTable(hash);
             int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
             
-            // Handle signals from SwissTable
+            // Handle signals from AbstractSwissTable
             switch (result) {
-                case SwissTable.NEED_REHASH:
+                case AbstractSwissTable.NEED_REHASH:
                     t.rehash();
                     continue outer;
-                case SwissTable.NEED_GROW:
+                case AbstractSwissTable.NEED_GROW:
                     t.grow();
                     continue outer;
-                case SwissTable.NEED_SPLIT:
+                case AbstractSwissTable.NEED_SPLIT:
                     handleSplit(t);
                     continue outer;
             }
             
-            int slot = result & SwissTable.SLOT_MASK;
-            boolean isNew = (result & SwissTable.NEW_FLAG) != 0;
+            int slot = result & AbstractSwissTable.SLOT_MASK;
+            boolean isNew = (result & AbstractSwissTable.NEW_FLAG) != 0;
             
             t.values[slot] = state;
             if (isNew) {
@@ -183,24 +245,24 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         // Outer retry loop (aligned with Go 1.24: outer: for { ... continue outer })
         outer:
         while (true) {
-            SwissTable<K, N, S> t = locateTable(hash);
+            AbstractSwissTable<K, N, S> t = locateTable(hash);
             int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
             
-            // Handle signals from SwissTable
+            // Handle signals from AbstractSwissTable
             switch (result) {
-                case SwissTable.NEED_REHASH:
+                case AbstractSwissTable.NEED_REHASH:
                     t.rehash();
                     continue outer;
-                case SwissTable.NEED_GROW:
+                case AbstractSwissTable.NEED_GROW:
                     t.grow();
                     continue outer;
-                case SwissTable.NEED_SPLIT:
+                case AbstractSwissTable.NEED_SPLIT:
                     handleSplit(t);
                     continue outer;
             }
             
-            int slot = result & SwissTable.SLOT_MASK;
-            boolean isNew = (result & SwissTable.NEW_FLAG) != 0;
+            int slot = result & AbstractSwissTable.SLOT_MASK;
+            boolean isNew = (result & AbstractSwissTable.NEW_FLAG) != 0;
             
             S oldState = isNew ? null : (S) t.values[slot];
             t.values[slot] = state;
@@ -214,7 +276,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public void remove(K key, N namespace) {
         long hash = computeHash(key, namespace);
-        SwissTable<K, N, S> t = locateTable(hash);
+        AbstractSwissTable<K, N, S> t = locateTable(hash);
         S old = t.remove(hash, key, namespace);
         if (old != null) {
             size--;
@@ -224,7 +286,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public S removeAndGetOld(K key, N namespace) {
         long hash = computeHash(key, namespace);
-        SwissTable<K, N, S> t = locateTable(hash);
+        AbstractSwissTable<K, N, S> t = locateTable(hash);
         S old = t.remove(hash, key, namespace);
         if (old != null) {
             size--;
@@ -248,24 +310,24 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         // Outer retry loop (aligned with Go 1.24: outer: for { ... continue outer })
         outer:
         while (true) {
-            SwissTable<K, N, S> t = locateTable(hash);
+            AbstractSwissTable<K, N, S> t = locateTable(hash);
             int result = t.put(hash, key, namespace, MAX_TABLE_CAPACITY);
             
-            // Handle signals from SwissTable
+            // Handle signals from AbstractSwissTable
             switch (result) {
-                case SwissTable.NEED_REHASH:
+                case AbstractSwissTable.NEED_REHASH:
                     t.rehash();
                     continue outer;
-                case SwissTable.NEED_GROW:
+                case AbstractSwissTable.NEED_GROW:
                     t.grow();
                     continue outer;
-                case SwissTable.NEED_SPLIT:
+                case AbstractSwissTable.NEED_SPLIT:
                     handleSplit(t);
                     continue outer;
             }
             
-            int slot = result & SwissTable.SLOT_MASK;
-            boolean isNew = (result & SwissTable.NEW_FLAG) != 0;
+            int slot = result & AbstractSwissTable.SLOT_MASK;
+            boolean isNew = (result & AbstractSwissTable.NEW_FLAG) != 0;
             
             S oldState = isNew ? null : (S) t.values[slot];
             t.values[slot] = transformation.apply(oldState, value);
@@ -280,7 +342,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public int sizeOfNamespace(Object namespace) {
         int count = 0;
-        for (SwissTable<K, N, S> t : tables) {
+        for (AbstractSwissTable<K, N, S> t : tables) {
             count += t.countNamespace(namespace);
         }
         return count;
@@ -289,14 +351,12 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     @Override
     public Stream<K> getKeys(N namespace) {
         ArrayList<K> keys = new ArrayList<>();
-        for (SwissTable<K, N, S> t : tables) {
+        for (AbstractSwissTable<K, N, S> t : tables) {
             for (int i = 0; i < t.capacity; i++) {
-                if (SwissTable.isFull(t.ctrl[i])) {
-                    @SuppressWarnings("unchecked")
-                    N ns = (N) t.keysNs[(i << 1) + 1];
+                if (AbstractSwissTable.isFull(t.ctrl[i])) {
+                    N ns = t.getNamespace(i);
                     if (namespace.equals(ns)) {
-                        @SuppressWarnings("unchecked")
-                        K key = (K) t.keysNs[i << 1];
+                        K key = t.getKey(i);
                         keys.add(key);
                     }
                 }
@@ -310,7 +370,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     /**
      * Handles NEED_SPLIT signal from a table.
      */
-    private void handleSplit(SwissTable<K, N, S> t) {
+    private void handleSplit(AbstractSwissTable<K, N, S> t) {
         // If localDepth == globalDepth, need to grow directory first
         if (t.localDepth == globalDepth) {
             growDirectory();
@@ -326,9 +386,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      */
     @SuppressWarnings("unchecked")
     private void growDirectory() {
-        SwissTable<K, N, S>[] newDir = new SwissTable[directory.length * 2];
+        AbstractSwissTable<K, N, S>[] newDir = new AbstractSwissTable[directory.length * 2];
         for (int i = 0; i < directory.length; i++) {
-            SwissTable<K, N, S> t = directory[i];
+            AbstractSwissTable<K, N, S> t = directory[i];
             newDir[2 * i] = t;
             newDir[2 * i + 1] = t;
             // Go-style deduplication: only update index on first encounter
@@ -350,7 +410,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
      * 3. Use oldTable.index to locate directory range
      */
     @SuppressWarnings("unchecked")
-    private void split(SwissTable<K, N, S> oldTable) {
+    private void split(AbstractSwissTable<K, N, S> oldTable) {
         byte newLocalDepth = (byte)(oldTable.localDepth + 1);
         
         // Calculate new table indices in directory
@@ -359,9 +419,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         int leftIndex = oldTable.index;
         int rightIndex = oldTable.index + (span >>> 1);
         
-        // New tables have same capacity as old table
-        SwissTable<K, N, S> left = new SwissTable<>(oldTable.capacity, newLocalDepth, leftIndex);
-        SwissTable<K, N, S> right = new SwissTable<>(oldTable.capacity, newLocalDepth, rightIndex);
+        // New tables have same capacity as old table (use the same concrete type as oldTable)
+        AbstractSwissTable<K, N, S> left = oldTable.createNew(oldTable.capacity, newLocalDepth, leftIndex);
+        AbstractSwissTable<K, N, S> right = oldTable.createNew(oldTable.capacity, newLocalDepth, rightIndex);
         
         // Split bit must align with directory routing rule
         // Directory uses high globalDepth bits of hash
@@ -370,10 +430,9 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         
         // Iterate old table, distribute to new tables
         for (int slot = 0; slot < oldTable.capacity; slot++) {
-            if (SwissTable.isFull(oldTable.ctrl[slot])) {
-                int keyIdx = slot << 1;
-                K key = (K) oldTable.keysNs[keyIdx];
-                N ns = (N) oldTable.keysNs[keyIdx + 1];
+            if (AbstractSwissTable.isFull(oldTable.ctrl[slot])) {
+                K key = oldTable.getKey(slot);
+                N ns = oldTable.getNamespace(slot);
                 S value = (S) oldTable.values[slot];
                 
                 // Use stored hash (no need to recompute)
@@ -382,7 +441,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 // Get split bit
                 int side = (int)((hash >>> splitShift) & 1L);
                 
-                SwissTable<K, N, S> target = (side == 0) ? left : right;
+                AbstractSwissTable<K, N, S> target = (side == 0) ? left : right;
                 target.putDirect(hash, key, ns, value);
             }
         }
@@ -511,18 +570,17 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
             nextState = null;
 
             while (tableIdx < tables.size()) {
-                SwissTable<K, N, S> t = tables.get(tableIdx);
+                AbstractSwissTable<K, N, S> t = tables.get(tableIdx);
                 int groupCount = t.groupMask + 1;
 
                 // Process remaining bits in current group's mask
                 while (currentMask != 0) {
-                    int lane = SwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
+                    int lane = AbstractSwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
                     int slot = (groupIdx << 3) + lane;
-                    currentMask = SwissTable.clearLowestBit(currentMask);
+                    currentMask = AbstractSwissTable.clearLowestBit(currentMask);
 
-                    int keyIdx = slot << 1;
-                    nextKey = (K) t.keysNs[keyIdx];
-                    nextNamespace = (N) t.keysNs[keyIdx + 1];
+                    nextKey = t.getKey(slot);
+                    nextNamespace = t.getNamespace(slot);
                     nextState = (S) t.values[slot];
                     return;
                 }
@@ -531,16 +589,15 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
                 groupIdx++;
                 while (groupIdx < groupCount) {
                     long ctrlWord = t.loadCtrlWord(groupIdx);
-                    currentMask = SwissTable.matchFull(ctrlWord);
+                    currentMask = AbstractSwissTable.matchFull(ctrlWord);
                     if (currentMask != 0) {
                         // Found a group with FULL slots, process first one
-                        int lane = SwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
+                        int lane = AbstractSwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
                         int slot = (groupIdx << 3) + lane;
-                        currentMask = SwissTable.clearLowestBit(currentMask);
+                        currentMask = AbstractSwissTable.clearLowestBit(currentMask);
 
-                        int keyIdx = slot << 1;
-                        nextKey = (K) t.keysNs[keyIdx];
-                        nextNamespace = (N) t.keysNs[keyIdx + 1];
+                        nextKey = t.getKey(slot);
+                        nextNamespace = t.getNamespace(slot);
                         nextState = (S) t.values[slot];
                         return;
                     }
@@ -566,7 +623,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     /**
      * Returns the list of unique tables for snapshot traversal.
      */
-    List<SwissTable<K, N, S>> getTables() {
+    List<AbstractSwissTable<K, N, S>> getTables() {
         return tables;
     }
 

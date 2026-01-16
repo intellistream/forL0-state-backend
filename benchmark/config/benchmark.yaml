@@ -31,6 +31,13 @@ local:
     tps: 100000000              # events per second (local mode)
     warmup_events: 1000000     # warmup events
     warmup_duration: 10        # warmup duration in seconds
+  
+  unittest:
+    num_keys: 1000            # Number of unique keys
+    state_size: 100           # State value size in bytes
+    num_operations: 1000000   # Total number of operations
+    zipf_exponent: 0          # 0 = uniform, >0 = Zipf distribution
+    arrival_rate: 0           # ops/sec, 0 = unlimited
 
 # Cluster mode settings (for production server)
 cluster:
@@ -39,11 +46,11 @@ cluster:
   
   wordcount:
     num_keys: 1000000         # 100万 key
-    num_records: 80000000    # 10亿条
+    num_records: 1000000000    # 10亿条
     arrival_rate: 0 
     skew_factor: 1.0         # Zipf s parameter
     window_size: 5000         # milliseconds (10s)
-    slide_size: 200          # milliseconds (10s)
+    slide_size: 5000          # milliseconds (10s)
     warmup_duration: 20       # warmup duration in seconds (0 to disable)
   
   nexmark:
@@ -63,6 +70,13 @@ cluster:
     tps: 1000000             # events per second (cluster mode)
     warmup_events: 10000000   # warmup events
     warmup_duration: 10      # warmup duration in seconds
+  
+  unittest:
+    num_keys: 10000           # Number of unique keys
+    state_size: 32           # State value size in bytes
+    num_operations: 500000000  # Total number of operations
+    zipf_exponent: 1.0       # 0 = uniform, >0 = Zipf distribution
+    arrival_rate: 0           # ops/sec, 0 = unlimited
 
 # State backends to compare
 backends:

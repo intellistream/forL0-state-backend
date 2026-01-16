@@ -111,6 +111,17 @@ BENCHMARKS=(
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapValues"
 )
 
+# StateMap micro-benchmarks (ForL0StateMap vs CopyOnWriteStateMap direct comparison)
+# These are run separately with mapType parameter instead of backendType
+STATEMAP_BENCHMARKS=(
+    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapPut"
+    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapGet"
+    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapUpdate"
+    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapTransform"
+    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapPutAndGetOld"
+    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapContainsKey"
+)
+
 # Define backend types
 BACKENDS=("HEAP" "FORL0")
 
@@ -143,7 +154,7 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
         if [ "$QUICK_MODE" = true ]; then
             JMH_ARGS="-wi 3 -i 5 -f 1 -t 1"
         else
-            JMH_ARGS="-wi 10 -i 20 -f 5 -t 1 -to 5m"
+            JMH_ARGS="-wi 5 -i 10 -f 3 -t 1"
         fi
         java -jar target/benchmarks.jar "$BENCHMARK" \
             -p "backendType=$BACKEND" \
@@ -211,4 +222,66 @@ if [ -f "$CHART_SCRIPT" ]; then
     fi
 else
     echo -e "${YELLOW}⚠ Chart script not found: $CHART_SCRIPT${NC}"
+fi
+
+# ========================================
+# StateMap Micro-Benchmarks Section
+# ========================================
+echo ""
+echo -e "${BLUE}======================================${NC}"
+echo -e "${BLUE}Running StateMap Micro-Benchmarks${NC}"
+echo -e "${BLUE}ForL0StateMap vs CopyOnWriteStateMap${NC}"
+echo -e "${BLUE}======================================${NC}"
+echo ""
+
+MAP_TYPES=("FORL0" "COPYONWRITE")
+STATEMAP_RESULTS_DIR="../../results/statemap-benchmark"
+mkdir -p "$STATEMAP_RESULTS_DIR"
+
+STATEMAP_TOTAL=${#STATEMAP_BENCHMARKS[@]}
+STATEMAP_CURRENT=0
+
+for BENCHMARK in "${STATEMAP_BENCHMARKS[@]}"; do
+    STATEMAP_CURRENT=$((STATEMAP_CURRENT + 1))
+    BENCH_NAME=$(echo "$BENCHMARK" | awk -F'.' '{print $(NF-1) "." $NF}')
+    
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}[$STATEMAP_CURRENT/$STATEMAP_TOTAL] Running: $BENCH_NAME${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    
+    for MAP_TYPE in "${MAP_TYPES[@]}"; do
+        echo -e "${GREEN}MapType: $MAP_TYPE${NC}"
+        OUTPUT_FILE="$STATEMAP_RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.csv"
+        
+        java -jar target/benchmarks.jar "$BENCHMARK" \
+            -p "mapType=$MAP_TYPE" \
+            -rf csv -rff "$OUTPUT_FILE" \
+            $JMH_ARGS \
+            -jvmArgs "-XX:+UseG1GC -XX:+AlwaysPreTouch -XX:-UseBiasedLocking" \
+            $PROFILER_ARGS \
+            2>&1 | tee "$STATEMAP_RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.log"
+        
+        echo -e "${GREEN}✓ Completed: $BENCH_NAME with $MAP_TYPE${NC}"
+        echo ""
+    done
+done
+
+echo -e "${BLUE}======================================${NC}"
+echo -e "${BLUE}All StateMap benchmarks completed!${NC}"
+echo -e "${BLUE}Results saved to: $STATEMAP_RESULTS_DIR${NC}"
+echo -e "${BLUE}======================================${NC}"
+
+# Generate StateMap chart
+echo ""
+echo -e "${GREEN}Generating StateMap comparison chart...${NC}"
+STATEMAP_CHART_SCRIPT="$SCRIPT_DIR/../scripts/plot_statemap_comparison.py"
+if [ -f "$STATEMAP_CHART_SCRIPT" ]; then
+    python3 "$STATEMAP_CHART_SCRIPT" "$STATEMAP_RESULTS_DIR" "$STATEMAP_RESULTS_DIR/comparison_chart_${TIMESTAMP}.png" "$TIMESTAMP"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ StateMap chart generated: $STATEMAP_RESULTS_DIR/comparison_chart_${TIMESTAMP}.png${NC}"
+    else
+        echo -e "${YELLOW}⚠ StateMap chart generation failed${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ StateMap chart script not found: $STATEMAP_CHART_SCRIPT${NC}"
 fi

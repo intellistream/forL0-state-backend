@@ -10,7 +10,9 @@ Usage:
     python run_wordcount.py --backend hashmap
     python run_wordcount.py --backend forl0
     python run_wordcount.py --backend all
-    python run_wordcount.py --backend all --profile  # With flame graphs + hardware metrics
+    python run_wordcount.py --backend all --profile cpu      # Async-profiler flame graphs
+    python run_wordcount.py --backend all --profile uarch    # VTune uarch analysis
+    python run_wordcount.py --backend all --profile memory   # VTune memory analysis
 """
 
 import argparse
@@ -32,6 +34,7 @@ from utils.config import (
     get_timestamp, parse_json_from_output, save_result
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
+from utils.vtune_profiler import VTuneProfiler, get_profiler_summary as get_vtune_summary
 from utils.hardware_metrics import HardwareMetricsCollector
 
 
@@ -435,25 +438,42 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
     # [BENCHMARK_TEST] Initialize profiler and hardware metrics if enabled
     # Note: Profiling starts AFTER warmup to capture steady-state performance
     profiler = None
+    vtune_profiler = None
     hw_collector = None
     
     if profile_mode:
-        profiler = AsyncProfiler()
-        if profiler.is_available():
-            print(f"  Async Profiler: {profiler.get_version()}")
-            print(f"  Supported events: {profiler.get_supported_events()}")
-            print(f"  Profiling mode: {profile_mode}")
+        # Determine if using VTune or async-profiler
+        if profile_mode in ['uarch', 'memory']:
+            # VTune profiler
+            vtune_profiler = VTuneProfiler()
+            if vtune_profiler.is_available():
+                print(f"  Intel VTune: {vtune_profiler.get_version()}")
+                analysis_type = vtune_profiler.ANALYSIS_TYPES[profile_mode]
+                print(f"  Analysis type: {analysis_type}")
+                print(f"  Note: VTune will start 20s after job begins (steady state)")
+            else:
+                print("  WARNING: Intel VTune Profiler not available")
+                print("           Check if vtune is in PATH or set VTUNE_PROFILER_DIR")
+                vtune_profiler = None
         else:
-            print("  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)")
-            profiler = None
+            # Async profiler (cpu/cache)
+            profiler = AsyncProfiler()
+            if profiler.is_available():
+                print(f"  Async Profiler: {profiler.get_version()}")
+                print(f"  Supported events: {profiler.get_supported_events()}")
+                print(f"  Profiling mode: {profile_mode}")
+            else:
+                print("  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)")
+                profiler = None
         
         # Hardware metrics collection
         # - For 'cpu' mode: collect memory only (profiler handles CPU)
         # - For 'cache' mode: pass profiler for JFR analysis
+        # - For VTune modes: no additional hardware collection (VTune handles it)
         if profile_mode == 'cache':
             hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')), profiler=profiler)
             print(f"  Hardware metrics: enabled (cache mode, perf available: {hw_collector.is_perf_available()})")
-        elif profile_mode:
+        elif profile_mode == 'cpu':
             # CPU mode: only collect memory, no cache stats
             hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')), profiler=None)
             print(f"  Hardware metrics: memory only (cpu mode)")
@@ -466,36 +486,41 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         tm_pids = []
         jfr_file = None
         profiler_files = None  # Initialize profiler_files
-        if profiler:
+        vtune_result_dir = None
+        
+        # Find TaskManager PIDs
+        if profiler or vtune_profiler:
             tm_pids = find_taskmanager_pids(flink_home)
-            if tm_pids:
-                print(f"  Profiling TaskManager PIDs: {tm_pids}")
-                profiles_dir = get_results_dir('profiles')
-                
-                if profile_mode == 'cpu':
-                    # CPU profiling: flame graphs
-                    profiler.start(
-                        pid=tm_pids[0],
-                        events=['cpu', 'alloc'],
-                        output_dir=str(profiles_dir),
-                        backend=backend,
-                        output_format='html',
-                        duration=None
-                    )
-                    print(f"  Started CPU profiling (cpu + alloc)")
-                elif profile_mode == 'cache':
-                    # Cache profiling: HTML flame graph for cache-misses
-                    profiler.start(
-                        pid=tm_pids[0],
-                        events=['cache-misses'],
-                        output_dir=str(profiles_dir),
-                        backend=backend,
-                        output_format='html',
-                        duration=None
-                    )
-                    print(f"  Started cache profiling (cache-misses)")
-            else:
+            if not tm_pids:
                 print("  WARNING: No TaskManager PIDs found for profiling")
+        
+        # Start async-profiler if needed (cpu/cache modes)
+        if profiler and tm_pids:
+            print(f"  Profiling TaskManager PIDs: {tm_pids}")
+            profiles_dir = get_results_dir('profiles')
+            
+            if profile_mode == 'cpu':
+                # CPU profiling: flame graphs
+                profiler.start(
+                    pid=tm_pids[0],
+                    events=['cpu', 'alloc'],
+                    output_dir=str(profiles_dir),
+                    backend=backend,
+                    output_format='html',
+                    duration=None
+                )
+                print(f"  Started CPU profiling (cpu + alloc)")
+            elif profile_mode == 'cache':
+                # Cache profiling: HTML flame graph for cache-misses
+                profiler.start(
+                    pid=tm_pids[0],
+                    events=['cache-misses'],
+                    output_dir=str(profiles_dir),
+                    backend=backend,
+                    output_format='html',
+                    duration=None
+                )
+                print(f"  Started cache profiling (cache-misses)")
         
         # [BENCHMARK_TEST] Start hardware metrics collection before job
         if hw_collector:
@@ -515,6 +540,28 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
                         query='wordcount',
                         backend=backend
                     )
+        
+        # [BENCHMARK_TEST] Start VTune profiler in background thread (with 20s delay)
+        vtune_thread = None
+        if vtune_profiler and tm_pids:
+            import threading
+            
+            def start_vtune_delayed():
+                """Start VTune profiling after 20 second delay."""
+                nonlocal vtune_result_dir
+                # VTune results will be saved to ~/vtune-results (default)
+                vtune_result_dir = vtune_profiler.start(
+                    pid=tm_pids[0],
+                    analysis_type=profile_mode,
+                    backend=backend,
+                    query='wordcount',
+                    duration=60,  # Profile for 60 seconds
+                    delay=20      # Wait 20 seconds before starting
+                )
+            
+            vtune_thread = threading.Thread(target=start_vtune_delayed, daemon=True)
+            vtune_thread.start()
+            print(f"  VTune profiling will start in background (20s delay)")
         
         # Submit job (blocking mode - wait for completion)
         result = subprocess.run(
@@ -542,6 +589,13 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
                 if cache_stats:
                     print(f"  [HW] Cache miss rate: {cache_stats.cache_miss_rate:.2%}")
             hw_collector.save_results("wordcount_hw")
+        
+        # [BENCHMARK_TEST] Wait for VTune thread to complete
+        if vtune_thread:
+            print("  Waiting for VTune profiling to complete...")
+            vtune_thread.join(timeout=120)  # Wait up to 2 minutes
+            if vtune_result_dir:
+                print(f"  VTune results saved to: {vtune_result_dir}")
         
         # Parse result - first try from TaskManager log (has full metrics)
         benchmark_result = parse_taskmanager_log(flink_home, wc_config, mode_config)
