@@ -353,7 +353,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         ArrayList<K> keys = new ArrayList<>();
         for (AbstractSwissTable<K, N, S> t : tables) {
             for (int i = 0; i < t.capacity; i++) {
-                if (AbstractSwissTable.isFull(t.ctrl[i])) {
+                if (t.isSlotFull(i)) {
                     N ns = t.getNamespace(i);
                     if (namespace.equals(ns)) {
                         K key = t.getKey(i);
@@ -430,7 +430,7 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
         
         // Iterate old table, distribute to new tables
         for (int slot = 0; slot < oldTable.capacity; slot++) {
-            if (AbstractSwissTable.isFull(oldTable.ctrl[slot])) {
+            if (oldTable.isSlotFull(slot)) {
                 K key = oldTable.getKey(slot);
                 N ns = oldTable.getNamespace(slot);
                 S value = (S) oldTable.values[slot];
@@ -531,12 +531,11 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
     }
 
     /**
-     * Iterator that traverses all SwissTables using SWAR matchFull.
+     * Iterator that traverses all SwissTables.
      */
     private class SwissTableIterator implements Iterator<StateEntry<K, N, S>> {
         private int tableIdx = 0;
-        private int groupIdx = -1;  // Start at -1 so first increment goes to 0
-        private long currentMask = 0;  // SWAR bitmask for current group
+        private int slotIdx = 0;
         private K nextKey = null;
         private N nextNamespace = null;
         private S nextState = null;
@@ -571,43 +570,22 @@ public class ForL0StateMap<K, N, S> extends StateMap<K, N, S> implements AutoClo
 
             while (tableIdx < tables.size()) {
                 AbstractSwissTable<K, N, S> t = tables.get(tableIdx);
-                int groupCount = t.groupMask + 1;
 
-                // Process remaining bits in current group's mask
-                while (currentMask != 0) {
-                    int lane = AbstractSwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
-                    int slot = (groupIdx << 3) + lane;
-                    currentMask = AbstractSwissTable.clearLowestBit(currentMask);
-
-                    nextKey = t.getKey(slot);
-                    nextNamespace = t.getNamespace(slot);
-                    nextState = (S) t.values[slot];
-                    return;
-                }
-
-                // Move to next group with SWAR matchFull
-                groupIdx++;
-                while (groupIdx < groupCount) {
-                    long ctrlWord = t.loadCtrlWord(groupIdx);
-                    currentMask = AbstractSwissTable.matchFull(ctrlWord);
-                    if (currentMask != 0) {
-                        // Found a group with FULL slots, process first one
-                        int lane = AbstractSwissTable.laneFromTz(Long.numberOfTrailingZeros(currentMask));
-                        int slot = (groupIdx << 3) + lane;
-                        currentMask = AbstractSwissTable.clearLowestBit(currentMask);
-
-                        nextKey = t.getKey(slot);
-                        nextNamespace = t.getNamespace(slot);
-                        nextState = (S) t.values[slot];
+                // Find next FULL slot
+                while (slotIdx < t.capacity) {
+                    if (t.isSlotFull(slotIdx)) {
+                        nextKey = t.getKey(slotIdx);
+                        nextNamespace = t.getNamespace(slotIdx);
+                        nextState = (S) t.values[slotIdx];
+                        slotIdx++;
                         return;
                     }
-                    groupIdx++;
+                    slotIdx++;
                 }
 
                 // Move to next table
                 tableIdx++;
-                groupIdx = -1;  // Reset to -1 so first increment goes to 0
-                currentMask = 0;
+                slotIdx = 0;
             }
         }
     }
