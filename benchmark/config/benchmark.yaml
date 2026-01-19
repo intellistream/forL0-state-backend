@@ -46,27 +46,27 @@ cluster:
   
   wordcount:
     num_keys: 1000000         # 100万 key
-    num_records: 1000000000    # 10亿条
+    num_records: 1500000000    # 10亿条
     arrival_rate: 0 
     skew_factor: 1.0         # Zipf s parameter
-    window_size: 5000         # milliseconds (10s)
-    slide_size: 5000          # milliseconds (10s)
+    window_size: 10000         # milliseconds (10s)
+    slide_size: 10000          # milliseconds (10s)
     warmup_duration: 20       # warmup duration in seconds (0 to disable)
   
   nexmark:
     # NexMark queries to run (all stateful queries for full benchmark)
     queries: "q4,q5,q7,q8,q9,q11,q12,q18,q19,q20"
     # Data volume per query (as specified in test plan)
-    q4_events: 20000000       # 8000万
-    q5_events: 20000000       # 8000万
-    q7_events: 20000000       # 8000万
-    q8_events: 300000000      # 1亿
-    q9_events: 10000000       # 4000万
-    q11_events: 20000000      # 8000万
-    q12_events: 20000000      # 8000万
-    q18_events: 20000000      # 8000万
-    q19_events: 20000000      # 8000万
-    q20_events: 20000000      # 6000万
+    q4_events: 80000000       # 8000万
+    q5_events: 80000000       # 8000万
+    q7_events: 80000000       # 8000万
+    q8_events: 100000000      # 1亿
+    q9_events: 40000000       # 4000万
+    q11_events: 80000000      # 8000万
+    q12_events: 80000000      # 8000万
+    q18_events: 80000000      # 8000万
+    q19_events: 80000000      # 8000万
+    q20_events: 60000000      # 6000万
     tps: 1000000             # events per second (cluster mode)
     warmup_events: 10000000   # warmup events
     warmup_duration: 10      # warmup duration in seconds

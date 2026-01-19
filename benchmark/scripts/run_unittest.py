@@ -114,7 +114,7 @@ def run_unittest(config: dict, backend: str,
     vtune_profiler = None
     
     if profile_mode:
-        if profile_mode in ['uarch', 'memory']:
+        if profile_mode in ['uarch', 'memory', 'hotspots']:
             # VTune profiler
             vtune_profiler = VTuneProfiler()
             if vtune_profiler.is_available():

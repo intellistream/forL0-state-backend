@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from run_wordcount import run_wordcount, save_result
-from run_nexmark import NexMarkRunner
+from run_nexmark import NexmarkRunner
 from run_unittest import run_unittest
 from utils.config import load_config
 
@@ -240,9 +240,13 @@ Examples:
     parser.add_argument('--query', type=str, default=None,
                        help='NexMark queries to run (comma-separated, e.g., q5,q8). Default: from config')
     parser.add_argument('--profile', '-p', type=str, default=None, 
-                       choices=['cpu', 'cache', 'uarch', 'memory'],
+                       choices=['cpu', 'cache', 'uarch', 'memory', 'hotspots'],
                        help='Enable profiling: cpu (flame graphs), cache (cache stats), '
-                            'uarch (VTune uarch-exploration), memory (VTune memory-access)')
+                            'uarch (VTune uarch-exploration), memory (VTune memory-access), '
+                            'hotspots (VTune hotspots with call stacks)')
+    parser.add_argument('--mini-batch', action='store_true',
+                       help='Enable mini-batch mode (buffer + sort by key, no pre-aggregation). '
+                            'Overrides config file setting.')
     
     args = parser.parse_args()
     
@@ -272,6 +276,8 @@ Examples:
             'memory': 'Memory access analysis (Intel VTune)'
         }.get(args.profile, args.profile)
         print(f"Profiling: {profile_desc}")
+    if args.mini_batch:
+        print(f"Mini-batch: ENABLED (buffer + sort by key, no pre-aggregation)")
     print("=" * 60)
     
     results = {'unittest': {}, 'wordcount': {}, 'nexmark': {}}
@@ -301,8 +307,21 @@ Examples:
         print("\n" + "=" * 60)
         print("Running WordCount Benchmark")
         print("=" * 60)
+        
+        # Get mini-batch settings from config or CLI override
+        wc_config = mode_config.get('wordcount', {})
+        mini_batch = args.mini_batch or wc_config.get('mini_batch', False)
+        batch_size = wc_config.get('batch_size', 2000)
+        batch_interval_ms = wc_config.get('batch_interval_ms', 50)
+        
         for backend in backends:
-            result = run_wordcount(config, backend, profile_mode=args.profile)
+            result = run_wordcount(
+                config, backend, 
+                profile_mode=args.profile,
+                mini_batch=mini_batch,
+                batch_size=batch_size,
+                batch_interval_ms=batch_interval_ms
+            )
             if result:
                 results['wordcount'][backend] = result
                 save_result(result, 'wordcount', backend, mode)
@@ -313,12 +332,11 @@ Examples:
         print("Running NexMark Benchmark")
         print("=" * 60)
         try:
-            runner = NexMarkRunner(config)
+            runner = NexmarkRunner(config)
             nexmark_results = runner.run(
                 backends=backends,
                 queries=nexmark_queries,
-                profile_mode=args.profile,
-                restart_cluster=True
+                profile_mode=args.profile
             )
             # Store results in our format
             for backend, metrics in nexmark_results.items():

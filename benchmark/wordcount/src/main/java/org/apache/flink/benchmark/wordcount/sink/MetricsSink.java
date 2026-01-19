@@ -43,7 +43,7 @@ import java.util.Map;
  * <p>At the end of execution, metrics are printed to stdout and optionally
  * saved to a JSON file.
  */
-public class MetricsSink extends RichSinkFunction<Tuple2<String, Long>> {
+public class MetricsSink extends RichSinkFunction<Tuple2<Long, Long>> {
     
     private static final long serialVersionUID = 1L;
     
@@ -72,7 +72,7 @@ public class MetricsSink extends RichSinkFunction<Tuple2<String, Long>> {
     }
     
     @Override
-    public void invoke(Tuple2<String, Long> value, Context context) throws Exception {
+    public void invoke(Tuple2<Long, Long> value, Context context) throws Exception {
         sinkRecordCount++;
     }
     

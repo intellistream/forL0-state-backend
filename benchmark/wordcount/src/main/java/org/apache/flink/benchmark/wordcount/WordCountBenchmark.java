@@ -77,13 +77,13 @@ public class WordCountBenchmark {
             env.enableCheckpointing(checkpointInterval);
         }
         
-        // Create skewed word source - outputs Tuple2<word, 1L>
-        DataStream<Tuple2<String, Long>> source = env
+        // Create skewed key source - outputs Tuple2<key, 1L>
+        DataStream<Tuple2<Long, Long>> source = env
             .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
-            .name("SkewedWordSource");
+            .name("SkewedKeySource");
         
-        // Sliding window word count
-        DataStream<Tuple2<String, Long>> result = source
+        // Sliding window key count
+        DataStream<Tuple2<Long, Long>> result = source
             .keyBy(t -> t.f0)
             .window(SlidingProcessingTimeWindows.of(
                 Duration.ofMillis(windowSizeMillis),

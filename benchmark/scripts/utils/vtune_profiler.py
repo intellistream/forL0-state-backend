@@ -33,7 +33,8 @@ class VTuneProfiler:
     # Supported analysis types
     ANALYSIS_TYPES = {
         'uarch': 'uarch-exploration',  # Microarchitecture exploration
-        'memory': 'memory-access'       # Memory access analysis
+        'memory': 'memory-access',      # Memory access analysis
+        'hotspots': 'hotspots'          # Hotspots analysis (with call stacks)
     }
     
     def __init__(self, vtune_dir: Optional[str] = None):

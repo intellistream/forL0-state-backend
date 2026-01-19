@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-""" NexMark Benchmark Runner for ForL0 State Backend
+""" NexMark DataStream Benchmark Runner for ForL0 State Backend
 
-This script runs NexMark benchmark using the official NexMark benchmark tool.
-It reads configuration from benchmark.yaml and dynamically generates nexmark.yaml.
+This script runs NexMark DataStream benchmark for state backend comparison.
+It reads configuration from benchmark.yaml and runs each query individually.
 
 Usage:
     python run_nexmark.py                       # Run with both backends
@@ -10,8 +10,6 @@ Usage:
     python run_nexmark.py --queries q5,q8       # Specific queries
     python run_nexmark.py --profile cpu         # Enable CPU flame graphs
     python run_nexmark.py --profile cache       # Enable cache statistics
-    python run_nexmark.py --profile uarch       # Enable VTune uarch analysis
-    python run_nexmark.py --profile memory      # Enable VTune memory analysis
 """
 
 import argparse
@@ -22,20 +20,227 @@ import shutil
 import subprocess
 import sys
 import time
+import glob
+import requests
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
-from utils.config import load_config
-from utils.profiler import AsyncProfiler
-from utils.vtune_profiler import VTuneProfiler
-from utils.hardware_metrics import HardwareMetricsCollector
+from utils.config import load_config, get_mode_config, parse_json_from_output
+from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
-class NexMarkRunner:
-    """NexMark benchmark runner with state backend comparison"""
+def check_flink_cluster(rest_url: str) -> bool:
+    """Check if Flink cluster is running."""
+    try:
+        resp = requests.get(f"{rest_url}/overview", timeout=5)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def get_job_status(rest_url: str, job_id: str) -> dict:
+    """Get job status from Flink REST API."""
+    try:
+        resp = requests.get(f"{rest_url}/jobs/{job_id}", timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return {}
+
+
+def cancel_job(rest_url: str, job_id: str) -> bool:
+    """Cancel a running Flink job via REST API."""
+    try:
+        resp = requests.patch(
+            f"{rest_url}/jobs/{job_id}",
+            params={'mode': 'cancel'},
+            timeout=30
+        )
+        if resp.status_code in [200, 202]:
+            return True
+        resp = requests.delete(f"{rest_url}/jobs/{job_id}/cancel", timeout=30)
+        return resp.status_code in [200, 202]
+    except Exception as e:
+        print(f"  WARNING: Failed to cancel job: {e}")
+        return False
+
+
+def submit_job_async(cmd: list, rest_url: str) -> Optional[str]:
+    """Submit a Flink job asynchronously and return job ID."""
+    detached_cmd = cmd.copy()
+    run_idx = detached_cmd.index('run')
+    detached_cmd.insert(run_idx + 1, '-d')
+    
+    try:
+        result = subprocess.run(
+            detached_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        output = result.stdout + result.stderr
+        match = re.search(r'JobID\s+([a-f0-9]+)', output)
+        if match:
+            return match.group(1)
+        
+        print(f"  WARNING: Could not parse job ID from output:\n{output}")
+        return None
+        
+    except subprocess.TimeoutExpired:
+        print("  ERROR: Job submission timed out")
+        return None
+    except Exception as e:
+        print(f"  ERROR: Job submission failed: {e}")
+        return None
+
+
+def wait_for_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> dict:
+    """Wait for job to complete and return final status."""
+    start_time = time.time()
+    last_status = None
+    
+    while time.time() - start_time < timeout:
+        status = get_job_status(rest_url, job_id)
+        state = status.get('state', 'UNKNOWN')
+        
+        if state != last_status:
+            print(f"  Job state: {state}")
+            last_status = state
+        
+        if state in ['FINISHED', 'FAILED', 'CANCELED', 'CANCELLING']:
+            return status
+        
+        time.sleep(2)
+    
+    print("ERROR: Job timed out")
+    return {'state': 'TIMEOUT'}
+
+
+def parse_taskmanager_log(flink_home: str) -> Optional[dict]:
+    """Parse benchmark results from TaskManager stdout (.out file)."""
+    log_pattern = f"{flink_home}/log/*taskexecutor*.out"
+    log_files = glob.glob(log_pattern)
+    
+    if not log_files:
+        return None
+    
+    log_file = max(log_files, key=lambda f: Path(f).stat().st_mtime)
+    
+    try:
+        with open(log_file, 'r') as f:
+            content = f.read()
+        
+        result = parse_json_from_output(content)
+        if result:
+            return result
+    except Exception:
+        pass
+    
+    return None
+
+
+def clear_taskmanager_logs(flink_home: str):
+    """Clear TaskManager log files to get fresh results."""
+    log_pattern = f"{flink_home}/log/*taskexecutor*.out"
+    for log_file in glob.glob(log_pattern):
+        try:
+            with open(log_file, 'w') as f:
+                f.write('')
+        except Exception:
+            pass
+
+
+def get_forl0_config_args(config: dict, backend: str) -> list:
+    """Get ForL0 StateBackend configuration as Flink -D arguments."""
+    if backend != 'forl0':
+        return []
+    
+    backend_config = None
+    for b in config.get('backends', []):
+        if b.get('name') == 'forl0':
+            backend_config = b.get('config', {})
+            break
+    
+    if not backend_config:
+        return []
+    
+    args = []
+    config_mapping = {
+        'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
+        'l0_cache_size': 'state.backend.forl0.l0-cache.size',
+        'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
+        'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
+        'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
+    }
+    
+    for yaml_key, flink_key in config_mapping.items():
+        if yaml_key in backend_config:
+            value = backend_config[yaml_key]
+            if isinstance(value, bool):
+                value = 'true' if value else 'false'
+            args.append(f'-D{flink_key}={value}')
+    
+    return args
+
+
+def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str) -> bool:
+    """Run a warmup job for JIT compilation and cache warming."""
+    print(f"\n--- Warmup Phase ({warmup_duration}s) ---")
+    print(f"  Submitting warmup job...")
+    
+    job_id = submit_job_async(cmd, rest_url)
+    if not job_id:
+        print("  WARNING: Failed to submit warmup job, skipping warmup")
+        return False
+    
+    print(f"  Warmup job submitted: {job_id}")
+    
+    start_time = time.time()
+    last_state = None
+    
+    while time.time() - start_time < warmup_duration:
+        status = get_job_status(rest_url, job_id)
+        state = status.get('state', 'UNKNOWN')
+        
+        if state != last_state:
+            print(f"  Job state: {state}")
+            last_state = state
+        
+        if state in ['FINISHED', 'FAILED', 'CANCELED']:
+            print(f"  Warmup job ended early with state: {state}")
+            return state != 'FAILED'
+        
+        elapsed = int(time.time() - start_time)
+        remaining = warmup_duration - elapsed
+        if remaining > 0 and remaining % 10 == 0:
+            print(f"  Warmup: {elapsed}s elapsed, {remaining}s remaining...")
+        
+        time.sleep(1)
+    
+    print(f"  Warmup complete, cancelling job...")
+    if cancel_job(rest_url, job_id):
+        for _ in range(30):
+            status = get_job_status(rest_url, job_id)
+            state = status.get('state', 'UNKNOWN')
+            if state in ['CANCELED', 'FINISHED', 'FAILED']:
+                print(f"  Warmup job cancelled successfully")
+                break
+            time.sleep(0.5)
+    else:
+        print(f"  WARNING: Failed to cancel warmup job")
+    
+    time.sleep(2)
+    print(f"--- Warmup Phase Complete ---\n")
+    return True
+
+
+class NexmarkRunner:
+    """NexMark DataStream benchmark runner."""
     
     def __init__(self, config: dict):
         self.config = config
@@ -46,12 +251,7 @@ class NexMarkRunner:
         self.mode = config.get('mode', 'local')
         self.mode_config = config.get(self.mode, {})
         self.nexmark_config = self.mode_config.get('nexmark', {})
-        
-        # NexMark paths
-        self.nexmark_home = self.benchmark_root / "nexmark-src" / "nexmark-flink" / "target" / "nexmark-flink-bin" / "nexmark-flink"
-        self.nexmark_conf_dir = self.nexmark_home / "conf"
-        self.nexmark_yaml = self.nexmark_conf_dir / "nexmark.yaml"
-        self.nexmark_yaml_backup = self.nexmark_conf_dir / "nexmark.yaml.original"
+        self.flink_config = config.get('flink', {})
         
         # Flink paths
         flink_home_env = os.environ.get('FLINK_HOME')
@@ -60,33 +260,37 @@ class NexMarkRunner:
         else:
             self.flink_home = Path.home() / "flink" / "flink-1.20.0"
         
-        self.flink_config = self.flink_home / "conf" / "config.yaml"
-        self.flink_config_backup = self.flink_home / "conf" / "config.yaml.bak"
+        self.rest_url = self.flink_config.get('rest_url', 'http://localhost:8081')
+        
+        # Nexmark DataStream JAR
+        self.nexmark_jar = self._find_nexmark_jar()
         
         # ForL0 JAR
         self.forl0_jar = self._find_forl0_jar()
         
-        # Results directory (can be overridden by run_all.py)
+        # Results directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.results_dir = self.benchmark_root / "results" / f"nexmark_{timestamp}"
         
-        # Hardware metrics results directory
-        self.hw_metrics_dir = self.benchmark_root / "results" / "hardware"
-        
-        # Profiler (optional)
+        # Profiler
         self.profiler = None
         
-        # VTune Profiler (optional)
-        self.vtune_profiler = None
+    def _find_nexmark_jar(self) -> Path:
+        """Find the Nexmark DataStream JAR."""
+        target_dir = self.benchmark_root / "nexmark-datastream" / "target"
+        pattern = "nexmark-datastream-*.jar"
         
-        # Hardware metrics collector (optional)
-        self.hw_collector = None
+        for jar in target_dir.glob(pattern):
+            if "sources" not in jar.name and "javadoc" not in jar.name and "original" not in jar.name:
+                return jar
         
-        # Current backend being tested (for L0 metrics)
-        self.current_backend = None
-        
+        raise FileNotFoundError(
+            f"Nexmark DataStream JAR not found in {target_dir}. "
+            "Run 'cd benchmark/nexmark-datastream && mvn package -DskipTests' first."
+        )
+    
     def _find_forl0_jar(self) -> Path:
-        """Find the ForL0 StateBackend JAR"""
+        """Find the ForL0 StateBackend JAR."""
         target_dir = self.project_root / "target"
         pattern = "flink-statebackend-forL0-*.jar"
         
@@ -96,695 +300,219 @@ class NexMarkRunner:
         
         raise FileNotFoundError(f"ForL0 JAR not found in {target_dir}. Run 'mvn package' first.")
     
-    def _check_nexmark(self):
-        """Check if NexMark is compiled"""
-        if not self.nexmark_home.exists():
-            raise FileNotFoundError(
-                f"NexMark not found at {self.nexmark_home}. "
-                "Please compile NexMark first: cd benchmark/nexmark-src && mvn clean package -DskipTests"
-            )
-        
-        lib_dir = self.nexmark_home / "lib"
-        nexmark_jars = list(lib_dir.glob("nexmark-flink-*.jar"))
-        if not nexmark_jars:
-            raise FileNotFoundError(f"NexMark JAR not found in {lib_dir}")
-        
-        # Copy NexMark JAR to Flink lib (required for source generator)
-        nexmark_jar = nexmark_jars[0]
-        flink_lib_jar = self.flink_home / "lib" / nexmark_jar.name
-        if not flink_lib_jar.exists():
-            import shutil
-            shutil.copy(nexmark_jar, flink_lib_jar)
-            print(f"[NexMark] Copied {nexmark_jar.name} to Flink lib")
-        
-        print(f"[NexMark] Using NexMark from: {self.nexmark_home}")
-        print(f"[NexMark] Found JAR: {nexmark_jar.name}")
-    
-    def _check_flink(self):
-        """Check if Flink is available"""
-        if not self.flink_home.exists():
-            raise FileNotFoundError(f"Flink not found at {self.flink_home}. Set FLINK_HOME env var.")
-        print(f"[NexMark] Using Flink from: {self.flink_home}")
-    
-    def _backup_configs(self):
-        """Backup Flink and NexMark config files"""
-        if self.flink_config.exists():
-            shutil.copy(self.flink_config, self.flink_config_backup)
-        if self.nexmark_yaml.exists() and not self.nexmark_yaml_backup.exists():
-            shutil.copy(self.nexmark_yaml, self.nexmark_yaml_backup)
-        print(f"[NexMark] Config files backed up")
-    
-    def _restore_configs(self):
-        """Restore Flink config file (not NexMark config, which we want to keep)"""
-        if self.flink_config_backup.exists():
-            shutil.copy(self.flink_config_backup, self.flink_config)
-        # Note: Don't restore nexmark.yaml - we want to keep our generated config
-        print(f"[NexMark] Flink config restored")
-    
     def _get_query_events(self, query: str) -> int:
-        """Get events number for a specific query from config.
-        
-        Tries query-specific config first (e.g., q4_events), then falls back to general events config.
-        
-        Args:
-            query: Query name (e.g., 'q4', 'q5')
-        
-        Returns:
-            Events number for the query
-        """
-        # Try query-specific config first (e.g., q4_events)
+        """Get events number for a specific query from config."""
         query_events_key = f"{query}_events"
         query_events = self.nexmark_config.get(query_events_key)
         
         if query_events is not None:
             return query_events
         
-        # Fall back to general events config
         return self.nexmark_config.get('events', 10000000)
     
-    def _generate_nexmark_yaml(self, queries: str, query_specific: Optional[str] = None):
-        """Generate nexmark.yaml from benchmark.yaml config.
+    def _copy_forl0_jar_if_needed(self):
+        """Copy ForL0 JAR to Flink lib if not present."""
+        flink_lib_jar = self.flink_home / "lib" / self.forl0_jar.name
+        if not flink_lib_jar.exists():
+            shutil.copy(self.forl0_jar, flink_lib_jar)
+            print(f"[Nexmark] Copied ForL0 JAR to Flink lib")
+    
+    def run_query(
+            self, 
+            query: str, 
+            backend: str, 
+            profile_mode: Optional[str] = None
+    ) -> Optional[dict]:
+        """Run a single Nexmark query.
         
         Args:
-            queries: Query list for nexmark.yaml (e.g., 'q4,q5' or 'q4')
-            query_specific: If set, use this query's specific events config (e.g., 'q4')
+            query: Query name (e.g., 'q5')
+            backend: State backend ('hashmap' or 'forl0')
+            profile_mode: 'cpu' or 'cache' for profiling
+            
+        Returns:
+            Query result metrics or None on failure
         """
-        # Determine events number
-        if query_specific:
-            events = self._get_query_events(query_specific)
-            print(f"[NexMark] Using {events:,} events for {query_specific}")
-        else:
-            events = self.nexmark_config.get('events', 10000000)
-        tps = self.nexmark_config.get('tps', 500000)
-        warmup_events = self.nexmark_config.get('warmup_events', 100000)
-        warmup_duration = self.nexmark_config.get('warmup_duration', 10)
         
-        # Set monitor delay to give job time to start and produce metrics
-        # If delay is too short, MetricReporter will fail before job produces any metrics
-        monitor_delay = 5  # Wait 5 seconds for job to start and produce initial metrics
+        parallelism = self.mode_config.get('parallelism', 4)
+        checkpoint_interval = self.mode_config.get('checkpoint_interval', 0)
+        num_events = self._get_query_events(query)
+        tps = self.nexmark_config.get('tps', 0)
+        warmup_duration = self.nexmark_config.get('warmup_duration', 0)
         
-        # Build nexmark.yaml content
-        content = f"""################################################################################
-# NexMark Configuration (auto-generated from benchmark.yaml)
-################################################################################
-
-# Metric reporter
-nexmark.metric.reporter.host: localhost
-nexmark.metric.reporter.port: 9098
-
-# Flink REST
-flink.rest.address: localhost
-flink.rest.port: 8081
-
-# Metric monitoring settings
-# Wait for job to start and produce metrics before monitoring begins
-nexmark.metric.monitor.delay: {monitor_delay}s
-nexmark.metric.monitor.interval: 1s
-
-# Workload suite - generated from benchmark.yaml
-nexmark.workload.suite.benchmark.events.num: {events}
-nexmark.workload.suite.benchmark.tps: {tps}
-nexmark.workload.suite.benchmark.queries: "{queries}"
-nexmark.workload.suite.benchmark.warmup.duration: {warmup_duration}s
-nexmark.workload.suite.benchmark.warmup.events.num: {warmup_events}
-nexmark.workload.suite.benchmark.warmup.tps: {tps}
-"""
+        # Find backend class
+        backends_list = {b['name']: b['class'] for b in self.config.get('backends', [])}
+        backend_class = backends_list.get(backend, '')
         
-        with open(self.nexmark_yaml, 'w') as f:
-            f.write(content)
+        # Build flink run command
+        flink_bin = self.flink_home / 'bin' / 'flink'
         
-        print(f"[NexMark] Generated nexmark.yaml with {events:,} events, {tps:,} tps")
-    
-    def _configure_state_backend(self, backend: str):
-        """Configure Flink state backend in config.yaml"""
-        if not self.flink_config.exists():
-            raise FileNotFoundError(f"Flink config not found: {self.flink_config}")
+        cmd = [str(flink_bin), 'run']
         
-        with open(self.flink_config, 'r') as f:
-            config_content = f.read()
+        # Add state backend configuration
+        if backend_class:
+            cmd.append(f'-Dstate.backend.type={backend_class}')
         
-        # Remove existing state backend config
-        config_content = re.sub(r'state\.backend:.*\n', '', config_content)
-        config_content = re.sub(r'state\.backend\.type:.*\n', '', config_content)
-        config_content = re.sub(r'state\.backend\.forl0\..*\n', '', config_content)
-        # Remove existing parallelism config (will re-add from benchmark.yaml)
-        config_content = re.sub(r'parallelism\.default:.*\n', '', config_content)
+        # Add ForL0-specific configuration
+        if backend == 'forl0':
+            self._copy_forl0_jar_if_needed()
+            forl0_args = get_forl0_config_args(self.config, backend)
+            cmd.extend(forl0_args)
         
-        # Get ForL0 config from benchmark.yaml
-        backends_config = self.config.get('backends', [])
-        forl0_config = next((b.get('config', {}) for b in backends_config if b.get('name') == 'forl0'), {})
+        # Add JAR and arguments
+        cmd.extend([
+            str(self.nexmark_jar),
+            '--query', query,
+            '--numEvents', str(num_events),
+            '--tps', str(tps),
+            '--parallelism', str(parallelism),
+            '--checkpointInterval', str(checkpoint_interval),
+            '--backend', backend,
+        ])
         
-        # Get parallelism from benchmark.yaml
-        parallelism = self.mode_config.get('parallelism', 1)
+        print(f"\n=== Running Nexmark {query.upper()} ({backend} backend) ===")
+        print(f"Events: {num_events:,}, TPS: {tps if tps > 0 else 'unlimited'}")
+        print(f"Command: {' '.join(cmd)}\n")
         
-        # Add new config
-        if backend == "hashmap":
-            new_config = f"""\n# State Backend (configured by NexMark runner)
-state.backend.type: hashmap
-parallelism.default: {parallelism}
-"""
-        elif backend == "forl0":
-            l0_size = forl0_config.get('l0_cache_size', 14)
-            l0_policy = forl0_config.get('l0_cache_replacement_policy', 'CLOCK')
-            l0_enabled = forl0_config.get('l0_cache_enabled', True)
-            l0_memory_max = forl0_config.get('l0_memory_max_size', '0')
-            main_table_load_factor = forl0_config.get('main_table_load_factor_threshold', 1.5)
-            new_config = f"""
-# State Backend (configured by NexMark runner)
-state.backend: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
-state.backend.forl0.l0-cache.enabled: {str(l0_enabled).lower()}
-state.backend.forl0.l0-cache.size: {l0_size}
-state.backend.forl0.l0-cache.replacement-policy: {l0_policy}
-state.backend.forl0.l0-memory.max-size: {l0_memory_max}
-state.backend.forl0.main-table.load-factor-threshold: {main_table_load_factor}
-parallelism.default: {parallelism}
-"""
-            # Copy ForL0 JAR to Flink lib if not present
-            flink_lib_jar = self.flink_home / "lib" / self.forl0_jar.name
-            if not flink_lib_jar.exists():
-                shutil.copy(self.forl0_jar, flink_lib_jar)
-                print(f"[NexMark] Copied ForL0 JAR to Flink lib")
-        else:
-            raise ValueError(f"Unknown backend: {backend}")
+        # Clear logs before running
+        clear_taskmanager_logs(str(self.flink_home))
         
-        config_content += new_config
+        # Run warmup if configured
+        if warmup_duration > 0:
+            run_warmup_job(cmd, self.rest_url, warmup_duration, backend)
+            clear_taskmanager_logs(str(self.flink_home))
         
-        with open(self.flink_config, 'w') as f:
-            f.write(config_content)
-        
-        print(f"[NexMark] Configured state backend: {backend}")
-    
-    def _restart_flink(self):
-        """Restart Flink cluster to apply new config"""
-        print("[NexMark] Restarting Flink cluster...")
-        
-        # Stop cluster
-        stop_script = self.flink_home / "bin" / "stop-cluster.sh"
-        if stop_script.exists():
-            subprocess.run([str(stop_script)], capture_output=True)
-            time.sleep(3)
-        
-        # Clean up any existing CPU monitor processes before starting Flink
-        self._cleanup_cpu_monitor()
-        
-        # Start cluster
-        start_script = self.flink_home / "bin" / "start-cluster.sh"
-        if start_script.exists():
-            subprocess.run([str(start_script)], capture_output=True)
-            time.sleep(5)
-        
-        print("[NexMark] Flink cluster restarted")
-    
-    def _cleanup_cpu_monitor(self):
-        """Clean up any existing CPU monitor (CpuMetricSender) processes"""
-        import platform
-        if platform.system() == "Darwin":
-            return  # Not applicable on macOS
-        
-        try:
-            # Find and kill any existing CpuMetricSender processes
-            result = subprocess.run(
-                ["pgrep", "-f", "CpuMetricSender"],
-                capture_output=True,
-                text=True
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                pids = result.stdout.strip().split('\n')
-                print(f"[NexMark] Cleaning up {len(pids)} existing CPU monitor process(es)...")
-                for pid in pids:
-                    subprocess.run(["kill", "-9", pid], capture_output=True)
-                time.sleep(1)
-                print(f"[NexMark] CPU monitor processes cleaned up")
-        except Exception as e:
-            print(f"[NexMark] Warning: Failed to cleanup CPU monitor: {e}")
-    
-    def _start_cpu_monitor(self):
-        """Start NexMark CPU metric monitor (CpuMetricSender)"""
-        import platform
-        if platform.system() == "Darwin":
-            print("[NexMark] Warning: CPU monitoring not available on macOS (requires /proc filesystem)")
-            print("[NexMark] Cores metric will show as 0. This works correctly on Linux.")
-            return
-        
-        # Clean up any existing CPU monitor first
-        self._cleanup_cpu_monitor()
-        
-        setup_script = self.nexmark_home / "bin" / "setup_cluster.sh"
-        if setup_script.exists():
-            print("[NexMark] Starting CPU monitor...")
-            env = os.environ.copy()
-            env['FLINK_HOME'] = str(self.flink_home)
-            # Use Popen instead of run to start the process without waiting
-            # The script starts background processes (CpuMetricSender), we just need to launch it
-            proc = subprocess.Popen(
-                [str(setup_script)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env,
-                cwd=str(self.nexmark_home)
-            )
-            time.sleep(2)  # Give it time to start
-            print("[NexMark] CPU monitor started")
-        else:
-            print("[NexMark] Warning: setup_cluster.sh not found, CPU metrics won't be collected")
-    
-    def _stop_cpu_monitor(self):
-        """Stop NexMark CPU metric monitor"""
-        import platform
-        if platform.system() == "Darwin":
-            return  # CPU monitor not started on macOS
-        
-        shutdown_script = self.nexmark_home / "bin" / "shutdown_cluster.sh"
-        if shutdown_script.exists():
-            print("[NexMark] Stopping CPU monitor...")
-            env = os.environ.copy()
-            env['FLINK_HOME'] = str(self.flink_home)
-            subprocess.run([str(shutdown_script)], capture_output=True, env=env, cwd=str(self.nexmark_home))
-            print("[NexMark] CPU monitor stopped")
-    
-    def _run_nexmark_benchmark(self, queries: str, profile_mode: Optional[str] = None) -> dict:
-        """Run NexMark benchmark and return results.
-        
-        Runs each query individually so that one failed query doesn't block others.
-        
-        Args:
-            queries: Comma-separated query list
-            profile_mode: 'cpu', 'cache', 'uarch', or 'memory' for per-query profiling
-        """
-        query_list = [q.strip() for q in queries.split(',')]
-        print(f"\n[NexMark] Running {len(query_list)} queries individually: {query_list}")
-        
-        # Set environment variable for NexMark config
-        env = os.environ.copy()
-        env['NEXMARK_CONF_DIR'] = str(self.nexmark_conf_dir)
-        env['FLINK_HOME'] = str(self.flink_home)  # Ensure FLINK_HOME is set for NexMark
-        
-        # Build classpath
-        nexmark_lib = self.nexmark_home / "lib"
-        flink_lib = self.flink_home / "lib"
-        classpath = f"{nexmark_lib}/*:{flink_lib}/*"
-        
-        all_metrics = {
-            'query_results': {},
-            'total_events': 0,
-            'elapsed_seconds': 0,
-            'queries': queries,
-            'return_code': 0,
-            'failed_queries': []
-        }
-        
-        self.results_dir.mkdir(parents=True, exist_ok=True)
-        total_start = time.time()
-        
-        for query in query_list:
-            print(f"\n[NexMark] === Running query: {query} ===")
+        # Initialize profiler if enabled
+        tm_pids = []
+        if profile_mode and profile_mode in ['cpu', 'cache']:
+            profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
+            self.profiler = AsyncProfiler(profiler_home)
             
-            # Regenerate nexmark.yaml with query-specific events config
-            self._generate_nexmark_yaml(query, query_specific=query)
-            
-            # Use NexMark's official run_query.sh script
-            run_script = self.nexmark_home / "bin" / "run_query.sh"
-            cmd = [str(run_script), query]  # run_query.sh defaults to "oa" category
-            
-            # [BENCHMARK_TEST] Record query start time for L0 metrics filtering
-            query_start_time = datetime.now()
-            
-            print(f"  Executing: {' '.join(cmd)}")
-            
-            # Find TaskManager PID
-            tm_pid = self._find_taskmanager_pid()
-            
-            # [BENCHMARK_TEST] Start per-query profiling
-            vtune_thread = None
-            vtune_result_dir = None
-            
-            # Handle VTune profiling (uarch/memory)
-            if self.vtune_profiler and profile_mode in ['uarch', 'memory'] and tm_pid:
-                import threading
-                
-                def start_vtune_delayed():
-                    """Start VTune profiling after 20 second delay."""
-                    nonlocal vtune_result_dir
-                    # VTune results will be saved to ~/vtune-results (default)
-                    vtune_result_dir = self.vtune_profiler.start(
-                        pid=tm_pid,
-                        analysis_type=profile_mode,
-                        backend=self.current_backend,
-                        query=query,
-                        duration=60,  # Profile for 60 seconds
-                        delay=20      # Wait 20 seconds before starting
-                    )
-                
-                vtune_thread = threading.Thread(target=start_vtune_delayed, daemon=True)
-                vtune_thread.start()
-                print(f"  VTune profiling will start in background for {query} (20s delay, PID: {tm_pid})")
-            
-            # Handle async-profiler (cpu/cache)
-            elif self.profiler and self.profiler.is_available() and profile_mode in ['cpu', 'cache'] and tm_pid:
-                if profile_mode == 'cpu':
-                    self.profiler.start(
-                        pid=tm_pid,
-                        events=['cpu', 'alloc'],
-                        output_dir=str(self.results_dir),
-                        backend=self.current_backend,
-                        query=query,
-                        output_format='html',
-                        duration=None
-                    )
-                    print(f"  Started CPU profiling for {query} (PID: {tm_pid})")
-                elif profile_mode == 'cache':
-                    self.profiler.start(
-                        pid=tm_pid,
-                        events=['cache-misses'],
-                        output_dir=str(self.results_dir),
-                        backend=self.current_backend,
-                        query=query,
-                        output_format='html',
-                        duration=None
-                    )
-                    print(f"  Started cache profiling for {query} (PID: {tm_pid})")
-            
-            # [BENCHMARK_TEST] Start per-query memory collection
-            if self.hw_collector and self.current_backend and tm_pid:
-                self.hw_collector.start_memory_collection(
-                    pid=tm_pid,
-                    query=query,
-                    backend=self.current_backend,
-                    interval=1.0
-                )
-            
-            # [BENCHMARK_TEST] Start per-query cache collection (if cache mode)
-            if self.hw_collector and profile_mode == 'cache' and tm_pid:
-                self.hw_collector.start_cache_collection(
-                    pid=tm_pid,
-                    query=query,
-                    backend=self.current_backend
-                )
-            
-            try:
-                start_time = time.time()
-                # Capture output for parsing, but also print to console for visibility
-                result = subprocess.run(
-                    cmd,
-                    cwd=str(self.nexmark_home),
-                    env=env,
-                    capture_output=False,  # Let output go to console for real-time visibility
-                    timeout=3600  # 1 hour timeout for safety
-                )
-                elapsed = time.time() - start_time
-                print(f"\n  Benchmark command completed in {elapsed:.1f}s (return code: {result.returncode})")
-                
-                # [BENCHMARK_TEST] Stop per-query profiling
-                if self.profiler and profile_mode in ['cpu', 'cache'] and tm_pid:
-                    try:
-                        self.profiler.stop(tm_pid)
-                        print(f"  Profiler stopped for {query}")
-                    except Exception as e:
-                        print(f"  Profiler stop error for {query}: {e}")
-                
-                # [BENCHMARK_TEST] Wait for VTune thread to complete
-                if vtune_thread:
-                    print(f"  Waiting for VTune profiling to complete for {query}...")
-                    vtune_thread.join(timeout=120)  # Wait up to 2 minutes
-                    if vtune_result_dir:
-                        print(f"  VTune results for {query} saved to: {vtune_result_dir}")
-                
-                # [BENCHMARK_TEST] Stop per-query cache collection
-                if self.hw_collector and profile_mode == 'cache':
-                    cache_stats = self.hw_collector.stop_cache_collection()
-                    if cache_stats:
-                        print(f"  [HW] {query} cache miss rate: {cache_stats.cache_miss_rate:.2%}")
-                
-                # [BENCHMARK_TEST] Stop per-query memory collection
-                if self.hw_collector:
-                    self.hw_collector.stop_memory_collection()
-                
-                # Parse results from both log file and by re-reading stderr output
-                # NexMark prints summary table to stderr
-                log_file = self.nexmark_home / "log" / "nexmark-flink.log"
-                query_metrics = {'query_results': {}}
-                
-                if log_file.exists():
-                    with open(log_file, 'r', errors='ignore') as f:
-                        full_output = f.read()
-                    # Look for the summary table in log or stderr
-                    query_metrics = self._parse_nexmark_output(full_output)
+            if self.profiler.is_available():
+                tm_pids = find_taskmanager_pids(str(self.flink_home))
+                if tm_pids:
+                    profiles_dir = self.results_dir / "profiles"
+                    profiles_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # If not found in log, query might have completed too fast
-                    # Results are printed to console but we can extract from recent log lines
-                    if not query_metrics.get('query_results'):
-                        # Try last 200 lines which should contain the results table
-                        lines = full_output.split('\n')[-200:]
-                        recent_output = '\n'.join(lines)
-                        query_metrics = self._parse_nexmark_output(recent_output)
-                
-                if query in query_metrics.get('query_results', {}):
-                    all_metrics['query_results'][query] = query_metrics['query_results'][query]
-                    print(f"[NexMark] {query} completed in {elapsed:.1f}s: {query_metrics['query_results'][query].get('throughput', 0):,.0f} events/sec")
-                else:
-                    print(f"[NexMark] {query} completed but no results parsed (return code: {result.returncode})")
-                    all_metrics['failed_queries'].append(query)
-                    if result.returncode != 0:
-                        all_metrics['return_code'] = result.returncode
-                        
-            except Exception as e:
-                print(f"[NexMark] {query} ERROR: {e} - skipping")
-                all_metrics['failed_queries'].append(query)
+                    events = ['cpu', 'alloc'] if profile_mode == 'cpu' else ['cache-misses']
+                    self.profiler.start(
+                        pid=tm_pids[0],
+                        events=events,
+                        output_dir=str(profiles_dir),
+                        backend=backend,
+                        query=query,
+                        output_format='html',
+                        duration=None
+                    )
+                    print(f"  Started {profile_mode} profiling (PID: {tm_pids[0]})")
         
-        all_metrics['elapsed_seconds'] = time.time() - total_start
-        
-        # Save combined output
-        output_file = self.results_dir / f"nexmark_output_{queries.replace(',', '_')}.txt"
-        with open(output_file, 'w') as f:
-            f.write(f"Combined results for queries: {queries}\n")
-            f.write(f"Successful: {list(all_metrics['query_results'].keys())}\n")
-            f.write(f"Failed: {all_metrics['failed_queries']}\n")
-        
-        print(f"\n[NexMark] All queries completed. Success: {len(all_metrics['query_results'])}, Failed: {len(all_metrics['failed_queries'])}")
-        
-        return all_metrics
-    
-    def _cancel_running_jobs(self):
-        """Cancel any running Flink jobs to clean up after timeout"""
         try:
-            import requests
-            resp = requests.get("http://localhost:8081/jobs", timeout=5)
-            if resp.status_code == 200:
-                jobs = resp.json().get('jobs', [])
-                for job in jobs:
-                    if job.get('status') == 'RUNNING':
-                        job_id = job.get('id')
-                        print(f"[NexMark] Cancelling job {job_id}...")
-                        requests.patch(f"http://localhost:8081/jobs/{job_id}?mode=cancel", timeout=10)
-        except Exception as e:
-            print(f"[NexMark] Failed to cancel jobs: {e}")
-    
-    def _parse_nexmark_output(self, output: str) -> dict:
-        """Parse NexMark benchmark output for metrics"""
-        metrics = {
-            'query_results': {},
-            'total_events': 0,
-        }
-        
-        # NexMark outputs results in a table format (events.num mode):
-        # | Query| Events Num      | Cores  | Time(s)  | Cores * Time(s) | Throughput   | Throughput/Cores|
-        # |q4    |20,000,000       |0       |6.329     |0.000            |3.16 M/s      |0/s              |
-        
-        for line in output.split('\n'):
-            # Clean up any invalid UTF-8 characters that NexMark might output on macOS
-            line = ''.join(c if ord(c) < 128 or c.isalnum() or c in '|., /-' else ' ' for c in line)
+            # Submit job and wait for completion
+            job_id = submit_job_async(cmd, self.rest_url)
+            if not job_id:
+                print(f"  ERROR: Failed to submit job")
+                return None
             
-            # Look for query results - match lines starting with | q
-            if '|' in line:
-                parts = [p.strip() for p in line.split('|')]
-                parts = [p for p in parts if p]  # Remove empty strings
-                if len(parts) >= 5:  # Minimum: query, events, time, throughput, throughput/core
-                    query = parts[0]
-                    if query.startswith('q') and query[1:].isdigit():
-                        try:
-                            # Find throughput column by looking for M/s or K/s pattern
-                            throughput = 0.0
-                            throughput_per_core = 0.0
-                            time_seconds = 0.0
-                            events_num = 0
-                            
-                            for i, part in enumerate(parts):
-                                # Parse events num (looks like "20,000,000")
-                                if ',' in part and part.replace(',', '').isdigit():
-                                    events_num = int(part.replace(',', ''))
-                                # Parse throughput (looks like "3.14 M/s") - check this BEFORE time!
-                                elif 'M/s' in part or 'K/s' in part:
-                                    throughput = self._parse_throughput(part)
-                                # Parse time (looks like "6.363") - must not contain M/s or K/s
-                                elif '.' in part and len(part) < 10 and '/' not in part:
-                                    try:
-                                        val = float(part)
-                                        if 0 < val < 1000:  # Reasonable time range
-                                            time_seconds = val
-                                    except ValueError:
-                                        pass
-                                elif part == '0/s' and throughput > 0:
-                                    throughput_per_core = 0.0  # Already set throughput, this is per-core
-                            
-                            if throughput > 0:
-                                metrics['query_results'][query] = {
-                                    'events_num': events_num,
-                                    'time_seconds': time_seconds,
-                                    'throughput': throughput,
-                                    'throughput_per_core': throughput_per_core,
-                                    # Keep old names for compatibility
-                                    'events_per_sec': throughput,
-                                    'cores': 0,  # Not available on macOS
-                                    'events_per_sec_per_core': throughput_per_core
-                                }
-                                print(f"[NexMark] Parsed {query}: {throughput:,.0f} events/sec, {time_seconds:.2f}s")
-                        except (ValueError, IndexError) as e:
-                            pass
-        
-        return metrics
+            print(f"  Job submitted: {job_id}")
+            
+            # Wait for completion
+            status = wait_for_job_completion(self.rest_url, job_id)
+            state = status.get('state', 'UNKNOWN')
+            
+            if state != 'FINISHED':
+                print(f"  ERROR: Job ended with state: {state}")
+                return None
+            
+            # Stop profiler
+            if self.profiler and tm_pids:
+                try:
+                    self.profiler.stop(tm_pids[0])
+                    print(f"  Profiler stopped")
+                except Exception as e:
+                    print(f"  Profiler stop error: {e}")
+            
+            # Parse results from TaskManager log
+            time.sleep(1)  # Give log time to flush
+            result = parse_taskmanager_log(str(self.flink_home))
+            
+            if result:
+                print(f"\n  Result: {result.get('throughput', 0):,.2f} events/sec")
+                return result
+            else:
+                print(f"  WARNING: Could not parse results from log")
+                return None
+                
+        except Exception as e:
+            print(f"  ERROR: {e}")
+            return None
     
-    def _parse_throughput(self, throughput_str: str) -> float:
-        """Parse throughput string like '3.16 M/s' or '902.98 K/s' to float"""
-        throughput_str = throughput_str.strip()
-        if not throughput_str or throughput_str == '0/s':
-            return 0.0
-        
-        # Remove '/s' suffix
-        throughput_str = throughput_str.replace('/s', '').strip()
-        
-        # Handle scientific notation like "9.22 E"
-        if ' E' in throughput_str:
-            return 0.0  # Invalid, NexMark outputs this when cores=0
-        
-        # Parse multiplier
-        multiplier = 1.0
-        if throughput_str.endswith('M'):
-            multiplier = 1_000_000
-            throughput_str = throughput_str[:-1].strip()
-        elif throughput_str.endswith('K'):
-            multiplier = 1_000
-            throughput_str = throughput_str[:-1].strip()
-        
-        try:
-            return float(throughput_str) * multiplier
-        except ValueError:
-            return 0.0
-    
-    def _find_taskmanager_pid(self) -> Optional[int]:
-        """Find Flink TaskManager process ID"""
-        try:
-            result = subprocess.run(
-                ["pgrep", "-f", "TaskManagerRunner"],
-                capture_output=True,
-                text=True
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                pid = int(result.stdout.strip().split('\n')[0])
-                return pid
-        except Exception:
-            pass
-        return None
-    
-    def run(self, backends: list, queries: Optional[str] = None, 
-            profile_mode: Optional[str] = None, restart_cluster: bool = True) -> dict:
-        """Run NexMark benchmark for specified backends
+    def run(
+            self, 
+            backends: List[str], 
+            queries: Optional[str] = None,
+            profile_mode: Optional[str] = None
+    ) -> dict:
+        """Run Nexmark benchmark for specified backends and queries.
         
         Args:
-            backends: List of backends to test ('hashmap', 'forl0')
-            queries: Comma-separated list of queries (e.g., 'q5,q8')
-            profile_mode: 'cpu' (async-profiler flame graphs), 'cache' (cache stats), 
-                         'uarch' (VTune uarch-exploration), 'memory' (VTune memory-access), 
-                         or None to disable
-            restart_cluster: Restart Flink cluster between backends
+            backends: List of backends to test
+            queries: Comma-separated query list (e.g., 'q5,q8')
+            profile_mode: 'cpu' or 'cache' for profiling
+            
+        Returns:
+            Results dictionary
         """
         
-        # Checks
-        self._check_nexmark()
-        self._check_flink()
+        # Check Flink cluster
+        if not check_flink_cluster(self.rest_url):
+            print(f"ERROR: Flink cluster not running at {self.rest_url}")
+            print(f"  Start cluster with: {self.flink_home}/bin/start-cluster.sh")
+            return {}
         
         # Get queries from config if not specified
         if queries is None:
             queries = self.nexmark_config.get('queries', 'q5')
         
-        # Ensure queries is a string
-        queries_str: str = str(queries) if queries else 'q5'
+        query_list = [q.strip() for q in queries.split(',')]
         
-        # Setup profiler and hardware metrics collector if requested
-        if profile_mode:
-            # Determine if using VTune or async-profiler
-            if profile_mode in ['uarch', 'memory']:
-                # VTune profiler
-                self.vtune_profiler = VTuneProfiler()
-                if self.vtune_profiler.is_available():
-                    print(f"[NexMark] Intel VTune: {self.vtune_profiler.get_version()}")
-                    analysis_type = self.vtune_profiler.ANALYSIS_TYPES[profile_mode]
-                    print(f"[NexMark] Analysis type: {analysis_type}")
-                    print(f"[NexMark] Note: VTune will start 20s after each query begins")
-                else:
-                    print("[NexMark] WARNING: Intel VTune Profiler not available")
-                    print("           Check if vtune is in PATH or set VTUNE_PROFILER_DIR")
-                    self.vtune_profiler = None
-            else:
-                # Async profiler (cpu/cache)
-                profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
-                self.profiler = AsyncProfiler(profiler_home)
-                
-                # Hardware metrics collection
-                if profile_mode == 'cache':
-                    self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=self.profiler)
-                    print(f"[NexMark] Cache profiling mode (perf available: {self.hw_collector.is_perf_available()})")
-                else:
-                    self.hw_collector = HardwareMetricsCollector(str(self.hw_metrics_dir), profiler=None)
-                    print(f"[NexMark] CPU profiling mode")
-        
-        # Backup configs
-        self._backup_configs()
-        
-        # Generate nexmark.yaml with our config
-        self._generate_nexmark_yaml(queries_str)
+        print(f"\n{'='*60}")
+        print(f"Nexmark DataStream Benchmark")
+        print(f"{'='*60}")
+        print(f"Queries: {query_list}")
+        print(f"Backends: {backends}")
+        print(f"Mode: {self.mode}")
+        print(f"{'='*60}\n")
         
         results = {}
         
-        try:
-            for backend in backends:
-                print(f"\n{'='*60}")
-                print(f"Running NexMark ({queries_str}) with backend: {backend}")
-                print(f"{'='*60}")
-                
-                # [BENCHMARK_TEST] Track current backend for L0 metrics collection
-                self.current_backend = backend
-                
-                # Configure backend
-                self._configure_state_backend(backend)
-                
-                # Restart Flink if requested
-                if restart_cluster:
-                    self._restart_flink()
-                
-                # Start CPU monitor for metrics collection
-                self._start_cpu_monitor()
-                
-                # Run benchmark with per-query profiling
-                metrics = self._run_nexmark_benchmark(queries_str, profile_mode=profile_mode)
-                results[backend] = metrics
-                
-                # Stop CPU monitor
-                self._stop_cpu_monitor()
-                
-                # Print results
-                print(f"\n[NexMark] Results for {backend}:")
-                for q, m in metrics.get('query_results', {}).items():
-                    print(f"  {q}: {m['events_per_sec']:,.0f} events/sec ({m['events_per_sec_per_core']:,.0f}/core)")
-                if metrics.get('failed_queries'):
-                    print(f"  Failed queries: {metrics['failed_queries']}")
-        
-        finally:
-            # Restore configs
-            self._restore_configs()
+        for backend in backends:
+            print(f"\n{'='*60}")
+            print(f"Backend: {backend}")
+            print(f"{'='*60}")
             
-            # [BENCHMARK_TEST] Save hardware metrics
-            if self.hw_collector:
-                self.hw_collector.save_results("nexmark_hw")
+            backend_results = {
+                'query_results': {},
+                'failed_queries': []
+            }
+            
+            for query in query_list:
+                result = self.run_query(query, backend, profile_mode)
+                
+                if result:
+                    backend_results['query_results'][query] = result
+                else:
+                    backend_results['failed_queries'].append(query)
+            
+            results[backend] = backend_results
+            
+            # Print summary
+            print(f"\n--- {backend} Summary ---")
+            for q, r in backend_results['query_results'].items():
+                throughput = r.get('throughput', 0)
+                throughput_per_core = r.get('throughput_per_core', 0)
+                print(f"  {q}: {throughput:,.0f} events/sec ({throughput_per_core:,.0f}/core)")
+            if backend_results['failed_queries']:
+                print(f"  Failed: {backend_results['failed_queries']}")
         
         # Save results
         self._save_results(results)
@@ -795,7 +523,7 @@ parallelism.default: {parallelism}
         return results
     
     def _save_results(self, results: dict):
-        """Save benchmark results to JSON"""
+        """Save benchmark results to JSON."""
         self.results_dir.mkdir(parents=True, exist_ok=True)
         output_file = self.results_dir / "nexmark_results.json"
         
@@ -809,10 +537,10 @@ parallelism.default: {parallelism}
         with open(output_file, 'w') as f:
             json.dump(results_with_meta, f, indent=2)
         
-        print(f"\n[NexMark] Results saved to: {output_file}")
+        print(f"\n[Nexmark] Results saved to: {output_file}")
     
     def _print_comparison(self, results: dict):
-        """Print comparison between backends"""
+        """Print comparison between backends."""
         if len(results) < 2:
             return
         
@@ -833,8 +561,8 @@ parallelism.default: {parallelism}
             print(f"\n{backend} vs {base_backend}:")
             
             for query in sorted(set(base_queries.keys()) | set(comp_queries.keys())):
-                base_perf = base_queries.get(query, {}).get('events_per_sec_per_core', 0)
-                comp_perf = comp_queries.get(query, {}).get('events_per_sec_per_core', 0)
+                base_perf = base_queries.get(query, {}).get('throughput_per_core', 0)
+                comp_perf = comp_queries.get(query, {}).get('throughput_per_core', 0)
                 
                 if base_perf > 0:
                     diff_pct = ((comp_perf - base_perf) / base_perf) * 100
@@ -843,7 +571,7 @@ parallelism.default: {parallelism}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run NexMark benchmark")
+    parser = argparse.ArgumentParser(description="Run Nexmark DataStream benchmark")
     parser.add_argument("--backend", "-b", 
                        choices=["hashmap", "forl0", "all"],
                        default="all",
@@ -854,9 +582,6 @@ def main():
     parser.add_argument("--profile", "-p",
                        type=str, default=None, choices=['cpu', 'cache'],
                        help="Enable profiling: cpu (flame graphs) or cache (cache statistics)")
-    parser.add_argument("--no-restart",
-                       action="store_true",
-                       help="Don't restart Flink cluster between backends")
     
     args = parser.parse_args()
     
@@ -870,17 +595,16 @@ def main():
         backends = [args.backend]
     
     # Run benchmark
-    runner = NexMarkRunner(config)
+    runner = NexmarkRunner(config)
     results = runner.run(
         backends=backends,
         queries=args.queries,
-        profile_mode=args.profile,
-        restart_cluster=not args.no_restart
+        profile_mode=args.profile
     )
     
-    # Return non-zero if any benchmark failed
+    # Return non-zero if any query failed
     for backend, metrics in results.items():
-        if metrics.get('return_code', 0) != 0:
+        if metrics.get('failed_queries'):
             sys.exit(1)
     
     sys.exit(0)

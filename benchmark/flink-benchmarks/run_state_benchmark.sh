@@ -34,7 +34,7 @@ if [ "$SKIP_BUILD" = true ]; then
     echo -e "${YELLOW}Build: SKIPPED (using existing jar)${NC}"
 fi
 if [ "$QUICK_MODE" = true ]; then
-    echo -e "${YELLOW}Mode: QUICK (wi=3, i=5, f=1)${NC}"
+    echo -e "${YELLOW}Mode: QUICK (wi=4, i=6, f=2)${NC}"
 else
     echo -e "${GREEN}Mode: FULL (wi=5, i=10, f=3)${NC}"
 fi
@@ -99,16 +99,10 @@ BENCHMARKS=(
     "org.apache.flink.state.benchmark.ListStateBenchmark.listGet"
     "org.apache.flink.state.benchmark.ListStateBenchmark.listUpdate"
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapAdd"
-    "org.apache.flink.state.benchmark.MapStateBenchmark.mapContains"
-    "org.apache.flink.state.benchmark.MapStateBenchmark.mapEntries"
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapGet"
-    "org.apache.flink.state.benchmark.MapStateBenchmark.mapIsEmpty"
-    "org.apache.flink.state.benchmark.MapStateBenchmark.mapIterator"
-    "org.apache.flink.state.benchmark.MapStateBenchmark.mapKeys"
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapPutAll"
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapRemove"
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapUpdate"
-    "org.apache.flink.state.benchmark.MapStateBenchmark.mapValues"
 )
 
 # StateMap micro-benchmarks (ForL0StateMap vs CopyOnWriteStateMap direct comparison)
@@ -152,7 +146,7 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
         # Run benchmark (use absolute path to jar)
         cd "$SCRIPT_DIR"
         if [ "$QUICK_MODE" = true ]; then
-            JMH_ARGS="-wi 3 -i 5 -f 1 -t 1"
+            JMH_ARGS="-wi 4 -i 6 -f 2 -t 1"
         else
             JMH_ARGS="-wi 5 -i 10 -f 3 -t 1"
         fi

@@ -443,7 +443,7 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
     
     if profile_mode:
         # Determine if using VTune or async-profiler
-        if profile_mode in ['uarch', 'memory']:
+        if profile_mode in ['uarch', 'memory', 'hotspots']:
             # VTune profiler
             vtune_profiler = VTuneProfiler()
             if vtune_profiler.is_available():
