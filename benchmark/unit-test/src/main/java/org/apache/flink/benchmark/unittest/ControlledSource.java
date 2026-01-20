@@ -32,7 +32,7 @@ import java.util.Random;
  *   <li>zipfExponent > 0: Zipf distribution (higher = more skewed)</li>
  * </ul>
  */
-public class ControlledSource extends RichSourceFunction<Integer> {
+public class ControlledSource extends RichSourceFunction<Long> {
 
     private static final long serialVersionUID = 1L;
 
@@ -59,7 +59,7 @@ public class ControlledSource extends RichSourceFunction<Integer> {
     }
 
     @Override
-    public void run(SourceContext<Integer> ctx) throws Exception {
+    public void run(SourceContext<Long> ctx) throws Exception {
         long startEmit = System.currentTimeMillis();
         System.out.println("[Source] Starting emission (real-time key generation)...");
         
@@ -68,11 +68,11 @@ public class ControlledSource extends RichSourceFunction<Integer> {
         if (zipfExponent > 0) {
             // Zipf distribution
             ZipfDistribution zipf = new ZipfDistribution(numKeys, zipfExponent);
-            keyGen = () -> zipf.sample() - 1;  // ZipfDistribution is 1-based
+            keyGen = () -> (long) (zipf.sample() - 1);  // ZipfDistribution is 1-based
         } else {
             // Uniform distribution
             Random random = new Random(42);
-            keyGen = () -> random.nextInt(numKeys);
+            keyGen = () -> (long) random.nextInt(numKeys);
         }
         
         // Batch emission to reduce synchronization overhead
@@ -121,6 +121,6 @@ public class ControlledSource extends RichSourceFunction<Integer> {
 
     @FunctionalInterface
     private interface KeyGenerator {
-        int nextKey();
+        long nextKey();
     }
 }

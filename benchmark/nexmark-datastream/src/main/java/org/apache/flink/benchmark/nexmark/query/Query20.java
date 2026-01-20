@@ -6,7 +6,6 @@ package org.apache.flink.benchmark.nexmark.query;
 
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.benchmark.nexmark.model.Auction;
 import org.apache.flink.benchmark.nexmark.model.Bid;
 import org.apache.flink.benchmark.nexmark.model.Event;
@@ -21,28 +20,24 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Query 20: Expand Bid with Auction (Filter Join)
+ * Query 20: Expand bid with auction
  * 
- * <p>Join bids with auctions, filtering for category 10.
- * This query tests regular equi-join with filter.
- * 
- * <p>SQL equivalent:
+ * <p>Original SQL:
  * <pre>
- * SELECT bid.*, auction.* 
- * FROM bid INNER JOIN auction 
- * ON bid.auction = auction.id
- * WHERE auction.category = 10
+ * SELECT
+ *     auction, bidder, price, channel, url, B.dateTime, B.extra,
+ *     itemName, description, initialBid, reserve, A.dateTime, expires, seller, category, A.extra
+ * FROM
+ *     bid AS B INNER JOIN auction AS A on B.auction = A.id
+ * WHERE A.category = 10;
  * </pre>
  * 
- * <p>State pattern:
- * <ul>
- *   <li>ValueState for auctions: Cache auction details by ID</li>
- *   <li>ListState for bids: Buffer bids waiting for matching auction</li>
- * </ul>
+ * <p>Implementation:
+ * Join bids with auctions, filter by category = 10.
  */
 public class Query20 {
 
-    private static final long TARGET_CATEGORY = 10;
+    private static final long CATEGORY_FILTER = 10;
 
     public static void run(
             StreamExecutionEnvironment env,
@@ -51,7 +46,6 @@ public class Query20 {
             long numEvents,
             int parallelism) {
 
-        // Split streams
         DataStream<Auction> auctions = events
                 .filter(Event::isAuction)
                 .map(e -> e.auction)
@@ -62,84 +56,104 @@ public class Query20 {
                 .map(e -> e.bid)
                 .returns(Bid.class);
 
-        // Join bids with auctions on bid.auction = auction.id, filter category = 10
-        DataStream<Tuple2<Bid, Auction>> joinedBids = auctions
+        // Join bids with auctions, filter by category
+        DataStream<BidAuctionJoinResult> joinedBids = auctions
                 .keyBy(a -> a.id)
                 .connect(bids.keyBy(b -> b.auction))
-                .process(new BidAuctionJoinFunction(TARGET_CATEGORY))
+                .process(new BidAuctionJoin())
                 .name("BidAuctionJoin");
 
-        // Sink
         joinedBids.addSink(new MetricsSink<>("q20", backend, numEvents, parallelism))
                 .name("Q20Sink")
                 .setParallelism(1);
     }
 
     /**
-     * Join bids with auctions and filter by category.
+     * Result of joining bid with auction.
      */
-    private static class BidAuctionJoinFunction 
-            extends KeyedCoProcessFunction<Long, Auction, Bid, Tuple2<Bid, Auction>> {
-
-        private final long targetCategory;
-
-        // Auction state: cached auction for this key
-        private transient ValueState<Auction> auctionState;
-        // Buffered bids waiting for auction
-        private transient ValueState<List<Bid>> pendingBidsState;
-
-        public BidAuctionJoinFunction(long targetCategory) {
-            this.targetCategory = targetCategory;
+    public static class BidAuctionJoinResult implements java.io.Serializable {
+        private static final long serialVersionUID = 1L;
+        
+        public Bid bid;
+        public Auction auction;
+        
+        public BidAuctionJoinResult() {}
+        
+        public BidAuctionJoinResult(Bid bid, Auction auction) {
+            this.bid = bid;
+            this.auction = auction;
         }
+        
+        @Override
+        public String toString() {
+            return "BidAuctionJoinResult{auction=" + auction.id + 
+                   ", bidder=" + bid.bidder + ", price=" + bid.price + 
+                   ", category=" + auction.category + "}";
+        }
+    }
+
+    /**
+     * Join bids with auctions, filter by category = 10.
+     */
+    private static class BidAuctionJoin 
+            extends KeyedCoProcessFunction<Long, Auction, Bid, BidAuctionJoinResult> {
+
+        private transient ValueState<Auction> auctionState;
+        private transient org.apache.flink.api.common.state.ListState<Bid> pendingBidsState;
 
         @Override
-        public void open(Configuration parameters) throws Exception {
+        public void open(Configuration parameters) {
             auctionState = getRuntimeContext().getState(
                     new ValueStateDescriptor<>("auction", Auction.class));
-            pendingBidsState = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("pendingBids", 
-                            org.apache.flink.api.common.typeinfo.Types.LIST(
-                                    org.apache.flink.api.common.typeinfo.TypeInformation.of(Bid.class))));
+            pendingBidsState = getRuntimeContext().getListState(
+                    new org.apache.flink.api.common.state.ListStateDescriptor<>(
+                        "pendingBids", Bid.class));
         }
 
         @Override
         public void processElement1(Auction auction, Context ctx, 
-                Collector<Tuple2<Bid, Auction>> out) throws Exception {
-            // Store auction
-            auctionState.update(auction);
+                Collector<BidAuctionJoinResult> out) throws Exception {
             
-            // Check if this auction matches category filter
-            if (auction.category == targetCategory) {
-                // Process any pending bids
-                List<Bid> pending = pendingBidsState.value();
-                if (pending != null && !pending.isEmpty()) {
-                    for (Bid bid : pending) {
-                        out.collect(Tuple2.of(bid, auction));
-                    }
-                    pendingBidsState.clear();
+            // Only store auctions with category = 10
+            if (auction.category == CATEGORY_FILTER) {
+                auctionState.update(auction);
+                
+                // Process pending bids
+                List<Bid> pending = new ArrayList<>();
+                for (Bid bid : pendingBidsState.get()) {
+                    pending.add(bid);
                 }
+                pendingBidsState.clear();
+                
+                for (Bid bid : pending) {
+                    out.collect(new BidAuctionJoinResult(bid, auction));
+                }
+                
+                // Register cleanup timer (auction expiry + buffer)
+                ctx.timerService().registerProcessingTimeTimer(auction.expires + 60000);
             }
         }
 
         @Override
         public void processElement2(Bid bid, Context ctx, 
-                Collector<Tuple2<Bid, Auction>> out) throws Exception {
+                Collector<BidAuctionJoinResult> out) throws Exception {
             Auction auction = auctionState.value();
             
             if (auction != null) {
-                // Auction exists, check category filter
-                if (auction.category == targetCategory) {
-                    out.collect(Tuple2.of(bid, auction));
-                }
+                // Auction exists and has category = 10
+                out.collect(new BidAuctionJoinResult(bid, auction));
             } else {
-                // No auction yet, buffer bid
-                List<Bid> pending = pendingBidsState.value();
-                if (pending == null) {
-                    pending = new ArrayList<>();
-                }
-                pending.add(bid);
-                pendingBidsState.update(pending);
+                // Buffer bid in case auction arrives later
+                pendingBidsState.add(bid);
             }
+        }
+
+        @Override
+        public void onTimer(long timestamp, OnTimerContext ctx, 
+                Collector<BidAuctionJoinResult> out) throws Exception {
+            // Cleanup state after auction expires
+            auctionState.clear();
+            pendingBidsState.clear();
         }
     }
 }

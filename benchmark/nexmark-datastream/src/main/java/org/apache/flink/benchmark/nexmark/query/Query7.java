@@ -4,44 +4,49 @@
  */
 package org.apache.flink.benchmark.nexmark.query;
 
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.benchmark.nexmark.model.Bid;
 import org.apache.flink.benchmark.nexmark.model.Event;
 import org.apache.flink.benchmark.nexmark.sink.MetricsSink;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Query 7: Highest Bid
  * 
- * <p>Find the highest bid in each tumbling window.
- * This query tests tumbling window aggregation with global max tracking.
- * 
- * <p>SQL equivalent:
+ * <p>Original SQL:
  * <pre>
  * SELECT B.auction, B.price, B.bidder, B.dateTime, B.extra
  * FROM bid B
  * JOIN (
- *     SELECT MAX(price) AS maxprice, window_start, window_end
- *     FROM TABLE(TUMBLE(TABLE bid, DESCRIPTOR(dateTime), INTERVAL '10' SECOND))
- *     GROUP BY window_start, window_end
- * ) S ON B.price = S.maxprice
- * WHERE B.dateTime >= S.window_start AND B.dateTime < S.window_end
+ *   SELECT MAX(price) AS maxprice, window_end as dateTime
+ *   FROM TABLE(TUMBLE(TABLE bid, DESCRIPTOR(dateTime), INTERVAL '10' SECOND))
+ *   GROUP BY window_start, window_end
+ * ) B1
+ * ON B.price = B1.maxprice
+ * WHERE B.dateTime BETWEEN B1.dateTime - INTERVAL '10' SECOND AND B1.dateTime;
  * </pre>
  * 
- * <p>State pattern:
- * <ul>
- *   <li>Window state: Track max bid per window</li>
- * </ul>
+ * <p>Implementation:
+ * 1. Tumbling window (10s) to find max price
+ * 2. For each window, collect all bids
+ * 3. Join: output all bids with price = max price in that window
  */
 public class Query7 {
 
-    // Window parameters
     private static final long WINDOW_SIZE_SECONDS = 10;
 
     public static void run(
@@ -51,44 +56,49 @@ public class Query7 {
             long numEvents,
             int parallelism) {
 
-        // Filter to bids only
         DataStream<Bid> bids = events
                 .filter(Event::isBid)
                 .map(e -> e.bid)
                 .returns(Bid.class);
 
-        // Tumbling window: find max bid per window
-        // We use windowAll since we need global max
+        // Tumbling window: find max bid and output all bids with that max price
         DataStream<Bid> highestBids = bids
                 .windowAll(TumblingProcessingTimeWindows.of(Duration.ofSeconds(WINDOW_SIZE_SECONDS)))
                 .process(new MaxBidWindowFunction())
                 .name("TumblingMaxBid");
 
-        // Sink
         highestBids.addSink(new MetricsSink<>("q7", backend, numEvents, parallelism))
                 .name("Q7Sink")
                 .setParallelism(1);
     }
 
     /**
-     * Process window function to find the max bid in each window.
+     * Find max price in window and emit all bids with that price.
+     * This implements the self-join semantics of the SQL query.
      */
     private static class MaxBidWindowFunction 
             extends ProcessAllWindowFunction<Bid, Bid, TimeWindow> {
 
         @Override
-        public void process(Context context, 
-                Iterable<Bid> elements, Collector<Bid> out) throws Exception {
-            Bid maxBid = null;
+        public void process(Context context, Iterable<Bid> elements, 
+                Collector<Bid> out) throws Exception {
+            
+            // First pass: find max price and collect all bids
+            long maxPrice = Long.MIN_VALUE;
+            List<Bid> allBids = new ArrayList<>();
             
             for (Bid bid : elements) {
-                if (maxBid == null || bid.price > maxBid.price) {
-                    maxBid = bid;
+                allBids.add(bid);
+                if (bid.price > maxPrice) {
+                    maxPrice = bid.price;
                 }
             }
             
-            if (maxBid != null) {
-                out.collect(maxBid);
+            // Second pass: emit all bids with max price
+            for (Bid bid : allBids) {
+                if (bid.price == maxPrice) {
+                    out.collect(bid);
+                }
             }
         }
     }

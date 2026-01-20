@@ -17,23 +17,23 @@ import java.util.Random;
  * Nexmark event source that generates Person, Auction, and Bid events.
  * 
  * <p>This is a DataStream implementation aligned with the original Nexmark benchmark.
- * Event proportions: Person(1) : Auction(3) : Bid(46) as per Nexmark spec.
+ * Default proportions: Person(1) : Auction(3) : Bid(46) as per Nexmark spec.
  * 
- * <p>Supports:
+ * <p>Configurable parameters:
  * <ul>
+ *   <li>numEvents: Total number of events to generate</li>
+ *   <li>targetTps: Target events per second (0 for unlimited)</li>
+ *   <li>personProportion/auctionProportion/bidProportion: Event type ratios</li>
  *   <li>Hot sellers/bidders/auctions (99% of events target hot entities)</li>
- *   <li>Configurable TPS rate limiting</li>
- *   <li>Parallel event generation</li>
  * </ul>
  */
 public class NexmarkSource extends RichParallelSourceFunction<Event> {
     private static final long serialVersionUID = 1L;
 
-    // Event type proportions (from Nexmark spec)
-    private static final int PERSON_PROPORTION = 1;
-    private static final int AUCTION_PROPORTION = 3;
-    private static final int BID_PROPORTION = 46;
-    private static final int PROPORTION_TOTAL = PERSON_PROPORTION + AUCTION_PROPORTION + BID_PROPORTION;
+    // Default event type proportions (from Nexmark spec)
+    public static final int DEFAULT_PERSON_PROPORTION = 1;
+    public static final int DEFAULT_AUCTION_PROPORTION = 3;
+    public static final int DEFAULT_BID_PROPORTION = 46;
 
     // Hot entity parameters (99% of events target hot entities)
     private static final int NUM_HOT_SELLERS = 100;
@@ -53,14 +53,15 @@ public class NexmarkSource extends RichParallelSourceFunction<Event> {
     private static final String[] US_CITIES = {"Phoenix", "Los Angeles", "Denver", "Miami", "Atlanta", 
             "Boise", "Chicago", "New York", "Portland", "Dallas", "Seattle"};
 
-    // Configuration
+    // Configuration (from constructor)
     private final long numEvents;
     private final long targetTps;
     private final int personProportion;
     private final int auctionProportion;
     private final int bidProportion;
+    private final int proportionTotal;
 
-    // Runtime state
+    // Runtime state (transient)
     private volatile boolean running = true;
     private transient Random random;
     private transient long personIdGenerator;
@@ -68,24 +69,33 @@ public class NexmarkSource extends RichParallelSourceFunction<Event> {
     private transient long baseTime;
 
     /**
-     * Create a Nexmark event source.
+     * Create a Nexmark event source with default proportions.
      *
      * @param numEvents Total number of events to generate
      * @param targetTps Target events per second (0 for unlimited)
      */
     public NexmarkSource(long numEvents, long targetTps) {
-        this(numEvents, targetTps, PERSON_PROPORTION, AUCTION_PROPORTION, BID_PROPORTION);
+        this(numEvents, targetTps, 
+             DEFAULT_PERSON_PROPORTION, DEFAULT_AUCTION_PROPORTION, DEFAULT_BID_PROPORTION);
     }
 
     /**
      * Create a Nexmark event source with custom proportions.
+     *
+     * @param numEvents Total number of events to generate
+     * @param targetTps Target events per second (0 for unlimited)
+     * @param personProp Person event proportion
+     * @param auctionProp Auction event proportion
+     * @param bidProp Bid event proportion
      */
-    public NexmarkSource(long numEvents, long targetTps, int personProp, int auctionProp, int bidProp) {
+    public NexmarkSource(long numEvents, long targetTps, 
+                         int personProp, int auctionProp, int bidProp) {
         this.numEvents = numEvents;
         this.targetTps = targetTps;
         this.personProportion = personProp;
         this.auctionProportion = auctionProp;
         this.bidProportion = bidProp;
+        this.proportionTotal = personProp + auctionProp + bidProp;
     }
 
     @Override
@@ -106,7 +116,7 @@ public class NexmarkSource extends RichParallelSourceFunction<Event> {
     }
 
     @Override
-    public void run(org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext<Event> ctx) throws Exception {
+    public void run(SourceContext<Event> ctx) throws Exception {
         int parallelism = getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks();
         long eventsPerSubtask = numEvents / parallelism;
         
@@ -150,10 +160,10 @@ public class NexmarkSource extends RichParallelSourceFunction<Event> {
      * Generate the next event based on configured proportions.
      */
     private Event generateNextEvent(long eventNumber) {
-        int proportionTotal = personProportion + auctionProportion + bidProportion;
         int rand = random.nextInt(proportionTotal);
         
-        long timestamp = baseTime + (eventNumber / 1000); // Advance time slowly
+        // Timestamp advances slowly to create realistic event time distribution
+        long timestamp = baseTime + (eventNumber / 1000);
         
         if (rand < personProportion) {
             return new Event(generatePerson(timestamp));
@@ -251,10 +261,9 @@ public class NexmarkSource extends RichParallelSourceFunction<Event> {
     }
 
     /**
-     * Generate extra padding string.
+     * Generate extra padding string (empty for performance).
      */
     private String generateExtra() {
-        // Short extra for performance (can be made configurable)
         return "";
     }
 }

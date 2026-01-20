@@ -28,7 +28,7 @@ from typing import Optional, Dict, List
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
-from utils.config import load_config, get_mode_config, parse_json_from_output
+from utils.config import load_config, parse_json_from_output
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
@@ -247,10 +247,9 @@ class NexmarkRunner:
         self.project_root = Path(__file__).parent.parent.parent
         self.benchmark_root = Path(__file__).parent.parent
         
-        # Get mode-specific config
-        self.mode = config.get('mode', 'local')
-        self.mode_config = config.get(self.mode, {})
-        self.nexmark_config = self.mode_config.get('nexmark', {})
+        # Get configuration
+        self.runtime_config = config.get('runtime', {})
+        self.nexmark_config = config.get('nexmark', {})
         self.flink_config = config.get('flink', {})
         
         # Flink paths
@@ -334,11 +333,16 @@ class NexmarkRunner:
             Query result metrics or None on failure
         """
         
-        parallelism = self.mode_config.get('parallelism', 4)
-        checkpoint_interval = self.mode_config.get('checkpoint_interval', 0)
+        parallelism = self.runtime_config.get('parallelism', 4)
+        checkpoint_interval = self.runtime_config.get('checkpoint_interval', 0)
         num_events = self._get_query_events(query)
         tps = self.nexmark_config.get('tps', 0)
         warmup_duration = self.nexmark_config.get('warmup_duration', 0)
+        
+        # Event proportions (Nexmark default: 1:3:46)
+        person_proportion = self.nexmark_config.get('person_proportion', 1)
+        auction_proportion = self.nexmark_config.get('auction_proportion', 3)
+        bid_proportion = self.nexmark_config.get('bid_proportion', 46)
         
         # Find backend class
         backends_list = {b['name']: b['class'] for b in self.config.get('backends', [])}
@@ -368,10 +372,14 @@ class NexmarkRunner:
             '--parallelism', str(parallelism),
             '--checkpointInterval', str(checkpoint_interval),
             '--backend', backend,
+            '--personProportion', str(person_proportion),
+            '--auctionProportion', str(auction_proportion),
+            '--bidProportion', str(bid_proportion),
         ])
         
         print(f"\n=== Running Nexmark {query.upper()} ({backend} backend) ===")
         print(f"Events: {num_events:,}, TPS: {tps if tps > 0 else 'unlimited'}")
+        print(f"Proportions: Person({person_proportion}):Auction({auction_proportion}):Bid({bid_proportion})")
         print(f"Command: {' '.join(cmd)}\n")
         
         # Clear logs before running

@@ -758,9 +758,8 @@ def plot_state_entries_timeline(output_dir):
     # so max slots should be the total for all subtasks, not per subtask.
     try:
         config = load_config()
-        mode = config.get('mode', 'local')
-        mode_config = config.get(mode, {})
-        parallelism = mode_config.get('parallelism', 2)
+        runtime_config = config.get('runtime', {})
+        parallelism = runtime_config.get('parallelism', 2)
         
         # Get l0_cache_size from forl0 backend config
         l0_cache_size = 14  # default
@@ -1669,16 +1668,7 @@ def generate_report(results, output_dir):
         <div class="section">
             <h2>📌 Conclusion</h2>
             <p>{{ conclusion }}</p>
-            
-            {% if not all_pass %}
-            <div style="margin-top: 1rem; padding: 1rem; background: #fef3c7; border-radius: 0.5rem; border-left: 4px solid #f59e0b;">
-                <strong>⚠️ Note:</strong> The current test was run in <strong>{{ mode }}</strong> mode. 
-                {% if mode == 'local' %}
-                ForL0 uses simulation mode on Mac, not real L0 Cache hardware. 
-                The 60% improvement target is expected to be achieved on the production server (鲲鹏920 with L0 Cache).
-                {% endif %}
-            </div>
-            {% endif %}
+        </div>
         </div>
     </div>
     
@@ -1692,9 +1682,7 @@ def generate_report(results, output_dir):
     
     # Prepare data
     config = load_config()
-    mode = config.get('mode', 'local')
-    mode_config = config.get(mode, {})
-    wc_config = mode_config.get('wordcount', {})
+    wc_config = config.get('wordcount', {})
     
     wc_hashmap = results.get('wordcount', {}).get('hashmap', {})
     wc_forl0 = results.get('wordcount', {}).get('forl0', {})
@@ -1988,14 +1976,15 @@ def generate_report(results, output_dir):
     
     cache_supported = platform.system() == 'Linux'
     
+    runtime_config = config.get('runtime', {})
+    
     # Render template
     template = Template(html_template)
     report = template.render(
         timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         summary=summary,
         all_pass=all_pass,
-        mode=mode,
-        parallelism=mode_config.get('parallelism', 8),
+        parallelism=runtime_config.get('parallelism', 8),
         total_benchmarks=total_benchmarks,
         wc_config=wc_config,
         wc_hashmap_tpc=f'{wc_hashmap_tpc:,.0f}' if wc_hashmap_tpc else 'N/A',

@@ -15,11 +15,9 @@ matplotlib.use('Agg')
 def parse_csv_results(results_dir, timestamp=None):
     """Parse CSV files to extract benchmark results with error bars.
     
-    Supports two filename formats:
-    - Old: StateMapBenchmark.method_MAPTYPE_TIMESTAMP.csv
-    - New: StateMapBenchmark.method_MAPTYPE_NSTYPE_TIMESTAMP.csv
+    Filename format: StateMapBenchmark.method_MAPTYPE_TIMESTAMP.csv
     
-    Returns dict: {method_name: {(mapType, nsType): {'score': x, 'error': y}}}
+    Returns dict: {method_name: {mapType: {'score': x, 'error': y}}}
     """
     results = {}
     
@@ -32,22 +30,14 @@ def parse_csv_results(results_dir, timestamp=None):
     for csv_file in csv_files:
         filename = os.path.basename(csv_file)
         
-        # Try new format: StateMapBenchmark.method_MAPTYPE_NSTYPE_TIMESTAMP.csv
-        match = re.match(r'([^_]+)_([^_]+)_([^_]+)_(\d{8}_\d{6})\.csv', filename)
-        if match:
-            bench_name = match.group(1)
-            map_type = match.group(2)
-            ns_type = match.group(3)
-            file_timestamp = match.group(4)
-        else:
-            # Try old format: StateMapBenchmark.method_MAPTYPE_TIMESTAMP.csv
-            match = re.match(r'([^_]+)_([^_]+)_(\d{8}_\d{6})\.csv', filename)
-            if not match:
-                continue
-            bench_name = match.group(1)
-            map_type = match.group(2)
-            ns_type = "DEFAULT"
-            file_timestamp = match.group(3)
+        # Format: StateMapBenchmark.method_MAPTYPE_TIMESTAMP.csv
+        match = re.match(r'([^_]+)_([^_]+)_(\d{8}_\d{6})\.csv', filename)
+        if not match:
+            continue
+        
+        bench_name = match.group(1)
+        map_type = match.group(2)
+        file_timestamp = match.group(3)
         
         if timestamp and timestamp != file_timestamp:
             continue
@@ -83,52 +73,53 @@ def parse_csv_results(results_dir, timestamp=None):
                     else:
                         clean_name = full_bench_name
                     
-                    # Use method as key, (mapType, nsType) as sub-key
+                    # Use method as key, mapType as sub-key
                     if clean_name not in results:
                         results[clean_name] = {}
-                    results[clean_name][(map_type, ns_type)] = {'score': score, 'error': error}
+                    results[clean_name][map_type] = {'score': score, 'error': error}
     
     return results
 
 def plot_chart(results, output_file):
-    """Generate comparison bar chart with 4 bars per API (2 mapType x 2 nsType)."""
-    benchmarks = sorted(results.keys())
+    """Generate comparison bar chart with 2 bars per API (ForL0 vs CopyOnWrite)."""
+    # Define display order for methods (StateMap interface methods)
+    method_order = ['mapPut', 'mapGet', 'mapTransform', 'mapPutAndGetOld', 'mapContainsKey']
+    benchmarks = [m for m in method_order if m in results]
+    # Add any remaining methods not in the predefined order
+    for m in sorted(results.keys()):
+        if m not in benchmarks:
+            benchmarks.append(m)
     
-    # Define the 4 combinations
-    combinations = [
-        ('FORL0', 'STRING'),
-        ('COPYONWRITE', 'STRING'),
-        ('FORL0', 'TIMEWINDOW'),
-        ('COPYONWRITE', 'TIMEWINDOW'),
-    ]
+    # Define the 2 map types
+    map_types = ['FORL0', 'COPYONWRITE']
     
-    # Colors and labels for each combination
-    colors = ['#F89E4F', '#5B8DBE', '#F8C97F', '#8BB8D8']  # Orange, Blue, Light Orange, Light Blue
-    labels = ['ForL0 (String)', 'CopyOnWrite (String)', 'ForL0 (TimeWindow)', 'CopyOnWrite (TimeWindow)']
+    # Colors and labels
+    colors = ['#F89E4F', '#5B8DBE']  # Orange for ForL0, Blue for CopyOnWrite
+    labels = ['ForL0StateMap', 'CopyOnWriteStateMap']
     
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
     
-    fig, ax = plt.subplots(figsize=(16, 8))
+    fig, ax = plt.subplots(figsize=(14, 7))
     
     x = range(len(benchmarks))
-    n_bars = len(combinations)
-    width = 0.18
+    n_bars = len(map_types)
+    width = 0.35
     
     all_scores = []
     all_errors = []
     bars_list = []
     
-    for idx, (map_type, ns_type) in enumerate(combinations):
-        scores = [results[b].get((map_type, ns_type), {}).get('score', 0) for b in benchmarks]
-        errors = [results[b].get((map_type, ns_type), {}).get('error', 0) for b in benchmarks]
+    for idx, map_type in enumerate(map_types):
+        scores = [results[b].get(map_type, {}).get('score', 0) for b in benchmarks]
+        errors = [results[b].get(map_type, {}).get('error', 0) for b in benchmarks]
         all_scores.extend(scores)
         all_errors.extend(errors)
         
         offset = (idx - (n_bars - 1) / 2) * width
         bars = ax.bar([i + offset for i in x], scores, width, 
                       label=labels[idx], color=colors[idx], edgecolor='none',
-                      yerr=errors, capsize=2, error_kw={'elinewidth': 1, 'capthick': 1})
+                      yerr=errors, capsize=3, error_kw={'elinewidth': 1, 'capthick': 1})
         bars_list.append((bars, errors))
     
     # Add value labels
@@ -137,25 +128,27 @@ def plot_chart(results, output_file):
         for bar, err in zip(bars, errors):
             height = bar.get_height()
             if height > 0:
-                # Always put label on top
                 label_y = height + err + (ymax * 0.01)
-                ax.annotate(f'{height/1000:.1f}K',
+                if height >= 1000:
+                    label_text = f'{height/1000:.1f}K'
+                else:
+                    label_text = f'{height:.0f}'
+                ax.annotate(label_text,
                            xy=(bar.get_x() + bar.get_width() / 2, label_y),
                            ha='center', va='bottom',
-                           fontsize=7, fontweight='bold',
-                           color='#333333', rotation=90)
+                           fontsize=9, fontweight='bold',
+                           color='#333333')
     
     ax.set_ylabel('Throughput (ops/ms)', fontsize=13)
     ax.set_title('StateMap Benchmark: ForL0StateMap vs CopyOnWriteStateMap\n'
-                 '(String namespace shows ForL0 advantage due to expensive equals())', fontsize=13)
+                 '(Long key + VoidNamespace, SwissTableLongVoid specialization)', fontsize=13)
     ax.set_xticks(x)
     ax.set_xticklabels(benchmarks, rotation=0, ha='center', fontsize=11)
     
     max_error = max(all_errors) if all_errors else 0
-    ax.set_ylim(0, (ymax + max_error) * 1.20)
+    ax.set_ylim(0, (ymax + max_error) * 1.25)
     
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.08), 
-             ncol=4, frameon=False, fontsize=10)
+    ax.legend(loc='upper right', frameon=True, fontsize=11)
     
     ax.grid(axis='y', alpha=0.3, linestyle='-', linewidth=0.5, color='gray')
     ax.set_axisbelow(True)
@@ -184,7 +177,9 @@ def main():
         print("Error: No benchmark results found")
         sys.exit(1)
     
-    print(f"Found {len(results)} benchmark results")
+    print(f"Found {len(results)} benchmark methods:")
+    for method, data in sorted(results.items()):
+        print(f"  {method}: {list(data.keys())}")
     plot_chart(results, output_file)
 
 if __name__ == '__main__':

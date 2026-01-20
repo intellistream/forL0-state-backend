@@ -349,7 +349,7 @@ def main():
         )
         if result:
             results[backend] = result
-            save_result(result, 'unit-test', backend, config.get('mode', 'local'))
+            save_result(result, 'unit-test', backend)
     
     # Print comparison if both backends were run
     if len(results) == 2:

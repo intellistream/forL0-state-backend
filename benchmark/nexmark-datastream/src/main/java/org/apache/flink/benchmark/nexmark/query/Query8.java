@@ -4,9 +4,8 @@
  */
 package org.apache.flink.benchmark.nexmark.query;
 
-import org.apache.flink.api.common.state.ListState;
-import org.apache.flink.api.common.state.ListStateDescriptor;
-import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.benchmark.nexmark.model.Auction;
 import org.apache.flink.benchmark.nexmark.model.Event;
@@ -16,36 +15,43 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Query 8: Monitor New Users
  * 
- * <p>Find users who have created auctions within 12 hours of registering.
- * This query tests window join of two streams.
- * 
- * <p>SQL equivalent:
+ * <p>Original SQL:
  * <pre>
- * SELECT P.id, P.name, A.reserve
- * FROM person P, auction A
- * WHERE P.id = A.seller
- *   AND A.dateTime >= P.dateTime
- *   AND A.dateTime <= P.dateTime + INTERVAL '12' HOUR
+ * SELECT P.id, P.name, P.starttime
+ * FROM (
+ *   SELECT id, name, window_start AS starttime, window_end AS endtime
+ *   FROM TABLE(TUMBLE(TABLE person, DESCRIPTOR(dateTime), INTERVAL '10' SECOND))
+ *   GROUP BY id, name, window_start, window_end
+ * ) P
+ * JOIN (
+ *   SELECT seller, window_start AS starttime, window_end AS endtime
+ *   FROM TABLE(TUMBLE(TABLE auction, DESCRIPTOR(dateTime), INTERVAL '10' SECOND))
+ *   GROUP BY seller, window_start, window_end
+ * ) A
+ * ON P.id = A.seller AND P.starttime = A.starttime AND P.endtime = A.endtime;
  * </pre>
  * 
- * <p>State pattern:
- * <ul>
- *   <li>ListState for persons: Buffer persons waiting for matching auctions</li>
- *   <li>ListState for auctions: Buffer auctions waiting for matching persons</li>
- * </ul>
+ * <p>Implementation:
+ * 1. Window persons by 10s tumbling window
+ * 2. Window auctions by 10s tumbling window
+ * 3. Join: person.id = auction.seller in same window
+ * 4. Output persons who created auctions in the same window they registered
  */
 public class Query8 {
 
-    // Join window: 12 hours in milliseconds
-    private static final long JOIN_WINDOW_MS = 12 * 60 * 60 * 1000L;
+    private static final long WINDOW_SIZE_SECONDS = 10;
 
     public static void run(
             StreamExecutionEnvironment env,
@@ -54,7 +60,6 @@ public class Query8 {
             long numEvents,
             int parallelism) {
 
-        // Split streams
         DataStream<Person> persons = events
                 .filter(Event::isPerson)
                 .map(e -> e.person)
@@ -65,115 +70,131 @@ public class Query8 {
                 .map(e -> e.auction)
                 .returns(Auction.class);
 
-        // Join persons with auctions on seller = person.id
-        DataStream<Tuple3<Long, String, Long>> newUserAuctions = persons
+        // Window both streams by the same tumbling window, keyed by person.id / auction.seller
+        // Then join within the same window
+        
+        // First, add window info to persons
+        DataStream<Tuple3<Long, String, Long>> windowedPersons = persons
                 .keyBy(p -> p.id)
-                .connect(auctions.keyBy(a -> a.seller))
-                .process(new PersonAuctionJoinFunction(JOIN_WINDOW_MS))
+                .window(TumblingProcessingTimeWindows.of(Duration.ofSeconds(WINDOW_SIZE_SECONDS)))
+                .process(new PersonWindowFunction())
+                .name("PersonWindow");
+
+        // Add window info to auctions (keyed by seller)
+        DataStream<Tuple3<Long, Long, Long>> windowedAuctions = auctions
+                .keyBy(a -> a.seller)
+                .window(TumblingProcessingTimeWindows.of(Duration.ofSeconds(WINDOW_SIZE_SECONDS)))
+                .process(new AuctionWindowFunction())
+                .name("AuctionWindow");
+
+        // Join by composite key: (personId/seller, windowStart, windowEnd)
+        DataStream<Tuple3<Long, String, Long>> joined = windowedPersons
+                .keyBy(t -> t.f0 + "-" + t.f2) // id-windowEnd
+                .connect(windowedAuctions.keyBy(t -> t.f0 + "-" + t.f2)) // seller-windowEnd
+                .process(new PersonAuctionJoin())
                 .name("PersonAuctionJoin");
 
-        // Sink
-        newUserAuctions.addSink(new MetricsSink<>("q8", backend, numEvents, parallelism))
+        joined.addSink(new MetricsSink<>("q8", backend, numEvents, parallelism))
                 .name("Q8Sink")
                 .setParallelism(1);
     }
 
     /**
-     * Join persons with auctions.
-     * A match occurs when auction.seller = person.id and auction is created within
-     * JOIN_WINDOW_MS of person registration.
+     * Extract (id, name, windowEnd) from windowed persons.
      */
-    private static class PersonAuctionJoinFunction 
-            extends KeyedCoProcessFunction<Long, Person, Auction, Tuple3<Long, String, Long>> {
-
-        private final long joinWindowMs;
-
-        // Buffer persons
-        private transient ListState<Person> personBuffer;
-        // Buffer auctions
-        private transient ListState<Auction> auctionBuffer;
-
-        public PersonAuctionJoinFunction(long joinWindowMs) {
-            this.joinWindowMs = joinWindowMs;
-        }
+    private static class PersonWindowFunction 
+            extends ProcessWindowFunction<Person, Tuple3<Long, String, Long>, Long, TimeWindow> {
 
         @Override
-        public void open(Configuration parameters) throws Exception {
-            personBuffer = getRuntimeContext().getListState(
-                    new ListStateDescriptor<>("persons", Person.class));
-            auctionBuffer = getRuntimeContext().getListState(
-                    new ListStateDescriptor<>("auctions", Auction.class));
-        }
-
-        @Override
-        public void processElement1(Person person, Context ctx, 
-                Collector<Tuple3<Long, String, Long>> out) throws Exception {
-            // Check for matching auctions already in buffer
-            List<Auction> toRemove = new ArrayList<>();
-            for (Auction auction : auctionBuffer.get()) {
-                if (isMatch(person, auction)) {
-                    out.collect(Tuple3.of(person.id, person.name, auction.reserve));
-                }
-                // Check if auction is too old
-                if (auction.dateTime < person.dateTime - joinWindowMs) {
-                    toRemove.add(auction);
+        public void process(Long key, Context ctx, Iterable<Person> elements, 
+                Collector<Tuple3<Long, String, Long>> out) {
+            // Deduplicate by id within window (GROUP BY id, name)
+            Set<Long> seen = new HashSet<>();
+            for (Person p : elements) {
+                if (!seen.contains(p.id)) {
+                    seen.add(p.id);
+                    out.collect(Tuple3.of(p.id, p.name, ctx.window().getEnd()));
                 }
             }
+        }
+    }
+
+    /**
+     * Extract (seller, auctionId, windowEnd) from windowed auctions.
+     */
+    private static class AuctionWindowFunction 
+            extends ProcessWindowFunction<Auction, Tuple3<Long, Long, Long>, Long, TimeWindow> {
+
+        @Override
+        public void process(Long key, Context ctx, Iterable<Auction> elements, 
+                Collector<Tuple3<Long, Long, Long>> out) {
+            // Deduplicate by seller within window (GROUP BY seller)
+            Set<Long> seen = new HashSet<>();
+            for (Auction a : elements) {
+                if (!seen.contains(a.seller)) {
+                    seen.add(a.seller);
+                    out.collect(Tuple3.of(a.seller, a.id, ctx.window().getEnd()));
+                }
+            }
+        }
+    }
+
+    /**
+     * Join persons with auctions by id/seller in same window.
+     */
+    private static class PersonAuctionJoin 
+            extends KeyedCoProcessFunction<String, Tuple3<Long, String, Long>, 
+                    Tuple3<Long, Long, Long>, Tuple3<Long, String, Long>> {
+
+        private transient ValueState<Tuple3<Long, String, Long>> personState;
+        private transient ValueState<Boolean> auctionSeenState;
+
+        @Override
+        public void open(Configuration parameters) {
+            personState = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("person", 
+                        org.apache.flink.api.common.typeinfo.Types.TUPLE(
+                            org.apache.flink.api.common.typeinfo.Types.LONG,
+                            org.apache.flink.api.common.typeinfo.Types.STRING,
+                            org.apache.flink.api.common.typeinfo.Types.LONG)));
+            auctionSeenState = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("auctionSeen", Boolean.class));
+        }
+
+        @Override
+        public void processElement1(Tuple3<Long, String, Long> person, Context ctx,
+                Collector<Tuple3<Long, String, Long>> out) throws Exception {
+            personState.update(person);
             
-            // Buffer the person
-            personBuffer.add(person);
+            // If we've already seen an auction for this key, emit
+            if (Boolean.TRUE.equals(auctionSeenState.value())) {
+                out.collect(person);
+            }
             
             // Register cleanup timer
-            ctx.timerService().registerProcessingTimeTimer(
-                    ctx.timerService().currentProcessingTime() + joinWindowMs);
+            ctx.timerService().registerProcessingTimeTimer(person.f2 + 1000);
         }
 
         @Override
-        public void processElement2(Auction auction, Context ctx, 
+        public void processElement2(Tuple3<Long, Long, Long> auction, Context ctx,
                 Collector<Tuple3<Long, String, Long>> out) throws Exception {
-            // Check for matching persons already in buffer
-            for (Person person : personBuffer.get()) {
-                if (isMatch(person, auction)) {
-                    out.collect(Tuple3.of(person.id, person.name, auction.reserve));
-                }
-            }
+            auctionSeenState.update(true);
             
-            // Buffer the auction
-            auctionBuffer.add(auction);
+            // If we've already seen the person, emit
+            Tuple3<Long, String, Long> person = personState.value();
+            if (person != null) {
+                out.collect(person);
+            }
             
             // Register cleanup timer
-            ctx.timerService().registerProcessingTimeTimer(
-                    ctx.timerService().currentProcessingTime() + joinWindowMs);
-        }
-
-        private boolean isMatch(Person person, Auction auction) {
-            return auction.dateTime >= person.dateTime 
-                    && auction.dateTime <= person.dateTime + joinWindowMs;
+            ctx.timerService().registerProcessingTimeTimer(auction.f2 + 1000);
         }
 
         @Override
-        public void onTimer(long timestamp, OnTimerContext ctx, 
+        public void onTimer(long timestamp, OnTimerContext ctx,
                 Collector<Tuple3<Long, String, Long>> out) throws Exception {
-            // Clean up old state
-            long cutoff = timestamp - joinWindowMs;
-            
-            // Remove old persons
-            List<Person> validPersons = new ArrayList<>();
-            for (Person person : personBuffer.get()) {
-                if (person.dateTime >= cutoff) {
-                    validPersons.add(person);
-                }
-            }
-            personBuffer.update(validPersons);
-            
-            // Remove old auctions
-            List<Auction> validAuctions = new ArrayList<>();
-            for (Auction auction : auctionBuffer.get()) {
-                if (auction.dateTime >= cutoff) {
-                    validAuctions.add(auction);
-                }
-            }
-            auctionBuffer.update(validAuctions);
+            personState.clear();
+            auctionSeenState.clear();
         }
     }
 }

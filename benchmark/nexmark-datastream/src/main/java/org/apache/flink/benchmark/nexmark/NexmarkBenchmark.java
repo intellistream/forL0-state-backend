@@ -26,7 +26,10 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
  *   --numEvents 10000000 \
  *   --tps 500000 \
  *   --parallelism 4 \
- *   --backend forl0
+ *   --backend forl0 \
+ *   --personProportion 1 \
+ *   --auctionProportion 3 \
+ *   --bidProportion 46
  * </pre>
  */
 public class NexmarkBenchmark {
@@ -41,6 +44,14 @@ public class NexmarkBenchmark {
         int parallelism = params.getInt("parallelism", 4);
         String backend = params.get("backend", "unknown");
         long checkpointInterval = params.getLong("checkpointInterval", 0);
+        
+        // Event proportions (Nexmark default: 1:3:46)
+        int personProportion = params.getInt("personProportion", 
+                NexmarkSource.DEFAULT_PERSON_PROPORTION);
+        int auctionProportion = params.getInt("auctionProportion", 
+                NexmarkSource.DEFAULT_AUCTION_PROPORTION);
+        int bidProportion = params.getInt("bidProportion", 
+                NexmarkSource.DEFAULT_BID_PROPORTION);
 
         // Create execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -51,9 +62,10 @@ public class NexmarkBenchmark {
             env.enableCheckpointing(checkpointInterval);
         }
 
-        // Create event source
+        // Create event source with configurable proportions
         DataStream<Event> events = env
-                .addSource(new NexmarkSource(numEvents, tps))
+                .addSource(new NexmarkSource(numEvents, tps, 
+                        personProportion, auctionProportion, bidProportion))
                 .name("NexmarkSource");
 
         // Run the specified query

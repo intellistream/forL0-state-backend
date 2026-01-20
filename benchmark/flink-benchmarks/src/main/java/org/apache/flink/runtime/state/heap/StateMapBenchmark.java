@@ -21,11 +21,10 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.benchmark.BenchmarkBase;
 import org.apache.flink.runtime.state.StateTransformationFunction;
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.runtime.state.VoidNamespace;
 
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Level;
-import org.openjdk.jmh.annotations.OperationsPerInvocation;
 import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
@@ -37,58 +36,86 @@ import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 import org.openjdk.jmh.runner.options.VerboseMode;
 
-import java.util.Random;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Micro-benchmark for StateMap implementations (ForL0StateMap vs CopyOnWriteStateMap).
  * 
- * <p>Uses batch operations with @OperationsPerInvocation to avoid the overhead of
- * @Setup(Level.Invocation) which would dominate the measurement for fast operations.
- * 
- * <p>Supports two namespace types to analyze equals() overhead impact:
+ * <p>Uses the same testing methodology as Flink State Benchmark:
  * <ul>
- *   <li>STRING: String namespace with expensive equals() (~70ns per call)</li>
- *   <li>TIMEWINDOW: TimeWindow namespace with cheap equals() (~2ns per call)</li>
+ *   <li>KeyValue inner class with @Setup(Level.Invocation)</li>
+ *   <li>Single operation per benchmark (no batching)</li>
+ *   <li>Pre-generated keys shuffled for random access</li>
  * </ul>
  * 
- * <p>Key insight: ForL0StateMap (Swiss Table) uses H2 filtering to reduce equals() calls,
- * making it faster for expensive equals() types like String.
+ * <p>Uses Long key + VoidNamespace to match WordCount benchmark and enable
+ * SwissTableLongVoid specialization for ForL0StateMap.
+ * 
+ * <p>This configuration uses SwissTableLongVoid specialization which:
+ * <ul>
+ *   <li>Stores keys as primitive long[] (no boxing overhead)</li>
+ *   <li>Uses identity comparison for VoidNamespace (no equals() overhead)</li>
+ *   <li>Achieves optimal memory layout and cache efficiency</li>
+ * </ul>
  */
 @State(Scope.Benchmark)
 public class StateMapBenchmark extends BenchmarkBase {
 
-    private static final int KEY_RANGE = 1_000_000;       // 与 WordCount numKeys 一致
-    private static final int NAMESPACE_COUNT = 10;        // 模拟滑动窗口数量 (windowSize/slideSize)
-    private static final int PREFILL_COUNT = 10_000_000;  // 预填充操作数
-    private static final int BATCH_SIZE = 10_000;         // 每次 benchmark 批量大小
-    private static final long WINDOW_SIZE = 5000;         // 窗口大小 (毫秒), 与 WordCount 一致
-    private static final long SLIDE_SIZE = 200;           // 滑动步长 (毫秒), 与 WordCount 一致
+    // Key counts - aligned with Flink State Benchmark
+    public static final int setupKeyCount = 500_000;       // 已存在的 keys
+    public static final int newKeyCount = 500_000;         // 新插入的 keys
+    public static final int randomValueCount = 1_000_000;  // 随机 values
+    
+    // Pre-generated keys (shuffled for random access)
+    public static final ArrayList<Long> setupKeys = new ArrayList<>(setupKeyCount);
+    public static final ArrayList<Long> newKeys = new ArrayList<>(newKeyCount);
+    public static final ArrayList<Long> randomValues = new ArrayList<>(randomValueCount);
+    
+    static {
+        for (long i = 0; i < setupKeyCount; i++) {
+            setupKeys.add(i);
+        }
+        Collections.shuffle(setupKeys);
+    }
+    
+    static {
+        for (long i = 0; i < newKeyCount; i++) {
+            newKeys.add(i + setupKeyCount);  // 确保 newKeys 与 setupKeys 不重叠
+        }
+        Collections.shuffle(newKeys);
+    }
+    
+    static {
+        for (long i = 0; i < randomValueCount; i++) {
+            randomValues.add(i);
+        }
+        Collections.shuffle(randomValues);
+    }
+    
+    // Thread-safe key index for KeyValue
+    protected static AtomicInteger keyIndex;
     
     @Param({"FORL0", "COPYONWRITE"})
     private String mapType;
     
-    @Param({"STRING", "TIMEWINDOW"})
-    private String nsType;
-    
     @SuppressWarnings("rawtypes")
     private StateMap stateMap;
     
-    // 预生成 String keys
-    private String[] keys;
-    
-    // 两种 namespace 类型
-    private String[] stringNamespaces;
-    private TimeWindow[] timeWindowNamespaces;
-    private Object[] namespaces;  // 实际使用的 namespace 数组
-    
-    private Long[] values;
-    
-    // 预生成随机访问序列（与 JUnit 保持一致）
-    private int[] randomKeyIndices;
-    private int[] randomNsIndices;
+    // VoidNamespace (单一 namespace)
+    private static final VoidNamespace NAMESPACE = VoidNamespace.INSTANCE;
     
     private static final StateTransformationFunction<Long, Long> TRANSFORM_FUNC = 
         (oldState, value) -> oldState == null ? value : oldState + value;
+    
+    private static int getCurrentIndex() {
+        int currentIndex = keyIndex.getAndIncrement();
+        if (currentIndex == Integer.MAX_VALUE) {
+            keyIndex.set(0);
+        }
+        return currentIndex;
+    }
 
     public static void main(String[] args) throws RunnerException {
         Options opt =
@@ -102,61 +129,29 @@ public class StateMapBenchmark extends BenchmarkBase {
     @SuppressWarnings({"rawtypes", "unchecked"})
     @Setup(Level.Trial)
     public void setUp() {
-        Random random = new Random(42);  // 固定种子
-        
-        // 预生成所有 String keys
-        keys = new String[KEY_RANGE];
-        for (int i = 0; i < KEY_RANGE; i++) {
-            keys[i] = "word_" + i;  // 与 WordCount SkewedWordSource 一致
-        }
-        
-        // 预生成两种类型的 namespace
-        stringNamespaces = new String[NAMESPACE_COUNT];
-        timeWindowNamespaces = new TimeWindow[NAMESPACE_COUNT];
-        
-        long baseTime = 1000000000000L;  // 固定基准时间
-        for (int i = 0; i < NAMESPACE_COUNT; i++) {
-            stringNamespaces[i] = "window_" + i;
-            // 使用分散的时间戳
-            long start = baseTime + i * 3600000L;
-            long end = start + WINDOW_SIZE;
-            timeWindowNamespaces[i] = new TimeWindow(start, end);
-        }
-        
-        // 根据参数选择 namespace 类型
-        if ("STRING".equals(nsType)) {
-            namespaces = stringNamespaces;
-        } else {
-            namespaces = timeWindowNamespaces;
-        }
-        
-        // 预生成随机访问序列和 values
-        values = new Long[BATCH_SIZE];
-        randomKeyIndices = new int[BATCH_SIZE];
-        randomNsIndices = new int[BATCH_SIZE];
-        
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            values[i] = random.nextLong();
-            randomKeyIndices[i] = random.nextInt(KEY_RANGE);
-            randomNsIndices[i] = random.nextInt(NAMESPACE_COUNT);
-        }
-        
-        // 创建 StateMap
+        // 创建 StateMap - 使用带类型的构造函数以启用特化版本
         if ("FORL0".equals(mapType)) {
-            stateMap = new ForL0StateMap<>();
+            // 使用 Long.class + VoidNamespace.class 构造函数
+            // 这会创建 SwissTableLongVoid 特化版本
+            stateMap = new ForL0StateMap<>(Long.class, VoidNamespace.class);
         } else {
             stateMap = new CopyOnWriteStateMap<>(LongSerializer.INSTANCE);
         }
         
-        // 预填充数据
-        Random prefillRandom = new Random(42);
-        for (int i = 0; i < PREFILL_COUNT; i++) {
-            int keyIdx = prefillRandom.nextInt(KEY_RANGE);
-            int nsIdx = prefillRandom.nextInt(NAMESPACE_COUNT);
-            stateMap.put(keys[keyIdx], namespaces[nsIdx], (long) i);
+        // 预填充数据 - 与 Flink State Benchmark 一致
+        for (int i = 0; i < setupKeyCount; i++) {
+            stateMap.put(setupKeys.get(i), NAMESPACE, randomValues.get(i % randomValueCount));
         }
         
-        System.out.println("[Setup] " + mapType + " (ns=" + nsType + ") stateMap size: " + stateMap.size());
+        // 初始化 key index
+        keyIndex = new AtomicInteger();
+        
+        // 打印验证信息
+        if (stateMap instanceof ForL0StateMap) {
+            System.out.println("[Setup] ForL0StateMap created - size: " + stateMap.size());
+        } else {
+            System.out.println("[Setup] CopyOnWriteStateMap created - size: " + stateMap.size());
+        }
     }
     
     @TearDown(Level.Trial)
@@ -166,82 +161,53 @@ public class StateMapBenchmark extends BenchmarkBase {
         }
         stateMap = null;
     }
-
-    @SuppressWarnings("unchecked")
-    @Benchmark
-    @OperationsPerInvocation(BATCH_SIZE)
-    public void mapPut() {
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            stateMap.put(keys[randomKeyIndices[i]], namespaces[randomNsIndices[i]], values[i]);
+    
+    /**
+     * KeyValue holder for per-invocation key generation.
+     * Same pattern as Flink State Benchmark.
+     */
+    @State(Scope.Thread)
+    public static class KeyValue {
+        public long setUpKey;  // 已存在的 key
+        public long newKey;    // 新 key
+        public long value;     // 随机 value
+        
+        @Setup(Level.Invocation)
+        public void kvSetup() {
+            int currentIndex = getCurrentIndex();
+            setUpKey = setupKeys.get(currentIndex % setupKeyCount);
+            newKey = newKeys.get(currentIndex % newKeyCount);
+            value = randomValues.get(currentIndex % randomValueCount);
         }
     }
 
     @SuppressWarnings("unchecked")
     @Benchmark
-    @OperationsPerInvocation(BATCH_SIZE)
-    public long mapGet() {
-        long sum = 0;
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            String key = keys[randomKeyIndices[i]];
-            Object ns = namespaces[randomNsIndices[i]];
-            Long value = (Long) stateMap.get(key, ns);
-            if (value != null) {
-                sum += value;
-            }
-        }
-        return sum;
+    public void mapPut(KeyValue keyValue) {
+        stateMap.put(keyValue.setUpKey, NAMESPACE, keyValue.value);
     }
 
     @SuppressWarnings("unchecked")
     @Benchmark
-    @OperationsPerInvocation(BATCH_SIZE)
-    public void mapUpdate() {
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            String key = keys[randomKeyIndices[i]];
-            Object ns = namespaces[randomNsIndices[i]];
-            stateMap.put(key, ns, values[i]);
-        }
+    public Long mapGet(KeyValue keyValue) {
+        return (Long) stateMap.get(keyValue.setUpKey, NAMESPACE);
     }
 
     @SuppressWarnings("unchecked")
     @Benchmark
-    @OperationsPerInvocation(BATCH_SIZE)
-    public void mapTransform() throws Exception {
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            String key = keys[randomKeyIndices[i]];
-            Object ns = namespaces[randomNsIndices[i]];
-            stateMap.transform(key, ns, values[i], TRANSFORM_FUNC);
-        }
+    public void mapTransform(KeyValue keyValue) throws Exception {
+        stateMap.transform(keyValue.setUpKey, NAMESPACE, keyValue.value, TRANSFORM_FUNC);
     }
     
     @SuppressWarnings("unchecked")
     @Benchmark
-    @OperationsPerInvocation(BATCH_SIZE)
-    public long mapPutAndGetOld() {
-        long sum = 0;
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            String key = keys[randomKeyIndices[i]];
-            Object ns = namespaces[randomNsIndices[i]];
-            Long old = (Long) stateMap.putAndGetOld(key, ns, values[i]);
-            if (old != null) {
-                sum += old;
-            }
-        }
-        return sum;
+    public Long mapPutAndGetOld(KeyValue keyValue) {
+        return (Long) stateMap.putAndGetOld(keyValue.setUpKey, NAMESPACE, keyValue.value);
     }
     
     @SuppressWarnings("unchecked")
     @Benchmark
-    @OperationsPerInvocation(BATCH_SIZE)
-    public int mapContainsKey() {
-        int count = 0;
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            String key = keys[randomKeyIndices[i]];
-            Object ns = namespaces[randomNsIndices[i]];
-            if (stateMap.containsKey(key, ns)) {
-                count++;
-            }
-        }
-        return count;
+    public boolean mapContainsKey(KeyValue keyValue) {
+        return stateMap.containsKey(keyValue.setUpKey, NAMESPACE);
     }
 }

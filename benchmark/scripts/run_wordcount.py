@@ -2,9 +2,8 @@
 """
 Run WordCount benchmark via Flink cluster.
 
-Both local and remote modes submit jobs to a Flink cluster via REST API.
-- Local: Start Flink cluster locally with `$FLINK_HOME/bin/start-cluster.sh`
-- Remote: Connect to remote Flink cluster
+Submit jobs to a Flink cluster via REST API.
+Start Flink cluster with `$FLINK_HOME/bin/start-cluster.sh`
 
 Usage:
     python run_wordcount.py --backend hashmap
@@ -29,14 +28,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from datetime import datetime
 from utils.config import (
-    load_config, get_mode_config, get_benchmark_root,
+    load_config, get_benchmark_root,
     get_wordcount_jar, get_flink_home, get_results_dir,
     get_timestamp, parse_json_from_output, save_result
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
 from utils.vtune_profiler import VTuneProfiler, get_profiler_summary as get_vtune_summary
 from utils.hardware_metrics import HardwareMetricsCollector
-
 
 def check_flink_cluster(rest_url: str) -> bool:
     """Check if Flink cluster is running."""
@@ -135,7 +133,7 @@ def wait_for_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> 
     return {'state': 'TIMEOUT'}
 
 
-def parse_job_runtime(output: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
+def parse_job_runtime(output: str, wc_config: dict, runtime_config: dict) -> Optional[dict]:
     """Parse Job Runtime from flink run output and calculate metrics."""
     import re
     
@@ -148,7 +146,7 @@ def parse_job_runtime(output: str, wc_config: dict, mode_config: dict) -> Option
     runtime_s = runtime_ms / 1000.0
     
     num_records = wc_config.get('num_records', 10000000)
-    parallelism = mode_config.get('parallelism', 2)
+    parallelism = runtime_config.get('parallelism', 2)
     
     throughput = num_records / runtime_s
     throughput_per_core = throughput / parallelism
@@ -197,7 +195,7 @@ def parse_latency_file_path(output: str, flink_home: str) -> Optional[str]:
     return None
 
 
-def parse_taskmanager_log(flink_home: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
+def parse_taskmanager_log(flink_home: str, wc_config: dict, runtime_config: dict) -> Optional[dict]:
     """Parse benchmark results from TaskManager stdout (.out file)."""
     import glob
     
@@ -368,9 +366,8 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         profile_mode: Profiling mode ('cpu' for flame graphs, 'cache' for cache statistics, None to disable)
     """
     
-    mode = config.get('mode', 'local')
-    mode_config = get_mode_config(config, mode)
-    wc_config = mode_config.get('wordcount', {})
+    runtime_config = config.get('runtime', {})
+    wc_config = config.get('wordcount', {})
     flink_config = config.get('flink', {})
     
     flink_home = get_flink_home()
@@ -420,8 +417,8 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         '--skewFactor', str(wc_config.get('skew_factor', 1.1)),
         '--windowSize', str(wc_config.get('window_size', 5)),
         '--slideSize', str(wc_config.get('slide_size', 200)),
-        '--parallelism', str(mode_config.get('parallelism', 2)),
-        '--checkpointInterval', str(mode_config.get('checkpoint_interval', 10000)),
+        '--parallelism', str(runtime_config.get('parallelism', 2)),
+        '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 10000)),
         '--latencyDir', str(latency_dir),
         '--backend', backend,
     ])
@@ -598,18 +595,17 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
                 print(f"  VTune results saved to: {vtune_result_dir}")
         
         # Parse result - first try from TaskManager log (has full metrics)
-        benchmark_result = parse_taskmanager_log(flink_home, wc_config, mode_config)
+        benchmark_result = parse_taskmanager_log(flink_home, wc_config, runtime_config)
         
         # If no result from log, try to parse Job Runtime from flink run output
         if not benchmark_result:
-            benchmark_result = parse_job_runtime(output, wc_config, mode_config)
+            benchmark_result = parse_job_runtime(output, wc_config, runtime_config)
         
         # Parse latency samples file path from output
         latency_file = parse_latency_file_path(output, flink_home)
         
         if benchmark_result:
             benchmark_result['backend'] = backend
-            benchmark_result['mode'] = mode
             if latency_file:
                 benchmark_result['latency_samples_file'] = latency_file
             # [BENCHMARK_TEST] Include profiler output files
@@ -659,7 +655,7 @@ def main():
         result = run_wordcount(config, backend, profile_mode='cpu' if args.profile else None)
         if result:
             results[backend] = result
-            save_result(result, 'wordcount', backend, config.get('mode', 'local'))
+            save_result(result, 'wordcount', backend)
     
     # Print comparison if both backends were run
     if len(results) == 2:

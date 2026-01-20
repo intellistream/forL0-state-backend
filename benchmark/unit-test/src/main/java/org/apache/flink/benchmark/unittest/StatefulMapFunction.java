@@ -36,7 +36,7 @@ import org.apache.flink.configuration.Configuration;
  * 
  * <p>The state is a byte array of configurable size, simulating arbitrary state payloads.
  */
-public class StatefulMapFunction extends RichMapFunction<Integer, Integer> {
+public class StatefulMapFunction extends RichMapFunction<Long, Long> {
 
     private static final long serialVersionUID = 1L;
 
@@ -71,7 +71,7 @@ public class StatefulMapFunction extends RichMapFunction<Integer, Integer> {
     }
 
     @Override
-    public Integer map(Integer keyIndex) throws Exception {
+    public Long map(Long keyIndex) throws Exception {
         // Fixed operation: GET + PUT
         byte[] oldValue = state.value();  // GET (may return null for new keys)
         state.update(valueBuffer);         // PUT

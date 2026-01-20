@@ -4,11 +4,11 @@
  */
 package org.apache.flink.benchmark.nexmark.query;
 
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.tuple.Tuple4;
 import org.apache.flink.benchmark.nexmark.model.Auction;
 import org.apache.flink.benchmark.nexmark.model.Bid;
 import org.apache.flink.benchmark.nexmark.model.Event;
@@ -19,30 +19,30 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
 import org.apache.flink.util.Collector;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Query 9: Winning Bids
  * 
- * <p>Find the winning bid (highest price, earliest time) for each auction.
- * This requires an interval join between auctions and bids, then selecting
- * the best bid per auction.
- * 
- * <p>SQL equivalent:
+ * <p>Original SQL:
  * <pre>
- * SELECT * FROM (
- *     SELECT A.*, B.*, ROW_NUMBER() OVER (
- *         PARTITION BY A.id ORDER BY B.price DESC, B.dateTime ASC
- *     ) AS rownum
- *     FROM auction A, bid B
- *     WHERE A.id = B.auction 
- *       AND B.dateTime BETWEEN A.dateTime AND A.expires
- * ) WHERE rownum <= 1
+ * SELECT id, itemName, description, initialBid, reserve, dateTime, expires, seller, category, extra,
+ *        auction, bidder, price, bid_dateTime, bid_extra
+ * FROM (
+ *    SELECT A.*, B.auction, B.bidder, B.price, B.dateTime AS bid_dateTime, B.extra AS bid_extra,
+ *      ROW_NUMBER() OVER (PARTITION BY A.id ORDER BY B.price DESC, B.dateTime ASC) AS rownum
+ *    FROM auction A, bid B
+ *    WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires
+ * )
+ * WHERE rownum <= 1;
  * </pre>
  * 
- * <p>State pattern:
- * <ul>
- *   <li>ValueState for auction details</li>
- *   <li>ValueState for best bid (highest price, earliest time)</li>
- * </ul>
+ * <p>Implementation:
+ * 1. Join auctions with bids
+ * 2. Filter bids within auction time range
+ * 3. For each auction, track highest bid (tiebreak by earliest time)
+ * 4. Emit winning bid when auction expires
  */
 public class Query9 {
 
@@ -53,7 +53,6 @@ public class Query9 {
             long numEvents,
             int parallelism) {
 
-        // Split streams
         DataStream<Auction> auctions = events
                 .filter(Event::isAuction)
                 .map(e -> e.auction)
@@ -64,48 +63,78 @@ public class Query9 {
                 .map(e -> e.bid)
                 .returns(Bid.class);
 
-        // Join auctions and bids, track best bid per auction
-        DataStream<Tuple4<Long, Long, Long, Long>> winningBids = auctions
+        // Join and find winning bid per auction
+        DataStream<AuctionBidResult> winningBids = auctions
                 .keyBy(a -> a.id)
                 .connect(bids.keyBy(b -> b.auction))
-                .process(new WinningBidFunction())
+                .process(new WinningBidJoin())
                 .name("WinningBidJoin");
 
-        // Sink
         winningBids.addSink(new MetricsSink<>("q9", backend, numEvents, parallelism))
                 .name("Q9Sink")
                 .setParallelism(1);
     }
 
     /**
-     * Join auctions with bids and track the winning bid.
-     * Winning bid = highest price, with ties broken by earliest time.
-     * 
-     * Output: (auctionId, sellerId, bidderId, winningPrice)
+     * Result type combining auction and winning bid.
      */
-    private static class WinningBidFunction 
-            extends KeyedCoProcessFunction<Long, Auction, Bid, Tuple4<Long, Long, Long, Long>> {
+    public static class AuctionBidResult implements java.io.Serializable {
+        private static final long serialVersionUID = 1L;
+        
+        public Auction auction;
+        public Bid winningBid;
+        
+        public AuctionBidResult() {}
+        
+        public AuctionBidResult(Auction auction, Bid winningBid) {
+            this.auction = auction;
+            this.winningBid = winningBid;
+        }
+        
+        @Override
+        public String toString() {
+            return "AuctionBidResult{auction=" + auction.id + 
+                   ", bidder=" + (winningBid != null ? winningBid.bidder : "null") + 
+                   ", price=" + (winningBid != null ? winningBid.price : 0) + "}";
+        }
+    }
 
-        // Auction state: (seller, dateTime, expires)
-        private transient ValueState<Tuple2<Long, Tuple2<Long, Long>>> auctionState;
-        // Best bid state: (price, dateTime, bidder)
-        private transient ValueState<Tuple2<Long, Tuple2<Long, Long>>> bestBidState;
+    /**
+     * Join auctions with bids, tracking winning bid per auction.
+     * Winning bid = highest price, tiebreak by earliest time.
+     */
+    private static class WinningBidJoin 
+            extends KeyedCoProcessFunction<Long, Auction, Bid, AuctionBidResult> {
+
+        private transient ValueState<Auction> auctionState;
+        private transient ValueState<Bid> winningBidState;
+        private transient ListState<Bid> pendingBidsState;
 
         @Override
-        public void open(Configuration parameters) throws Exception {
+        public void open(Configuration parameters) {
             auctionState = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("auction", 
-                            Types.TUPLE(Types.LONG, Types.TUPLE(Types.LONG, Types.LONG))));
-            bestBidState = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("bestBid", 
-                            Types.TUPLE(Types.LONG, Types.TUPLE(Types.LONG, Types.LONG))));
+                    new ValueStateDescriptor<>("auction", Auction.class));
+            winningBidState = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("winningBid", Bid.class));
+            pendingBidsState = getRuntimeContext().getListState(
+                    new ListStateDescriptor<>("pendingBids", Bid.class));
         }
 
         @Override
         public void processElement1(Auction auction, Context ctx, 
-                Collector<Tuple4<Long, Long, Long, Long>> out) throws Exception {
-            // Store auction: (seller, (dateTime, expires))
-            auctionState.update(Tuple2.of(auction.seller, Tuple2.of(auction.dateTime, auction.expires)));
+                Collector<AuctionBidResult> out) throws Exception {
+            auctionState.update(auction);
+            
+            // Process any pending bids
+            List<Bid> pending = new ArrayList<>();
+            for (Bid bid : pendingBidsState.get()) {
+                pending.add(bid);
+            }
+            pendingBidsState.clear();
+            
+            for (Bid bid : pending) {
+                processBid(auction, bid);
+            }
             
             // Register timer for auction expiration
             ctx.timerService().registerProcessingTimeTimer(auction.expires);
@@ -113,54 +142,48 @@ public class Query9 {
 
         @Override
         public void processElement2(Bid bid, Context ctx, 
-                Collector<Tuple4<Long, Long, Long, Long>> out) throws Exception {
-            Tuple2<Long, Tuple2<Long, Long>> auction = auctionState.value();
+                Collector<AuctionBidResult> out) throws Exception {
+            Auction auction = auctionState.value();
+            
             if (auction == null) {
-                return; // No auction yet
+                // Auction not yet received, buffer the bid
+                pendingBidsState.add(bid);
+            } else {
+                processBid(auction, bid);
             }
-            
-            long auctionStart = auction.f1.f0;
-            long auctionEnd = auction.f1.f1;
-            
-            // Check if bid is within auction time window
-            if (bid.dateTime >= auctionStart && bid.dateTime <= auctionEnd) {
-                Tuple2<Long, Tuple2<Long, Long>> currentBest = bestBidState.value();
+        }
+
+        private void processBid(Auction auction, Bid bid) throws Exception {
+            // Check if bid is within auction time range
+            if (bid.dateTime >= auction.dateTime && bid.dateTime <= auction.expires) {
+                Bid currentWinner = winningBidState.value();
                 
-                boolean isBetter = false;
-                if (currentBest == null) {
-                    isBetter = true;
+                if (currentWinner == null) {
+                    winningBidState.update(bid);
                 } else {
-                    long bestPrice = currentBest.f0;
-                    long bestTime = currentBest.f1.f0;
-                    // Better if higher price, or same price but earlier time
-                    isBetter = bid.price > bestPrice || 
-                            (bid.price == bestPrice && bid.dateTime < bestTime);
-                }
-                
-                if (isBetter) {
-                    bestBidState.update(Tuple2.of(bid.price, Tuple2.of(bid.dateTime, bid.bidder)));
+                    // Higher price wins, or earlier time if same price
+                    if (bid.price > currentWinner.price || 
+                        (bid.price == currentWinner.price && bid.dateTime < currentWinner.dateTime)) {
+                        winningBidState.update(bid);
+                    }
                 }
             }
         }
 
         @Override
         public void onTimer(long timestamp, OnTimerContext ctx, 
-                Collector<Tuple4<Long, Long, Long, Long>> out) throws Exception {
-            // Auction expired, emit winning bid
-            Tuple2<Long, Tuple2<Long, Long>> auction = auctionState.value();
-            Tuple2<Long, Tuple2<Long, Long>> bestBid = bestBidState.value();
+                Collector<AuctionBidResult> out) throws Exception {
+            Auction auction = auctionState.value();
+            Bid winningBid = winningBidState.value();
             
-            if (auction != null && bestBid != null) {
-                long auctionId = ctx.getCurrentKey();
-                long seller = auction.f0;
-                long bidder = bestBid.f1.f1;
-                long price = bestBid.f0;
-                out.collect(Tuple4.of(auctionId, seller, bidder, price));
+            if (auction != null && winningBid != null) {
+                out.collect(new AuctionBidResult(auction, winningBid));
             }
             
-            // Clean up state
+            // Clear state
             auctionState.clear();
-            bestBidState.clear();
+            winningBidState.clear();
+            pendingBidsState.clear();
         }
     }
 }

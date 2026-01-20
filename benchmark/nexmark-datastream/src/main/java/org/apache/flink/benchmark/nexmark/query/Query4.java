@@ -4,13 +4,9 @@
  */
 package org.apache.flink.benchmark.nexmark.query;
 
-import org.apache.flink.api.common.state.MapState;
-import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.benchmark.nexmark.model.Auction;
 import org.apache.flink.benchmark.nexmark.model.Bid;
 import org.apache.flink.benchmark.nexmark.model.Event;
@@ -26,28 +22,23 @@ import org.apache.flink.util.Collector;
 /**
  * Query 4: Average Price for a Category
  * 
- * <p>Finds the average selling price for each category of item.
- * This requires joining auctions with their winning bids and aggregating by category.
- * 
- * <p>SQL equivalent:
+ * <p>Original SQL:
  * <pre>
- * SELECT category, AVG(final) 
+ * SELECT Q.category, AVG(Q.final)
  * FROM (
  *     SELECT MAX(B.price) AS final, A.category
  *     FROM auction A, bid B
- *     WHERE A.id = B.auction 
- *       AND B.dateTime BETWEEN A.dateTime AND A.expires
+ *     WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires
  *     GROUP BY A.id, A.category
- * ) 
- * GROUP BY category
+ * ) Q
+ * GROUP BY Q.category;
  * </pre>
  * 
- * <p>State pattern:
- * <ul>
- *   <li>MapState: Store auctions keyed by auction ID</li>
- *   <li>ValueState: Track max bid per auction</li>
- *   <li>MapState: Track running average per category (sum, count)</li>
- * </ul>
+ * <p>Implementation:
+ * 1. Join bids with auctions (bid.auction = auction.id)
+ * 2. Filter bids within auction time range
+ * 3. For each auction, track max bid price (winning bid)
+ * 4. For each category, compute running average of winning prices
  */
 public class Query4 {
 
@@ -69,23 +60,19 @@ public class Query4 {
                 .map(e -> e.bid)
                 .returns(Bid.class);
 
-        // Join auctions and bids, compute max bid per auction, then average by category
-        // We use a two-stage approach:
-        // Stage 1: Join auction with bids, track max bid per auction
-        // Stage 2: Aggregate by category
-
-        // Stage 1: Co-process auction and bid streams keyed by auction ID
-        SingleOutputStreamOperator<Tuple3<Long, Long, Long>> auctionMaxBids = auctions
+        // Join bids with auctions, keyed by auction id
+        // Track max bid per auction, filter by time range
+        SingleOutputStreamOperator<Tuple2<Long, Long>> winningBids = auctions
                 .keyBy(a -> a.id)
                 .connect(bids.keyBy(b -> b.auction))
-                .process(new AuctionBidJoinFunction())
+                .process(new AuctionBidJoin())
                 .name("AuctionBidJoin");
 
-        // Stage 2: Aggregate by category
-        DataStream<Tuple2<Long, Double>> categoryAvg = auctionMaxBids
-                .keyBy(t -> t.f1) // key by category
-                .process(new CategoryAverageFunction())
-                .name("CategoryAverage");
+        // Compute running average per category
+        DataStream<Tuple2<Long, Double>> categoryAvg = winningBids
+                .keyBy(t -> t.f0) // category
+                .process(new CategoryAvgFunction())
+                .name("CategoryAvg");
 
         // Sink
         categoryAvg.addSink(new MetricsSink<>("q4", backend, numEvents, parallelism))
@@ -94,111 +81,99 @@ public class Query4 {
     }
 
     /**
-     * Join auctions with bids and output (auctionId, category, maxBid) when auction expires.
-     * 
-     * <p>State:
-     * <ul>
-     *   <li>ValueState for auction details (category, expires)</li>
-     *   <li>ValueState for max bid seen</li>
-     * </ul>
+     * Join auctions with bids.
+     * For each auction, track max bid price where bid time is within auction time range.
+     * Emits (category, maxPrice) when auction expires.
      */
-    private static class AuctionBidJoinFunction 
-            extends KeyedCoProcessFunction<Long, Auction, Bid, Tuple3<Long, Long, Long>> {
+    private static class AuctionBidJoin 
+            extends KeyedCoProcessFunction<Long, Auction, Bid, Tuple2<Long, Long>> {
 
-        // Auction state: (category, dateTime, expires)
-        private transient ValueState<Tuple3<Long, Long, Long>> auctionState;
-        // Max bid state
+        // Auction state
+        private transient ValueState<Auction> auctionState;
+        // Max bid price for this auction
         private transient ValueState<Long> maxBidState;
 
         @Override
-        public void open(Configuration parameters) throws Exception {
+        public void open(Configuration parameters) {
             auctionState = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("auction", Types.TUPLE(Types.LONG, Types.LONG, Types.LONG)));
+                    new ValueStateDescriptor<>("auction", Auction.class));
             maxBidState = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("maxBid", Types.LONG));
+                    new ValueStateDescriptor<>("maxBid", Long.class));
         }
 
         @Override
-        public void processElement1(Auction auction, Context ctx, Collector<Tuple3<Long, Long, Long>> out) 
-                throws Exception {
-            // Store auction details
-            auctionState.update(Tuple3.of(auction.category, auction.dateTime, auction.expires));
-            
-            // Register timer for auction expiration
+        public void processElement1(Auction auction, Context ctx, Collector<Tuple2<Long, Long>> out) throws Exception {
+            auctionState.update(auction);
+            // Register timer to emit result when auction expires
             ctx.timerService().registerProcessingTimeTimer(auction.expires);
         }
 
         @Override
-        public void processElement2(Bid bid, Context ctx, Collector<Tuple3<Long, Long, Long>> out) 
-                throws Exception {
-            Tuple3<Long, Long, Long> auction = auctionState.value();
-            if (auction == null) {
-                return; // No auction yet, ignore bid
-            }
-            
-            // Check if bid is within auction time window
-            long auctionStart = auction.f1;
-            long auctionEnd = auction.f2;
-            if (bid.dateTime >= auctionStart && bid.dateTime <= auctionEnd) {
-                // Update max bid
-                Long currentMax = maxBidState.value();
-                if (currentMax == null || bid.price > currentMax) {
-                    maxBidState.update(bid.price);
+        public void processElement2(Bid bid, Context ctx, Collector<Tuple2<Long, Long>> out) throws Exception {
+            Auction auction = auctionState.value();
+            if (auction != null) {
+                // Check if bid is within auction time range
+                if (bid.dateTime >= auction.dateTime && bid.dateTime <= auction.expires) {
+                    Long currentMax = maxBidState.value();
+                    if (currentMax == null || bid.price > currentMax) {
+                        maxBidState.update(bid.price);
+                    }
                 }
             }
+            // If auction not yet received, we could buffer bids, but for simplicity
+            // we assume auctions arrive before their bids (as per Nexmark generator)
         }
 
         @Override
-        public void onTimer(long timestamp, OnTimerContext ctx, Collector<Tuple3<Long, Long, Long>> out) 
-                throws Exception {
-            // Auction expired, emit result
-            Tuple3<Long, Long, Long> auction = auctionState.value();
+        public void onTimer(long timestamp, OnTimerContext ctx, Collector<Tuple2<Long, Long>> out) throws Exception {
+            Auction auction = auctionState.value();
             Long maxBid = maxBidState.value();
             
             if (auction != null && maxBid != null) {
-                // Output (auctionId, category, maxBid)
-                out.collect(Tuple3.of(ctx.getCurrentKey(), auction.f0, maxBid));
+                // Emit (category, winningPrice)
+                out.collect(Tuple2.of(auction.category, maxBid));
             }
             
-            // Clean up state
+            // Clear state
             auctionState.clear();
             maxBidState.clear();
         }
     }
 
     /**
-     * Compute running average price per category.
-     * 
-     * <p>State: ValueState storing (sum, count) for running average.
+     * Compute running average of winning prices per category.
+     * Emits updated average on each new winning bid.
      */
-    private static class CategoryAverageFunction 
-            extends KeyedProcessFunction<Long, Tuple3<Long, Long, Long>, Tuple2<Long, Double>> {
+    private static class CategoryAvgFunction 
+            extends KeyedProcessFunction<Long, Tuple2<Long, Long>, Tuple2<Long, Double>> {
 
-        // Running average state: (sum, count)
-        private transient ValueState<Tuple2<Long, Long>> avgState;
+        private transient ValueState<Long> sumState;
+        private transient ValueState<Long> countState;
 
         @Override
-        public void open(Configuration parameters) throws Exception {
-            avgState = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("avg", Types.TUPLE(Types.LONG, Types.LONG)));
+        public void open(Configuration parameters) {
+            sumState = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("sum", Long.class));
+            countState = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("count", Long.class));
         }
 
         @Override
-        public void processElement(Tuple3<Long, Long, Long> value, Context ctx, 
+        public void processElement(Tuple2<Long, Long> value, Context ctx, 
                 Collector<Tuple2<Long, Double>> out) throws Exception {
-            long category = value.f1;
-            long maxBid = value.f2;
+            Long category = value.f0;
+            Long price = value.f1;
             
-            Tuple2<Long, Long> current = avgState.value();
-            if (current == null) {
-                current = Tuple2.of(0L, 0L);
-            }
+            Long sum = sumState.value();
+            Long count = countState.value();
             
-            long newSum = current.f0 + maxBid;
-            long newCount = current.f1 + 1;
-            avgState.update(Tuple2.of(newSum, newCount));
+            sum = (sum == null ? 0L : sum) + price;
+            count = (count == null ? 0L : count) + 1;
             
-            double avg = (double) newSum / newCount;
+            sumState.update(sum);
+            countState.update(count);
+            
+            double avg = (double) sum / count;
             out.collect(Tuple2.of(category, avg));
         }
     }

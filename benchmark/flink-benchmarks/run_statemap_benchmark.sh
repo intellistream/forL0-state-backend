@@ -83,11 +83,10 @@ else
     echo ""
 fi
 
-# Define benchmark methods (use $ for exact match to avoid mapPut matching mapPutAndGetOld)
+# Define benchmark methods (StateMap interface methods)
 BENCHMARKS=(
     "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapPut$"
     "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapGet$"
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapUpdate$"
     "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapTransform$"
     "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapPutAndGetOld$"
     "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapContainsKey$"
@@ -95,9 +94,6 @@ BENCHMARKS=(
 
 # Define map types (different from state backend types)
 MAP_TYPES=("FORL0" "COPYONWRITE")
-
-# Define namespace types for equals() overhead comparison
-NAMESPACE_TYPES=("STRING" "TIMEWINDOW")
 
 # Output directory
 RESULTS_DIR="../../results/statemap-benchmark"
@@ -119,30 +115,27 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
     echo -e "${BLUE}[$CURRENT_TEST/$TOTAL_TESTS] Running: $BENCH_NAME${NC}"
     echo -e "${BLUE}========================================${NC}"
     
-    for NS_TYPE in "${NAMESPACE_TYPES[@]}"; do
-        for MAP_TYPE in "${MAP_TYPES[@]}"; do
-            echo -e "${GREEN}MapType: $MAP_TYPE, NsType: $NS_TYPE${NC}"
-            OUTPUT_FILE="$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${NS_TYPE}_${TIMESTAMP}.csv"
-            
-            # JMH args based on mode
-            if [ "$QUICK_MODE" = true ]; then
-                JMH_ARGS="-wi 3 -i 5 -f 1 -t 1"
-            else
-                JMH_ARGS="-wi 5 -i 10 -f 3 -t 1"
-            fi
-            
-            java -jar target/benchmarks.jar "$BENCHMARK" \
-                -p "mapType=$MAP_TYPE" \
-                -p "nsType=$NS_TYPE" \
-                -rf csv -rff "$OUTPUT_FILE" \
-                $JMH_ARGS \
-                -jvmArgs "-XX:+UseG1GC -XX:+AlwaysPreTouch -XX:-UseBiasedLocking" \
-                $PROFILER_ARGS \
-                2>&1 | tee "$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${NS_TYPE}_${TIMESTAMP}.log"
-            
-            echo -e "${GREEN}✓ Completed: $BENCH_NAME with $MAP_TYPE/$NS_TYPE${NC}"
-            echo ""
-        done
+    for MAP_TYPE in "${MAP_TYPES[@]}"; do
+        echo -e "${GREEN}MapType: $MAP_TYPE${NC}"
+        OUTPUT_FILE="$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.csv"
+        
+        # JMH args based on mode
+        if [ "$QUICK_MODE" = true ]; then
+            JMH_ARGS="-wi 3 -i 5 -f 1 -t 1"
+        else
+            JMH_ARGS="-wi 5 -i 10 -f 3 -t 1"
+        fi
+        
+        java -jar target/benchmarks.jar "$BENCHMARK" \
+            -p "mapType=$MAP_TYPE" \
+            -rf csv -rff "$OUTPUT_FILE" \
+            $JMH_ARGS \
+            -jvmArgs "-XX:+UseG1GC -XX:+AlwaysPreTouch -XX:-UseBiasedLocking" \
+            $PROFILER_ARGS \
+            2>&1 | tee "$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.log"
+        
+        echo -e "${GREEN}✓ Completed: $BENCH_NAME with $MAP_TYPE${NC}"
+        echo ""
     done
 done
 
@@ -167,16 +160,12 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
     METHOD_NAME=$(echo "$BENCHMARK" | awk -F'.' '{print $NF}')
     echo "=== $METHOD_NAME ===" >> "$SUMMARY_FILE"
     
-    for NS_TYPE in "${NAMESPACE_TYPES[@]}"; do
-        echo "" >> "$SUMMARY_FILE"
-        echo "--- Namespace: $NS_TYPE ---" >> "$SUMMARY_FILE"
-        for MAP_TYPE in "${MAP_TYPES[@]}"; do
-            OUTPUT_FILE="$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${NS_TYPE}_${TIMESTAMP}.csv"
-            if [ -f "$OUTPUT_FILE" ]; then
-                echo "  MapType: $MAP_TYPE" >> "$SUMMARY_FILE"
-                tail -n +2 "$OUTPUT_FILE" | awk -F',' '{print "    " $1 ": " $5 " " $7}' >> "$SUMMARY_FILE"
-            fi
-        done
+    for MAP_TYPE in "${MAP_TYPES[@]}"; do
+        OUTPUT_FILE="$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.csv"
+        if [ -f "$OUTPUT_FILE" ]; then
+            echo "  MapType: $MAP_TYPE" >> "$SUMMARY_FILE"
+            tail -n +2 "$OUTPUT_FILE" | awk -F',' '{print "    " $1 ": " $5 " " $7}' >> "$SUMMARY_FILE"
+        fi
     done
     echo "" >> "$SUMMARY_FILE"
 done

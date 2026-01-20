@@ -251,19 +251,16 @@ Examples:
     args = parser.parse_args()
     
     config = load_config()
-    mode = config.get('mode', 'local')
-    mode_config = config.get(mode, {})
     
     # Determine backends
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
     
     # Determine NexMark queries
-    nexmark_queries = args.query if args.query else mode_config.get('nexmark', {}).get('queries', 'q5')
+    nexmark_queries = args.query if args.query else config.get('nexmark', {}).get('queries', 'q5')
     
     print("=" * 60)
     print("ForL0 StateBackend Benchmark")
     print("=" * 60)
-    print(f"Mode: {mode}")
     print(f"Test: {args.test}")
     print(f"Backends: {', '.join(backends)}")
     if args.test in ['nexmark', 'all']:
@@ -287,7 +284,7 @@ Examples:
         print("\n" + "=" * 60)
         print("Running Unit Test Benchmark")
         print("=" * 60)
-        unittest_config = mode_config.get('unittest', {})
+        unittest_config = config.get('unittest', {})
         for backend in backends:
             result = run_unittest(
                 config, backend,
@@ -300,7 +297,7 @@ Examples:
             )
             if result:
                 results['unittest'][backend] = result
-                save_result(result, 'unittest', backend, mode)
+                save_result(result, 'unittest', backend)
     
     # Run WordCount benchmarks
     if args.test in ['wordcount', 'all']:
@@ -309,7 +306,7 @@ Examples:
         print("=" * 60)
         
         # Get mini-batch settings from config or CLI override
-        wc_config = mode_config.get('wordcount', {})
+        wc_config = config.get('wordcount', {})
         mini_batch = args.mini_batch or wc_config.get('mini_batch', False)
         batch_size = wc_config.get('batch_size', 2000)
         batch_interval_ms = wc_config.get('batch_interval_ms', 50)
@@ -324,7 +321,7 @@ Examples:
             )
             if result:
                 results['wordcount'][backend] = result
-                save_result(result, 'wordcount', backend, mode)
+                save_result(result, 'wordcount', backend)
     
     # Run NexMark benchmarks
     if args.test in ['nexmark', 'all']:

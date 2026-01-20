@@ -22,24 +22,18 @@ import java.util.List;
 /**
  * Query 19: Auction TOP-10 Price
  * 
- * <p>Find the top 10 bids by price for each auction.
- * This query tests top-N aggregation with state maintenance.
- * 
- * <p>SQL equivalent:
+ * <p>Original SQL:
  * <pre>
  * SELECT * FROM (
- *     SELECT *, ROW_NUMBER() OVER (
- *         PARTITION BY auction 
- *         ORDER BY price DESC
- *     ) AS rank_number
- *     FROM bid
- * ) WHERE rank_number <= 10
+ *   SELECT *, ROW_NUMBER() OVER (PARTITION BY auction ORDER BY price DESC) AS rank_number
+ *   FROM bid
+ * )
+ * WHERE rank_number <= 10;
  * </pre>
  * 
- * <p>State pattern:
- * <ul>
- *   <li>ListState per auction: Store top-10 bids sorted by price descending</li>
- * </ul>
+ * <p>Implementation:
+ * For each auction, maintain top 10 bids by price.
+ * This is a TOP-N query.
  */
 public class Query19 {
 
@@ -52,77 +46,89 @@ public class Query19 {
             long numEvents,
             int parallelism) {
 
-        // Filter to bids only
         DataStream<Bid> bids = events
                 .filter(Event::isBid)
                 .map(e -> e.bid)
                 .returns(Bid.class);
 
-        // Key by auction and maintain top-10
-        DataStream<Bid> topBids = bids
+        // Key by auction, maintain top 10
+        DataStream<BidWithRank> topBids = bids
                 .keyBy(b -> b.auction)
-                .process(new TopNBidsFunction(TOP_N))
-                .name("TopNBids");
+                .process(new TopNFunction())
+                .name("TopN");
 
-        // Sink
         topBids.addSink(new MetricsSink<>("q19", backend, numEvents, parallelism))
                 .name("Q19Sink")
                 .setParallelism(1);
     }
 
     /**
-     * Maintain top-N bids per auction.
-     * Emits a bid if it's in the top-N.
+     * Bid with rank number.
      */
-    private static class TopNBidsFunction extends KeyedProcessFunction<Long, Bid, Bid> {
+    public static class BidWithRank implements java.io.Serializable {
+        private static final long serialVersionUID = 1L;
+        
+        public Bid bid;
+        public int rank;
+        
+        public BidWithRank() {}
+        
+        public BidWithRank(Bid bid, int rank) {
+            this.bid = bid;
+            this.rank = rank;
+        }
+        
+        @Override
+        public String toString() {
+            return "BidWithRank{auction=" + bid.auction + ", price=" + bid.price + ", rank=" + rank + "}";
+        }
+    }
 
-        private final int topN;
+    /**
+     * Maintain top N bids per auction.
+     */
+    private static class TopNFunction 
+            extends KeyedProcessFunction<Long, Bid, BidWithRank> {
 
-        // State: list of top bids (sorted by price descending)
         private transient ListState<Bid> topBidsState;
 
-        public TopNBidsFunction(int topN) {
-            this.topN = topN;
-        }
-
         @Override
-        public void open(Configuration parameters) throws Exception {
+        public void open(Configuration parameters) {
             topBidsState = getRuntimeContext().getListState(
                     new ListStateDescriptor<>("topBids", Bid.class));
         }
 
         @Override
-        public void processElement(Bid bid, Context ctx, Collector<Bid> out) throws Exception {
+        public void processElement(Bid bid, Context ctx, Collector<BidWithRank> out) throws Exception {
             // Get current top bids
             List<Bid> topBids = new ArrayList<>();
             for (Bid b : topBidsState.get()) {
                 topBids.add(b);
             }
-
-            // Check if this bid should be in top-N
-            boolean shouldAdd = topBids.size() < topN;
-            if (!shouldAdd && !topBids.isEmpty()) {
-                // Check if bid is higher than the lowest in top-N
-                long minPrice = topBids.stream().mapToLong(b -> b.price).min().orElse(Long.MAX_VALUE);
-                shouldAdd = bid.price > minPrice;
+            
+            // Add new bid
+            topBids.add(bid);
+            
+            // Sort by price descending
+            topBids.sort(Comparator.comparingLong((Bid b) -> b.price).reversed());
+            
+            // Keep only top N
+            if (topBids.size() > TOP_N) {
+                topBids = topBids.subList(0, TOP_N);
             }
-
-            if (shouldAdd) {
-                topBids.add(bid);
-                
-                // Sort by price descending
-                topBids.sort(Comparator.comparingLong((Bid b) -> b.price).reversed());
-                
-                // Keep only top-N
-                if (topBids.size() > topN) {
-                    topBids = topBids.subList(0, topN);
+            
+            // Update state
+            topBidsState.clear();
+            for (Bid b : topBids) {
+                topBidsState.add(b);
+            }
+            
+            // Check if bid is in top N and emit with rank
+            for (int i = 0; i < topBids.size(); i++) {
+                if (topBids.get(i).equals(bid)) {
+                    out.collect(new BidWithRank(bid, i + 1));
+                    break;
                 }
-                
-                // Update state
-                topBidsState.update(topBids);
-                
-                // Emit the new bid (it's in top-N)
-                out.collect(bid);
             }
         }
     }

@@ -24,7 +24,7 @@ import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 /**
  * A sink that discards all input and prints summary statistics on close.
  */
-public class DiscardSink extends RichSinkFunction<Integer> {
+public class DiscardSink extends RichSinkFunction<Long> {
 
     private static final long serialVersionUID = 1L;
 
@@ -39,7 +39,7 @@ public class DiscardSink extends RichSinkFunction<Integer> {
     }
 
     @Override
-    public void invoke(Integer value, Context context) throws Exception {
+    public void invoke(Long value, Context context) throws Exception {
         count++;
     }
 
