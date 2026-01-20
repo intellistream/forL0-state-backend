@@ -798,20 +798,6 @@ public class ForL0StateMapStressTest {
             int[] transformValues = createSequence(operationNum, 1000);
             LOG.info("=== 测试数据生成完成 ===");
 
-            // ===== ForL0StateMap 基准测试 =====
-            LOG.info("=== ForL0StateMap 基准测试 ===");
-
-            BenchmarkResult forL0Result = runStateMapBenchmark(
-                "ForL0StateMap",
-                createForL0StateMapInteger(),
-                keys,
-                namespaces,
-                keySequence,
-                namespaceSequence,
-                transformValues,
-                ForL0StateMapStressTest::getHeapUsed
-            );
-
             // ===== CopyOnWriteStateMap 基准测试 =====
             LOG.info("=== CopyOnWriteStateMap 基准测试 ===");
 
@@ -828,6 +814,20 @@ public class ForL0StateMapStressTest {
                 namespaceSequence,
                 transformValues,
                 ()-> 0L
+            );
+
+            // ===== ForL0StateMap 基准测试 =====
+            LOG.info("=== ForL0StateMap 基准测试 ===");
+
+            BenchmarkResult forL0Result = runStateMapBenchmark(
+                "ForL0StateMap",
+                createForL0StateMapInteger(),
+                keys,
+                namespaces,
+                keySequence,
+                namespaceSequence,
+                transformValues,
+                ForL0StateMapStressTest::getHeapUsed
             );
 
             // ===== 性能对比总结 =====

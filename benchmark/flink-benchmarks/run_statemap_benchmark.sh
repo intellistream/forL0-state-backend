@@ -13,14 +13,24 @@ NC='\033[0m' # No Color
 
 # Parse command line arguments
 ENABLE_PROFILING=false
+ENABLE_VTUNE=false
+VTUNE_ANALYSIS_TYPE="hotspots"
 SKIP_BUILD=false
 QUICK_MODE=false
-while getopts "psq" opt; do
+while getopts "pva:sq" opt; do
   case $opt in
     p) ENABLE_PROFILING=true ;;
+    v) ENABLE_VTUNE=true ;;
+    a) VTUNE_ANALYSIS_TYPE=$OPTARG ;;
     s) SKIP_BUILD=true ;;
     q) QUICK_MODE=true ;;
-    *) echo "Usage: $0 [-p] [-s] [-q]"; echo "  -p: Enable async-profiler for flame graph generation"; echo "  -s: Skip Maven build (use existing benchmarks.jar)"; echo "  -q: Quick mode (less iterations, faster but less accurate)"; exit 1 ;;
+    *) echo "Usage: $0 [-p] [-v] [-a analysis_type] [-s] [-q]"
+       echo "  -p: Enable async-profiler for flame graph generation"
+       echo "  -v: Enable VTune profiling"
+       echo "  -a: VTune analysis type (hotspots|uarch-exploration|memory-access), default: hotspots"
+       echo "  -s: Skip Maven build (use existing benchmarks.jar)"
+       echo "  -q: Quick mode (less iterations, faster but less accurate)"
+       exit 1 ;;
   esac
 done
 
@@ -28,7 +38,10 @@ echo -e "${BLUE}======================================${NC}"
 echo -e "${BLUE}StateMap Benchmark${NC}"
 echo -e "${BLUE}ForL0StateMap vs CopyOnWriteStateMap${NC}"
 if [ "$ENABLE_PROFILING" = true ]; then
-    echo -e "${YELLOW}Profiling: ENABLED${NC}"
+    echo -e "${YELLOW}Async-Profiler: ENABLED${NC}"
+fi
+if [ "$ENABLE_VTUNE" = true ]; then
+    echo -e "${YELLOW}VTune Profiler: ENABLED ($VTUNE_ANALYSIS_TYPE)${NC}"
 fi
 if [ "$SKIP_BUILD" = true ]; then
     echo -e "${YELLOW}Build: SKIPPED (using existing jar)${NC}"
@@ -126,13 +139,75 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
             JMH_ARGS="-wi 5 -i 10 -f 3 -t 1"
         fi
         
-        java -jar target/benchmarks.jar "$BENCHMARK" \
-            -p "mapType=$MAP_TYPE" \
-            -rf csv -rff "$OUTPUT_FILE" \
-            $JMH_ARGS \
-            -jvmArgs "-XX:+UseG1GC -XX:+AlwaysPreTouch -XX:-UseBiasedLocking" \
-            $PROFILER_ARGS \
-            2>&1 | tee "$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.log"
+        # Base JVM args for better profiling
+        JVM_ARGS="-XX:+UseG1GC -XX:+AlwaysPreTouch -XX:-UseBiasedLocking"
+        
+        # Add profiling-specific JVM args
+        if [ "$ENABLE_VTUNE" = true ] || [ "$ENABLE_PROFILING" = true ]; then
+            JVM_ARGS="$JVM_ARGS -XX:+PreserveFramePointer -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:-OmitStackTraceInFastThrow"
+        fi
+        
+        # Start VTune in background if enabled
+        VTUNE_PID=""
+        if [ "$ENABLE_VTUNE" = true ]; then
+            VTUNE_DIR="/home/user/vtune-results"
+            mkdir -p "$VTUNE_DIR"
+            VTUNE_RESULT_DIR="$VTUNE_DIR/statemap_${VTUNE_ANALYSIS_TYPE}_${MAP_TYPE}_${TIMESTAMP}"
+            
+            echo -e "${YELLOW}  VTune will attach in 20s for $VTUNE_ANALYSIS_TYPE analysis${NC}"
+            
+            # Start JMH in background and get PID
+            java -jar target/benchmarks.jar "$BENCHMARK" \
+                -p "mapType=$MAP_TYPE" \
+                -rf csv -rff "$OUTPUT_FILE" \
+                $JMH_ARGS \
+                -jvmArgs "$JVM_ARGS" \
+                $PROFILER_ARGS \
+                2>&1 | tee "$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.log" &
+            
+            JMH_PID=$!
+            
+            # Wait for JMH to start and warm up
+            sleep 20
+            
+            # Get actual Java process PID (JMH spawns a new JVM)
+            JAVA_PID=$(pgrep -P $JMH_PID java || pgrep -f "benchmarks.jar")
+            
+            if [ -n "$JAVA_PID" ]; then
+                echo -e "${YELLOW}  Starting VTune on PID: $JAVA_PID${NC}"
+                
+                # Start VTune profiling
+                vtune -collect $VTUNE_ANALYSIS_TYPE \
+                      -knob sampling-mode=hw \
+                      -knob enable-stack-collection=true \
+                      -knob stack-size=4096 \
+                      -result-dir "$VTUNE_RESULT_DIR" \
+                      -target-pid $JAVA_PID \
+                      -duration 60 \
+                      > "$VTUNE_RESULT_DIR.log" 2>&1 &
+                
+                VTUNE_PID=$!
+                echo -e "${YELLOW}  VTune started (PID: $VTUNE_PID), profiling for 60s${NC}"
+            fi
+            
+            # Wait for JMH to complete
+            wait $JMH_PID
+            
+            # Wait for VTune to complete if still running
+            if [ -n "$VTUNE_PID" ]; then
+                wait $VTUNE_PID 2>/dev/null || true
+                echo -e "${GREEN}  VTune profiling completed: $VTUNE_RESULT_DIR${NC}"
+            fi
+        else
+            # Normal execution without VTune
+            java -jar target/benchmarks.jar "$BENCHMARK" \
+                -p "mapType=$MAP_TYPE" \
+                -rf csv -rff "$OUTPUT_FILE" \
+                $JMH_ARGS \
+                -jvmArgs "$JVM_ARGS" \
+                $PROFILER_ARGS \
+                2>&1 | tee "$RESULTS_DIR/${BENCH_NAME}_${MAP_TYPE}_${TIMESTAMP}.log"
+        fi
         
         echo -e "${GREEN}✓ Completed: $BENCH_NAME with $MAP_TYPE${NC}"
         echo ""
