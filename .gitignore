@@ -1,14 +1,12 @@
-# 先排除 target 下的所有文件和子目录，但保留 target 目录本身
-target/*
-!target/*.jar
+# Maven build outputs
+target/
+*.jar
+*.war
+*.ear
+*.class
+
+# Maven wrapper
 !.mvn/wrapper/maven-wrapper.jar
-
-# 排除子模块的 target 目录内容，但保留部署用的 jar
-benchmark/wordcount/target/*
-!benchmark/wordcount/target/*.jar
-
-benchmark/nexmark-src/nexmark-flink/target/*
-!benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/
 
 !**/src/main/**/target/
 !**/src/test/**/target/
