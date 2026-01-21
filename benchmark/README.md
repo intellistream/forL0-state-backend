@@ -264,8 +264,8 @@ backends:
     description: "Flink 原生 HashMapStateBackend (基线)"
   
   - name: forl0
-    class: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
-    description: "ForL0 StateBackend (SwissMap 架构)"
+    class: org.apache.flink.state.forl0.ForL0StateBackendFactory
+    description: "ForL0 StateBackend (SwissTable 架构)"
 ```
 
 ### 7. ForL0 StateBackend 配置参数

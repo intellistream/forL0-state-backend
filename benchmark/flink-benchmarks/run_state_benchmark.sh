@@ -105,17 +105,6 @@ BENCHMARKS=(
     "org.apache.flink.state.benchmark.MapStateBenchmark.mapUpdate"
 )
 
-# StateMap micro-benchmarks (ForL0StateMap vs CopyOnWriteStateMap direct comparison)
-# These are run separately with mapType parameter instead of backendType
-STATEMAP_BENCHMARKS=(
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapPut"
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapGet"
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapUpdate"
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapTransform"
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapPutAndGetOld"
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapContainsKey"
-)
-
 # Define backend types
 BACKENDS=("HEAP" "FORL0")
 

@@ -41,7 +41,7 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.heap.HeapKeyedStateBackend;
 import org.apache.flink.runtime.state.heap.HeapKeyedStateBackendBuilder;
 import org.apache.flink.runtime.state.heap.HeapPriorityQueueSetFactory;
-import org.apache.flink.runtime.state.heap.ForL0KeyedStateBackendBuilder;
+import org.apache.flink.state.forl0.ForL0KeyedStateBackendBuilder;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 
@@ -95,7 +95,7 @@ public class StateBackendBenchmarkUtils {
 
     /**
      * Creates ForL0 keyed state backend.
-     * L0 cache is DISABLED for fair comparison with HeapKeyedStateBackend.
+     * Uses Swiss Tables for high-performance state storage.
      */
     private static AbstractKeyedStateBackend<Long> createForL0KeyedStateBackend(
             File rootDir, TtlTimeProvider ttlTimeProvider) throws IOException {
@@ -106,7 +106,6 @@ public class StateBackendBenchmarkUtils {
         HeapPriorityQueueSetFactory priorityQueueSetFactory =
                 new HeapPriorityQueueSetFactory(keyGroupRange, numberOfKeyGroups, 128);
 
-        // l0CacheEnabled = false for fair comparison with HeapKeyedStateBackend
         ForL0KeyedStateBackendBuilder<Long> backendBuilder =
                 new ForL0KeyedStateBackendBuilder<>(
                         null,
@@ -119,11 +118,9 @@ public class StateBackendBenchmarkUtils {
                         LatencyTrackingStateConfig.disabled(),
                         Collections.emptyList(),
                         AbstractStateBackend.getCompressionDecorator(executionConfig),
-                        LocalRecoveryConfig.BACKUP_AND_RECOVERY_DISABLED,
                         priorityQueueSetFactory,
-                        false,
-                        new CloseableRegistry(),
-                        false);  // l0CacheEnabled = false
+                        true,  // asyncSnapshots
+                        new CloseableRegistry());
         return backendBuilder.build();
     }
 

@@ -333,11 +333,11 @@ static void* do_malloc_aligned(size_t size, size_t alignment) {
 /* ==================== JNI Functions ==================== */
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    malloc
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_malloc
+JNIEXPORT jlong JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_malloc
   (JNIEnv *env, jclass cls, jlong size)
 {
     if (size <= 0) {
@@ -349,11 +349,11 @@ JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0M
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    free
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_free
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_free
   (JNIEnv *env, jclass cls, jlong address)
 {
     if (address != 0) {
@@ -362,11 +362,11 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    mallocAligned
  * Signature: (JI)J
  */
-JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_mallocAligned
+JNIEXPORT jlong JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_mallocAligned
   (JNIEnv *env, jclass cls, jlong size, jint alignment)
 {
     if (size <= 0 || alignment <= 0) {
@@ -378,11 +378,11 @@ JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0M
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    getMode
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_getMode
+JNIEXPORT jint JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_getMode
   (JNIEnv *env, jclass cls)
 {
     init_mode();
@@ -390,11 +390,11 @@ JNIEXPORT jint JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    isL0Mode
  * Signature: ()Z
  */
-JNIEXPORT jboolean JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_isL0Mode
+JNIEXPORT jboolean JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_isL0Mode
   (JNIEnv *env, jclass cls)
 {
     init_mode();
@@ -402,11 +402,11 @@ JNIEXPORT jboolean JNICALL Java_org_apache_flink_runtime_state_heap_space_Native
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    setMaxCapacity
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_setMaxCapacity
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_setMaxCapacity
   (JNIEnv *env, jclass cls, jlong capacity)
 {
     /* 
@@ -425,11 +425,11 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    copyFromArray
  * Signature: (J[BII)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_copyFromArray
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_copyFromArray
   (JNIEnv *env, jclass cls, jlong destAddress, jbyteArray src, jint srcOffset, jint length)
 {
     if (destAddress == 0 || src == NULL || length <= 0) {
@@ -444,11 +444,11 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    copyToArray
  * Signature: (J[BII)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_copyToArray
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_copyToArray
   (JNIEnv *env, jclass cls, jlong srcAddress, jbyteArray dest, jint destOffset, jint length)
 {
     if (srcAddress == 0 || dest == NULL || length <= 0) {
@@ -463,99 +463,99 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    getByte
  * Signature: (J)B
  */
-JNIEXPORT jbyte JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_getByte
+JNIEXPORT jbyte JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_getByte
   (JNIEnv *env, jclass cls, jlong address)
 {
     return *((jbyte *)(uintptr_t)address);
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    putByte
  * Signature: (JB)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_putByte
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_putByte
   (JNIEnv *env, jclass cls, jlong address, jbyte value)
 {
     *((jbyte *)(uintptr_t)address) = value;
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    getShort
  * Signature: (J)S
  */
-JNIEXPORT jshort JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_getShort
+JNIEXPORT jshort JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_getShort
   (JNIEnv *env, jclass cls, jlong address)
 {
     return *((jshort *)(uintptr_t)address);
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    putShort
  * Signature: (JS)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_putShort
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_putShort
   (JNIEnv *env, jclass cls, jlong address, jshort value)
 {
     *((jshort *)(uintptr_t)address) = value;
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    getInt
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_getInt
+JNIEXPORT jint JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_getInt
   (JNIEnv *env, jclass cls, jlong address)
 {
     return *((jint *)(uintptr_t)address);
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    putInt
  * Signature: (JI)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_putInt
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_putInt
   (JNIEnv *env, jclass cls, jlong address, jint value)
 {
     *((jint *)(uintptr_t)address) = value;
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    getLong
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_getLong
+JNIEXPORT jlong JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_getLong
   (JNIEnv *env, jclass cls, jlong address)
 {
     return *((jlong *)(uintptr_t)address);
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    putLong
  * Signature: (JJ)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_putLong
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_putLong
   (JNIEnv *env, jclass cls, jlong address, jlong value)
 {
     *((jlong *)(uintptr_t)address) = value;
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    memset
  * Signature: (JBJ)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_memset
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_memset
   (JNIEnv *env, jclass cls, jlong address, jbyte value, jlong length)
 {
     if (address != 0 && length > 0) {
@@ -564,11 +564,11 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    memcpy
  * Signature: (JJJ)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_memcpy
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_memcpy
   (JNIEnv *env, jclass cls, jlong destAddress, jlong srcAddress, jlong length)
 {
     if (destAddress != 0 && srcAddress != 0 && length > 0) {
@@ -577,11 +577,11 @@ JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Me
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    createRawPool
  * Signature: (Ljava/lang/String;J)J
  */
-JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_createRawPool
+JNIEXPORT jlong JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_createRawPool
   (JNIEnv *env, jclass cls, jstring name, jlong size)
 {
     const char *pool_name = (*env)->GetStringUTFChars(env, name, NULL);
@@ -597,11 +597,11 @@ JNIEXPORT jlong JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0M
 }
 
 /*
- * Class:     org_apache_flink_runtime_state_heap_space_NativeL0Memory
+ * Class:     org_apache_flink_state_forl0_space_NativeL0Memory
  * Method:    releaseRawPool
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_releaseRawPool
+JNIEXPORT void JNICALL Java_org_apache_flink_state_forl0_space_NativeL0Memory_releaseRawPool
   (JNIEnv *env, jclass cls, jlong poolAddress)
 {
     if (poolAddress != 0) {

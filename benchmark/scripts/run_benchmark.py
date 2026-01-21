@@ -307,17 +307,10 @@ Examples:
         
         # Get mini-batch settings from config or CLI override
         wc_config = config.get('wordcount', {})
-        mini_batch = args.mini_batch or wc_config.get('mini_batch', False)
-        batch_size = wc_config.get('batch_size', 2000)
-        batch_interval_ms = wc_config.get('batch_interval_ms', 50)
-        
         for backend in backends:
             result = run_wordcount(
                 config, backend, 
-                profile_mode=args.profile,
-                mini_batch=mini_batch,
-                batch_size=batch_size,
-                batch_interval_ms=batch_interval_ms
+                profile_mode=args.profile
             )
             if result:
                 results['wordcount'][backend] = result

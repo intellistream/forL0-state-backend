@@ -57,34 +57,34 @@ fi
 
 # Setup directories
 VTUNE_DIR="/home/user/vtune-results"
-RESULTS_DIR="../../results/statemap-benchmark"
+RESULTS_DIR="../../results/state-benchmark"
 mkdir -p "$VTUNE_DIR"
 mkdir -p "$RESULTS_DIR"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-# Define benchmarks to run
+# Define benchmarks to run (State Backend level benchmarks)
 BENCHMARKS=(
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapPut"
-    "org.apache.flink.runtime.state.heap.StateMapBenchmark.mapGet"
+    "org.apache.flink.state.benchmark.StateBenchmarkBase.valueUpdate"
+    "org.apache.flink.state.benchmark.StateBenchmarkBase.valueGet"
 )
 
-MAP_TYPES=("FORL0" "COPYONWRITE")
+BACKEND_TYPES=("FORL0" "HEAP")
 
-echo -e "${GREEN}Running ${#BENCHMARKS[@]} benchmarks x ${#MAP_TYPES[@]} map types${NC}"
+echo -e "${GREEN}Running ${#BENCHMARKS[@]} benchmarks x ${#BACKEND_TYPES[@]} backend types${NC}"
 echo ""
 
 # Run each benchmark
 for BENCHMARK in "${BENCHMARKS[@]}"; do
     METHOD_NAME=$(echo "$BENCHMARK" | awk -F'.' '{print $NF}')
     
-    for MAP_TYPE in "${MAP_TYPES[@]}"; do
+    for BACKEND_TYPE in "${BACKEND_TYPES[@]}"; do
         echo -e "${BLUE}========================================${NC}"
-        echo -e "${BLUE}Profiling: $METHOD_NAME - $MAP_TYPE${NC}"
+        echo -e "${BLUE}Profiling: $METHOD_NAME - $BACKEND_TYPE${NC}"
         echo -e "${BLUE}========================================${NC}"
         
-        VTUNE_RESULT_DIR="$VTUNE_DIR/statemap_${ANALYSIS_TYPE}_${METHOD_NAME}_${MAP_TYPE}_${TIMESTAMP}"
-        OUTPUT_FILE="$RESULTS_DIR/${METHOD_NAME}_${MAP_TYPE}_vtune_${TIMESTAMP}.csv"
+        VTUNE_RESULT_DIR="$VTUNE_DIR/state_${ANALYSIS_TYPE}_${METHOD_NAME}_${BACKEND_TYPE}_${TIMESTAMP}"
+        OUTPUT_FILE="$RESULTS_DIR/${METHOD_NAME}_${BACKEND_TYPE}_vtune_${TIMESTAMP}.csv"
         
         echo -e "${YELLOW}Starting JMH benchmark...${NC}"
         
@@ -95,10 +95,10 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
              -XX:-OmitStackTraceInFastThrow \
              -XX:+UseG1GC \
              -jar target/benchmarks.jar "$BENCHMARK" \
-             -p "mapType=$MAP_TYPE" \
+             -p "backendType=$BACKEND_TYPE" \
              -rf csv -rff "$OUTPUT_FILE" \
              -wi 5 -i 10 -f 1 -t 1 \
-             2>&1 | tee "$RESULTS_DIR/${METHOD_NAME}_${MAP_TYPE}_vtune_${TIMESTAMP}.log" &
+             2>&1 | tee "$RESULTS_DIR/${METHOD_NAME}_${BACKEND_TYPE}_vtune_${TIMESTAMP}.log" &
         
         JMH_PID=$!
         

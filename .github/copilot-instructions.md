@@ -112,6 +112,10 @@ table.values[slot] = value;
 2. **命名**: `*Test.java` 或 `*ITCase.java`
 3. **Native 测试**: 需要 native 库可用,使用 `@EnabledIf("isNativeAvailable")`
 
+### 文档
+
+1. 除非用户要求，否则禁止创建新的说明文档
+
 ## 常见任务
 
 ### 编译项目
