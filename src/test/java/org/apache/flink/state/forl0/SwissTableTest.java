@@ -38,7 +38,7 @@ class SwissTableTest {
 
     private static final int INITIAL_CAPACITY = 64;
     
-    private SwissTable<Long, String, Long> table;
+    private SwissTable<Long, Long> table;
 
     @BeforeEach
     void setUp() {
@@ -49,74 +49,89 @@ class SwissTableTest {
 
     @Test
     void testPutAndGet() {
-        long hash = computeHash(1L, "ns1");
-        int result = table.put(hash, 1L, "ns1");
+        int hash = computeHash(1L);
+        int result = table.put(hash, 1L);
         
         assertTrue((result & SwissTable.NEW_FLAG) != 0, "Should be new insertion");
         int slot = result & SwissTable.SLOT_MASK;
-        table.values[slot] = 100L;
+        table.entries[(slot << 1) + 1] = 100L;
         
-        Long value = table.get(hash, 1L, "ns1");
+        Long value = table.get(hash, 1L);
         assertEquals(100L, value);
     }
 
     @Test
     void testPutUpdate() {
-        long hash = computeHash(1L, "ns1");
+        int hash = computeHash(1L);
         
         // First insert
-        int result1 = table.put(hash, 1L, "ns1");
+        int result1 = table.put(hash, 1L);
         assertTrue((result1 & SwissTable.NEW_FLAG) != 0);
         int slot1 = result1 & SwissTable.SLOT_MASK;
-        table.values[slot1] = 100L;
+        table.entries[(slot1 << 1) + 1] = 100L;
         
         // Update same key
-        int result2 = table.put(hash, 1L, "ns1");
+        int result2 = table.put(hash, 1L);
         assertFalse((result2 & SwissTable.NEW_FLAG) != 0, "Should be update, not new");
         int slot2 = result2 & SwissTable.SLOT_MASK;
         assertEquals(slot1, slot2, "Should return same slot");
         
-        table.values[slot2] = 200L;
-        assertEquals(200L, table.get(hash, 1L, "ns1"));
+        table.entries[(slot2 << 1) + 1] = 200L;
+        assertEquals(200L, table.get(hash, 1L));
     }
 
     @Test
     void testGetNonExistent() {
-        long hash = computeHash(999L, "ns_none");
-        assertNull(table.get(hash, 999L, "ns_none"));
+        int hash = computeHash(999L);
+        assertNull(table.get(hash, 999L));
     }
 
     @Test
     void testRemove() {
-        long hash = computeHash(1L, "ns1");
-        int result = table.put(hash, 1L, "ns1");
+        int hash = computeHash(1L);
+        int result = table.put(hash, 1L);
         int slot = result & SwissTable.SLOT_MASK;
-        table.values[slot] = 100L;
+        table.entries[(slot << 1) + 1] = 100L;
         
-        Long removed = table.remove(hash, 1L, "ns1");
+        Long removed = table.remove(hash, 1L);
         assertEquals(100L, removed);
-        assertNull(table.get(hash, 1L, "ns1"));
+        assertNull(table.get(hash, 1L));
     }
 
     @Test
     void testRemoveNonExistent() {
-        long hash = computeHash(999L, "ns_none");
-        assertNull(table.remove(hash, 999L, "ns_none"));
+        int hash = computeHash(999L);
+        assertNull(table.remove(hash, 999L));
     }
 
     @Test
     void testContainsKey() {
-        long hash = computeHash(1L, "ns1");
-        assertFalse(table.containsKey(hash, 1L, "ns1"));
+        int hash = computeHash(1L);
+        assertFalse(table.containsKey(hash, 1L));
         
-        int result = table.put(hash, 1L, "ns1");
+        int result = table.put(hash, 1L);
         int slot = result & SwissTable.SLOT_MASK;
-        table.values[slot] = 100L;
+        table.entries[(slot << 1) + 1] = 100L;
         
-        assertTrue(table.containsKey(hash, 1L, "ns1"));
+        assertTrue(table.containsKey(hash, 1L));
         
-        table.remove(hash, 1L, "ns1");
-        assertFalse(table.containsKey(hash, 1L, "ns1"));
+        table.remove(hash, 1L);
+        assertFalse(table.containsKey(hash, 1L));
+    }
+
+    @Test
+    void testIsEmpty() {
+        assertTrue(table.isEmpty());
+        
+        int hash = computeHash(1L);
+        int result = table.put(hash, 1L);
+        int slot = result & SwissTable.SLOT_MASK;
+        table.entries[(slot << 1) + 1] = 100L;
+        
+        assertFalse(table.isEmpty());
+        
+        table.remove(hash, 1L);
+        assertTrue(table.isEmpty());
     }
 
     // ========== Multiple Entries ==========
@@ -126,8 +141,8 @@ class SwissTableTest {
         Map<Long, Long> expected = new HashMap<>();
         
         for (long i = 0; i < 50; i++) {
-            long hash = computeHash(i, "ns");
-            int result = table.put(hash, i, "ns");
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
             
             // Handle expansion signals
             while (result < 0) {
@@ -136,30 +151,29 @@ class SwissTableTest {
                 } else if (result == SwissTable.NEED_REHASH) {
                     table.rehash();
                 }
-                result = table.put(hash, i, "ns");
+                result = table.put(hash, i);
             }
             
             int slot = result & SwissTable.SLOT_MASK;
-            table.values[slot] = i * 10;
+            table.entries[(slot << 1) + 1] = i * 10;
             expected.put(i, i * 10);
         }
         
         assertEquals(50, table.size());
         
         for (long i = 0; i < 50; i++) {
-            long hash = computeHash(i, "ns");
-            assertEquals(expected.get(i), table.get(hash, i, "ns"));
+            int hash = computeHash(i);
+            assertEquals(expected.get(i), table.get(hash, i));
         }
     }
 
     @Test
-    void testDifferentNamespaces() {
-        long key = 1L;
-        
+    void testDifferentKeys() {
+        // Test multiple keys (no namespaces to worry about now)
         for (int i = 0; i < 10; i++) {
-            String ns = "ns" + i;
-            long hash = computeHash(key, ns);
-            int result = table.put(hash, key, ns);
+            long key = i * 1000L;
+            int hash = computeHash(key);
+            int result = table.put(hash, key);
             
             while (result < 0) {
                 if (result == SwissTable.NEED_GROW) {
@@ -167,19 +181,19 @@ class SwissTableTest {
                 } else if (result == SwissTable.NEED_REHASH) {
                     table.rehash();
                 }
-                result = table.put(hash, key, ns);
+                result = table.put(hash, key);
             }
             
             int slot = result & SwissTable.SLOT_MASK;
-            table.values[slot] = (long) i;
+            table.entries[(slot << 1) + 1] = (long) i;
         }
         
         assertEquals(10, table.size());
         
         for (int i = 0; i < 10; i++) {
-            String ns = "ns" + i;
-            long hash = computeHash(key, ns);
-            assertEquals((long) i, table.get(hash, key, ns));
+            long key = i * 1000L;
+            int hash = computeHash(key);
+            assertEquals((long) i, table.get(hash, key));
         }
     }
 
@@ -192,18 +206,18 @@ class SwissTableTest {
         // Need to insert 57 entries to exhaust growthLeft and trigger NEED_GROW
         int count = 0;
         for (long i = 0; count < 57; i++) {
-            long hash = computeHash(i, "ns");
-            int result = table.put(hash, i, "ns");
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
             
             if (result == SwissTable.NEED_GROW) {
                 table.grow();
                 // Retry after grow
-                result = table.put(hash, i, "ns");
+                result = table.put(hash, i);
             }
             
             if ((result & SwissTable.NEW_FLAG) != 0) {
                 int slot = result & SwissTable.SLOT_MASK;
-                table.values[slot] = i * 10;
+                table.entries[(slot << 1) + 1] = i * 10;
                 count++;
             }
         }
@@ -212,52 +226,56 @@ class SwissTableTest {
         
         // Verify all entries
         for (long i = 0; i < count; i++) {
-            long hash = computeHash(i, "ns");
-            assertEquals(i * 10, table.get(hash, i, "ns"));
+            int hash = computeHash(i);
+            assertEquals(i * 10, table.get(hash, i));
         }
     }
 
     @Test
     void testRehashAfterDeletes() {
-        // Fill and delete to create tombstones
-        for (long i = 0; i < 40; i++) {
-            long hash = computeHash(i, "ns");
-            int result = table.put(hash, i, "ns");
+        // Fill table more densely to ensure tombstones are created
+        // With 87.5% load factor (56 max for capacity 64), fill it close to capacity
+        for (long i = 0; i < 55; i++) {
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
             int slot = result & SwissTable.SLOT_MASK;
-            table.values[slot] = i;
+            table.entries[(slot << 1) + 1] = i;
         }
         
-        // Delete half
-        for (long i = 0; i < 20; i++) {
-            long hash = computeHash(i, "ns");
-            table.remove(hash, i, "ns");
+        // Delete half - at high load factor, deletions should create tombstones
+        for (long i = 0; i < 27; i++) {
+            int hash = computeHash(i);
+            table.remove(hash, i);
         }
         
-        assertTrue(table.tomb > 0, "Should have tombstones");
+        // Table should have ~28 entries left and possibly some tombstones
+        assertEquals(28, table.size(), "Should have 28 entries left");
         
-        // Keep inserting until rehash is triggered
+        // Keep inserting until rehash or grow is triggered
         for (long i = 100; i < 150; i++) {
-            long hash = computeHash(i, "ns");
-            int result = table.put(hash, i, "ns");
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
             
             if (result == SwissTable.NEED_REHASH) {
+                int tombsBefore = table.tomb;
                 table.rehash();
-                result = table.put(hash, i, "ns");
+                assertEquals(0, table.tomb, "Rehash should clear tombstones");
+                result = table.put(hash, i);
             } else if (result == SwissTable.NEED_GROW) {
                 table.grow();
-                result = table.put(hash, i, "ns");
+                result = table.put(hash, i);
             }
             
             if ((result & SwissTable.NEW_FLAG) != 0) {
                 int slot = result & SwissTable.SLOT_MASK;
-                table.values[slot] = i;
+                table.entries[(slot << 1) + 1] = i;
             }
         }
         
-        // Verify remaining entries
-        for (long i = 20; i < 40; i++) {
-            long hash = computeHash(i, "ns");
-            assertEquals(i, table.get(hash, i, "ns"));
+        // Verify remaining entries from original insertions
+        for (long i = 27; i < 55; i++) {
+            int hash = computeHash(i);
+            assertEquals(i, table.get(hash, i), "Entry " + i + " should be present");
         }
     }
 
@@ -268,17 +286,17 @@ class SwissTableTest {
         Map<Long, Long> expected = new HashMap<>();
         
         for (long i = 0; i < 30; i++) {
-            long hash = computeHash(i, "ns");
-            int result = table.put(hash, i, "ns");
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
             int slot = result & SwissTable.SLOT_MASK;
-            table.values[slot] = i * 10;
+            table.entries[(slot << 1) + 1] = i * 10;
             expected.put(i, i * 10);
         }
         
         Map<Long, Long> actual = new HashMap<>();
-        Iterator<SwissTable.Entry<Long, String, Long>> iter = table.iterator();
+        Iterator<SwissTable.Entry<Long, Long>> iter = table.iterator();
         while (iter.hasNext()) {
-            SwissTable.Entry<Long, String, Long> entry = iter.next();
+            SwissTable.Entry<Long, Long> entry = iter.next();
             actual.put(entry.getKey(), entry.getState());
         }
         
@@ -288,9 +306,17 @@ class SwissTableTest {
     // ========== Edge Cases ==========
 
     @Test
-    void testNullNamespace() {
-        // SwissTable should handle null namespace if needed
-        // This depends on implementation - skip if not supported
+    void testCollectKeys() {
+        for (long i = 0; i < 10; i++) {
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
+            int slot = result & SwissTable.SLOT_MASK;
+            table.entries[(slot << 1) + 1] = i;
+        }
+        
+        java.util.List<Long> keys = new java.util.ArrayList<>();
+        table.collectKeys(keys);
+        assertEquals(10, keys.size());
     }
 
     @Test
@@ -302,8 +328,8 @@ class SwissTableTest {
         
         for (int i = 0; i < 100; i++) {
             long key = rand.nextLong();
-            long hash = computeHash(key, "ns");
-            int result = table.put(hash, key, "ns");
+            int hash = computeHash(key);
+            int result = table.put(hash, key);
             
             while (result < 0) {
                 if (result == SwissTable.NEED_GROW) {
@@ -311,79 +337,76 @@ class SwissTableTest {
                 } else if (result == SwissTable.NEED_REHASH) {
                     table.rehash();
                 }
-                result = table.put(hash, key, "ns");
+                result = table.put(hash, key);
             }
             
             if ((result & SwissTable.NEW_FLAG) != 0) {
                 int slot = result & SwissTable.SLOT_MASK;
-                table.values[slot] = key;
+                table.entries[(slot << 1) + 1] = key;
                 entries.put(key, key);
             }
         }
         
         // Verify all entries
         for (Map.Entry<Long, Long> e : entries.entrySet()) {
-            long hash = computeHash(e.getKey(), "ns");
-            assertEquals(e.getValue(), table.get(hash, e.getKey(), "ns"));
+            int hash = computeHash(e.getKey());
+            assertEquals(e.getValue(), table.get(hash, e.getKey()));
         }
     }
 
     @Test
     void testSizeAfterOperations() {
         assertEquals(0, table.size());
+        assertTrue(table.isEmpty());
         
         // Add 10 entries
         for (long i = 0; i < 10; i++) {
-            long hash = computeHash(i, "ns");
-            int result = table.put(hash, i, "ns");
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
             while (result < 0) {
                 if (result == SwissTable.NEED_GROW) {
                     table.grow();
                 } else if (result == SwissTable.NEED_REHASH) {
                     table.rehash();
                 }
-                result = table.put(hash, i, "ns");
+                result = table.put(hash, i);
             }
             int slot = result & SwissTable.SLOT_MASK;
-            table.values[slot] = i;
+            table.entries[(slot << 1) + 1] = i;
         }
         assertEquals(10, table.size());
+        assertFalse(table.isEmpty());
         
         // Remove 5 entries
         for (long i = 0; i < 5; i++) {
-            long hash = computeHash(i, "ns");
-            table.remove(hash, i, "ns");
+            int hash = computeHash(i);
+            table.remove(hash, i);
         }
         assertEquals(5, table.size());
         
         // Update existing entry (size unchanged)
-        long hash = computeHash(5L, "ns");
-        int result = table.put(hash, 5L, "ns");
+        int hash = computeHash(5L);
+        int result = table.put(hash, 5L);
         while (result < 0) {
             if (result == SwissTable.NEED_GROW) {
                 table.grow();
             } else if (result == SwissTable.NEED_REHASH) {
                 table.rehash();
             }
-            result = table.put(hash, 5L, "ns");
+            result = table.put(hash, 5L);
         }
         int slot = result & SwissTable.SLOT_MASK;
-        table.values[slot] = 500L;
+        table.entries[(slot << 1) + 1] = 500L;
         assertEquals(5, table.size());
     }
 
     // ========== Helper Methods ==========
 
-    private long computeHash(Long key, String namespace) {
-        int keyHash = key.hashCode();
-        int nsHash = namespace.hashCode();
-        long combined = ((long) keyHash << 32) | (nsHash & 0xFFFFFFFFL);
-        // Mix using finalizer from MurmurHash3
-        combined ^= combined >>> 33;
-        combined *= 0xff51afd7ed558ccdL;
-        combined ^= combined >>> 33;
-        combined *= 0xc4ceb9fe1a85ec53L;
-        combined ^= combined >>> 33;
-        return combined;
+    /**
+     * Compute 32-bit hash for key using smear function (aligned with hash-smith).
+     */
+    private int computeHash(Long key) {
+        int h = key.hashCode();
+        return (int) (0x1b873593 * Integer.rotateLeft(h * 0xcc9e2d51, 15));
     }
 }

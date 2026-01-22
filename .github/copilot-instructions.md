@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，采用 Swiss Tables 架构（对齐 Go 1.24），通过 SWAR 并行匹配和 Extendible Hashing 实现高效的状态访问。
+ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，采用 Swiss Tables 架构（对齐 hash-smith SwissMap），通过 SWAR 并行匹配实现高效的状态访问。
 
 ## 技术栈
 
@@ -16,45 +16,46 @@ ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实�
 
 ## 核心架构
 
-### Swiss Tables 架构 (对齐 Go 1.24)
+### Lightweight StateStore 架构
 
 ```
-ForL0StateMap (StateMap 接口 + Directory 路由)
-├── directory[]         // Extendible Hashing 路由表
-├── tables: List        // 唯一 SwissTable 列表
-└── SwissTable          // 存储层
-    ├── ctrl[]          // 控制字节 (EMPTY=0x80, DELETED=0xFE, FULL=h2)
-    ├── keysNs[]        // key/namespace 存储 (slot i → keysNs[2i], keysNs[2i+1])
-    ├── values[]        // value 存储
-    └── hashes[]        // 64位 hash 存储 (用于 rehash/grow/split)
+ForL0StateStore<K, N, S> (StateSnapshotRestore 接口)
+├── VoidNamespace 模式: SwissTable<K,S>[] tables    // 直接访问，零 HashMap 开销
+└── General Namespace 模式: Map<N, SwissTable<K,S>>[] namespaceMaps
+    └── SwissTable<K, S>                            // 每个 namespace 独立的表
+        ├── ctrl[]          // 控制字节 (EMPTY=0x80, DELETED=0xFE, FULL=h2)
+        ├── entries[]       // AoS 交织布局 [k0,v0,k1,v1,...] (slot i → entries[2i], entries[2i+1])
+        └── hashes[]        // 32位 hash 存储 (用于 rehash/grow)
 ```
 
-### Hash 位分配 (对齐 Go 1.24)
+### Hash 位分配 (对齐 hash-smith SwissMap)
 
 ```
-64 位 hash:
-├── H1 = hash >>> 7     // 高 57 位，用于探测起始 group
-├── H2 = hash & 0x7F    // 低 7 位，存入 ctrl 字节
-└── Directory 路由: hash >>> globalShift (高 globalDepth 位)
+32 位 hash (smear function from Guava):
+├── H1 = hash >>> 7     // 高 25 位，用于探测起始 group
+└── H2 = hash & 0x7F    // 低 7 位，存入 ctrl 字节
+
+Hash 计算:
+int h = key.hashCode();
+int hash = (int)(0x1b873593 * Integer.rotateLeft(h * 0xcc9e2d51, 15));
 ```
 
 ### 关键组件
 
 | 组件 | 职责 | 位置 |
 |------|------|------|
-| `ForL0StateBackend` | StateBackend 入口 | `runtime/state/heap/` |
-| `ForL0KeyedStateBackend` | KeyedStateBackend 实现 | `runtime/state/heap/` |
-| `ForL0StateMap` | StateMap 接口 + Directory 路由 | `runtime/state/heap/` |
-| `SwissTable` | SWAR 并行匹配的哈希表存储 | `runtime/state/heap/` |
-| `NativeL0Memory` | JNI 桥接类 (L0 Cache) | `runtime/state/heap/space/` |
+| `ForL0StateBackend` | StateBackend 入口 | `state/forl0/` |
+| `ForL0KeyedStateBackend` | KeyedStateBackend 实现 | `state/forl0/` |
+| `ForL0StateStore` | 状态存储 (KeyGroup → Namespace → SwissTable) | `state/forl0/` |
+| `SwissTable` | SWAR 并行匹配的哈希表存储 | `state/forl0/` |
+| `NativeL0Memory` | JNI 桥接类 (L0 Cache) | `state/forl0/space/` |
 | `forl0_native.c` | C 实现 (L0/模拟模式) | `src/main/native/` |
 
 ### SwissTable 核心算法
 
 ```java
 // SWAR 并行匹配 (8 slots 同时比较)
-static long matchH2(long ctrlWord, int h2) {
-    long pattern = LSB * (h2 & 0xFFL);
+static long matchH2(long ctrlWord, long pattern) {
     long x = ctrlWord ^ pattern;
     return (x - LSB) & ~x & MSB;
 }
@@ -62,35 +63,38 @@ static long matchH2(long ctrlWord, int h2) {
 // put 返回值编码
 static final int NEW_FLAG = 1 << 16;   // 新插入标志
 static final int SLOT_MASK = 0xFFFF;   // 槽位掩码
-static final int NEED_SPLIT = -1;      // 需要 split
+static final int NEED_REHASH = -1;     // 需要 rehash
+static final int NEED_GROW = -2;       // 需要 grow
 
-// 使用示例
-int result = table.put(hash, key, namespace, MAX_CAPACITY);
-if (result == NEED_SPLIT) {
-    handleSplit(table);
-    continue; // 重试
+// 使用示例 (AoS 布局直接访问)
+int result = table.put(hash, key);
+if (result == SwissTable.NEED_REHASH) {
+    table.rehash();
+    continue;
 }
-int slot = result & SLOT_MASK;
-boolean isNew = (result & NEW_FLAG) != 0;
-table.values[slot] = value;
+if (result == SwissTable.NEED_GROW) {
+    table.grow();
+    continue;
+}
+int slot = result & SwissTable.SLOT_MASK;
+table.entries[(slot << 1) + 1] = value;  // 直接访问，无方法调用
 ```
 
-### Extendible Hashing
+### Namespace 组织
 
-- **globalDepth**: Directory 使用的 hash 位数
-- **localDepth**: 每个 Table 的深度
-- **split**: 当 Table 满载且 capacity = MAX_TABLE_CAPACITY 时触发
-- **Go 风格 index 去重**: `if (t.index == i) t.index = 2 * i`
+- **VoidNamespace 特化**: 自动检测 VoidNamespaceSerializer，跳过 HashMap 层
+- **Namespace 清理**: 删除后检查 SwissTable.isEmpty()，自动从 HashMap 移除空 namespace
+- **内存隔离**: 每个 namespace 独立的 SwissTable，避免 key 冲突
 
 ## 代码规范
 
 ### Java 代码
 
-1. **包结构**: `org.apache.flink.runtime.state.heap.*`
+1. **包结构**: `org.apache.flink.state.forl0.*`
 2. **命名约定**:
    - 类名: `ForL0` 前缀表示本项目组件
    - 常量: 全大写下划线分隔
-   - 64B 对齐相关常量使用 `*_SIZE`, `*_OFFSET` 后缀
+   - AoS 访问: `entries[(slot << 1)]` (key), `entries[(slot << 1) + 1]` (value)
 3. **日志**: 使用 SLF4J (`LoggerFactory.getLogger`)
 4. **注释**: 
    - 公共 API 使用 Javadoc
@@ -103,7 +107,7 @@ table.values[slot] = value;
 2. **条件编译**: 
    - `L0_NOT_SUPPORTED`: macOS 下定义,跳过 L0 相关代码
    - `#ifndef L0_NOT_SUPPORTED ... #endif` 包裹 L0 专用代码
-3. **JNI 命名**: `Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_*`
+3. **JNI 命名**: `Java_org_apache_flink_state_forl0_space_NativeL0Memory_*`
 4. **内存对齐**: 使用 `posix_memalign` 保证 64 字节对齐
 
 ### 测试
@@ -142,14 +146,12 @@ make install                # 复制到 resources/native/
 - Allocator 实现不需要并发支持
 - 避免在热路径使用同步原语
 
-### 内存布局
+### 内存布局 (AoS - Array of Structures)
 
 - SwissTable ctrl[]: 每 slot 1 字节控制字节
-- SwissTable keysNs[]: slot i → keysNs[2*i] (key), keysNs[2*i+1] (namespace)
-- SwissTable values[]: slot i → values[i]
-- SwissTable hashes[]: slot i → 64位 hash (用于 rehash/grow/split)
-- Directory 默认大小: 1 (globalDepth=0)
-- Table 容量: INITIAL=64, MAX=1024, 负载因子 87.5%
+- SwissTable entries[]: AoS 交织布局 (slot i → entries[2*i] key, entries[2*i+1] value)
+- SwissTable hashes[]: slot i → 32位 hash (用于 rehash/grow)
+- Table 容量: INITIAL=64, 负载因子 87.5%
 
 ### 错误处理
 

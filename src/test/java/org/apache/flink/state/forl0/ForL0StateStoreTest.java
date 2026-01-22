@@ -195,6 +195,64 @@ class ForL0StateStoreTest {
             assertNull(stateStore.get(key, 1, keyGroup));
             assertEquals(value2, stateStore.get(key, 2, keyGroup));
         }
+
+        @Test
+        void testNamespaceCleanupWhenEmpty() {
+            // Test that empty namespace maps are properly cleaned up
+            // This is critical for windowed operations to avoid memory leaks
+            String key1 = "key1";
+            String key2 = "key2";
+            int keyGroup = computeKeyGroup(key1);
+            
+            // Put entries in namespace 100
+            stateStore.put(key1, 100, "v1", keyGroup);
+            stateStore.put(key2, 100, "v2", keyGroup);
+            assertEquals(2, stateStore.sizeOfNamespace(100));
+            
+            // Put entry in namespace 200
+            stateStore.put(key1, 200, "v3", keyGroup);
+            assertEquals(1, stateStore.sizeOfNamespace(200));
+            
+            // Remove all entries from namespace 100
+            stateStore.remove(key1, 100, keyGroup);
+            assertEquals(1, stateStore.sizeOfNamespace(100));
+            stateStore.remove(key2, 100, keyGroup);
+            assertEquals(0, stateStore.sizeOfNamespace(100));
+            
+            // Namespace 200 should still work correctly
+            assertEquals("v3", stateStore.get(key1, 200, keyGroup));
+            assertEquals(1, stateStore.sizeOfNamespace(200));
+            
+            // Re-add to namespace 100 should work (namespace was cleaned up, not corrupted)
+            stateStore.put(key1, 100, "newValue", keyGroup);
+            assertEquals(1, stateStore.sizeOfNamespace(100));
+            assertEquals("newValue", stateStore.get(key1, 100, keyGroup));
+        }
+
+        @Test
+        void testMultipleNamespaceCleanupInSameKeyGroup() {
+            // Test cleanup of multiple namespaces in same key group
+            String key = "testKey";
+            int keyGroup = computeKeyGroup(key);
+            
+            // Create entries in 10 different namespaces
+            for (int ns = 0; ns < 10; ns++) {
+                stateStore.put(key, ns, "value" + ns, keyGroup);
+            }
+            assertEquals(10, stateStore.size());
+            
+            // Remove all namespaces one by one
+            for (int ns = 0; ns < 10; ns++) {
+                stateStore.remove(key, ns, keyGroup);
+                assertEquals(0, stateStore.sizeOfNamespace(ns));
+            }
+            assertEquals(0, stateStore.size());
+            
+            // Verify we can still add new entries after cleanup
+            stateStore.put(key, 999, "newValue", keyGroup);
+            assertEquals(1, stateStore.size());
+            assertEquals("newValue", stateStore.get(key, 999, keyGroup));
+        }
     }
 
     @Nested

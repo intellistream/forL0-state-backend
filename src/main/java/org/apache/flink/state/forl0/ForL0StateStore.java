@@ -26,19 +26,30 @@ import org.apache.flink.runtime.state.StateSnapshotKeyGroupReader;
 import org.apache.flink.runtime.state.StateSnapshotRestore;
 import org.apache.flink.runtime.state.StateSnapshot;
 import org.apache.flink.runtime.state.StateTransformationFunction;
+import org.apache.flink.runtime.state.VoidNamespace;
+import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Objects;
+import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.stream.Stream;
 
 /**
- * A simple state store that maps KeyGroup -> SwissTable.
+ * A simple state store that maps KeyGroup -> SwissTable (or HashMap<Namespace, SwissTable>).
  * 
  * <p>This is a lightweight replacement for the complex StateTable hierarchy.
- * Each KeyGroup has one SwissTable for storing key/namespace/value triplets.
+ * State is organized by namespace to reduce cache misses.
+ * 
+ * <p>Two storage modes:
+ * <ul>
+ *   <li>VoidNamespace mode: Direct SwissTable[] access, zero HashMap overhead</li>
+ *   <li>General Namespace mode: HashMap<N, SwissTable>[] for namespace routing</li>
+ * </ul>
  *
  * @param <K> key type
  * @param <N> namespace type
@@ -61,14 +72,14 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
     /** Meta information about this state. */
     private RegisteredKeyValueStateBackendMetaInfo<N, S> metaInfo;
 
-    /** Array of SwissTables, one per key group. */
-    private final SwissTable<K, N, S>[] tables;
+    /** Whether this store uses VoidNamespace mode (no HashMap layer). */
+    private final boolean isVoidNamespace;
 
-    /**
-     * The last namespace that was actually used. This is a small optimization to reduce
-     * duplicate namespace objects, aligned with CopyOnWriteStateMap's lastNamespace optimization.
-     */
-    private N lastNamespace;
+    /** VoidNamespace mode: direct SwissTable array, one per key group. */
+    private final SwissTable<K, S>[] tables;
+
+    /** General Namespace mode: HashMap per key group for namespace routing. */
+    private final Map<N, SwissTable<K, S>>[] namespaceMaps;
 
     /**
      * Creates a new ForL0StateStore.
@@ -88,9 +99,19 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
         this.metaInfo = metaInfo;
         
         int numKeyGroups = keyGroupRange.getNumberOfKeyGroups();
-        this.tables = new SwissTable[numKeyGroups];
         
-        // Lazily initialize tables
+        // VoidNamespace specialization detection
+        this.isVoidNamespace = metaInfo.getNamespaceSerializer() instanceof VoidNamespaceSerializer;
+        
+        if (isVoidNamespace) {
+            // VoidNamespace: direct SwissTable[], no HashMap overhead
+            this.tables = new SwissTable[numKeyGroups];
+            this.namespaceMaps = null;
+        } else {
+            // General Namespace: use HashMap<N, SwissTable>[]
+            this.tables = null;
+            this.namespaceMaps = new HashMap[numKeyGroups];
+        }
     }
 
     // ========== Core Operations ==========
@@ -104,12 +125,23 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
      * @return the state value, or null if not found
      */
     public S get(K key, N namespace, int keyGroup) {
-        SwissTable<K, N, S> table = getTable(keyGroup);
+        int idx = keyGroup - keyGroupOffset;
+        SwissTable<K, S> table;
+        
+        if (isVoidNamespace) {
+            // VoidNamespace: direct access
+            table = tables[idx];
+        } else {
+            // General Namespace: via HashMap
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            table = (nsMap == null) ? null : nsMap.get(namespace);
+        }
+        
         if (table == null) {
             return null;
         }
-        long hash = computeHash(key, namespace);
-        return table.get(hash, key, namespace);
+        int hash = computeKeyHash(key);
+        return table.get(hash, key);
     }
 
     /**
@@ -121,13 +153,34 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
      * @param keyGroup the key group
      */
     public void put(K key, N namespace, S value, int keyGroup) {
-        SwissTable<K, N, S> table = getOrCreateTable(keyGroup);
-        // Deduplicate namespace to reduce memory usage
-        namespace = deduplicateNamespace(namespace);
-        long hash = computeHash(key, namespace);
+        int idx = keyGroup - keyGroupOffset;
+        SwissTable<K, S> table;
+        
+        if (isVoidNamespace) {
+            // VoidNamespace: direct access, no HashMap overhead
+            table = tables[idx];
+            if (table == null) {
+                table = new SwissTable<>(INITIAL_TABLE_CAPACITY);
+                tables[idx] = table;
+            }
+        } else {
+            // General Namespace: via HashMap
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            if (nsMap == null) {
+                nsMap = new HashMap<>(8);  // Small initial capacity, Namespace count is usually small
+                namespaceMaps[idx] = nsMap;
+            }
+            table = nsMap.get(namespace);
+            if (table == null) {
+                table = new SwissTable<>(INITIAL_TABLE_CAPACITY);
+                nsMap.put(namespace, table);
+            }
+        }
+        
+        int hash = computeKeyHash(key);
         
         while (true) {
-            int result = table.put(hash, key, namespace);
+            int result = table.put(hash, key);
             
             if (result == SwissTable.NEED_REHASH) {
                 table.rehash();
@@ -140,7 +193,7 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
             
             // Normal insert or update
             int slot = result & SwissTable.SLOT_MASK;
-            table.values[slot] = value;
+            table.entries[(slot << 1) + 1] = value;
             return;
         }
     }
@@ -161,13 +214,32 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
             K key, N namespace, T value, 
             StateTransformationFunction<S, T> transformation,
             int keyGroup) throws Exception {
-        SwissTable<K, N, S> table = getOrCreateTable(keyGroup);
-        // Deduplicate namespace to reduce memory usage
-        namespace = deduplicateNamespace(namespace);
-        long hash = computeHash(key, namespace);
+        int idx = keyGroup - keyGroupOffset;
+        SwissTable<K, S> table;
+        
+        if (isVoidNamespace) {
+            table = tables[idx];
+            if (table == null) {
+                table = new SwissTable<>(INITIAL_TABLE_CAPACITY);
+                tables[idx] = table;
+            }
+        } else {
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            if (nsMap == null) {
+                nsMap = new HashMap<>(8);
+                namespaceMaps[idx] = nsMap;
+            }
+            table = nsMap.get(namespace);
+            if (table == null) {
+                table = new SwissTable<>(INITIAL_TABLE_CAPACITY);
+                nsMap.put(namespace, table);
+            }
+        }
+        
+        int hash = computeKeyHash(key);
         
         while (true) {
-            int result = table.put(hash, key, namespace);
+            int result = table.put(hash, key);
             
             if (result == SwissTable.NEED_REHASH) {
                 table.rehash();
@@ -180,8 +252,10 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
             
             // Get slot and apply transformation directly
             int slot = result & SwissTable.SLOT_MASK;
-            S oldState = (S) table.values[slot];
-            table.values[slot] = transformation.apply(oldState, value);
+            int valueIdx = (slot << 1) + 1;
+            @SuppressWarnings("unchecked")
+            S oldState = (S) table.entries[valueIdx];
+            table.entries[valueIdx] = transformation.apply(oldState, value);
             return;
         }
     }
@@ -195,69 +269,68 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
      * @return the removed value, or null if not found
      */
     public S remove(K key, N namespace, int keyGroup) {
-        SwissTable<K, N, S> table = getTable(keyGroup);
-        if (table == null) {
-            return null;
+        int idx = keyGroup - keyGroupOffset;
+        
+        if (isVoidNamespace) {
+            SwissTable<K, S> table = tables[idx];
+            if (table == null) {
+                return null;
+            }
+            int hash = computeKeyHash(key);
+            return table.remove(hash, key);
+        } else {
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            if (nsMap == null) {
+                return null;
+            }
+            SwissTable<K, S> table = nsMap.get(namespace);
+            if (table == null) {
+                return null;
+            }
+            
+            int hash = computeKeyHash(key);
+            S removed = table.remove(hash, key);
+            
+            // Critical: Remove empty namespace from HashMap to avoid accumulation in windowed scenarios
+            if (table.isEmpty()) {
+                nsMap.remove(namespace);
+            }
+            
+            return removed;
         }
-        long hash = computeHash(key, namespace);
-        return table.remove(hash, key, namespace);
     }
 
     /**
      * Checks if a key/namespace pair exists.
      */
     public boolean containsKey(K key, N namespace, int keyGroup) {
-        SwissTable<K, N, S> table = getTable(keyGroup);
+        int idx = keyGroup - keyGroupOffset;
+        SwissTable<K, S> table;
+        
+        if (isVoidNamespace) {
+            table = tables[idx];
+        } else {
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            table = (nsMap == null) ? null : nsMap.get(namespace);
+        }
+        
         if (table == null) {
             return false;
         }
-        long hash = computeHash(key, namespace);
-        return table.containsKey(hash, key, namespace);
+        int hash = computeKeyHash(key);
+        return table.containsKey(hash, key);
     }
 
-    // ========== Table Management ==========
-
-    private SwissTable<K, N, S> getTable(int keyGroup) {
-        int idx = keyGroup - keyGroupOffset;
-        return tables[idx];
-    }
-
-    private SwissTable<K, N, S> getOrCreateTable(int keyGroup) {
-        int idx = keyGroup - keyGroupOffset;
-        SwissTable<K, N, S> table = tables[idx];
-        if (table == null) {
-            table = new SwissTable<>(INITIAL_TABLE_CAPACITY);
-            tables[idx] = table;
-        }
-        return table;
-    }
-
-    // ========== Hash Computation ==========
+    // ========== Hash Computation (aligned with hash-smith SwissMap) ==========
 
     /**
-     * Deduplicates namespace objects to reduce memory usage.
-     * Aligned with CopyOnWriteStateMap's lastNamespace optimization.
+     * Computes 32-bit hash for key using smear function.
+     * Aligned with hash-smith SwissMap.
      */
-    private N deduplicateNamespace(N namespace) {
-        if (namespace.equals(lastNamespace)) {
-            return lastNamespace;
-        }
-        lastNamespace = namespace;
-        return namespace;
-    }
-
-    private long computeHash(K key, N namespace) {
-        // Use a combination of key and namespace hash
-        int keyHash = key.hashCode();
-        int nsHash = namespace.hashCode();
-        // Mix the hashes - using MurmurHash3 finalizer style mixing
-        long h = ((long) keyHash << 32) | (nsHash & 0xFFFFFFFFL);
-        h ^= h >>> 33;
-        h *= 0xff51afd7ed558ccdL;
-        h ^= h >>> 33;
-        h *= 0xc4ceb9fe1a85ec53L;
-        h ^= h >>> 33;
-        return h;
+    int computeKeyHash(K key) {
+        int h = key.hashCode();
+        // smear mixing (from hash-smith / Guava)
+        return (int) (0x1b873593 * Integer.rotateLeft(h * 0xcc9e2d51, 15));
     }
 
     // ========== Iteration and Queries ==========
@@ -267,12 +340,21 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
      */
     public Stream<K> getKeys(N namespace) {
         List<K> keys = new ArrayList<>();
-        for (SwissTable<K, N, S> table : tables) {
-            if (table != null) {
-                for (Iterator<SwissTable.Entry<K, N, S>> it = table.iterator(); it.hasNext(); ) {
-                    SwissTable.Entry<K, N, S> entry = it.next();
-                    if (Objects.equals(namespace, entry.getNamespace())) {
-                        keys.add(entry.getKey());
+        
+        if (isVoidNamespace) {
+            // VoidNamespace: all keys belong to the same namespace
+            for (SwissTable<K, S> table : tables) {
+                if (table != null) {
+                    table.collectKeys(keys);
+                }
+            }
+        } else {
+            // General Namespace: only traverse the matching SwissTable
+            for (Map<N, SwissTable<K, S>> nsMap : namespaceMaps) {
+                if (nsMap != null) {
+                    SwissTable<K, S> table = nsMap.get(namespace);
+                    if (table != null) {
+                        table.collectKeys(keys);
                     }
                 }
             }
@@ -283,13 +365,30 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
     /**
      * Returns a stream of all keys and namespaces.
      */
+    @SuppressWarnings("unchecked")
     public Stream<org.apache.flink.api.java.tuple.Tuple2<K, N>> getKeysAndNamespaces() {
         List<org.apache.flink.api.java.tuple.Tuple2<K, N>> result = new ArrayList<>();
-        for (SwissTable<K, N, S> table : tables) {
-            if (table != null) {
-                for (Iterator<SwissTable.Entry<K, N, S>> it = table.iterator(); it.hasNext(); ) {
-                    SwissTable.Entry<K, N, S> entry = it.next();
-                    result.add(org.apache.flink.api.java.tuple.Tuple2.of(entry.getKey(), entry.getNamespace()));
+        
+        if (isVoidNamespace) {
+            // VoidNamespace: inject fixed VoidNamespace.INSTANCE
+            N voidNs = (N) VoidNamespace.INSTANCE;
+            for (SwissTable<K, S> table : tables) {
+                if (table != null) {
+                    for (Iterator<SwissTable.Entry<K, S>> it = table.iterator(); it.hasNext(); ) {
+                        result.add(org.apache.flink.api.java.tuple.Tuple2.of(it.next().getKey(), voidNs));
+                    }
+                }
+            }
+        } else {
+            for (Map<N, SwissTable<K, S>> nsMap : namespaceMaps) {
+                if (nsMap != null) {
+                    for (Map.Entry<N, SwissTable<K, S>> nsEntry : nsMap.entrySet()) {
+                        N namespace = nsEntry.getKey();
+                        SwissTable<K, S> table = nsEntry.getValue();
+                        for (Iterator<SwissTable.Entry<K, S>> it = table.iterator(); it.hasNext(); ) {
+                            result.add(org.apache.flink.api.java.tuple.Tuple2.of(it.next().getKey(), namespace));
+                        }
+                    }
                 }
             }
         }
@@ -299,26 +398,66 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
     /**
      * Returns an iterable over entries for a specific key group.
      */
+    @SuppressWarnings("unchecked")
     public Iterable<StateEntry<K, N, S>> entries(int keyGroup) {
-        SwissTable<K, N, S> table = getTable(keyGroup);
-        if (table == null) {
-            return java.util.Collections.emptyList();
-        }
+        int idx = keyGroup - keyGroupOffset;
         
-        return () -> new Iterator<StateEntry<K, N, S>>() {
-            private final Iterator<SwissTable.Entry<K, N, S>> inner = table.iterator();
-            
-            @Override
-            public boolean hasNext() {
-                return inner.hasNext();
+        if (isVoidNamespace) {
+            // VoidNamespace: directly traverse table, inject fixed VoidNamespace.INSTANCE
+            SwissTable<K, S> table = tables[idx];
+            if (table == null || table.isEmpty()) {
+                return Collections.emptyList();
             }
             
-            @Override
-            public StateEntry<K, N, S> next() {
-                SwissTable.Entry<K, N, S> e = inner.next();
-                return new SimpleStateEntry<>(e.getKey(), e.getNamespace(), e.getState());
+            N voidNs = (N) VoidNamespace.INSTANCE;
+            
+            return () -> new Iterator<StateEntry<K, N, S>>() {
+                private final Iterator<SwissTable.Entry<K, S>> inner = table.iterator();
+                
+                @Override
+                public boolean hasNext() {
+                    return inner.hasNext();
+                }
+                
+                @Override
+                public StateEntry<K, N, S> next() {
+                    SwissTable.Entry<K, S> e = inner.next();
+                    return new SimpleStateEntry<>(e.getKey(), voidNs, e.getState());
+                }
+            };
+        } else {
+            // General Namespace: traverse all SwissTables in HashMap
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            if (nsMap == null || nsMap.isEmpty()) {
+                return Collections.emptyList();
             }
-        };
+            
+            return () -> new Iterator<StateEntry<K, N, S>>() {
+                private final Iterator<Map.Entry<N, SwissTable<K, S>>> nsIter = 
+                        nsMap.entrySet().iterator();
+                private N currentNamespace;
+                private Iterator<SwissTable.Entry<K, S>> tableIter;
+                
+                @Override
+                public boolean hasNext() {
+                    while ((tableIter == null || !tableIter.hasNext()) && nsIter.hasNext()) {
+                        Map.Entry<N, SwissTable<K, S>> entry = nsIter.next();
+                        currentNamespace = entry.getKey();
+                        tableIter = entry.getValue().iterator();
+                    }
+                    return tableIter != null && tableIter.hasNext();
+                }
+                
+                @Override
+                public StateEntry<K, N, S> next() {
+                    if (!hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    SwissTable.Entry<K, S> e = tableIter.next();
+                    return new SimpleStateEntry<>(e.getKey(), currentNamespace, e.getState());
+                }
+            };
+        }
     }
 
     /**
@@ -326,9 +465,20 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
      */
     public int size() {
         int total = 0;
-        for (SwissTable<K, N, S> table : tables) {
-            if (table != null) {
-                total += table.size();
+        
+        if (isVoidNamespace) {
+            for (SwissTable<K, S> table : tables) {
+                if (table != null) {
+                    total += table.size();
+                }
+            }
+        } else {
+            for (Map<N, SwissTable<K, S>> nsMap : namespaceMaps) {
+                if (nsMap != null) {
+                    for (SwissTable<K, S> table : nsMap.values()) {
+                        total += table.size();
+                    }
+                }
             }
         }
         return total;
@@ -381,15 +531,20 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
     /**
      * Gets the count of entries for a specific namespace.
      */
+    @SuppressWarnings("unchecked")
     public int sizeOfNamespace(Object namespace) {
+        if (isVoidNamespace) {
+            // VoidNamespace: return total size
+            return size();
+        }
+        
+        // General Namespace: O(keyGroups) complexity
         int count = 0;
-        for (SwissTable<K, N, S> table : tables) {
-            if (table != null) {
-                for (Iterator<SwissTable.Entry<K, N, S>> it = table.iterator(); it.hasNext(); ) {
-                    SwissTable.Entry<K, N, S> entry = it.next();
-                    if (Objects.equals(namespace, entry.getNamespace())) {
-                        count++;
-                    }
+        for (Map<N, SwissTable<K, S>> nsMap : namespaceMaps) {
+            if (nsMap != null) {
+                SwissTable<K, S> table = nsMap.get((N) namespace);
+                if (table != null) {
+                    count += table.size();
                 }
             }
         }
@@ -399,10 +554,55 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
     // ========== Internal Helpers ==========
 
     /**
-     * Gets the raw table array for snapshot purposes.
+     * Checks if this store uses VoidNamespace mode.
      */
-    SwissTable<K, N, S>[] getTables() {
-        return tables;
+    public boolean isVoidNamespace() {
+        return isVoidNamespace;
+    }
+
+    /**
+     * Gets the direct table for a key group (VoidNamespace mode only).
+     */
+    SwissTable<K, S> getTableDirect(int keyGroup) {
+        return tables[keyGroup - keyGroupOffset];
+    }
+
+    /**
+     * Gets the namespace map for a key group (General Namespace mode only).
+     */
+    Map<N, SwissTable<K, S>> getNamespaceMap(int keyGroup) {
+        return namespaceMaps[keyGroup - keyGroupOffset];
+    }
+
+    /**
+     * Gets or creates a direct table for a key group (VoidNamespace mode only).
+     */
+    SwissTable<K, S> getOrCreateTableDirect(int keyGroup) {
+        int idx = keyGroup - keyGroupOffset;
+        SwissTable<K, S> table = tables[idx];
+        if (table == null) {
+            table = new SwissTable<>(INITIAL_TABLE_CAPACITY);
+            tables[idx] = table;
+        }
+        return table;
+    }
+
+    /**
+     * Gets or creates a table for a key group and namespace (General Namespace mode only).
+     */
+    SwissTable<K, S> getOrCreateTable(int keyGroup, N namespace) {
+        int idx = keyGroup - keyGroupOffset;
+        Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+        if (nsMap == null) {
+            nsMap = new HashMap<>(8);
+            namespaceMaps[idx] = nsMap;
+        }
+        SwissTable<K, S> table = nsMap.get(namespace);
+        if (table == null) {
+            table = new SwissTable<>(INITIAL_TABLE_CAPACITY);
+            nsMap.put(namespace, table);
+        }
+        return table;
     }
 
     /**

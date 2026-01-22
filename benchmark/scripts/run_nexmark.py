@@ -252,6 +252,9 @@ class NexmarkRunner:
         self.nexmark_config = config.get('nexmark', {})
         self.flink_config = config.get('flink', {})
         
+        # Run mode (benchmark, test, etc.)
+        self.mode = self.nexmark_config.get('mode', 'benchmark')
+        
         # Flink paths
         flink_home_env = os.environ.get('FLINK_HOME')
         if flink_home_env:

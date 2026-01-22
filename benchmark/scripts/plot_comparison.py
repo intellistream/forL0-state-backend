@@ -176,6 +176,41 @@ def plot_chart(results, output_file):
     add_value_labels(bars1, forl0_errors)
     add_value_labels(bars2, heap_errors)
     
+    # Add performance improvement percentage labels
+    def add_improvement_labels():
+        ymax = max(forl0_scores + heap_scores)
+        for i, (forl0_score, heap_score) in enumerate(zip(forl0_scores, heap_scores)):
+            if forl0_score > 0 and heap_score > 0:
+                # Calculate improvement percentage: (ForL0 - Heap) / Heap * 100
+                improvement = ((forl0_score - heap_score) / heap_score) * 100
+                
+                # Determine label position above the taller bar
+                max_bar_height = max(forl0_score + forl0_errors[i] if i < len(forl0_errors) else forl0_score,
+                                   heap_score + heap_errors[i] if i < len(heap_errors) else heap_score)
+                label_y = max_bar_height + (ymax * 0.05)
+                
+                # Format improvement text with color coding
+                if improvement > 0:
+                    color = '#2E8B57'  # SeaGreen for positive improvement
+                    text = f'+{improvement:.1f}%'
+                elif improvement < 0:
+                    color = '#DC143C'  # Crimson for negative performance
+                    text = f'{improvement:.1f}%'
+                else:
+                    color = '#696969'  # Gray for no change
+                    text = '0.0%'
+                
+                # Add the percentage label
+                ax.annotate(text,
+                           xy=(i, label_y),
+                           ha='center', va='bottom',
+                           fontsize=9, fontweight='bold',
+                           color=color,
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                   edgecolor=color, alpha=0.8))
+    
+    add_improvement_labels()
+    
     # Customize plot to match reference
     ax.set_ylabel('Throughput (ops/ms)', fontsize=13)
     ax.set_title('Flink State Backend Benchmark Comparison', fontsize=15)
@@ -200,10 +235,10 @@ def plot_chart(results, output_file):
     # X-axis labels rotated like reference image
     ax.set_xticklabels(clean_names, rotation=45, ha='right', fontsize=10)
     
-    # Adjust y-axis to make room for labels
+    # Adjust y-axis to make room for labels and improvement percentages
     ymax = max(forl0_scores + heap_scores)
     max_error = max(forl0_errors + heap_errors) if forl0_errors and heap_errors else 0
-    ax.set_ylim(0, (ymax + max_error) * 1.15)
+    ax.set_ylim(0, (ymax + max_error) * 1.25)  # Increased from 1.15 to 1.25 for percentage labels
     
     # Legend at bottom center like reference
     ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), 
