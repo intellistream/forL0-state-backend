@@ -17,9 +17,9 @@ wordcount:
   num_keys: 1000000           # Number of unique keys
   num_records: 1000000000     # Total number of records
   arrival_rate: 0             # 0 = unlimited (full speed)
-  skew_factor: 1.0            # Zipf s parameter
+  skew_factor: 1.1            # Zipf s parameter
   window_size: 5000          # milliseconds (10s)
-  slide_size: 5000           # milliseconds (10s)
+  slide_size: 1000           # milliseconds (10s)
   warmup_duration: 20         # warmup duration in seconds (0 to disable)
 
 # NexMark benchmark settings
@@ -27,19 +27,19 @@ nexmark:
   # NexMark queries to run (all stateful queries for full benchmark)
   queries: "q4,q5,q7,q8,q9,q11,q12,q18,q19,q20"
   # Data volume per query (as specified in test plan)
-  q4_events: 80000000         # 8000万
-  q5_events: 80000000         # 8000万
-  q7_events: 80000000         # 8000万
-  q8_events: 100000000        # 1亿
-  q9_events: 40000000         # 4000万
-  q11_events: 80000000        # 8000万
-  q12_events: 80000000        # 8000万
-  q18_events: 80000000        # 8000万
-  q19_events: 80000000        # 8000万
-  q20_events: 60000000        # 6000万
+  q4_events: 160000000         # 8000万
+  q5_events: 160000000         # 8000万
+  q7_events: 160000000         # 8000万
+  q8_events: 200000000        # 1亿
+  q9_events: 80000000         # 4000万
+  q11_events: 160000000        # 8000万
+  q12_events: 160000000        # 8000万
+  q18_events: 160000000        # 8000万
+  q19_events: 160000000        # 8000万
+  q20_events: 80000000        # 6000万
   tps: 0                      # events per second (0 = unlimited)
-  warmup_events: 10000000     # warmup events
-  warmup_duration: 20         # warmup duration in seconds
+  warmup_events: 0     # warmup events
+  warmup_duration: 0         # warmup duration in seconds
   # Event proportions (Nexmark default: Person:Auction:Bid = 1:3:46)
   person_proportion: 1
   auction_proportion: 3

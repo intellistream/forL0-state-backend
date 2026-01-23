@@ -253,7 +253,6 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
             // Get slot and apply transformation directly
             int slot = result & SwissTable.SLOT_MASK;
             int valueIdx = (slot << 1) + 1;
-            @SuppressWarnings("unchecked")
             S oldState = (S) table.entries[valueIdx];
             table.entries[valueIdx] = transformation.apply(oldState, value);
             return;
