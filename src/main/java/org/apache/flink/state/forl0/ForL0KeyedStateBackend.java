@@ -503,15 +503,8 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                     keyContext.getKeyGroupRange(),
                     (TypeSerializer<Integer>) keySerializer,
                     (RegisteredKeyValueStateBackendMetaInfo<N, V>) metaInfo);
-        } else if (serializerName.contains("String")) {
-            // String key specialization
-            LOG.debug("[ForL0] Using specialized SwissTableString for String keys");
-            return (ForL0StateStore<K, N, V>) new ForL0StateStoreString<>(
-                    keyContext.getKeyGroupRange(),
-                    (TypeSerializer<String>) keySerializer,
-                    (RegisteredKeyValueStateBackendMetaInfo<N, V>) metaInfo);
         } else {
-            // Fallback to generic implementation
+            // Fallback to generic implementation (including String keys)
             LOG.debug("[ForL0] Using generic SwissTable for {} keys", serializerName);
             return new ForL0StateStore<>(
                     keyContext.getKeyGroupRange(),
