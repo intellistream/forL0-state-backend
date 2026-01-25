@@ -87,23 +87,9 @@ public class SwissTable<K, S> {
         this.growthLeft = maxOcc(slotCount);
     }
 
-    // ========== Hash functions (aligned with hash-smith SwissMap) ==========
-
-    /**
-     * H1: High 25 bits (for 32-bit hash), used for probe starting group.
-     * Aligned with hash-smith: h1(hash) = hash >>> 7
-     */
-    static int h1(int hash) {
-        return hash >>> 7;
-    }
-
-    /**
-     * H2: Low 7 bits, stored in ctrl byte.
-     * Aligned with hash-smith: h2(hash) = hash & 0x7F
-     */
-    static int h2(int hash) {
-        return hash & 0x7F;
-    }
+    // ========== Hash Layout (aligned with hash-smith SwissMap) ==========
+    // H1 = hash >>> 7  (high 25 bits for probe starting group)
+    // H2 = hash & 0x7F (low 7 bits stored in ctrl byte)
 
     // ========== Core Operations ==========
 
@@ -116,9 +102,8 @@ public class SwissTable<K, S> {
      */
     @SuppressWarnings("unchecked")
     public S get(int hash, K key) {
-        int h2Hash = h2(hash);
-        long h2Pattern = LSB * (h2Hash & 0xFFL);  // Inline broadcast
-        int group = h1(hash) & groupMask;
+        long h2Pattern = LSB * (hash & 0x7FL);  // h2 broadcast to 8 lanes
+        int group = (hash >>> 7) & groupMask;
         int stride = 1;
 
         while (true) {
@@ -166,9 +151,8 @@ public class SwissTable<K, S> {
      * @return slot encoding or NEED_REHASH/NEED_GROW
      */
     public int put(int hash, K key) {
-        int h2Hash = h2(hash);
-        long h2Pattern = LSB * (h2Hash & 0xFFL);  // Inline broadcast
-        int group = h1(hash) & groupMask;
+        long h2Pattern = LSB * (hash & 0x7FL);  // h2 broadcast to 8 lanes
+        int group = (hash >>> 7) & groupMask;
         int stride = 1;
         int firstDeletedSlot = -1;
 
@@ -226,7 +210,7 @@ public class SwissTable<K, S> {
                 int insertIdx = insertSlot << 1;
                 entries[insertIdx] = key;
                 // entries[insertIdx + 1] is set by caller
-                ctrl[insertSlot] = (byte) h2Hash;
+                ctrl[insertSlot] = (byte) (hash & 0x7F);
                 hashes[insertSlot] = hash;  // Store hash for rehash/grow
                 used++;
 
@@ -254,9 +238,8 @@ public class SwissTable<K, S> {
      */
     @SuppressWarnings("unchecked")
     public S remove(int hash, K key) {
-        int h2Hash = h2(hash);
-        long h2Pattern = LSB * (h2Hash & 0xFFL);  // Inline broadcast
-        int group = h1(hash) & groupMask;
+        long h2Pattern = LSB * (hash & 0x7FL);  // h2 broadcast to 8 lanes
+        int group = (hash >>> 7) & groupMask;
         int stride = 1;
 
         while (true) {
@@ -317,8 +300,7 @@ public class SwissTable<K, S> {
      * @param value the value
      */
     public void putDirect(int hash, K key, S value) {
-        int h2Hash = h2(hash);
-        int group = h1(hash) & groupMask;
+        int group = (hash >>> 7) & groupMask;
         int stride = 1;
 
         while (true) {
@@ -329,7 +311,7 @@ public class SwissTable<K, S> {
                 int idx = slot << 1;
                 entries[idx] = key;
                 entries[idx + 1] = value;
-                ctrl[slot] = (byte) h2Hash;
+                ctrl[slot] = (byte) (hash & 0x7F);  // h2
                 hashes[slot] = hash;  // Store hash
                 used++;
                 growthLeft--;
@@ -379,8 +361,7 @@ public class SwissTable<K, S> {
      */
     private void insertForRehash(byte[] newCtrl, Object[] newEntries, int[] newHashes,
                                   int newGroupMask, int hash, Object key, Object value) {
-        int h2Hash = h2(hash);
-        int group = h1(hash) & newGroupMask;
+        int group = (hash >>> 7) & newGroupMask;
         int stride = 1;
 
         while (true) {
@@ -392,7 +373,7 @@ public class SwissTable<K, S> {
                     newEntries[idx] = key;
                     newEntries[idx + 1] = value;
                     newHashes[slot] = hash;
-                    newCtrl[slot] = (byte) h2Hash;
+                    newCtrl[slot] = (byte) (hash & 0x7F);  // h2
                     return;
                 }
             }

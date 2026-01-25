@@ -1,21 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.apache.flink.state.forl0;
 
 import org.apache.flink.annotation.VisibleForTesting;
@@ -264,10 +246,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                             ? newMetaInfo.withSerializerUpgradesAllowed()
                             : newMetaInfo;
 
-            stateStore = new ForL0StateStore<>(
-                    keyContext.getKeyGroupRange(),
-                    keySerializer,
-                    newMetaInfo);
+            stateStore = createStateStore(keySerializer, newMetaInfo);
             registeredStores.put(stateDesc.getName(), stateStore);
         }
 
@@ -489,6 +468,56 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
      */
     ForL0KeyContext<K> getForL0KeyContext() {
         return forl0KeyContext;
+    }
+
+    /**
+     * Creates a StateStore with appropriate specialization based on key type.
+     * 
+     * <p>Specialization priority:
+     * <ul>
+     *   <li>Long keys → ForL0StateStoreLong (most common in Nexmark)</li>
+     *   <li>Integer keys → ForL0StateStoreInt</li>
+     *   <li>String keys → ForL0StateStoreString</li>
+     *   <li>Other types → Generic ForL0StateStore</li>
+     * </ul>
+     */
+    @SuppressWarnings("unchecked")
+    private <N, V> ForL0StateStore<K, N, V> createStateStore(
+            TypeSerializer<K> keySerializer,
+            RegisteredKeyValueStateBackendMetaInfo<N, V> metaInfo) {
+        
+        // Detect key type from serializer class name
+        String serializerName = keySerializer.getClass().getSimpleName();
+        
+        if (serializerName.contains("Long")) {
+            // Long key specialization
+            LOG.debug("[ForL0] Using specialized SwissTableLong for Long keys");
+            return (ForL0StateStore<K, N, V>) new ForL0StateStoreLong<>(
+                    keyContext.getKeyGroupRange(),
+                    (TypeSerializer<Long>) keySerializer,
+                    (RegisteredKeyValueStateBackendMetaInfo<N, V>) metaInfo);
+        } else if (serializerName.contains("Int") && !serializerName.contains("Interval")) {
+            // Integer key specialization
+            LOG.debug("[ForL0] Using specialized SwissTableInt for Integer keys");
+            return (ForL0StateStore<K, N, V>) new ForL0StateStoreInt<>(
+                    keyContext.getKeyGroupRange(),
+                    (TypeSerializer<Integer>) keySerializer,
+                    (RegisteredKeyValueStateBackendMetaInfo<N, V>) metaInfo);
+        } else if (serializerName.contains("String")) {
+            // String key specialization
+            LOG.debug("[ForL0] Using specialized SwissTableString for String keys");
+            return (ForL0StateStore<K, N, V>) new ForL0StateStoreString<>(
+                    keyContext.getKeyGroupRange(),
+                    (TypeSerializer<String>) keySerializer,
+                    (RegisteredKeyValueStateBackendMetaInfo<N, V>) metaInfo);
+        } else {
+            // Fallback to generic implementation
+            LOG.debug("[ForL0] Using generic SwissTable for {} keys", serializerName);
+            return new ForL0StateStore<>(
+                    keyContext.getKeyGroupRange(),
+                    keySerializer,
+                    metaInfo);
+        }
     }
 
     private interface StateCreateFactory {
