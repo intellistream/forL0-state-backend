@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from run_wordcount import run_wordcount, save_result
 from run_nexmark import NexmarkRunner
 from run_unittest import run_unittest
+from run_benchset import run_benchset, print_benchset_summary, BENCHMARKS as BENCHSET_BENCHMARKS
 from utils.config import load_config
 
 
@@ -28,7 +29,8 @@ def run_all_benchmarks(config, backends, profile=False):
     results = {
         'wordcount': {},
         'nexmark': {},
-        'unittest': {}
+        'unittest': {},
+        'benchset': {}
     }
     
     for backend in backends:
@@ -233,7 +235,7 @@ Examples:
         """
     )
     
-    parser.add_argument('--test', choices=['unittest', 'wordcount', 'nexmark', 'all'], default='all',
+    parser.add_argument('--test', choices=['unittest', 'wordcount', 'nexmark', 'benchset', 'all'], default='all',
                        help='Test to run (default: all)')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='all',
                        help='State backend to use (default: all)')
@@ -277,7 +279,7 @@ Examples:
         print(f"Mini-batch: ENABLED (buffer + sort by key, no pre-aggregation)")
     print("=" * 60)
     
-    results = {'unittest': {}, 'wordcount': {}, 'nexmark': {}}
+    results = {'unittest': {}, 'wordcount': {}, 'nexmark': {}, 'benchset': {}}
     
     # Run Unit Test benchmarks
     if args.test in ['unittest', 'all']:
@@ -337,6 +339,30 @@ Examples:
             print("  cd benchmark/nexmark-src && mvn clean package -DskipTests")
         except Exception as e:
             print(f"\n[Error] NexMark failed: {e}")
+    
+    # Run Benchset (realistic business scenarios)
+    if args.test in ['benchset', 'all']:
+        print("\n" + "=" * 60)
+        print("Running Benchset (Realistic Business Scenarios)")
+        print("=" * 60)
+        try:
+            benchset_results = run_benchset(
+                config, 
+                backends, 
+                BENCHSET_BENCHMARKS,
+                profile_mode=args.profile
+            )
+            results['benchset'] = benchset_results
+            # Print benchset-specific summary
+            print_benchset_summary(benchset_results, backends)
+        except FileNotFoundError as e:
+            print(f"\n[Warning] Benchset not available: {e}")
+            print("To run Benchset, first compile it:")
+            print("  cd benchmark/benchset && mvn clean package -DskipTests")
+        except Exception as e:
+            print(f"\n[Error] Benchset failed: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Print summary
     print_summary(results, backends)

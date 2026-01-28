@@ -18,21 +18,31 @@
 
 package org.apache.flink.benchmark.wordcount;
 
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.benchmark.wordcount.sink.MetricsSink;
 import org.apache.flink.benchmark.wordcount.source.SkewedWordSource;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
-
-import java.time.Duration;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.util.Collector;
 
 /**
- * Sliding Window WordCount Benchmark.
+ * Stateful WordCount Benchmark (State-Backend Focused).
  * 
  * <p>This benchmark measures the performance of Flink StateBackend implementations
- * using a sliding window word count workload with skewed data distribution.
+ * using a stateful word count workload that maximizes state access overhead.
+ * 
+ * <p>Key design for StateBackend benchmarking:
+ * <ul>
+ *   <li>Uses KeyedProcessFunction with ValueState (VoidNamespace) instead of windows</li>
+ *   <li>No Timer overhead - pure state access</li>
+ *   <li>Each record triggers one state read + one state write</li>
+ *   <li>High key cardinality to stress the state backend</li>
+ * </ul>
  * 
  * <p>Metrics collected:
  * <ul>
@@ -46,8 +56,6 @@ import java.time.Duration;
  *   --numKeys 1000000 \
  *   --numRecords 100000000 \
  *   --skewFactor 1.1 \
- *   --windowSize 5000 \
- *   --slideSize 200 \
  *   --parallelism 8
  * </pre>
  */
@@ -60,9 +68,7 @@ public class WordCountBenchmark {
         int numKeys = params.getInt("numKeys", 1_000_000);
         long numRecords = params.getLong("numRecords", 100_000_000L);
         double skewFactor = params.getDouble("skewFactor", 1.1);
-        int arrivalRate = params.getInt("arrivalRate", 230_000);  // records/s, 0 = unlimited
-        int windowSizeMillis = params.getInt("windowSize", 5000);  // milliseconds
-        int slideSizeMillis = params.getInt("slideSize", 200);    // milliseconds
+        int arrivalRate = params.getInt("arrivalRate", 0);  // records/s, 0 = unlimited (default: unlimited for max throughput)
         int parallelism = params.getInt("parallelism", 8);
         String outputPath = params.get("output", null);
         String backend = params.get("backend", "unknown");
@@ -71,8 +77,9 @@ public class WordCountBenchmark {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
         
-        // Enable checkpointing if specified
-        int checkpointInterval = params.getInt("checkpointInterval", 10000);
+        // Disable checkpointing by default to avoid Copy-on-Write overhead
+        // This gives cleaner state backend performance comparison
+        int checkpointInterval = params.getInt("checkpointInterval", 0);
         if (checkpointInterval > 0) {
             env.enableCheckpointing(checkpointInterval);
         }
@@ -82,15 +89,12 @@ public class WordCountBenchmark {
             .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
             .name("SkewedKeySource");
         
-        // Sliding window key count
+        // Stateful count using KeyedProcessFunction with ValueState
+        // This uses VoidNamespace and has no Timer overhead
         DataStream<Tuple2<Long, Long>> result = source
             .keyBy(t -> t.f0)
-            .window(SlidingProcessingTimeWindows.of(
-                Duration.ofMillis(windowSizeMillis),
-                Duration.ofMillis(slideSizeMillis)
-            ))
-            .sum(1)
-            .name("SlidingWindowCount");
+            .process(new StatefulCounter())
+            .name("StatefulCounter");
         
         // Metrics sink
         result.addSink(new MetricsSink(outputPath, parallelism, backend, numRecords))
@@ -98,16 +102,59 @@ public class WordCountBenchmark {
             .setParallelism(1);
         
         // Execute
-        System.out.println("=== WordCount Benchmark ===");
+        System.out.println("=== Stateful WordCount Benchmark (StateBackend Focused) ===");
         System.out.println("numKeys: " + numKeys);
         System.out.println("numRecords: " + numRecords);
         System.out.println("skewFactor: " + skewFactor);
         System.out.println("arrivalRate: " + (arrivalRate > 0 ? arrivalRate + " records/s" : "unlimited"));
-        System.out.println("windowSize: " + windowSizeMillis + "ms");
-        System.out.println("slideSize: " + slideSizeMillis + "ms");
         System.out.println("parallelism: " + parallelism);
-        System.out.println("===========================");
+        System.out.println("checkpointing: " + (checkpointInterval > 0 ? checkpointInterval + "ms" : "disabled"));
+        System.out.println("============================================================");
         
-        env.execute("WordCount Benchmark");
+        env.execute("Stateful WordCount Benchmark");
+    }
+    
+    /**
+     * Stateful counter using ValueState.
+     * 
+     * <p>Each record triggers:
+     * <ul>
+     *   <li>One state read: countState.value()</li>
+     *   <li>One state write: countState.update()</li>
+     * </ul>
+     * 
+     * <p>Uses VoidNamespace (default for ValueState), which allows ForL0 to use
+     * direct SwissTable access without HashMap overhead.
+     */
+    public static class StatefulCounter 
+            extends KeyedProcessFunction<Long, Tuple2<Long, Long>, Tuple2<Long, Long>> {
+        
+        private static final long serialVersionUID = 1L;
+        
+        private transient ValueState<Long> countState;
+        
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            countState = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("count", Long.class));
+        }
+        
+        @Override
+        public void processElement(
+                Tuple2<Long, Long> value, 
+                Context ctx, 
+                Collector<Tuple2<Long, Long>> out) throws Exception {
+            // State read
+            Long currentCount = countState.value();
+            
+            // Compute new count
+            long newCount = (currentCount == null) ? value.f1 : currentCount + value.f1;
+            
+            // State write
+            countState.update(newCount);
+            
+            // Emit result
+            out.collect(Tuple2.of(value.f0, newCount));
+        }
     }
 }

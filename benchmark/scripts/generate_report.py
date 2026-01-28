@@ -1329,9 +1329,10 @@ def generate_report(results, output_dir):
         
         <!-- WordCount Section -->
         <div class="section">
-            <h2>📝 WordCount Benchmark</h2>
+            <h2>📝 Stateful WordCount Benchmark</h2>
             
             <h3>Configuration</h3>
+            <p class="note">Uses KeyedProcessFunction + ValueState (VoidNamespace) for pure state access testing.</p>
             <div class="config-grid">
                 <div class="config-item">
                     <div class="label">Key Count</div>
@@ -1342,16 +1343,12 @@ def generate_report(results, output_dir):
                     <div class="value">{{ wc_config.num_records | default('N/A') }}</div>
                 </div>
                 <div class="config-item">
-                    <div class="label">Window Size</div>
-                    <div class="value">{{ wc_config.window_size | default('5000') }}ms</div>
-                </div>
-                <div class="config-item">
-                    <div class="label">Slide Size</div>
-                    <div class="value">{{ wc_config.slide_size | default('200') }}ms</div>
-                </div>
-                <div class="config-item">
                     <div class="label">Skew Factor</div>
-                    <div class="value">{{ wc_config.skew_factor | default('1.1') }}</div>
+                    <div class="value">{{ wc_config.skew_factor | default('0') }}</div>
+                </div>
+                <div class="config-item">
+                    <div class="label">Arrival Rate</div>
+                    <div class="value">{{ wc_config.arrival_rate | default('unlimited') }}</div>
                 </div>
             </div>
             

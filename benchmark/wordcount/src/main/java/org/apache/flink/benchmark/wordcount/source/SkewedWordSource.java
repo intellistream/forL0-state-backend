@@ -87,8 +87,10 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<Long, Lo
             ? numRecords  // Last subtask handles remaining records
             : startRecord + recordsPerSubtask;
         
-        // Create Zipf distribution for skewed key selection
-        ZipfDistribution zipf = new ZipfDistribution(numKeys, skewFactor);
+        // Create distribution for key selection
+        // When skewFactor <= 0, use uniform distribution; otherwise use Zipf distribution
+        final boolean useUniform = skewFactor <= 0;
+        ZipfDistribution zipf = useUniform ? null : new ZipfDistribution(numKeys, skewFactor);
         Random random = new Random(subtaskIndex);  // Seed for reproducibility
         
         // Rate limiting: calculate per-subtask rate
@@ -101,9 +103,8 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<Long, Lo
         long lastBatchTime = System.nanoTime();
         
         while (running && count < (endRecord - startRecord)) {
-            // Generate key using Zipf distribution
-            int keyIndex = zipf.sample();
-            long key = (long) keyIndex;
+            // Generate key using uniform or Zipf distribution
+            long key = useUniform ? random.nextInt(numKeys) : zipf.sample();
             
             // Emit record: (key, 1L)
             synchronized (ctx.getCheckpointLock()) {

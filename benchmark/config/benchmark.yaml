@@ -13,14 +13,72 @@ runtime:
   checkpoint_interval: 0      # ms (0 = disabled)
   
 # WordCount benchmark settings
+# Uses KeyedProcessFunction + ValueState (VoidNamespace) for pure state access testing
+# No window/timer overhead - maximizes state backend impact on performance
 wordcount:
-  num_keys: 1000000           # Number of unique keys
-  num_records: 1000000000     # Total number of records
-  arrival_rate: 0             # 0 = unlimited (full speed)
-  skew_factor: 1.1            # Zipf s parameter
-  window_size: 5000          # milliseconds (10s)
-  slide_size: 1000           # milliseconds (10s)
+  num_keys: 1000000           # Number of unique keys (high cardinality for SwissTable)
+  num_records: 1500000000     # Total number of records
+  arrival_rate: 0             # 0 = unlimited (full speed for max throughput)
+  skew_factor: 0              # Zipf s parameter (0 = uniform distribution)
   warmup_duration: 20         # warmup duration in seconds (0 to disable)
+
+# Benchmark Set - Realistic business scenarios for ForL0 StateBackend
+# All benchmarks use Long keys to trigger SwissTableLong specialization
+# Design principle: All ValueState (ForL0's sweet spot), high cardinality, uniform distribution
+benchset:
+  # Real-time Session Analytics: Track session metrics in real-time
+  # Business: Web/App analytics, each session has multiple metrics
+  # Pattern: 50M sessions, 3 ValueStates, 6 ops/record, ~85% NEW ratio
+  adclick:
+    num_keys: 50000000        # 50M unique sessions (very high cardinality)
+    num_records: 1000000000   # 1B events
+    skew_factor: 0            # Uniform (maximize NEW ratio)
+    arrival_rate: 0           # Unlimited throughput
+  
+  # Real-time Fraud Detection: Multi-feature risk scoring
+  # Business: Credit card fraud detection, each transaction checks multiple risk indicators
+  # Pattern: 30M transactions, 5 ValueStates, 10 ops/record, ~80% NEW ratio
+  userprofile:
+    num_keys: 30000000        # 30M unique transaction IDs
+    num_records: 1000000000   # 1B transactions
+    skew_factor: 0            # Uniform (each transaction mostly unique)
+    arrival_rate: 0           # Unlimited throughput
+  
+  # High-cardinality Event Deduplication: Exactly-once message processing
+  # Business: Message dedup for exactly-once semantics (Kafka/Pulsar)
+  # Pattern: 50M message IDs, 2 ValueStates, 4 ops/record, ~90% NEW ratio
+  iot:
+    num_keys: 50000000        # 50M unique message IDs
+    num_records: 1000000000   # 1B messages
+    skew_factor: 0            # Uniform (each message is unique)
+    arrival_rate: 0           # Unlimited throughput
+  
+  # Stream-Stream Join: Order-Payment matching with high cardinality
+  # Business: E-commerce order-payment reconciliation
+  # Pattern: 60M join keys, 2 ValueStates, 3 ops/record, ~90% NEW ratio
+  order:
+    num_keys: 60000000        # 60M unique order IDs
+    num_records: 1000000000   # 1B join probes
+    skew_factor: 0            # Uniform (each order appears 1-2 times)
+    arrival_rate: 0           # Unlimited throughput
+    skew_factor: 1.0          # Slightly skewed (some users more active)
+    arrival_rate: 0           # Unlimited throughput
+  
+  # IoT Device Metrics: Multi-metric aggregation (count, sum, min, max)
+  # Business: Industrial IoT, smart city monitoring
+  iot:
+    num_keys: 5000000         # 5M devices
+    num_records: 500000000    # 500M sensor readings
+    skew_factor: 0.8          # Slightly skewed (some devices report more)
+    arrival_rate: 0           # Unlimited throughput
+  
+  # Order Status Tracking: State transitions, high cardinality
+  # Business: E-commerce order tracking, logistics
+  order:
+    num_keys: 10000000        # 10M orders
+    num_records: 500000000    # 500M status updates
+    skew_factor: 0            # Uniform (orders are independent)
+    arrival_rate: 0           # Unlimited throughput
 
 # NexMark benchmark settings
 nexmark:
@@ -50,7 +108,7 @@ unittest:
   num_keys: 10000000             # Number of unique keys
   state_size: 64              # State value size in bytes
   num_operations: 1000000000   # Total number of operations
-  zipf_exponent: 1.5          # 0 = uniform, >0 = Zipf distribution
+  zipf_exponent: 0          # 0 = uniform, >0 = Zipf distribution
   arrival_rate: 0             # ops/sec, 0 = unlimited
 
 # State backends to compare

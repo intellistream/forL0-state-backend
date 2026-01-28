@@ -405,21 +405,17 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
     forl0_args = get_forl0_config_args(config, backend)
     cmd.extend(forl0_args)
     
-    # Set up latency samples directory
-    latency_dir = get_results_dir('latency')
-    
     # Add JAR and arguments
+    # WordCount now uses KeyedProcessFunction + ValueState (VoidNamespace)
+    # No window parameters needed - pure state access testing
     cmd.extend([
         jar_path,
         '--numKeys', str(wc_config.get('num_keys', 1000000)),
         '--numRecords', str(wc_config.get('num_records', 100000000)),
-        '--arrivalRate', str(wc_config.get('arrival_rate', 230000)),
-        '--skewFactor', str(wc_config.get('skew_factor', 1.1)),
-        '--windowSize', str(wc_config.get('window_size', 5)),
-        '--slideSize', str(wc_config.get('slide_size', 200)),
+        '--arrivalRate', str(wc_config.get('arrival_rate', 0)),
+        '--skewFactor', str(wc_config.get('skew_factor', 0)),
         '--parallelism', str(runtime_config.get('parallelism', 2)),
-        '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 10000)),
-        '--latencyDir', str(latency_dir),
+        '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 0)),
         '--backend', backend,
     ])
     
