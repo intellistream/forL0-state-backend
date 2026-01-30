@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Run ForL0 Benchmark Set - Realistic business scenarios.
+Run ForL0 Benchmark Set v4 - High state pressure realistic business scenarios.
 
 This script runs a comprehensive benchmark set designed to demonstrate
 ForL0 StateBackend's advantages with Long keys (SwissTableLong specialization).
 
 Available benchmarks:
-  - adclick: Ad click deduplication (high cardinality, valueAdd heavy)
-  - userprofile: User profile updates (4 ValueStates, 8 ops/record)
-  - iot: IoT metrics aggregation (count, sum, min, max)
-  - order: Order status tracking (state transitions)
+  - fraud:     Fraud Detection - 7 states, 23 ops/record (ValueState + MapState)
+  - recommend: Realtime Recommendation - 6 states, 18 ops/record (MapState dominant)
+  - metric:    Multi-Metric Aggregation - 10 states, 20 ops/record (Pure ValueState)
+  - session:   Session Sequence - 5 states, 15 ops/record (Ring Buffer pattern)
+  - join:      Multi-Stream Join - 8 states, 25 ops/record (Scan-based matching)
 
 Usage:
-    python run_benchset.py --backend all                    # Run all benchmarks
-    python run_benchset.py --backend forl0 --benchmark iot  # Single benchmark
-    python run_benchset.py --backend all --profile cpu      # With flame graphs
+    python run_benchset.py --backend all                        # Run all benchmarks
+    python run_benchset.py --backend forl0 --benchmark fraud    # Single benchmark
+    python run_benchset.py --backend all --profile cpu          # With flame graphs
 """
 
 import argparse
@@ -32,13 +33,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.config import (
     load_config, get_benchmark_root,
     get_flink_home, get_results_dir,
-    get_timestamp, parse_json_from_output, save_result
+    get_timestamp, save_result
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
-# Benchmark configurations
-BENCHMARKS = ['adclick', 'userprofile', 'iot', 'order']
+# Benchmark configurations (v4)
+BENCHMARKS = ['fraud', 'recommend', 'metric', 'session', 'join']
 
 
 def get_benchset_jar() -> Optional[str]:
@@ -59,8 +60,18 @@ def check_flink_cluster(rest_url: str) -> bool:
         return False
 
 
-def submit_job_and_wait(cmd: list, rest_url: str, timeout: int = 7200) -> Optional[dict]:
-    """Submit job asynchronously, wait for completion, and return results."""
+def submit_job_and_wait(cmd: list, rest_url: str, num_records: int, timeout: int = 7200) -> Optional[dict]:
+    """Submit job asynchronously, wait for completion, and return results.
+    
+    Args:
+        cmd: Flink run command
+        rest_url: Flink REST API URL
+        num_records: Number of input records (for throughput calculation)
+        timeout: Job timeout in seconds
+        
+    Returns:
+        Result dict with throughput = numRecords / time
+    """
     
     # Submit in detached mode
     detached_cmd = cmd.copy()
@@ -110,7 +121,10 @@ def submit_job_and_wait(cmd: list, rest_url: str, timeout: int = 7200) -> Option
                 
                 if state in ['FINISHED', 'FAILED', 'CANCELED']:
                     if state == 'FINISHED':
-                        return parse_results_from_logs(get_flink_home())
+                        # Get job duration from REST API
+                        duration_ms = status.get('duration', 0)
+                        duration_sec = duration_ms / 1000.0
+                        return calculate_throughput(num_records, duration_sec)
                     return None
         except Exception:
             pass
@@ -121,25 +135,27 @@ def submit_job_and_wait(cmd: list, rest_url: str, timeout: int = 7200) -> Option
     return None
 
 
-def parse_results_from_logs(flink_home: str) -> Optional[dict]:
-    """Parse benchmark results from TaskManager stdout."""
-    import glob
+def calculate_throughput(num_records: int, duration_sec: float) -> Optional[dict]:
+    """Calculate throughput from num_records and duration.
     
-    log_pattern = f"{flink_home}/log/*taskexecutor*.out"
-    log_files = glob.glob(log_pattern)
-    
-    if not log_files:
-        return None
-    
-    log_file = max(log_files, key=lambda f: Path(f).stat().st_mtime)
-    
-    try:
-        with open(log_file, 'r') as f:
-            content = f.read()
+    Args:
+        num_records: Number of input records
+        duration_sec: Job duration in seconds
         
-        return parse_json_from_output(content)
-    except Exception:
+    Returns:
+        Result dict with throughput = num_records / duration
+    """
+    if duration_sec <= 0:
+        print("  WARN: Invalid duration")
         return None
+    
+    throughput = num_records / duration_sec
+    
+    return {
+        'total_records': num_records,
+        'time_seconds': duration_sec,
+        'throughput': throughput
+    }
 
 
 def run_single_benchmark(
@@ -153,7 +169,7 @@ def run_single_benchmark(
     Args:
         config: Benchmark configuration
         backend: State backend ('hashmap' or 'forl0')
-        benchmark_name: Benchmark name ('adclick', 'userprofile', 'iot', 'order')
+        benchmark_name: Benchmark name ('fraud', 'profile', 'attrib', 'join', 'inventory')
         profile_mode: Profiling mode ('cpu', 'cache', None)
         
     Returns:
@@ -198,7 +214,7 @@ def run_single_benchmark(
     num_keys = benchmark_config.get('num_keys', 1000000)
     num_records = benchmark_config.get('num_records', 100000000)
     skew_factor = benchmark_config.get('skew_factor', 0)
-    arrival_rate = benchmark_config.get('arrival_rate', 0)
+    batch_size = benchmark_config.get('batch_size', 10)
     
     # Add JAR and arguments
     cmd.extend([
@@ -206,8 +222,8 @@ def run_single_benchmark(
         '--benchmark', benchmark_name,
         '--numKeys', str(num_keys),
         '--numRecords', str(num_records),
-        '--arrivalRate', str(arrival_rate),
         '--skewFactor', str(skew_factor),
+        '--batchSize', str(batch_size),
         '--parallelism', str(runtime_config.get('parallelism', 8)),
         '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 0)),
         '--backend', backend,
@@ -216,7 +232,8 @@ def run_single_benchmark(
     print(f"\n=== Running {benchmark_name.upper()} Benchmark ({backend}) ===")
     print(f"  numKeys: {num_keys:,}")
     print(f"  numRecords: {num_records:,}")
-    print(f"  skewFactor: {skew_factor}")
+    if benchmark_name in ['fraud', 'inventory']:
+        print(f"  batchSize/warehouses: {batch_size}")
     print(f"  Command: {' '.join(cmd[:6])} ... {benchmark_name}\n")
     
     # Initialize profiler if enabled
@@ -241,7 +258,9 @@ def run_single_benchmark(
     
     try:
         # Submit job and wait for results
-        result = submit_job_and_wait(cmd, rest_url)
+        # Throughput = numRecords / time_seconds
+        parallelism = runtime_config.get('parallelism', 8)
+        result = submit_job_and_wait(cmd, rest_url, num_records)
         
         # Stop profiler
         if profiler and tm_pids:
@@ -251,6 +270,8 @@ def run_single_benchmark(
         if result:
             result['backend'] = backend
             result['benchmark'] = benchmark_name
+            result['parallelism'] = parallelism
+            result['throughput_per_core'] = result['throughput'] / parallelism
             print(f"\n  Result: {result.get('throughput', 0):,.0f} records/s")
             print(f"          {result.get('throughput_per_core', 0):,.0f} records/s/core")
         
