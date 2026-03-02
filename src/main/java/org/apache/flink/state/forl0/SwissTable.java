@@ -448,6 +448,38 @@ public class SwissTable<K, S> {
     // ========== Iteration Support ==========
 
     /**
+     * Functional interface for zero-allocation entry traversal.
+     */
+    @FunctionalInterface
+    public interface EntryConsumer<K, S> {
+        void accept(K key, S value) throws Exception;
+    }
+
+    /**
+     * Iterates over all entries without allocating any objects.
+     * Uses SWAR parallel matching to skip empty/deleted groups efficiently.
+     *
+     * @param consumer callback for each key-value pair
+     */
+    @SuppressWarnings("unchecked")
+    public <E extends Exception> void forEachEntry(EntryConsumer<K, S> consumer) throws E {
+        int groupCount = capacity >>> 3;
+        for (int g = 0; g < groupCount; g++) {
+            long ctrlWord = loadCtrlWord(g);
+            for (long fullMask = matchFull(ctrlWord); fullMask != 0; fullMask &= fullMask - 1) {
+                int lane = (int) (Long.numberOfTrailingZeros(fullMask) >>> 3);
+                int slot = (g << 3) + lane;
+                int idx = slot << 1;
+                try {
+                    consumer.accept((K) entries[idx], (S) entries[idx + 1]);
+                } catch (Exception e) {
+                    throw (E) e;
+                }
+            }
+        }
+    }
+
+    /**
      * Collects all keys into the given list.
      */
     @SuppressWarnings("unchecked")
@@ -484,23 +516,33 @@ public class SwissTable<K, S> {
 
     /**
      * Iterator over all entries in the table.
+     * Uses SWAR parallel matching to efficiently skip empty/deleted groups.
      */
     private class EntryIterator implements Iterator<Entry<K, S>> {
-        private int nextIndex = 0;
+        private int currentGroup = 0;
+        private long currentFullMask;
+        private final int groupCount;
 
         EntryIterator() {
-            advanceToNext();
+            this.groupCount = capacity >>> 3;
+            advanceToNextFullSlot();
         }
 
-        private void advanceToNext() {
-            while (nextIndex < capacity && !isFull(ctrl[nextIndex])) {
-                nextIndex++;
+        private void advanceToNextFullSlot() {
+            while (currentGroup < groupCount) {
+                if (currentFullMask == 0) {
+                    currentFullMask = matchFull(loadCtrlWord(currentGroup));
+                }
+                if (currentFullMask != 0) {
+                    return;
+                }
+                currentGroup++;
             }
         }
 
         @Override
         public boolean hasNext() {
-            return nextIndex < capacity;
+            return currentFullMask != 0;
         }
 
         @Override
@@ -509,11 +551,18 @@ public class SwissTable<K, S> {
             if (!hasNext()) {
                 throw new NoSuchElementException();
             }
-            int idx = nextIndex << 1;
+            int lane = (int) (Long.numberOfTrailingZeros(currentFullMask) >>> 3);
+            int slot = (currentGroup << 3) + lane;
+            int idx = slot << 1;
             K key = (K) entries[idx];
             S value = (S) entries[idx + 1];
-            nextIndex++;
-            advanceToNext();
+            
+            currentFullMask &= currentFullMask - 1;
+            if (currentFullMask == 0) {
+                currentGroup++;
+                advanceToNextFullSlot();
+            }
+            
             return new Entry<>(key, value);
         }
     }

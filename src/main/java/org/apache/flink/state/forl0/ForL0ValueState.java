@@ -23,6 +23,9 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
     private TypeSerializer<V> valueSerializer;
     private V defaultValue;
     private N currentNamespace;
+    
+    /** Converts RowData values to BinaryRowData for faster checkpoint serialization. */
+    private RowDataBinaryConverter binaryConverter;
 
     ForL0ValueState(
             ForL0StateStore<K, N, V> store,
@@ -37,6 +40,7 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
         this.namespaceSerializer = namespaceSerializer;
         this.valueSerializer = valueSerializer;
         this.defaultValue = defaultValue;
+        this.binaryConverter = RowDataBinaryConverter.create(valueSerializer);
     }
 
     @Override
@@ -52,8 +56,12 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
             clear();
             return;
         }
-        // Direct field access - no virtual method calls
-        store.put(keyContext.currentKey, currentNamespace, value, keyContext.currentKeyGroupIndex);
+        // Convert RowData to BinaryRowData for faster checkpoint serialization.
+        // For BinaryRowData input this is a no-op (instanceof check only).
+        // For GenericRowData input this converts to compact BinaryRowData,
+        // which makes checkpoint serialization O(memcpy) instead of O(n_fields).
+        V stored = binaryConverter.convert(value);
+        store.put(keyContext.currentKey, currentNamespace, stored, keyContext.currentKeyGroupIndex);
     }
 
     @Override
@@ -138,6 +146,7 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
 
     ForL0ValueState<K, N, V> setValueSerializer(TypeSerializer<V> valueSerializer) {
         this.valueSerializer = valueSerializer;
+        this.binaryConverter = RowDataBinaryConverter.create(valueSerializer);
         return this;
     }
 

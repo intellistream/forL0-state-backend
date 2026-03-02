@@ -92,26 +92,31 @@ public class ForL0StateStoreSnapshot<K, N, S> implements IterableStateSnapshot<K
     /**
      * Writer for key-group data.
      * <p>Uses Flink's standard checkpoint format: namespace -> key -> state order.
+     * <p>Optimized: single-pass iteration using forEachInKeyGroup (zero object allocation),
+     * entry count from O(1) SwissTable.size() instead of counting pass.
      */
     private class ForL0StateKeyGroupWriter implements StateKeyGroupWriter {
         @Override
         public void writeStateInKeyGroup(@Nonnull DataOutputView dov, int keyGroupId)
                 throws IOException {
-            Iterable<StateEntry<K, N, S>> entries = store.entries(keyGroupId);
-            
-            // Count entries first
-            int count = 0;
-            for (@SuppressWarnings("unused") StateEntry<K, N, S> entry : entries) {
-                count++;
-            }
-            
-            // Write count and entries (namespace -> key -> state order, same as Flink standard)
+            // O(1) entry count — no counting pass needed
+            int count = store.getEntryCount(keyGroupId);
             dov.writeInt(count);
-            for (StateEntry<K, N, S> entry : entries) {
-                store.getNamespaceSerializer().serialize(entry.getNamespace(), dov);
-                store.getKeySerializer().serialize(entry.getKey(), dov);
-                store.getStateSerializer().serialize(entry.getState(), dov);
+            
+            if (count == 0) {
+                return;
             }
+            
+            // Single-pass zero-allocation iteration
+            final TypeSerializer<N> nsSerializer = store.getNamespaceSerializer();
+            final TypeSerializer<K> kSerializer = store.getKeySerializer();
+            final TypeSerializer<S> sSerializer = store.getStateSerializer();
+            
+            store.forEachInKeyGroup(keyGroupId, (key, namespace, state) -> {
+                nsSerializer.serialize(namespace, dov);
+                kSerializer.serialize(key, dov);
+                sSerializer.serialize(state, dov);
+            });
         }
     }
 }

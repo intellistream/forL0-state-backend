@@ -9,6 +9,7 @@ import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -375,6 +376,66 @@ public class ForL0StateStoreLong<N, S> extends ForL0StateStore<Long, N, S> {
             }
         }
         return total;
+    }
+
+    @Override
+    public final int getEntryCount(int keyGroup) {
+        int idx = keyGroup - keyGroupOffsetLong;
+        
+        if (isVoidNamespaceLong) {
+            SwissTableLong<S> table = tablesLong[idx];
+            return (table == null) ? 0 : table.size();
+        } else {
+            Map<N, SwissTableLong<S>> nsMap = namespaceMapsLong[idx];
+            if (nsMap == null) {
+                return 0;
+            }
+            int count = 0;
+            for (SwissTableLong<S> table : nsMap.values()) {
+                count += table.size();
+            }
+            return count;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public final void forEachInKeyGroup(int keyGroup, StateEntryConsumer<Long, N, S> consumer) throws IOException {
+        int idx = keyGroup - keyGroupOffsetLong;
+        
+        if (isVoidNamespaceLong) {
+            SwissTableLong<S> table = tablesLong[idx];
+            if (table == null || table.isEmpty()) {
+                return;
+            }
+            N voidNs = (N) VoidNamespace.INSTANCE;
+            try {
+                table.<IOException>forEachEntry((key, value) -> consumer.accept(key, voidNs, value));
+            } catch (Exception e) {
+                throwAsIOException(e);
+            }
+        } else {
+            Map<N, SwissTableLong<S>> nsMap = namespaceMapsLong[idx];
+            if (nsMap == null || nsMap.isEmpty()) {
+                return;
+            }
+            for (Map.Entry<N, SwissTableLong<S>> nsEntry : nsMap.entrySet()) {
+                N namespace = nsEntry.getKey();
+                SwissTableLong<S> table = nsEntry.getValue();
+                try {
+                    table.<IOException>forEachEntry((key, value) -> consumer.accept(key, namespace, value));
+                } catch (Exception e) {
+                    throwAsIOException(e);
+                }
+            }
+        }
+    }
+    
+    private static void throwAsIOException(Exception e) throws IOException {
+        if (e instanceof IOException) {
+            throw (IOException) e;
+        }
+        throw new IOException(e);
     }
 
     @SuppressWarnings("unchecked")

@@ -315,6 +315,39 @@ public class SwissTableInt<S> {
         }
     }
 
+    /**
+     * Functional interface for zero-allocation entry traversal (Integer keys).
+     */
+    @FunctionalInterface
+    public interface EntryConsumer<S> {
+        void accept(int key, S value) throws Exception;
+    }
+
+    /**
+     * Iterates over all entries without allocating any objects.
+     * Uses SWAR parallel matching to skip empty/deleted groups efficiently.
+     *
+     * @param consumer callback for each key-value pair
+     */
+    @SuppressWarnings("unchecked")
+    public <E extends Exception> void forEachEntry(EntryConsumer<S> consumer) throws E {
+        int groupCount = capacity >>> 3;
+        for (int g = 0; g < groupCount; g++) {
+            int groupBase = g * LONGS_PER_GROUP;
+            long ctrlWord = groupData[groupBase];
+            for (long fullMask = matchFull(ctrlWord); fullMask != 0; fullMask &= fullMask - 1) {
+                int lane = Long.numberOfTrailingZeros(fullMask) >>> 3;
+                int slot = (g << 3) + lane;
+                int key = getKey(groupBase, lane);
+                try {
+                    consumer.accept(key, (S) values[slot]);
+                } catch (Exception e) {
+                    throw (E) e;
+                }
+            }
+        }
+    }
+
     public Iterator<Entry<S>> iterator() {
         return new EntryIterator();
     }

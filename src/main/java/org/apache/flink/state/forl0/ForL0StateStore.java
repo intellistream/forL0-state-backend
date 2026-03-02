@@ -12,6 +12,7 @@ import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 
 import javax.annotation.Nonnull;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -466,6 +467,83 @@ public class ForL0StateStore<K, N, S> implements StateSnapshotRestore {
     }
 
     // ========== Getters ==========
+
+    /**
+     * Gets the entry count for a specific key group (used by snapshot writer to avoid double iteration).
+     */
+    public int getEntryCount(int keyGroup) {
+        int idx = keyGroup - keyGroupOffset;
+        
+        if (isVoidNamespace) {
+            SwissTable<K, S> table = tables[idx];
+            return (table == null) ? 0 : table.size();
+        } else {
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            if (nsMap == null) {
+                return 0;
+            }
+            int count = 0;
+            for (SwissTable<K, S> table : nsMap.values()) {
+                count += table.size();
+            }
+            return count;
+        }
+    }
+
+    /**
+     * Functional interface for zero-allocation snapshot traversal.
+     * Receives namespace, key, state for each entry without any object allocation.
+     */
+    @FunctionalInterface
+    public interface StateEntryConsumer<K, N, S> {
+        void accept(K key, N namespace, S state) throws IOException;
+    }
+
+    /**
+     * Iterates over all entries in a key group without allocating iterator/entry objects.
+     * This is the zero-allocation path used by the snapshot writer.
+     *
+     * @param keyGroup the key group
+     * @param consumer callback for each (key, namespace, state) triple
+     */
+    @SuppressWarnings("unchecked")
+    public void forEachInKeyGroup(int keyGroup, StateEntryConsumer<K, N, S> consumer) throws IOException {
+        int idx = keyGroup - keyGroupOffset;
+        
+        if (isVoidNamespace) {
+            SwissTable<K, S> table = tables[idx];
+            if (table == null || table.isEmpty()) {
+                return;
+            }
+            N voidNs = (N) VoidNamespace.INSTANCE;
+            try {
+                table.<IOException>forEachEntry((key, value) -> consumer.accept(key, voidNs, value));
+            } catch (Exception e) {
+                throwAsIOException(e);
+            }
+        } else {
+            Map<N, SwissTable<K, S>> nsMap = namespaceMaps[idx];
+            if (nsMap == null || nsMap.isEmpty()) {
+                return;
+            }
+            for (Map.Entry<N, SwissTable<K, S>> nsEntry : nsMap.entrySet()) {
+                N namespace = nsEntry.getKey();
+                SwissTable<K, S> table = nsEntry.getValue();
+                try {
+                    table.<IOException>forEachEntry((key, value) -> consumer.accept(key, namespace, value));
+                } catch (Exception e) {
+                    throwAsIOException(e);
+                }
+            }
+        }
+    }
+
+    private static void throwAsIOException(Exception e) throws IOException {
+        if (e instanceof IOException) {
+            throw (IOException) e;
+        }
+        throw new IOException(e);
+    }
 
     public String getStateName() {
         return metaInfo.getName();
