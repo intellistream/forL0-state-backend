@@ -8,8 +8,13 @@ import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateSnapshot;
+import org.apache.flink.runtime.state.VoidNamespace;
+import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.junit.jupiter.api.*;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -385,6 +390,302 @@ class ForL0StateStoreTest {
             StateSnapshot snapshot = stateStore.stateSnapshot();
             assertNotNull(snapshot);
             assertNotNull(snapshot.getMetaInfoSnapshot());
+        }
+    }
+
+    @Nested
+    class EntryCountAndForEachTests {
+
+        // ========== getEntryCount tests (General Namespace) ==========
+
+        @Test
+        void testGetEntryCountEmpty() {
+            // Empty key group should return 0
+            assertEquals(0, stateStore.getEntryCount(0));
+        }
+
+        @Test
+        void testGetEntryCountSingleNamespace() {
+            String key1 = "a";
+            String key2 = "b";
+            int kg = computeKeyGroup(key1);
+            // Ensure both keys hash to same key group for this test
+            stateStore.put(key1, 1, "v1", kg);
+            stateStore.put(key2, 1, "v2", kg);
+
+            assertEquals(2, stateStore.getEntryCount(kg));
+        }
+
+        @Test
+        void testGetEntryCountMultipleNamespaces() {
+            String key = "testKey";
+            int kg = computeKeyGroup(key);
+            
+            stateStore.put(key, 1, "v1", kg);
+            stateStore.put(key, 2, "v2", kg);
+            stateStore.put(key, 3, "v3", kg);
+
+            assertEquals(3, stateStore.getEntryCount(kg));
+        }
+
+        @Test
+        void testGetEntryCountAfterRemove() {
+            String key = "testKey";
+            int kg = computeKeyGroup(key);
+            
+            stateStore.put(key, 1, "v1", kg);
+            stateStore.put(key, 2, "v2", kg);
+            assertEquals(2, stateStore.getEntryCount(kg));
+
+            stateStore.remove(key, 1, kg);
+            assertEquals(1, stateStore.getEntryCount(kg));
+
+            stateStore.remove(key, 2, kg);
+            assertEquals(0, stateStore.getEntryCount(kg));
+        }
+
+        @Test
+        void testGetEntryCountMatchesSize() {
+            // Total of getEntryCount across all key groups should equal size()
+            for (int i = 0; i < 100; i++) {
+                String key = "key" + i;
+                stateStore.put(key, i % 10, "v" + i, computeKeyGroup(key));
+            }
+
+            int totalCount = 0;
+            for (int kg = 0; kg < NUM_KEY_GROUPS; kg++) {
+                totalCount += stateStore.getEntryCount(kg);
+            }
+            assertEquals(stateStore.size(), totalCount);
+        }
+
+        // ========== forEachInKeyGroup tests (General Namespace) ==========
+
+        @Test
+        void testForEachInKeyGroupEmpty() throws IOException {
+            int[] count = {0};
+            stateStore.forEachInKeyGroup(0, (key, ns, state) -> count[0]++);
+            assertEquals(0, count[0]);
+        }
+
+        @Test
+        void testForEachInKeyGroupSingleEntry() throws IOException {
+            String key = "testKey";
+            int kg = computeKeyGroup(key);
+            stateStore.put(key, 42, "hello", kg);
+
+            List<String> keys = new ArrayList<>();
+            List<Integer> namespaces = new ArrayList<>();
+            List<String> states = new ArrayList<>();
+
+            stateStore.forEachInKeyGroup(kg, (k, ns, s) -> {
+                keys.add(k);
+                namespaces.add(ns);
+                states.add(s);
+            });
+
+            assertEquals(1, keys.size());
+            assertEquals(key, keys.get(0));
+            assertEquals(42, (int) namespaces.get(0));
+            assertEquals("hello", states.get(0));
+        }
+
+        @Test
+        void testForEachInKeyGroupMultipleNamespaces() throws IOException {
+            String key = "testKey";
+            int kg = computeKeyGroup(key);
+            
+            stateStore.put(key, 1, "v1", kg);
+            stateStore.put(key, 2, "v2", kg);
+            stateStore.put(key, 3, "v3", kg);
+
+            Set<Integer> namespaces = new HashSet<>();
+            Set<String> values = new HashSet<>();
+
+            stateStore.forEachInKeyGroup(kg, (k, ns, s) -> {
+                assertEquals(key, k);
+                namespaces.add(ns);
+                values.add(s);
+            });
+
+            assertEquals(new HashSet<>(Arrays.asList(1, 2, 3)), namespaces);
+            assertEquals(new HashSet<>(Arrays.asList("v1", "v2", "v3")), values);
+        }
+
+        @Test
+        void testForEachInKeyGroupConsistentWithEntries() throws IOException {
+            // Fill multiple key groups
+            for (int i = 0; i < 50; i++) {
+                String key = "key" + i;
+                stateStore.put(key, i % 5, "v" + i, computeKeyGroup(key));
+            }
+
+            for (int kg = 0; kg < NUM_KEY_GROUPS; kg++) {
+                // Collect via entries() iterator
+                Set<String> entriesKeys = new HashSet<>();
+                for (StateEntry<String, Integer, String> entry : stateStore.entries(kg)) {
+                    entriesKeys.add(entry.getKey());
+                }
+
+                // Collect via forEachInKeyGroup
+                Set<String> forEachKeys = new HashSet<>();
+                stateStore.forEachInKeyGroup(kg, (k, ns, s) -> forEachKeys.add(k));
+
+                assertEquals(entriesKeys, forEachKeys, "KeyGroup " + kg + " mismatch");
+            }
+        }
+
+        @Test
+        void testForEachInKeyGroupExceptionPropagation() {
+            String key = "testKey";
+            int kg = computeKeyGroup(key);
+            stateStore.put(key, 1, "v1", kg);
+
+            assertThrows(IOException.class, () ->
+                stateStore.forEachInKeyGroup(kg, (k, ns, s) -> {
+                    throw new IOException("test");
+                })
+            );
+        }
+
+        @Test
+        void testForEachInKeyGroupCountMatchesGetEntryCount() throws IOException {
+            for (int i = 0; i < 100; i++) {
+                String key = "key" + i;
+                stateStore.put(key, i % 10, "v" + i, computeKeyGroup(key));
+            }
+
+            for (int kg = 0; kg < NUM_KEY_GROUPS; kg++) {
+                int expectedCount = stateStore.getEntryCount(kg);
+                int[] actualCount = {0};
+                stateStore.forEachInKeyGroup(kg, (k, ns, s) -> actualCount[0]++);
+                assertEquals(expectedCount, actualCount[0], "KeyGroup " + kg + " count mismatch");
+            }
+        }
+    }
+
+    @Nested
+    class VoidNamespaceTests {
+
+        private ForL0StateStore<String, VoidNamespace, String> voidNsStore;
+
+        @BeforeEach
+        void setUp() {
+            RegisteredKeyValueStateBackendMetaInfo<VoidNamespace, String> metaInfo =
+                    new RegisteredKeyValueStateBackendMetaInfo<>(
+                            StateDescriptor.Type.VALUE,
+                            "voidNsState",
+                            VoidNamespaceSerializer.INSTANCE,
+                            StringSerializer.INSTANCE);
+            voidNsStore = new ForL0StateStore<>(KEY_GROUP_RANGE, StringSerializer.INSTANCE, metaInfo);
+        }
+
+        @Test
+        void testGetEntryCountVoidNamespaceEmpty() {
+            assertEquals(0, voidNsStore.getEntryCount(0));
+        }
+
+        @Test
+        void testGetEntryCountVoidNamespace() {
+            String key = "testKey";
+            int kg = computeKeyGroup(key);
+            voidNsStore.put(key, VoidNamespace.INSTANCE, "v1", kg);
+            assertEquals(1, voidNsStore.getEntryCount(kg));
+        }
+
+        @Test
+        void testGetEntryCountVoidNamespaceMultiple() {
+            // Insert multiple keys that hash to same key group
+            String fixedKg = "ka"; // pick a key, then add more to same kg
+            int kg = computeKeyGroup(fixedKg);
+            voidNsStore.put(fixedKg, VoidNamespace.INSTANCE, "v1", kg);
+
+            // Add entries across different key groups
+            for (int i = 0; i < 20; i++) {
+                String key = "vk" + i;
+                voidNsStore.put(key, VoidNamespace.INSTANCE, "v" + i, computeKeyGroup(key));
+            }
+
+            // Total should match size
+            int total = 0;
+            for (int kgi = 0; kgi < NUM_KEY_GROUPS; kgi++) {
+                total += voidNsStore.getEntryCount(kgi);
+            }
+            assertEquals(voidNsStore.size(), total);
+        }
+
+        @Test
+        void testForEachInKeyGroupVoidNamespaceEmpty() throws IOException {
+            int[] count = {0};
+            voidNsStore.forEachInKeyGroup(0, (key, ns, state) -> count[0]++);
+            assertEquals(0, count[0]);
+        }
+
+        @Test
+        void testForEachInKeyGroupVoidNamespace() throws IOException {
+            String key = "testKey";
+            int kg = computeKeyGroup(key);
+            voidNsStore.put(key, VoidNamespace.INSTANCE, "hello", kg);
+
+            List<String> keys = new ArrayList<>();
+            List<Object> namespaces = new ArrayList<>();
+            List<String> states = new ArrayList<>();
+
+            voidNsStore.forEachInKeyGroup(kg, (k, ns, s) -> {
+                keys.add(k);
+                namespaces.add(ns);
+                states.add(s);
+            });
+
+            assertEquals(1, keys.size());
+            assertEquals(key, keys.get(0));
+            assertSame(VoidNamespace.INSTANCE, namespaces.get(0));
+            assertEquals("hello", states.get(0));
+        }
+
+        @Test
+        void testForEachInKeyGroupVoidNamespaceConsistentWithEntries() throws IOException {
+            for (int i = 0; i < 50; i++) {
+                String key = "key" + i;
+                voidNsStore.put(key, VoidNamespace.INSTANCE, "v" + i, computeKeyGroup(key));
+            }
+
+            for (int kg = 0; kg < NUM_KEY_GROUPS; kg++) {
+                Set<String> entriesKeys = new HashSet<>();
+                for (StateEntry<String, VoidNamespace, String> entry : voidNsStore.entries(kg)) {
+                    entriesKeys.add(entry.getKey());
+                }
+
+                Set<String> forEachKeys = new HashSet<>();
+                voidNsStore.forEachInKeyGroup(kg, (k, ns, s) -> {
+                    assertSame(VoidNamespace.INSTANCE, ns);
+                    forEachKeys.add(k);
+                });
+
+                assertEquals(entriesKeys, forEachKeys, "KeyGroup " + kg + " mismatch");
+            }
+        }
+
+        @Test
+        void testForEachInKeyGroupVoidNamespaceAfterRemove() throws IOException {
+            String key1 = "a";
+            String key2 = "b";
+            int kg1 = computeKeyGroup(key1);
+            int kg2 = computeKeyGroup(key2);
+
+            voidNsStore.put(key1, VoidNamespace.INSTANCE, "v1", kg1);
+            voidNsStore.put(key2, VoidNamespace.INSTANCE, "v2", kg2);
+
+            voidNsStore.remove(key1, VoidNamespace.INSTANCE, kg1);
+
+            int[] count1 = {0};
+            voidNsStore.forEachInKeyGroup(kg1, (k, ns, s) -> count1[0]++);
+            // If key1 and key2 are in same kg, count is 1; if different, count is 0
+            if (kg1 == kg2) {
+                assertEquals(1, count1[0]);
+            } else {
+                assertEquals(0, count1[0]);
+            }
         }
     }
 

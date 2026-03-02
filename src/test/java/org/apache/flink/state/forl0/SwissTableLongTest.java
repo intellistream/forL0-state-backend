@@ -3,6 +3,7 @@ package org.apache.flink.state.forl0;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -332,6 +333,102 @@ class SwissTableLongTest {
             count++;
         }
         assertEquals(4, count);
+    }
+
+    // ========== forEachEntry ==========
+
+    @Test
+    void testForEachEntry() {
+        Map<Long, Long> expected = new HashMap<>();
+
+        for (long i = 0; i < 30; i++) {
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
+            int slot = result & SwissTableLong.SLOT_MASK;
+            table.values[slot] = i * 10;
+            expected.put(i, i * 10);
+        }
+
+        Map<Long, Long> actual = new HashMap<>();
+        table.forEachEntry((key, value) -> actual.put(key, (Long) value));
+
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void testForEachEntryEmpty() {
+        int[] count = {0};
+        table.forEachEntry((key, value) -> count[0]++);
+        assertEquals(0, count[0]);
+    }
+
+    @Test
+    void testForEachEntryAfterDeletes() {
+        for (long i = 0; i < 30; i++) {
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
+            int slot = result & SwissTableLong.SLOT_MASK;
+            table.values[slot] = i * 10;
+        }
+
+        for (long i = 0; i < 15; i++) {
+            table.remove(computeHash(i), i);
+        }
+
+        Map<Long, Long> actual = new HashMap<>();
+        table.forEachEntry((key, value) -> actual.put(key, (Long) value));
+
+        assertEquals(15, actual.size());
+        for (long i = 15; i < 30; i++) {
+            assertEquals(i * 10, actual.get(i));
+        }
+    }
+
+    @Test
+    void testForEachEntryConsistentWithIterator() {
+        Map<Long, Long> expected = new HashMap<>();
+        for (long i = 0; i < 50; i++) {
+            int hash = computeHash(i);
+            int result = table.put(hash, i);
+            while (result < 0) {
+                if (result == SwissTableLong.NEED_GROW) {
+                    table.grow();
+                } else if (result == SwissTableLong.NEED_REHASH) {
+                    table.rehash();
+                }
+                result = table.put(hash, i);
+            }
+            int slot = result & SwissTableLong.SLOT_MASK;
+            table.values[slot] = i * 10;
+            expected.put(i, i * 10);
+        }
+
+        Map<Long, Long> iterResult = new HashMap<>();
+        Iterator<SwissTableLong.Entry<Long>> iter = table.iterator();
+        while (iter.hasNext()) {
+            SwissTableLong.Entry<Long> entry = iter.next();
+            iterResult.put(entry.getKeyBoxed(), entry.getState());
+        }
+
+        Map<Long, Long> forEachResult = new HashMap<>();
+        table.forEachEntry((key, value) -> forEachResult.put(key, (Long) value));
+
+        assertEquals(expected, iterResult);
+        assertEquals(expected, forEachResult);
+    }
+
+    @Test
+    void testForEachEntryExceptionPropagation() {
+        int hash = computeHash(1L);
+        int result = table.put(hash, 1L);
+        int slot = result & SwissTableLong.SLOT_MASK;
+        table.values[slot] = 100L;
+
+        assertThrows(IOException.class, () ->
+            table.<IOException>forEachEntry((key, value) -> {
+                throw new IOException("test exception");
+            })
+        );
     }
 
     // ========== Hash Collision ==========
