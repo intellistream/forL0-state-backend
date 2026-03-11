@@ -89,7 +89,7 @@ class VTuneProfiler:
         try:
             result = subprocess.run(
                 [self.vtune_path, '--version'],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=30
             )
             return result.returncode == 0
         except Exception:
@@ -103,7 +103,7 @@ class VTuneProfiler:
         try:
             result = subprocess.run(
                 [self.vtune_path, '--version'],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=30
             )
             if result.returncode == 0:
                 # Parse version from output (e.g., "Intel(R) VTune(TM) Profiler 2023.2.0")

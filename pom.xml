@@ -67,6 +67,14 @@
             <version>${flink.version}</version>
         </dependency>
 
+        <!-- Table API common (provided): RowData, LogicalType for RowData zero-serialization path -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-common</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- 测试所需：MiniCluster/JUnit 工具（仅测试作用域） -->
         <dependency>
             <groupId>org.apache.flink</groupId>

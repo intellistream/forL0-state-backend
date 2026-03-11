@@ -40,6 +40,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,10 +51,9 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * A {@link AbstractKeyedStateBackend} that uses Swiss Tables for state storage.
- *
- * <p>This is a lightweight StateBackend implementation with high-performance
- * hash table operations using SWAR parallel matching.
+ * A {@link AbstractKeyedStateBackend} that delegates all state storage to the
+ * C++ ForL0 engine via JNI. This is a thin shell — all state data lives in
+ * off-heap memory managed by C++.
  *
  * @param <K> The key by which state is keyed.
  */
@@ -97,11 +99,17 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                             (StateUpdateFactory) ForL0ReducingState::update))
                     .collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
-    /** Map of created Key/Value states. */
+    /** Native C++ engine handle. */
+    private final long engineHandle;
+
+    /** Map of state name → native state handle (long). */
+    private final Map<String, Long> nativeStateHandles;
+
+    /** Map of created State objects. */
     private final Map<String, State> createdKVStates;
 
-    /** Map of registered Key/Value state stores. */
-    private final Map<String, ForL0StateStore<K, ?, ?>> registeredStores;
+    /** Meta info registry for checkpoint compatibility. */
+    private final Map<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> registeredMetaInfos;
 
     /** The snapshot strategy for this backend. */
     private final ForL0SnapshotStrategy<K> snapshotStrategy;
@@ -123,7 +131,9 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             LatencyTrackingStateConfig latencyTrackingStateConfig,
             CloseableRegistry cancelStreamRegistry,
             StreamCompressionDecorator keyGroupCompressionDecorator,
-            Map<String, ForL0StateStore<K, ?, ?>> registeredStores,
+            long engineHandle,
+            Map<String, Long> nativeStateHandles,
+            Map<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> registeredMetaInfos,
             Map<String, HeapPriorityQueueSnapshotRestoreWrapper<?>> registeredPQStates,
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
             ForL0SnapshotStrategy<K> snapshotStrategy,
@@ -140,7 +150,9 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                 keyGroupCompressionDecorator,
                 keyContext);
         this.forl0KeyContext = keyContext;
-        this.registeredStores = registeredStores;
+        this.engineHandle = engineHandle;
+        this.nativeStateHandles = nativeStateHandles;
+        this.registeredMetaInfos = registeredMetaInfos;
         this.createdKVStates = new HashMap<>();
         this.snapshotStrategy = snapshotStrategy;
         this.snapshotExecutionType = snapshotExecutionType;
@@ -150,7 +162,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                         priorityQueueSetFactory,
                         keyContext.getKeyGroupRange(),
                         keyContext.getNumberOfKeyGroups());
-        LOG.info("[ForL0] Initializing ForL0 keyed state backend with Swiss Tables.");
+        LOG.info("[ForL0] Initializing ForL0 keyed state backend with C++ engine (handle={})", engineHandle);
     }
 
     // ------------------------------------------------------------------------
@@ -177,29 +189,24 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     }
 
     @SuppressWarnings({"unchecked"})
-    private <N, V> ForL0StateStore<K, N, V> tryRegisterStateStore(
+    private <N, V> RegisteredKeyValueStateBackendMetaInfo<N, V> tryRegisterMetaInfo(
             TypeSerializer<N> namespaceSerializer,
             StateDescriptor<?, V> stateDesc,
             @Nonnull StateSnapshotTransformFactory<V> snapshotTransformFactory,
             boolean allowFutureMetadataUpdates)
             throws StateMigrationException {
 
-        ForL0StateStore<K, N, V> stateStore =
-                (ForL0StateStore<K, N, V>) registeredStores.get(stateDesc.getName());
+        RegisteredKeyValueStateBackendMetaInfo<N, V> metaInfo =
+                (RegisteredKeyValueStateBackendMetaInfo<N, V>) registeredMetaInfos.get(stateDesc.getName());
 
         TypeSerializer<V> newStateSerializer = stateDesc.getSerializer();
 
-        if (stateStore != null) {
-            RegisteredKeyValueStateBackendMetaInfo<N, V> restoredMetaInfo =
-                    stateStore.getMetaInfo();
+        if (metaInfo != null) {
+            metaInfo.updateSnapshotTransformFactory(snapshotTransformFactory);
 
-            restoredMetaInfo.updateSnapshotTransformFactory(snapshotTransformFactory);
-
-            TypeSerializer<N> previousNamespaceSerializer =
-                    restoredMetaInfo.getNamespaceSerializer();
-
+            TypeSerializer<N> previousNamespaceSerializer = metaInfo.getNamespaceSerializer();
             TypeSerializerSchemaCompatibility<N> namespaceCompatibility =
-                    restoredMetaInfo.updateNamespaceSerializer(namespaceSerializer);
+                    metaInfo.updateNamespaceSerializer(namespaceSerializer);
             if (namespaceCompatibility.isCompatibleAfterMigration()
                     || namespaceCompatibility.isIncompatible()) {
                 throw new StateMigrationException(
@@ -210,12 +217,11 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                 + ").");
             }
 
-            restoredMetaInfo.checkStateMetaInfo(stateDesc);
+            metaInfo.checkStateMetaInfo(stateDesc);
 
-            TypeSerializer<V> previousStateSerializer = restoredMetaInfo.getStateSerializer();
-
+            TypeSerializer<V> previousStateSerializer = metaInfo.getStateSerializer();
             TypeSerializerSchemaCompatibility<V> stateCompatibility =
-                    restoredMetaInfo.updateStateSerializer(newStateSerializer);
+                    metaInfo.updateStateSerializer(newStateSerializer);
 
             if (stateCompatibility.isIncompatible()) {
                 throw new StateMigrationException(
@@ -226,69 +232,125 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                 + ").");
             }
 
-            RegisteredKeyValueStateBackendMetaInfo<N, V> updatedMetaInfo =
-                    allowFutureMetadataUpdates
-                            ? restoredMetaInfo.withSerializerUpgradesAllowed()
-                            : restoredMetaInfo;
-
-            stateStore.setMetaInfo(updatedMetaInfo);
+            metaInfo = allowFutureMetadataUpdates
+                    ? metaInfo.withSerializerUpgradesAllowed()
+                    : metaInfo;
         } else {
-            RegisteredKeyValueStateBackendMetaInfo<N, V> newMetaInfo =
-                    new RegisteredKeyValueStateBackendMetaInfo<>(
-                            stateDesc.getType(),
-                            stateDesc.getName(),
-                            namespaceSerializer,
-                            newStateSerializer,
-                            snapshotTransformFactory);
+            metaInfo = new RegisteredKeyValueStateBackendMetaInfo<>(
+                    stateDesc.getType(),
+                    stateDesc.getName(),
+                    namespaceSerializer,
+                    newStateSerializer,
+                    snapshotTransformFactory);
 
-            newMetaInfo =
-                    allowFutureMetadataUpdates
-                            ? newMetaInfo.withSerializerUpgradesAllowed()
-                            : newMetaInfo;
+            metaInfo = allowFutureMetadataUpdates
+                    ? metaInfo.withSerializerUpgradesAllowed()
+                    : metaInfo;
 
-            stateStore = createStateStore(keySerializer, newMetaInfo);
-            registeredStores.put(stateDesc.getName(), stateStore);
+            registeredMetaInfos.put(stateDesc.getName(), metaInfo);
         }
 
-        return stateStore;
+        return metaInfo;
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * Ensure a native state table exists for the given state.
+     * Registers with C++ engine on first use.
+     */
+    private <N, V> long ensureNativeState(
+            String stateName,
+            StateDescriptor<?, V> stateDesc,
+            TypeSerializer<N> namespaceSerializer,
+            TypeSerializer<V> stateSerializer) {
+
+        Long existingHandle = nativeStateHandles.get(stateName);
+        if (existingHandle != null) {
+            return existingHandle;
+        }
+
+        int stateType;
+        switch (stateDesc.getType()) {
+            case VALUE: stateType = 0; break;
+            case LIST: stateType = 1; break;
+            case MAP: stateType = 2; break;
+            case REDUCING: stateType = 3; break;
+            case AGGREGATING: stateType = 4; break;
+            default:
+                throw new FlinkRuntimeException("Unsupported state type: " + stateDesc.getType());
+        }
+
+        int keyTypeId = TypeAnalyzer.getTypeId(keySerializer);
+        int valueTypeId = TypeAnalyzer.getTypeId(stateSerializer);
+        int nsTypeId = TypeAnalyzer.getTypeId(namespaceSerializer);
+        byte[] typeDescriptor = TypeAnalyzer.generateStateDescriptor(
+                keySerializer, namespaceSerializer, stateSerializer);
+
+        long handle = NativeEngine.registerState(
+                engineHandle, stateName, stateType,
+                keyTypeId, valueTypeId, nsTypeId,
+                typeDescriptor);
+
+        nativeStateHandles.put(stateName, handle);
+        LOG.debug("[ForL0] Registered native state '{}' type={} keyTypeId={} valueTypeId={} nsTypeId={} handle={}",
+                stateName, stateType, keyTypeId, valueTypeId, nsTypeId, handle);
+        return handle;
+    }
+
     @Override
     public <N> Stream<K> getKeys(String state, N namespace) {
-        if (!registeredStores.containsKey(state)) {
-            return Stream.empty();
-        }
-
-        ForL0StateStore<K, N, ?> store =
-                (ForL0StateStore<K, N, ?>) registeredStores.get(state);
-        return store.getKeys(namespace);
+        Long handle = nativeStateHandles.get(state);
+        if (handle == null) return Stream.empty();
+        return decodeKeysFromNative(NativeEngine.getStateKeys(handle));
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public <N> Stream<K> getKeys(List<String> states, N namespace) {
-        // Collect all keys from all stores, deduplicating across them
-        return states.stream()
-                .filter(registeredStores::containsKey)
-                .flatMap(s -> {
-                    ForL0StateStore<K, N, ?> store =
-                            (ForL0StateStore<K, N, ?>) registeredStores.get(s);
-                    return store.getKeys(namespace);
-                })
-                .distinct();
+        return states.stream().flatMap(s -> getKeys(s, namespace));
+    }
+
+    @Override
+    public <N> Stream<Tuple2<K, N>> getKeysAndNamespaces(String state) {
+        // VoidNamespace is the common case; return keys paired with null namespace.
+        // For general namespace mode, full iteration is not yet supported.
+        return getKeys(state, null).map(k -> Tuple2.of(k, null));
     }
 
     @SuppressWarnings("unchecked")
-    @Override
-    public <N> Stream<Tuple2<K, N>> getKeysAndNamespaces(String state) {
-        if (!registeredStores.containsKey(state)) {
-            return Stream.empty();
-        }
+    private <T> Stream<T> decodeKeysFromNative(byte[] data) {
+        if (data == null || data.length <= 4) return Stream.empty();
+        ByteBuffer bb = ByteBuffer.wrap(data);
+        int count = bb.getInt();
+        if (count <= 0) return Stream.empty();
 
-        ForL0StateStore<K, N, ?> store =
-                (ForL0StateStore<K, N, ?>) registeredStores.get(state);
-        return store.getKeysAndNamespaces();
+        int keyTypeId = TypeAnalyzer.getTypeId(keySerializer);
+        List<T> keys = new ArrayList<>(count);
+        try {
+            if (keyTypeId == TypeAnalyzer.TYPE_INT64) {
+                for (int i = 0; i < count; i++) {
+                    keys.add((T) Long.valueOf(bb.getLong()));
+                }
+            } else if (keyTypeId == TypeAnalyzer.TYPE_INT32) {
+                for (int i = 0; i < count; i++) {
+                    keys.add((T) Integer.valueOf(bb.getInt()));
+                }
+            } else {
+                // String/bytes keys: [length(int)] + [bytes] each
+                org.apache.flink.core.memory.DataInputDeserializer in =
+                        new org.apache.flink.core.memory.DataInputDeserializer(data, 4, data.length - 4);
+                for (int i = 0; i < count; i++) {
+                    int len = in.readInt();
+                    byte[] keyBytes = new byte[len];
+                    in.readFully(keyBytes);
+                    // Deserialize the key using the key serializer
+                    org.apache.flink.core.memory.DataInputDeserializer keyIn =
+                            new org.apache.flink.core.memory.DataInputDeserializer(keyBytes);
+                    keys.add((T) keySerializer.deserialize(keyIn));
+                }
+            }
+        } catch (IOException e) {
+            throw new FlinkRuntimeException("Failed to decode keys from native engine", e);
+        }
+        return keys.stream();
     }
 
     @Override
@@ -311,12 +373,18 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             @Nonnull StateSnapshotTransformFactory<SEV> snapshotTransformFactory,
             boolean allowFutureMetadataUpdates)
             throws Exception {
-        ForL0StateStore<K, N, SV> stateStore =
-                tryRegisterStateStore(
+
+        RegisteredKeyValueStateBackendMetaInfo<N, SV> metaInfo =
+                tryRegisterMetaInfo(
                         namespaceSerializer,
                         stateDesc,
                         getStateSnapshotTransformFactory(stateDesc, snapshotTransformFactory),
                         allowFutureMetadataUpdates);
+
+        long stateHandle = ensureNativeState(
+                stateDesc.getName(), stateDesc,
+                metaInfo.getNamespaceSerializer(),
+                metaInfo.getStateSerializer());
 
         IS createdState = (IS) createdKVStates.get(stateDesc.getName());
         if (createdState == null) {
@@ -324,14 +392,21 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             if (stateCreateFactory == null) {
                 throw new FlinkRuntimeException(stateNotSupportedMessage(stateDesc));
             }
-            createdState =
-                    stateCreateFactory.createState(stateDesc, stateStore, this);
+            createdState = stateCreateFactory.createState(
+                    stateDesc, stateHandle,
+                    metaInfo.getNamespaceSerializer(),
+                    metaInfo.getStateSerializer(),
+                    this);
         } else {
             StateUpdateFactory stateUpdateFactory = STATE_UPDATE_FACTORIES.get(stateDesc.getType());
             if (stateUpdateFactory == null) {
                 throw new FlinkRuntimeException(stateNotSupportedMessage(stateDesc));
             }
-            createdState = stateUpdateFactory.updateState(stateDesc, stateStore, createdState);
+            createdState = stateUpdateFactory.updateState(
+                    stateDesc,
+                    metaInfo.getNamespaceSerializer(),
+                    metaInfo.getStateSerializer(),
+                    createdState);
         }
 
         createdKVStates.put(stateDesc.getName(), createdState);
@@ -382,15 +457,9 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     @Nonnull
     @Override
-    public SavepointResources<K> savepoint() {
+    public SavepointResources<K> savepoint() throws Exception {
         ForL0SnapshotResources<K> snapshotResources =
-                ForL0SnapshotResources.create(
-                        registeredStores,
-                        priorityQueuesManager.getRegisteredPQStates(),
-                        keyGroupCompressionDecorator,
-                        keyGroupRange,
-                        keySerializer,
-                        numberOfKeyGroups);
+                snapshotStrategy.syncPrepareResources(-1L);
 
         return new SavepointResources<>(snapshotResources, snapshotExecutionType);
     }
@@ -433,97 +502,59 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
         return "ForL0KeyedStateBackend";
     }
 
-    /** Returns the total number of state entries across all keys/namespaces. */
     @VisibleForTesting
     @Override
     public int numKeyValueStateEntries() {
-        int sum = 0;
-        for (ForL0StateStore<K, ?, ?> store : registeredStores.values()) {
-            sum += store.size();
-        }
-        return sum;
+        return (int) NativeEngine.totalEntries(engineHandle);
     }
 
-    /** Returns the total number of state entries across all keys for the given namespace. */
-    @VisibleForTesting
-    public int numKeyValueStateEntries(Object namespace) {
-        int sum = 0;
-        for (ForL0StateStore<K, ?, ?> store : registeredStores.values()) {
-            sum += store.sizeOfNamespace(namespace);
-        }
-        return sum;
+    @Override
+    public void dispose() {
+        super.dispose();
+        NativeEngine.destroyEngine(engineHandle);
+        LOG.info("[ForL0] C++ engine destroyed (handle={})", engineHandle);
     }
 
-    /**
-     * Get registered state stores for testing.
-     */
-    @VisibleForTesting
-    public Map<String, ForL0StateStore<K, ?, ?>> getRegisteredStores() {
-        return registeredStores;
+    /** Returns the native engine handle. */
+    long getEngineHandle() {
+        return engineHandle;
+    }
+
+    /** Returns the native state handles map. */
+    Map<String, Long> getNativeStateHandles() {
+        return nativeStateHandles;
+    }
+
+    /** Returns the registered meta infos. */
+    Map<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> getRegisteredMetaInfos() {
+        return registeredMetaInfos;
     }
 
     /**
      * Returns the ForL0KeyContext for direct field access in State implementations.
-     * This is used by State factory methods to pass the key context with public fields.
      */
     ForL0KeyContext<K> getForL0KeyContext() {
         return forl0KeyContext;
     }
 
-    /**
-     * Creates a StateStore with appropriate specialization based on key type.
-     * 
-     * <p>Specialization priority:
-     * <ul>
-     *   <li>Long keys → ForL0StateStoreLong (most common in Nexmark)</li>
-     *   <li>Integer keys → ForL0StateStoreInt</li>
-     *   <li>String keys → ForL0StateStoreString</li>
-     *   <li>Other types → Generic ForL0StateStore</li>
-     * </ul>
-     */
-    @SuppressWarnings("unchecked")
-    private <N, V> ForL0StateStore<K, N, V> createStateStore(
-            TypeSerializer<K> keySerializer,
-            RegisteredKeyValueStateBackendMetaInfo<N, V> metaInfo) {
-        
-        // Detect key type from serializer class name
-        String serializerName = keySerializer.getClass().getSimpleName();
-        
-        if (serializerName.contains("Long")) {
-            // Long key specialization
-            LOG.debug("[ForL0] Using specialized SwissTableLong for Long keys");
-            return (ForL0StateStore<K, N, V>) new ForL0StateStoreLong<>(
-                    keyContext.getKeyGroupRange(),
-                    (TypeSerializer<Long>) keySerializer,
-                    (RegisteredKeyValueStateBackendMetaInfo<N, V>) metaInfo);
-        } else if (serializerName.contains("Int") && !serializerName.contains("Interval")) {
-            // Integer key specialization
-            LOG.debug("[ForL0] Using specialized SwissTableInt for Integer keys");
-            return (ForL0StateStore<K, N, V>) new ForL0StateStoreInt<>(
-                    keyContext.getKeyGroupRange(),
-                    (TypeSerializer<Integer>) keySerializer,
-                    (RegisteredKeyValueStateBackendMetaInfo<N, V>) metaInfo);
-        } else {
-            // Fallback to generic implementation (including String keys)
-            LOG.debug("[ForL0] Using generic SwissTable for {} keys", serializerName);
-            return new ForL0StateStore<>(
-                    keyContext.getKeyGroupRange(),
-                    keySerializer,
-                    metaInfo);
-        }
-    }
+    // ========== Factory Interfaces ==========
 
-    private interface StateCreateFactory {
+    interface StateCreateFactory {
         <K, N, SV, S extends State, IS extends S> IS createState(
                 StateDescriptor<S, SV> stateDesc,
-                ForL0StateStore<K, N, SV> stateStore,
+                long stateHandle,
+                TypeSerializer<N> namespaceSerializer,
+                TypeSerializer<SV> stateSerializer,
                 ForL0KeyedStateBackend<K> backend)
                 throws Exception;
     }
 
-    private interface StateUpdateFactory {
+    interface StateUpdateFactory {
         <K, N, SV, S extends State, IS extends S> IS updateState(
-                StateDescriptor<S, SV> stateDesc, ForL0StateStore<K, N, SV> stateStore, IS existingState)
+                StateDescriptor<S, SV> stateDesc,
+                TypeSerializer<N> namespaceSerializer,
+                TypeSerializer<SV> stateSerializer,
+                IS existingState)
                 throws Exception;
     }
 }
