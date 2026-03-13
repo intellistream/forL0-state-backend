@@ -102,6 +102,9 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     /** Native C++ engine handle. */
     private final long engineHandle;
 
+    /** Whether this backend has been disposed. */
+    private boolean disposed = false;
+
     /** Map of state name → native state handle (long). */
     private final Map<String, Long> nativeStateHandles;
 
@@ -510,6 +513,10 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     @Override
     public void dispose() {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
         super.dispose();
         NativeEngine.destroyEngine(engineHandle);
         LOG.info("[ForL0] C++ engine destroyed (handle={})", engineHandle);

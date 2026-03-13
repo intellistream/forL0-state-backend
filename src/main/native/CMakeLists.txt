@@ -57,6 +57,7 @@ set(FORL0_SOURCES
     jni/jni_value_state.cpp
     jni/jni_list_state.cpp
     jni/jni_map_state.cpp
+    jni/jni_tw_state.cpp
     jni/jni_checkpoint.cpp
 )
 
@@ -90,3 +91,46 @@ add_custom_command(TARGET forl0_engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:forl0_engine>" "${NATIVE_RESOURCE_DIR}/"
     COMMENT "Copying libforl0_engine to resources/native/"
 )
+
+# --------------------------------------------------------------------------
+# Google Test (optional, for C++ unit tests)
+# --------------------------------------------------------------------------
+option(FORL0_BUILD_TESTS "Build C++ unit tests" ON)
+
+if(FORL0_BUILD_TESTS)
+    set(FORL0_TEST_SOURCES
+        test/swiss_table_test.cpp
+        test/state_table_cow_test.cpp
+        test/checkpoint_round_trip_test.cpp
+        test/type_layout_parser_test.cpp
+        test/time_window_namespace_test.cpp
+        test/typed_inner_map_test.cpp
+        test/test_main.cpp
+    )
+
+    add_executable(forl0_tests ${FORL0_TEST_SOURCES})
+
+    target_include_directories(forl0_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint
+        ${CMAKE_CURRENT_SOURCE_DIR}/jni
+        ${CMAKE_CURRENT_SOURCE_DIR}/test
+    )
+
+    # Try system GTest first, fall back to mini_gtest
+    find_package(GTest QUIET)
+    if(GTest_FOUND)
+        message(STATUS "Using system Google Test")
+        target_link_libraries(forl0_tests PRIVATE GTest::gtest)
+        enable_testing()
+        include(GoogleTest)
+        gtest_discover_tests(forl0_tests)
+    else()
+        message(STATUS "Google Test not found — using mini_gtest fallback")
+        target_compile_definitions(forl0_tests PRIVATE FORL0_USE_MINI_GTEST=1)
+        enable_testing()
+        add_test(NAME forl0_tests COMMAND forl0_tests)
+    endif()
+endif()

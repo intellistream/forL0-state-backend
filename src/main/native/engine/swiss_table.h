@@ -308,19 +308,12 @@ private:
         slots_[idx].~slot_type();
         --size_;
 
-        // Determine whether to set DELETED or EMPTY.
-        // Following abseil: if the slot's group has no empty slots after it,
-        // we must set DELETED to not break probe chains. Otherwise set EMPTY.
-        // Simplified: if the next slot in the probe chain is EMPTY, we can set EMPTY.
-        // Full abseil logic: check if the group containing idx+1 has any empty slots.
-        // Here we use abseil's was_never_full heuristic:
-        size_t next_idx = (idx + 1) & (capacity_ - 1);
-        if (ctrl_[next_idx] == kEmpty) {
-            set_ctrl(ctrl_, capacity_, idx, kEmpty);
-            ++growth_left_;
-        } else {
-            set_ctrl(ctrl_, capacity_, idx, kDeleted);
-        }
+        // Always set DELETED to avoid breaking group-based probe chains.
+        // The simplified "check next slot" heuristic is incorrect for SWAR
+        // group probing where probe steps span 8-slot groups.
+        // Tombstones are reclaimed during rehash triggered by
+        // rehash_and_grow_if_necessary() when tombstones > capacity/4.
+        set_ctrl(ctrl_, capacity_, idx, kDeleted);
     }
 
     template <typename VV>

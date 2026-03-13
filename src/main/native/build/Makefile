@@ -65,6 +65,16 @@ CMAKE_BINARY_DIR = /home/user/projects/forL0-state-backend/src/main/native/build
 #=============================================================================
 # Targets provided globally by CMake.
 
+# Special rule for the target test
+test:
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Running tests..."
+	/usr/bin/ctest --force-new-ctest-process $(ARGS)
+.PHONY : test
+
+# Special rule for the target test
+test/fast: test
+.PHONY : test/fast
+
 # Special rule for the target edit_cache
 edit_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "No interactive CMake dialog available..."
@@ -128,6 +138,19 @@ forl0_engine: cmake_check_build_system
 forl0_engine/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_engine.dir/build.make CMakeFiles/forl0_engine.dir/build
 .PHONY : forl0_engine/fast
+
+#=============================================================================
+# Target rules for targets named forl0_tests
+
+# Build rule for target.
+forl0_tests: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 forl0_tests
+.PHONY : forl0_tests
+
+# fast build rule for target.
+forl0_tests/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/build
+.PHONY : forl0_tests/fast
 
 jni/forl0_jni.o: jni/forl0_jni.cpp.o
 .PHONY : jni/forl0_jni.o
@@ -225,6 +248,30 @@ jni/jni_map_state.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_engine.dir/build.make CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.s
 .PHONY : jni/jni_map_state.cpp.s
 
+jni/jni_tw_state.o: jni/jni_tw_state.cpp.o
+.PHONY : jni/jni_tw_state.o
+
+# target to build an object file
+jni/jni_tw_state.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_engine.dir/build.make CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o
+.PHONY : jni/jni_tw_state.cpp.o
+
+jni/jni_tw_state.i: jni/jni_tw_state.cpp.i
+.PHONY : jni/jni_tw_state.i
+
+# target to preprocess a source file
+jni/jni_tw_state.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_engine.dir/build.make CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.i
+.PHONY : jni/jni_tw_state.cpp.i
+
+jni/jni_tw_state.s: jni/jni_tw_state.cpp.s
+.PHONY : jni/jni_tw_state.s
+
+# target to generate assembly for a file
+jni/jni_tw_state.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_engine.dir/build.make CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.s
+.PHONY : jni/jni_tw_state.cpp.s
+
 jni/jni_value_state.o: jni/jni_value_state.cpp.o
 .PHONY : jni/jni_value_state.o
 
@@ -249,6 +296,174 @@ jni/jni_value_state.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_engine.dir/build.make CMakeFiles/forl0_engine.dir/jni/jni_value_state.cpp.s
 .PHONY : jni/jni_value_state.cpp.s
 
+test/checkpoint_round_trip_test.o: test/checkpoint_round_trip_test.cpp.o
+.PHONY : test/checkpoint_round_trip_test.o
+
+# target to build an object file
+test/checkpoint_round_trip_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/checkpoint_round_trip_test.cpp.o
+.PHONY : test/checkpoint_round_trip_test.cpp.o
+
+test/checkpoint_round_trip_test.i: test/checkpoint_round_trip_test.cpp.i
+.PHONY : test/checkpoint_round_trip_test.i
+
+# target to preprocess a source file
+test/checkpoint_round_trip_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/checkpoint_round_trip_test.cpp.i
+.PHONY : test/checkpoint_round_trip_test.cpp.i
+
+test/checkpoint_round_trip_test.s: test/checkpoint_round_trip_test.cpp.s
+.PHONY : test/checkpoint_round_trip_test.s
+
+# target to generate assembly for a file
+test/checkpoint_round_trip_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/checkpoint_round_trip_test.cpp.s
+.PHONY : test/checkpoint_round_trip_test.cpp.s
+
+test/state_table_cow_test.o: test/state_table_cow_test.cpp.o
+.PHONY : test/state_table_cow_test.o
+
+# target to build an object file
+test/state_table_cow_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/state_table_cow_test.cpp.o
+.PHONY : test/state_table_cow_test.cpp.o
+
+test/state_table_cow_test.i: test/state_table_cow_test.cpp.i
+.PHONY : test/state_table_cow_test.i
+
+# target to preprocess a source file
+test/state_table_cow_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/state_table_cow_test.cpp.i
+.PHONY : test/state_table_cow_test.cpp.i
+
+test/state_table_cow_test.s: test/state_table_cow_test.cpp.s
+.PHONY : test/state_table_cow_test.s
+
+# target to generate assembly for a file
+test/state_table_cow_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/state_table_cow_test.cpp.s
+.PHONY : test/state_table_cow_test.cpp.s
+
+test/swiss_table_test.o: test/swiss_table_test.cpp.o
+.PHONY : test/swiss_table_test.o
+
+# target to build an object file
+test/swiss_table_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/swiss_table_test.cpp.o
+.PHONY : test/swiss_table_test.cpp.o
+
+test/swiss_table_test.i: test/swiss_table_test.cpp.i
+.PHONY : test/swiss_table_test.i
+
+# target to preprocess a source file
+test/swiss_table_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/swiss_table_test.cpp.i
+.PHONY : test/swiss_table_test.cpp.i
+
+test/swiss_table_test.s: test/swiss_table_test.cpp.s
+.PHONY : test/swiss_table_test.s
+
+# target to generate assembly for a file
+test/swiss_table_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/swiss_table_test.cpp.s
+.PHONY : test/swiss_table_test.cpp.s
+
+test/test_main.o: test/test_main.cpp.o
+.PHONY : test/test_main.o
+
+# target to build an object file
+test/test_main.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/test_main.cpp.o
+.PHONY : test/test_main.cpp.o
+
+test/test_main.i: test/test_main.cpp.i
+.PHONY : test/test_main.i
+
+# target to preprocess a source file
+test/test_main.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/test_main.cpp.i
+.PHONY : test/test_main.cpp.i
+
+test/test_main.s: test/test_main.cpp.s
+.PHONY : test/test_main.s
+
+# target to generate assembly for a file
+test/test_main.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/test_main.cpp.s
+.PHONY : test/test_main.cpp.s
+
+test/time_window_namespace_test.o: test/time_window_namespace_test.cpp.o
+.PHONY : test/time_window_namespace_test.o
+
+# target to build an object file
+test/time_window_namespace_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/time_window_namespace_test.cpp.o
+.PHONY : test/time_window_namespace_test.cpp.o
+
+test/time_window_namespace_test.i: test/time_window_namespace_test.cpp.i
+.PHONY : test/time_window_namespace_test.i
+
+# target to preprocess a source file
+test/time_window_namespace_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/time_window_namespace_test.cpp.i
+.PHONY : test/time_window_namespace_test.cpp.i
+
+test/time_window_namespace_test.s: test/time_window_namespace_test.cpp.s
+.PHONY : test/time_window_namespace_test.s
+
+# target to generate assembly for a file
+test/time_window_namespace_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/time_window_namespace_test.cpp.s
+.PHONY : test/time_window_namespace_test.cpp.s
+
+test/type_layout_parser_test.o: test/type_layout_parser_test.cpp.o
+.PHONY : test/type_layout_parser_test.o
+
+# target to build an object file
+test/type_layout_parser_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/type_layout_parser_test.cpp.o
+.PHONY : test/type_layout_parser_test.cpp.o
+
+test/type_layout_parser_test.i: test/type_layout_parser_test.cpp.i
+.PHONY : test/type_layout_parser_test.i
+
+# target to preprocess a source file
+test/type_layout_parser_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/type_layout_parser_test.cpp.i
+.PHONY : test/type_layout_parser_test.cpp.i
+
+test/type_layout_parser_test.s: test/type_layout_parser_test.cpp.s
+.PHONY : test/type_layout_parser_test.s
+
+# target to generate assembly for a file
+test/type_layout_parser_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/type_layout_parser_test.cpp.s
+.PHONY : test/type_layout_parser_test.cpp.s
+
+test/typed_inner_map_test.o: test/typed_inner_map_test.cpp.o
+.PHONY : test/typed_inner_map_test.o
+
+# target to build an object file
+test/typed_inner_map_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/typed_inner_map_test.cpp.o
+.PHONY : test/typed_inner_map_test.cpp.o
+
+test/typed_inner_map_test.i: test/typed_inner_map_test.cpp.i
+.PHONY : test/typed_inner_map_test.i
+
+# target to preprocess a source file
+test/typed_inner_map_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/typed_inner_map_test.cpp.i
+.PHONY : test/typed_inner_map_test.cpp.i
+
+test/typed_inner_map_test.s: test/typed_inner_map_test.cpp.s
+.PHONY : test/typed_inner_map_test.s
+
+# target to generate assembly for a file
+test/typed_inner_map_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forl0_tests.dir/build.make CMakeFiles/forl0_tests.dir/test/typed_inner_map_test.cpp.s
+.PHONY : test/typed_inner_map_test.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -257,7 +472,9 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... test"
 	@echo "... forl0_engine"
+	@echo "... forl0_tests"
 	@echo "... jni/forl0_jni.o"
 	@echo "... jni/forl0_jni.i"
 	@echo "... jni/forl0_jni.s"
@@ -270,9 +487,33 @@ help:
 	@echo "... jni/jni_map_state.o"
 	@echo "... jni/jni_map_state.i"
 	@echo "... jni/jni_map_state.s"
+	@echo "... jni/jni_tw_state.o"
+	@echo "... jni/jni_tw_state.i"
+	@echo "... jni/jni_tw_state.s"
 	@echo "... jni/jni_value_state.o"
 	@echo "... jni/jni_value_state.i"
 	@echo "... jni/jni_value_state.s"
+	@echo "... test/checkpoint_round_trip_test.o"
+	@echo "... test/checkpoint_round_trip_test.i"
+	@echo "... test/checkpoint_round_trip_test.s"
+	@echo "... test/state_table_cow_test.o"
+	@echo "... test/state_table_cow_test.i"
+	@echo "... test/state_table_cow_test.s"
+	@echo "... test/swiss_table_test.o"
+	@echo "... test/swiss_table_test.i"
+	@echo "... test/swiss_table_test.s"
+	@echo "... test/test_main.o"
+	@echo "... test/test_main.i"
+	@echo "... test/test_main.s"
+	@echo "... test/time_window_namespace_test.o"
+	@echo "... test/time_window_namespace_test.i"
+	@echo "... test/time_window_namespace_test.s"
+	@echo "... test/type_layout_parser_test.o"
+	@echo "... test/type_layout_parser_test.i"
+	@echo "... test/type_layout_parser_test.s"
+	@echo "... test/typed_inner_map_test.o"
+	@echo "... test/typed_inner_map_test.i"
+	@echo "... test/typed_inner_map_test.s"
 .PHONY : help
 
 

@@ -62,11 +62,14 @@ public final class TypeAnalyzer {
     public static final int TYPE_MAP      = 12;
     public static final int TYPE_FIXED_ROW = 13;
     public static final int TYPE_VOID_NS  = 20;
+    public static final int TYPE_TIME_WINDOW = 21;
 
     /** Cached RowDataSerializer class reference (loaded via reflection to avoid hard dep). */
     private static final Class<?> ROW_DATA_SERIALIZER_CLASS;
     /** Cached 'types' field in RowDataSerializer (LogicalType[]). */
     private static final Field ROW_DATA_TYPES_FIELD;
+    /** Cached TimeWindowSerializer class reference (loaded via reflection). */
+    private static final Class<?> TIME_WINDOW_SERIALIZER_CLASS;
 
     static {
         Class<?> cls = null;
@@ -80,6 +83,14 @@ public final class TypeAnalyzer {
         }
         ROW_DATA_SERIALIZER_CLASS = cls;
         ROW_DATA_TYPES_FIELD = f;
+
+        Class<?> twCls = null;
+        try {
+            twCls = Class.forName("org.apache.flink.streaming.api.windowing.windows.TimeWindow$Serializer");
+        } catch (ClassNotFoundException e) {
+            // flink-streaming not on classpath
+        }
+        TIME_WINDOW_SERIALIZER_CLASS = twCls;
     }
 
     private TypeAnalyzer() {}
@@ -106,6 +117,8 @@ public final class TypeAnalyzer {
             return TYPE_BYTES;
         } else if (serializer instanceof VoidNamespaceSerializer) {
             return TYPE_VOID_NS;
+        } else if (isTimeWindowSerializer(serializer)) {
+            return TYPE_TIME_WINDOW;
         } else if (serializer instanceof ListSerializer) {
             return TYPE_LIST;
         } else if (serializer instanceof MapSerializer) {
@@ -267,6 +280,14 @@ public final class TypeAnalyzer {
      */
     public static boolean isVoidNamespace(TypeSerializer<?> namespaceSerializer) {
         return namespaceSerializer instanceof VoidNamespaceSerializer;
+    }
+
+    /**
+     * Check if a TypeSerializer is a TimeWindow.Serializer.
+     */
+    public static boolean isTimeWindowSerializer(TypeSerializer<?> serializer) {
+        return TIME_WINDOW_SERIALIZER_CLASS != null
+                && TIME_WINDOW_SERIALIZER_CLASS.isInstance(serializer);
     }
 
     /**

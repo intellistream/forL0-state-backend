@@ -15,9 +15,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <functional>
 #include <mutex>
@@ -52,6 +52,18 @@ public:
         }
         // COW state per key group
         cow_states_.resize(num_key_groups);
+        // Per-key-group mutexes for COW thread safety (async snapshot vs main thread)
+        cow_mutexes_.resize(num_key_groups);
+        for (int i = 0; i < num_key_groups; ++i) {
+            cow_mutexes_[i] = std::make_unique<std::recursive_mutex>();
+        }
+        // OPT-4: Pre-size namespace and COW vectors for direct indexing
+        int_namespace_maps_.resize(num_key_groups);
+        str_namespace_maps_.resize(num_key_groups);
+        tw_namespace_maps_.resize(num_key_groups);
+        int_ns_cow_.resize(num_key_groups);
+        str_ns_cow_.resize(num_key_groups);
+        tw_ns_cow_.resize(num_key_groups);
     }
 
     ~StateTable() = default;
@@ -61,29 +73,50 @@ public:
 
     // ---- COW Snapshot support ----
 
+    // OPT-5: Merged COW tracking — single map instead of overwritten + added_after.
+    // cow_entries: optional<V> with value = overwritten (old value), nullopt = added_after.
     struct COWState {
         bool active = false;
-        std::unordered_map<K, V> overwritten;  // old values of modified entries
+        std::unordered_map<K, std::optional<V>> cow_entries;
         std::unordered_map<K, V> deleted;       // old values of deleted entries
-        std::unordered_set<K> added_after;      // keys added after snapshot
+    };
+
+    // Per-namespace COW tracking (used by namespace put/remove)
+    struct NsCowEntry {
+        std::unordered_map<K, std::optional<V>> cow_entries;
+        std::unordered_map<K, V> deleted;
+        void clear() { cow_entries.clear(); deleted.clear(); }
     };
 
     void prepare_snapshot() {
-        for (auto& cs : cow_states_) {
-            cs.active = true;
-            cs.overwritten.clear();
-            cs.deleted.clear();
-            cs.added_after.clear();
+        for (int i = 0; i < num_key_groups_; ++i) {
+            std::lock_guard<std::recursive_mutex> lock(*cow_mutexes_[i]);
+            cow_states_[i].active = true;
+            cow_states_[i].cow_entries.clear();
+            cow_states_[i].deleted.clear();
+            int_ns_cow_[i].clear();
+            str_ns_cow_[i].clear();
+            tw_ns_cow_[i].clear();
         }
     }
 
     void release_snapshot() {
-        for (auto& cs : cow_states_) {
-            cs.active = false;
-            cs.overwritten.clear();
-            cs.deleted.clear();
-            cs.added_after.clear();
+        for (int i = 0; i < num_key_groups_; ++i) {
+            std::lock_guard<std::recursive_mutex> lock(*cow_mutexes_[i]);
+            cow_states_[i].active = false;
+            cow_states_[i].cow_entries.clear();
+            cow_states_[i].deleted.clear();
+            int_ns_cow_[i].clear();
+            str_ns_cow_[i].clear();
+            tw_ns_cow_[i].clear();
         }
+    }
+
+    // Check if a snapshot is active for a given key group.
+    // When true, in-place modifications to values obtained via get() are unsafe
+    // and callers must use copy-and-replace through put() instead.
+    bool is_snapshot_active(int key_group) const {
+        return cow_states_[key_group - start_key_group_].active;
     }
 
     // ---- VoidNamespace operations ----
@@ -92,28 +125,113 @@ public:
         return tables_[key_group - start_key_group_]->find(key);
     }
 
+    // COW-safe in-place modification. Locks + cow_before_write internally,
+    // then calls fn(*val). Returns true if key existed and was modified.
+    // Total: 1 copy per unique key per snapshot (in cow_before_write), vs 2 with copy-and-put.
+    template <typename ModifyFn>
+    bool modify_in_place(int key_group, const K& key, ModifyFn&& fn) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) {
+            lock.lock();
+            cow_before_write(idx, key);
+        }
+        V* val = tables_[idx]->find(key);
+        if (val) { fn(*val); return true; }
+        return false;
+    }
+
+    // COW-safe in-place modification that may result in key removal.
+    // After fn(*val), if val->empty(), removes the key (with proper COW erase tracking).
+    template <typename ModifyFn>
+    void modify_or_remove_in_place(int key_group, const K& key, ModifyFn&& fn) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) {
+            lock.lock();
+            cow_before_write(idx, key);
+        }
+        V* val = tables_[idx]->find(key);
+        if (!val) return;
+        fn(*val);
+        if (val->empty()) {
+            cow_before_erase(idx, key);
+            tables_[idx]->erase(key);
+        }
+    }
+
+    // Namespace variant: COW-safe in-place modification.
+    template <typename N, typename ModifyFn>
+    bool modify_in_place(int key_group, const N& ns, const K& key, ModifyFn&& fn) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) {
+            lock.lock();
+            cow_before_write_ns(idx, ns, key);
+        }
+        auto* tbl = find_namespace_table(key_group, ns);
+        if (!tbl) return false;
+        V* val = tbl->find(key);
+        if (val) { fn(*val); return true; }
+        return false;
+    }
+
+    // Namespace variant: COW-safe in-place modification that may result in key removal.
+    template <typename N, typename ModifyFn>
+    void modify_or_remove_in_place(int key_group, const N& ns, const K& key, ModifyFn&& fn) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) {
+            lock.lock();
+            cow_before_write_ns(idx, ns, key);
+        }
+        auto* tbl = find_namespace_table(key_group, ns);
+        if (!tbl) return;
+        V* val = tbl->find(key);
+        if (!val) return;
+        fn(*val);
+        if (val->empty()) {
+            cow_before_erase_ns(idx, ns, key);
+            tbl->erase(key);
+            if (tbl->empty()) remove_namespace_table(key_group, ns);
+        }
+    }
+
     V* put(int key_group, const K& key, const V& value) {
         int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) lock.lock();
         cow_before_write(idx, key);
         auto [ptr, inserted] = tables_[idx]->insert_or_assign(key, value);
-        if (inserted && cow_states_[idx].active) {
-            cow_states_[idx].added_after.insert(key);
+        if (inserted && cs.active) {
+            cs.cow_entries.emplace(key, std::nullopt);
         }
         return ptr;
     }
 
     V* put(int key_group, const K& key, V&& value) {
         int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) lock.lock();
         cow_before_write(idx, key);
         auto [ptr, inserted] = tables_[idx]->insert_or_assign(key, std::move(value));
-        if (inserted && cow_states_[idx].active) {
-            cow_states_[idx].added_after.insert(key);
+        if (inserted && cs.active) {
+            cs.cow_entries.emplace(key, std::nullopt);
         }
         return ptr;
     }
 
     bool remove(int key_group, const K& key) {
         int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) lock.lock();
         cow_before_erase(idx, key);
         return tables_[idx]->erase(key);
     }
@@ -128,20 +246,41 @@ public:
 
     template <typename N>
     V* put(int key_group, const N& ns, const K& key, const V& value) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) lock.lock();
+        cow_before_write_ns(idx, ns, key);
         auto* tbl = get_or_create_namespace_table(key_group, ns);
-        auto [ptr, _] = tbl->insert_or_assign(key, value);
+        auto [ptr, inserted] = tbl->insert_or_assign(key, value);
+        if (inserted && cs.active) {
+            get_or_create_ns_cow(idx, ns).cow_entries.emplace(key, std::nullopt);
+        }
         return ptr;
     }
 
     template <typename N>
     V* put(int key_group, const N& ns, const K& key, V&& value) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) lock.lock();
+        cow_before_write_ns(idx, ns, key);
         auto* tbl = get_or_create_namespace_table(key_group, ns);
-        auto [ptr, _] = tbl->insert_or_assign(key, std::move(value));
+        auto [ptr, inserted] = tbl->insert_or_assign(key, std::move(value));
+        if (inserted && cs.active) {
+            get_or_create_ns_cow(idx, ns).cow_entries.emplace(key, std::nullopt);
+        }
         return ptr;
     }
 
     template <typename N>
     bool remove(int key_group, const N& ns, const K& key) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) lock.lock();
+        cow_before_erase_ns(idx, ns, key);
         auto* tbl = find_namespace_table(key_group, ns);
         if (!tbl) return false;
         bool erased = tbl->erase(key);
@@ -188,20 +327,30 @@ public:
             return;
         }
 
+        std::lock_guard<std::recursive_mutex> lock(*cow_mutexes_[idx]);
+
+        // OPT-6: Fast path — no COW modifications since snapshot
+        if (cs.cow_entries.empty() && cs.deleted.empty()) {
+            if (tables_[idx]) {
+                tables_[idx]->for_each([&](const K& k, const V& v) {
+                    fn(k, v);
+                });
+            }
+            return;
+        }
+
         // Iterate current table, applying COW overrides
         if (tables_[idx]) {
             tables_[idx]->for_each([&](const K& k, const V& v) {
-                // Skip entries added after snapshot
-                if (cs.added_after.find(k) != cs.added_after.end()) {
+                auto it = cs.cow_entries.find(k);
+                if (it != cs.cow_entries.end()) {
+                    if (it->second.has_value()) {
+                        fn(k, *it->second);  // overwritten — use old value
+                    }
+                    // else: added_after — skip
                     return;
                 }
-                // Use old value if overwritten
-                auto it = cs.overwritten.find(k);
-                if (it != cs.overwritten.end()) {
-                    fn(k, it->second);
-                } else {
-                    fn(k, v);
-                }
+                fn(k, v);
             });
         }
 
@@ -214,12 +363,82 @@ public:
     template <typename N, typename Fn>
     void for_each_in_key_group_ns(int key_group, Fn&& fn) const {
         int idx = key_group - start_key_group_;
-        auto it = int_namespace_maps_.find(idx);
-        if (it != int_namespace_maps_.end()) {
-            for (auto& [ns, tbl] : it->second) {
+        if constexpr (std::is_same_v<N, int64_t>) {
+            for (auto& [ns, tbl] : int_namespace_maps_[idx]) {
                 tbl->for_each([&](const K& k, const V& v) {
                     fn(ns, k, v);
                 });
+            }
+        } else if constexpr (std::is_same_v<N, TimeWindow>) {
+            for (auto& [ns, tbl] : tw_namespace_maps_[idx]) {
+                tbl->for_each([&](const K& k, const V& v) {
+                    fn(ns, k, v);
+                });
+            }
+        } else {
+            for (auto& [ns, tbl] : str_namespace_maps_[idx]) {
+                tbl->for_each([&](const K& k, const V& v) {
+                    fn(ns, k, v);
+                });
+            }
+        }
+    }
+
+    // Snapshot-consistent iteration for a key group with namespaces.
+    // Provides the state as it was at prepare_snapshot() time.
+    template <typename N, typename Fn>
+    void for_each_snapshot_in_key_group_ns(int key_group, Fn&& fn) const {
+        int idx = key_group - start_key_group_;
+        const auto& cs = cow_states_[idx];
+
+        if (!cs.active) {
+            for_each_in_key_group_ns<N>(key_group, std::forward<Fn>(fn));
+            return;
+        }
+
+        std::lock_guard<std::recursive_mutex> lock(*cow_mutexes_[idx]);
+
+        // Select the appropriate namespace map and COW map
+        const auto& ns_map = get_ns_maps_ref<N>()[idx];
+        const auto& ns_cow = get_ns_cow_ref<N>()[idx];
+
+        // OPT-6: Fast path — no namespace-level COW modifications
+        if (ns_cow.empty()) {
+            // Iterate directly under lock (can't call for_each_in_key_group_ns since table access must be protected)
+            for (auto& [ns, tbl] : ns_map) {
+                tbl->for_each([&](const K& k, const V& v) {
+                    fn(ns, k, v);
+                });
+            }
+            return;
+        }
+
+        // Step 1: Iterate current namespace tables with COW overrides
+        for (auto& [ns, tbl] : ns_map) {
+            const NsCowEntry* cow = nullptr;
+            auto cow_ns_it = ns_cow.find(ns);
+            if (cow_ns_it != ns_cow.end()) {
+                cow = &cow_ns_it->second;
+            }
+            tbl->for_each([&](const K& k, const V& v) {
+                if (cow) {
+                    auto it = cow->cow_entries.find(k);
+                    if (it != cow->cow_entries.end()) {
+                        if (it->second.has_value()) {
+                            fn(ns, k, *it->second);  // overwritten
+                        }
+                        // else: added_after — skip
+                        return;
+                    }
+                }
+                fn(ns, k, v);
+            });
+        }
+
+        // Step 2: Emit all deleted entries from COW
+        for (auto& [ns, cow] : ns_cow) {
+            for (auto& [k, v] : cow.deleted) {
+                fn(ns, k, v);
             }
         }
     }
@@ -235,16 +454,40 @@ public:
 
     template <typename N, typename MergeFn>
     void merge_namespaces(int key_group, const N& target, const std::vector<N>& sources, MergeFn&& merge) {
+        int idx = key_group - start_key_group_;
+        auto& cs = cow_states_[idx];
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cs.active) lock.lock();
         auto* target_tbl = get_or_create_namespace_table(key_group, target);
         for (const auto& src_ns : sources) {
             auto* src_tbl = find_namespace_table(key_group, src_ns);
             if (!src_tbl) continue;
+            // COW: save values before merge overwrites them
+            if (cs.active) {
+                src_tbl->for_each([&](const K& k, V& v) {
+                    auto& nc_target = get_or_create_ns_cow(idx, target);
+                    V* existing = target_tbl->find(k);
+                    if (existing && !nc_target.cow_entries.count(k)) {
+                        nc_target.cow_entries[k] = *existing;
+                    }
+                });
+                // COW: save all entries from source namespace before removal
+                auto& nc_src = get_or_create_ns_cow(idx, src_ns);
+                src_tbl->for_each([&](const K& k, V& v) {
+                    if (!nc_src.cow_entries.count(k) && !nc_src.deleted.count(k)) {
+                        nc_src.deleted[k] = v;
+                    }
+                });
+            }
             src_tbl->for_each([&](const K& k, V& v) {
                 V* existing = target_tbl->find(k);
                 if (existing) {
                     *existing = merge(*existing, std::move(v));
                 } else {
                     target_tbl->insert_or_assign(k, std::move(v));
+                    if (cs.active) {
+                        get_or_create_ns_cow(idx, target).cow_entries.emplace(k, std::nullopt);
+                    }
                 }
             });
             remove_namespace_table(key_group, src_ns);
@@ -264,12 +507,17 @@ public:
                 if (t) total += t->size();
             }
         }
-        for (auto& [idx, ns_map] : int_namespace_maps_) {
+        for (auto& ns_map : int_namespace_maps_) {
             for (auto& [ns, tbl] : ns_map) {
                 total += tbl->size();
             }
         }
-        for (auto& [idx, ns_map] : str_namespace_maps_) {
+        for (auto& ns_map : str_namespace_maps_) {
+            for (auto& [ns, tbl] : ns_map) {
+                total += tbl->size();
+            }
+        }
+        for (auto& ns_map : tw_namespace_maps_) {
             for (auto& [ns, tbl] : ns_map) {
                 total += tbl->size();
             }
@@ -291,40 +539,120 @@ private:
     void cow_before_write(int idx, const K& key) {
         auto& cs = cow_states_[idx];
         if (!cs.active) return;
-        if (cs.overwritten.find(key) != cs.overwritten.end()) return;
-        if (cs.added_after.find(key) != cs.added_after.end()) return;
+        if (cs.cow_entries.count(key)) return;  // already tracked
         V* existing = tables_[idx]->find(key);
         if (existing) {
-            cs.overwritten[key] = *existing;  // deep copy old value
+            cs.cow_entries[key] = *existing;  // optional<V> with value
         }
     }
 
     void cow_before_erase(int idx, const K& key) {
         auto& cs = cow_states_[idx];
         if (!cs.active) return;
-        if (cs.overwritten.find(key) != cs.overwritten.end()) return;
-        if (cs.deleted.find(key) != cs.deleted.end()) return;
-        if (cs.added_after.find(key) != cs.added_after.end()) return;
+        auto it = cs.cow_entries.find(key);
+        if (it != cs.cow_entries.end()) {
+            if (it->second.has_value()) {
+                // Was overwritten — move old value to deleted
+                cs.deleted[key] = std::move(*it->second);
+            }
+            // else: was added_after — no old value to save
+            cs.cow_entries.erase(it);
+            return;
+        }
+        if (cs.deleted.count(key)) return;
         V* existing = tables_[idx]->find(key);
         if (existing) {
             cs.deleted[key] = *existing;  // save deleted entry
         }
     }
 
-    // Namespace table lookup — supports both int64_t and std::string namespaces
+    // Namespace COW: save old value before writing to a namespace table
+    template <typename N>
+    void cow_before_write_ns(int idx, const N& ns, const K& key) {
+        auto& cs = cow_states_[idx];
+        if (!cs.active) return;
+        auto& nc = get_or_create_ns_cow(idx, ns);
+        if (nc.cow_entries.count(key)) return;
+        int kg = idx + start_key_group_;
+        auto* tbl = find_namespace_table(kg, ns);
+        if (!tbl) return;
+        V* existing = tbl->find(key);
+        if (existing) {
+            nc.cow_entries[key] = *existing;
+        }
+    }
+
+    // Namespace COW: save old value before erasing from a namespace table
+    template <typename N>
+    void cow_before_erase_ns(int idx, const N& ns, const K& key) {
+        auto& cs = cow_states_[idx];
+        if (!cs.active) return;
+        auto& nc = get_or_create_ns_cow(idx, ns);
+        auto it = nc.cow_entries.find(key);
+        if (it != nc.cow_entries.end()) {
+            if (it->second.has_value()) {
+                nc.deleted[key] = std::move(*it->second);
+            }
+            nc.cow_entries.erase(it);
+            return;
+        }
+        if (nc.deleted.count(key)) return;
+        int kg = idx + start_key_group_;
+        auto* tbl = find_namespace_table(kg, ns);
+        if (!tbl) return;
+        V* existing = tbl->find(key);
+        if (existing) {
+            nc.deleted[key] = *existing;
+        }
+    }
+
+    // Helpers for namespace COW map access
+    template <typename N>
+    NsCowEntry& get_or_create_ns_cow(int idx, const N& ns) {
+        if constexpr (std::is_same_v<N, int64_t>) {
+            return int_ns_cow_[idx][ns];
+        } else if constexpr (std::is_same_v<N, TimeWindow>) {
+            return tw_ns_cow_[idx][ns];
+        } else {
+            return str_ns_cow_[idx][ns];
+        }
+    }
+
+    template <typename N>
+    const auto& get_ns_maps_ref() const {
+        if constexpr (std::is_same_v<N, int64_t>) {
+            return int_namespace_maps_;
+        } else if constexpr (std::is_same_v<N, TimeWindow>) {
+            return tw_namespace_maps_;
+        } else {
+            return str_namespace_maps_;
+        }
+    }
+
+    template <typename N>
+    const auto& get_ns_cow_ref() const {
+        if constexpr (std::is_same_v<N, int64_t>) {
+            return int_ns_cow_;
+        } else if constexpr (std::is_same_v<N, TimeWindow>) {
+            return tw_ns_cow_;
+        } else {
+            return str_ns_cow_;
+        }
+    }
+
+    // Namespace table lookup — supports int64_t, std::string, and TimeWindow namespaces
     template <typename N>
     Table* find_namespace_table(int key_group, const N& ns) {
         int idx = key_group - start_key_group_;
         if constexpr (std::is_same_v<N, int64_t>) {
-            auto it = int_namespace_maps_.find(idx);
-            if (it == int_namespace_maps_.end()) return nullptr;
-            auto nit = it->second.find(ns);
-            return nit != it->second.end() ? nit->second.get() : nullptr;
+            auto nit = int_namespace_maps_[idx].find(ns);
+            return nit != int_namespace_maps_[idx].end() ? nit->second.get() : nullptr;
+        } else if constexpr (std::is_same_v<N, TimeWindow>) {
+            auto nit = tw_namespace_maps_[idx].find(ns);
+            return nit != tw_namespace_maps_[idx].end() ? nit->second.get() : nullptr;
         } else {
-            auto it = str_namespace_maps_.find(idx);
-            if (it == str_namespace_maps_.end()) return nullptr;
-            auto nit = it->second.find(ns);
-            return nit != it->second.end() ? nit->second.get() : nullptr;
+            auto nit = str_namespace_maps_[idx].find(ns);
+            return nit != str_namespace_maps_[idx].end() ? nit->second.get() : nullptr;
         }
     }
 
@@ -333,6 +661,14 @@ private:
         int idx = key_group - start_key_group_;
         if constexpr (std::is_same_v<N, int64_t>) {
             auto& ns_map = int_namespace_maps_[idx];
+            auto it = ns_map.find(ns);
+            if (it != ns_map.end()) return it->second.get();
+            auto tbl = std::make_unique<Table>(16, alloc_);
+            auto* ptr = tbl.get();
+            ns_map.emplace(ns, std::move(tbl));
+            return ptr;
+        } else if constexpr (std::is_same_v<N, TimeWindow>) {
+            auto& ns_map = tw_namespace_maps_[idx];
             auto it = ns_map.find(ns);
             if (it != ns_map.end()) return it->second.get();
             auto tbl = std::make_unique<Table>(16, alloc_);
@@ -354,17 +690,11 @@ private:
     void remove_namespace_table(int key_group, const N& ns) {
         int idx = key_group - start_key_group_;
         if constexpr (std::is_same_v<N, int64_t>) {
-            auto it = int_namespace_maps_.find(idx);
-            if (it != int_namespace_maps_.end()) {
-                it->second.erase(ns);
-                if (it->second.empty()) int_namespace_maps_.erase(it);
-            }
+            int_namespace_maps_[idx].erase(ns);
+        } else if constexpr (std::is_same_v<N, TimeWindow>) {
+            tw_namespace_maps_[idx].erase(ns);
         } else {
-            auto it = str_namespace_maps_.find(idx);
-            if (it != str_namespace_maps_.end()) {
-                it->second.erase(ns);
-                if (it->second.empty()) str_namespace_maps_.erase(it);
-            }
+            str_namespace_maps_[idx].erase(ns);
         }
     }
 
@@ -376,12 +706,22 @@ private:
     // VoidNamespace mode: one table per key group
     std::vector<std::unique_ptr<Table>> tables_;
 
-    // General Namespace mode: supports both int64_t and std::string namespace types
-    std::unordered_map<int, std::unordered_map<int64_t, std::unique_ptr<Table>>> int_namespace_maps_;
-    std::unordered_map<int, std::unordered_map<std::string, std::unique_ptr<Table>>> str_namespace_maps_;
+    // General Namespace mode: supports int64_t, std::string, and TimeWindow namespace types
+    // OPT-4: Outer layer uses vector (indexed by key group offset) for O(1) lookup
+    std::vector<std::unordered_map<int64_t, std::unique_ptr<Table>>> int_namespace_maps_;
+    std::vector<std::unordered_map<std::string, std::unique_ptr<Table>>> str_namespace_maps_;
+    std::vector<std::unordered_map<TimeWindow, std::unique_ptr<Table>, TimeWindowHash>> tw_namespace_maps_;
 
     // COW state per key group (for snapshot consistency)
     std::vector<COWState> cow_states_;
+    // Per-key-group mutexes: protects cow_states_[i], tables_[i], and ns COW maps during active snapshot
+    std::vector<std::unique_ptr<std::recursive_mutex>> cow_mutexes_;
+
+    // Namespace-level COW tracking: idx → namespace → NsCowEntry
+    // OPT-4: Outer layer uses vector for O(1) lookup
+    std::vector<std::unordered_map<int64_t, NsCowEntry>> int_ns_cow_;
+    std::vector<std::unordered_map<std::string, NsCowEntry>> str_ns_cow_;
+    std::vector<std::unordered_map<TimeWindow, NsCowEntry, TimeWindowHash>> tw_ns_cow_;
 };
 
 // ============================================================================
@@ -394,6 +734,8 @@ public:
     virtual ~StateTableHandle() = default;
     virtual size_t total_size() const = 0;
     virtual bool is_void_namespace() const = 0;
+    virtual void prepare_snapshot() = 0;
+    virtual void release_snapshot() = 0;
 };
 
 // Typed wrapper
@@ -408,6 +750,8 @@ public:
 
     size_t total_size() const override { return table_->total_size(); }
     bool is_void_namespace() const override { return table_->is_void_namespace(); }
+    void prepare_snapshot() override { table_->prepare_snapshot(); }
+    void release_snapshot() override { table_->release_snapshot(); }
 
 private:
     std::unique_ptr<StateTable<K, V>> table_;
@@ -465,15 +809,18 @@ public:
     // Snapshot version management (for COW)
     uint64_t prepare_snapshot() {
         ++snapshot_version_;
-        // Prepare COW in all state tables — must be called on the main thread
-        // during the synchronous snapshot phase.
-        // The actual COW state preparation is done per-table when needed.
+        // Propagate COW preparation to all registered state tables
+        for (auto& [id, handle] : state_handles_) {
+            handle->prepare_snapshot();
+        }
         return snapshot_version_;
     }
 
     void release_snapshot() {
-        // Release is called after async snapshot completes.
-        // Individual tables release via typed dispatch from JNI layer.
+        // Propagate COW release to all registered state tables
+        for (auto& [id, handle] : state_handles_) {
+            handle->release_snapshot();
+        }
     }
 
     uint64_t snapshot_version() const {
@@ -494,8 +841,12 @@ public:
     }
 
     // Registry for checkpoint: maps state_id → opaque StateHandle* (from JNI layer).
-    // The JNI layer registers these after state registration.
-    void register_state_handle_ptr(int64_t state_id, void* handle_ptr) {
+    // StateEngine takes ownership and frees all handles on destruction.
+    using OwnedPtr = std::unique_ptr<void, void(*)(void*)>;
+
+    void register_state_handle_ptr(int64_t state_id, void* handle_ptr,
+                                   void(*deleter)(void*)) {
+        owned_state_handles_.emplace_back(OwnedPtr(handle_ptr, deleter));
         state_handle_ptrs_[state_id] = handle_ptr;
     }
 
@@ -519,7 +870,8 @@ private:
     std::unordered_map<int64_t, std::unique_ptr<StateTableHandle>> state_handles_;
     std::unordered_map<int64_t, std::string> state_names_;
     std::unordered_map<std::string, int64_t> name_to_id_;
-    std::unordered_map<int64_t, void*> state_handle_ptrs_;  // state_id → StateHandle*
+    std::unordered_map<int64_t, void*> state_handle_ptrs_;  // state_id → StateHandle* (non-owning)
+    std::vector<OwnedPtr> owned_state_handles_;  // owns all StateHandle allocations
 
     uint64_t snapshot_version_;
 };

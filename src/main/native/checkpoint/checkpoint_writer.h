@@ -71,15 +71,14 @@ inline void write_flink_value<std::string>(WriteBuffer& buf, const std::string& 
 // Each element is already serialized bytes — written raw.
 template <>
 inline void write_flink_value<ElementList>(WriteBuffer& buf, const ElementList& value, const TypeLayout&) {
-    // First compute inner content into a temp buffer
-    WriteBuffer inner;
-    inner.write_int(static_cast<int32_t>(value.size()));
+    // OPT-9: Write directly with placeholder length, then patch
+    size_t len_pos = buf.size();
+    buf.write_int(0);  // placeholder
+    buf.write_int(static_cast<int32_t>(value.size()));
     for (const auto& elem : value) {
-        inner.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
+        buf.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
     }
-    // Write length-prefixed: [total_bytes][content]
-    buf.write_int(static_cast<int32_t>(inner.size()));
-    buf.write_raw(inner.data(), inner.size());
+    buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
 }
 
 // InnerMap: write as [total_byte_length(4)][count(4)][uk1][uv1][uk2][uv2]...
@@ -88,21 +87,67 @@ inline void write_flink_value<ElementList>(WriteBuffer& buf, const ElementList& 
 // User keys and values are already serialized bytes — written raw.
 template <>
 inline void write_flink_value<InnerMap>(WriteBuffer& buf, const InnerMap& value, const TypeLayout&) {
-    // First compute inner content into a temp buffer
-    WriteBuffer inner;
-    inner.write_int(static_cast<int32_t>(value.size()));
+    // OPT-9: Write directly with placeholder length, then patch
+    size_t len_pos = buf.size();
+    buf.write_int(0);  // placeholder
+    buf.write_int(static_cast<int32_t>(value.size()));
     for (const auto& entry : value) {
-        inner.write_raw(reinterpret_cast<const uint8_t*>(entry.first.data()), entry.first.size());
-        inner.write_raw(reinterpret_cast<const uint8_t*>(entry.second.data()), entry.second.size());
+        buf.write_raw(reinterpret_cast<const uint8_t*>(entry.first.data()), entry.first.size());
+        buf.write_raw(reinterpret_cast<const uint8_t*>(entry.second.data()), entry.second.size());
     }
-    // Write length-prefixed: [total_bytes][content]
-    buf.write_int(static_cast<int32_t>(inner.size()));
-    buf.write_raw(inner.data(), inner.size());
+    buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
+}
+
+// Typed InnerMap variants — same checkpoint format as InnerMap but with typed entries.
+
+template <>
+inline void write_flink_value<InnerMapLongLong>(WriteBuffer& buf, const InnerMapLongLong& value, const TypeLayout&) {
+    // OPT-9: Direct write with placeholder
+    size_t len_pos = buf.size();
+    buf.write_int(0);
+    buf.write_int(static_cast<int32_t>(value.size()));
+    for (const auto& entry : value) {
+        buf.write_long(entry.first);
+        buf.write_long(entry.second);
+    }
+    buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
+}
+
+template <>
+inline void write_flink_value<InnerMapLongString>(WriteBuffer& buf, const InnerMapLongString& value, const TypeLayout&) {
+    // OPT-9: Direct write with placeholder
+    size_t len_pos = buf.size();
+    buf.write_int(0);
+    buf.write_int(static_cast<int32_t>(value.size()));
+    for (const auto& entry : value) {
+        buf.write_long(entry.first);
+        buf.write_raw(reinterpret_cast<const uint8_t*>(entry.second.data()), entry.second.size());
+    }
+    buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
+}
+
+template <>
+inline void write_flink_value<InnerMapStringLong>(WriteBuffer& buf, const InnerMapStringLong& value, const TypeLayout&) {
+    // OPT-9: Direct write with placeholder
+    size_t len_pos = buf.size();
+    buf.write_int(0);
+    buf.write_int(static_cast<int32_t>(value.size()));
+    for (const auto& entry : value) {
+        buf.write_raw(reinterpret_cast<const uint8_t*>(entry.first.data()), entry.first.size());
+        buf.write_long(entry.second);
+    }
+    buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
 }
 
 // Write VoidNamespace marker (Flink VoidNamespaceSerializer writes a single 0 byte)
 inline void write_void_namespace(WriteBuffer& buf) {
     buf.write_byte(0);
+}
+
+// Write TimeWindow namespace: [ns_start(8B BE)][ns_end(8B BE)]
+inline void write_time_window_namespace(WriteBuffer& buf, const TimeWindow& tw) {
+    buf.write_long(tw.first);   // start, big-endian
+    buf.write_long(tw.second);  // end, big-endian
 }
 
 // FixedRow: write as BinaryRowData format (length-prefixed).
@@ -140,15 +185,13 @@ public:
           void_namespace_(void_namespace) {}
 
     // Write all entries for a key group into the buffer.
+    // Uses snapshot-consistent iteration (COW) when a snapshot is active.
     // Returns the number of entries written.
     size_t write_key_group(const StateTable<K, V>& table,
                            int key_group,
                            WriteBuffer& buf) {
-        const auto* swiss = table.get_table(key_group);
-        if (!swiss || swiss->empty()) return 0;
-
         size_t count = 0;
-        swiss->for_each([&](const K& key, const V& value) {
+        table.for_each_snapshot_in_key_group(key_group, [&](const K& key, const V& value) {
             if (void_namespace_) {
                 write_void_namespace(buf);
             }
@@ -159,6 +202,22 @@ public:
         return count;
     }
 
+    // Write all entries for a key group with TimeWindow namespaces.
+    // Uses snapshot-consistent iteration (COW) when a snapshot is active.
+    size_t write_key_group_tw(const StateTable<K, V>& table,
+                              int key_group,
+                              WriteBuffer& buf) {
+        size_t count = 0;
+        table.template for_each_snapshot_in_key_group_ns<TimeWindow>(key_group,
+            [&](const TimeWindow& tw, const K& key, const V& value) {
+                write_time_window_namespace(buf, tw);
+                write_flink_value(buf, key, key_layout_);
+                write_flink_value(buf, value, value_layout_);
+                ++count;
+            });
+        return count;
+    }
+
     // Write for ListState: value is std::vector<T>
     // Flink ListSerializer writes: element_count(int) + each element
     template <typename T>
@@ -166,11 +225,8 @@ public:
                                 int key_group,
                                 WriteBuffer& buf,
                                 const TypeLayout& elem_layout) {
-        const auto* swiss = table.get_table(key_group);
-        if (!swiss || swiss->empty()) return 0;
-
         size_t count = 0;
-        swiss->for_each([&](const K& key, const std::vector<T>& list) {
+        table.for_each_snapshot_in_key_group(key_group, [&](const K& key, const std::vector<T>& list) {
             if (void_namespace_) {
                 write_void_namespace(buf);
             }

@@ -30,6 +30,7 @@ enum class TypeId : uint8_t {
     MAP      = 12,
     FIXED_ROW = 13, // FixedLengthRow — multi-field all-fixed RowData (int64_t[N])
     VOID_NS  = 20,  // VoidNamespace marker
+    TIME_WINDOW = 21, // TimeWindow namespace {start: int64, end: int64}
 };
 
 // Field descriptor within a StructLayout.
@@ -128,6 +129,17 @@ struct FixedRowHash {
             h ^= static_cast<size_t>(row.f[i]);
             h *= 0x100000001b3ULL;
         }
+        return h;
+    }
+};
+
+// TimeWindow: {start, end} — both int64_t
+using TimeWindow = std::pair<int64_t, int64_t>;
+
+struct TimeWindowHash {
+    size_t operator()(const TimeWindow& tw) const {
+        size_t h = std::hash<int64_t>()(tw.first);
+        h ^= std::hash<int64_t>()(tw.second) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
         return h;
     }
 };
@@ -248,6 +260,10 @@ private:
                 layout->cpp_size = 0;
                 break;
 
+            case TypeId::TIME_WINDOW:
+                layout->cpp_size = sizeof(TimeWindow);
+                break;
+
             default:
                 throw std::runtime_error("TypeLayout: unknown type id");
         }
@@ -290,6 +306,7 @@ template <> struct CppType<TypeId::BOOL>    { using type = bool; };
 template <> struct CppType<TypeId::STRING>  { using type = std::string; };
 template <> struct CppType<TypeId::BYTES>   { using type = std::string; };
 template <> struct CppType<TypeId::VOID_NS> { using type = VoidNamespace; };
+template <> struct CppType<TypeId::TIME_WINDOW> { using type = TimeWindow; };
 
 // ============================================================================
 //  Type aliases for ListState and MapState native storage
@@ -300,5 +317,10 @@ using ElementList = std::vector<std::string>;
 
 // MapState stores a nested map of serialized user-key → serialized user-value.
 using InnerMap = std::unordered_map<std::string, std::string>;
+
+// Typed InnerMap variants — avoid string encoding for primitive UK/UV.
+using InnerMapLongLong   = std::unordered_map<int64_t, int64_t>;
+using InnerMapLongString = std::unordered_map<int64_t, std::string>;
+using InnerMapStringLong = std::unordered_map<std::string, int64_t>;
 
 }  // namespace forl0

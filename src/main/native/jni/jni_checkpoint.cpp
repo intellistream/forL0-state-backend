@@ -74,6 +74,9 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
         auto* tbl = engine->get_state_table<KT, VT>(tid);                    \
         if (!tbl) return 0;                                                   \
         CheckpointStateWriter<KT, VT> writer(kl, vl, vns);                   \
+        if (handle->ns_type == StateHandle::NsType::TIME_WINDOW) {           \
+            return writer.write_key_group_tw(*tbl, key_group, buf);          \
+        }                                                                     \
         return writer.write_key_group(*tbl, key_group, buf);                  \
     } while (0)
 
@@ -86,10 +89,23 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
         }
     }
 
-    // MAP state: value is InnerMap (std::unordered_map<std::string, std::string>)
+    // MAP state: dispatch based on InnerMap specialization
     if (kind == StateHandle::StateKind::MAP_) {
         if (kt == StateHandle::KeyType::INT64) {
-            WRITE_KG(int64_t, InnerMap);
+            switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::LONG_LONG:
+                    WRITE_KG(int64_t, InnerMapLongLong);
+                    break;
+                case StateHandle::MapInnerKind::LONG_STRING:
+                    WRITE_KG(int64_t, InnerMapLongString);
+                    break;
+                case StateHandle::MapInnerKind::STRING_LONG:
+                    WRITE_KG(int64_t, InnerMapStringLong);
+                    break;
+                default:
+                    WRITE_KG(int64_t, InnerMap);
+                    break;
+            }
         } else {
             WRITE_KG(std::string, InnerMap);
         }
@@ -151,7 +167,11 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
         auto* tbl = engine->get_state_table<KT, VT>(tid);                     \
         if (!tbl) return;                                                      \
         CheckpointStateReader<KT, VT> rd(kl, vl, vns);                        \
-        rd.read_entries(reader, *tbl, key_group, entry_count);                 \
+        if (handle->ns_type == StateHandle::NsType::TIME_WINDOW) {            \
+            rd.read_entries_tw(reader, *tbl, key_group, entry_count);          \
+        } else {                                                               \
+            rd.read_entries(reader, *tbl, key_group, entry_count);             \
+        }                                                                      \
         return;                                                                \
     } while (0)
 
@@ -164,10 +184,23 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
         }
     }
 
-    // MAP state: value is InnerMap
+    // MAP state: dispatch based on InnerMap specialization
     if (kind == StateHandle::StateKind::MAP_) {
         if (kt == StateHandle::KeyType::INT64) {
-            READ_KG(int64_t, InnerMap);
+            switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::LONG_LONG:
+                    READ_KG(int64_t, InnerMapLongLong);
+                    break;
+                case StateHandle::MapInnerKind::LONG_STRING:
+                    READ_KG(int64_t, InnerMapLongString);
+                    break;
+                case StateHandle::MapInnerKind::STRING_LONG:
+                    READ_KG(int64_t, InnerMapStringLong);
+                    break;
+                default:
+                    READ_KG(int64_t, InnerMap);
+                    break;
+            }
         } else {
             READ_KG(std::string, InnerMap);
         }
@@ -229,6 +262,15 @@ Java_org_apache_flink_state_forl0_NativeEngine_prepareSnapshot(
     })
 }
 
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_releaseSnapshot(
+        JNIEnv* env, jclass, jlong engineHandle) {
+    JNI_ENTRY_VOID({
+        auto* engine = from_handle<StateEngine>(engineHandle);
+        engine->release_snapshot();
+    })
+}
+
 // ============================================================================
 //  Write key group data — called per key group during async snapshot.
 //  Returns byte[] containing all state entries for this key group in
@@ -266,8 +308,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_writeKeyGroupData(
         buf.write_short(-1);
 
         if (buf.size() <= 2) return nullptr;  // only marker, no data
-        return string_to_jbytearray(env,
-                std::string(reinterpret_cast<const char*>(buf.data()), buf.size()));
+        jbyteArray result = env->NewByteArray(static_cast<jsize>(buf.size()));
+        env->SetByteArrayRegion(result, 0, static_cast<jsize>(buf.size()),
+                reinterpret_cast<const jbyte*>(buf.data()));
+        return result;
     })
 }
 
@@ -339,8 +383,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_writeStateKeyGroupEntries(
         p[2] = static_cast<uint8_t>((c >> 8) & 0xFF);
         p[3] = static_cast<uint8_t>(c & 0xFF);
 
-        return string_to_jbytearray(env,
-                std::string(reinterpret_cast<const char*>(buf.data()), buf.size()));
+        jbyteArray result = env->NewByteArray(static_cast<jsize>(buf.size()));
+        env->SetByteArrayRegion(result, 0, static_cast<jsize>(buf.size()),
+                reinterpret_cast<const jbyte*>(buf.data()));
+        return result;
     })
 }
 

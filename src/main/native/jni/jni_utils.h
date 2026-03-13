@@ -47,6 +47,16 @@ inline jbyteArray string_to_jbytearray(JNIEnv* env, const std::string& s) {
     return arr;
 }
 
+/** Direct buffer→jbyteArray without intermediate std::string copy. */
+inline jbyteArray buffer_to_jbytearray(JNIEnv* env, const uint8_t* data, size_t size) {
+    jbyteArray arr = env->NewByteArray(static_cast<jsize>(size));
+    if (arr) {
+        env->SetByteArrayRegion(arr, 0, static_cast<jsize>(size),
+                                reinterpret_cast<const jbyte*>(data));
+    }
+    return arr;
+}
+
 inline std::string jstring_to_string(JNIEnv* env, jstring str) {
     if (!str) return {};
     const char* chars = env->GetStringUTFChars(str, nullptr);
@@ -98,13 +108,18 @@ struct StateHandle {
     enum class KeyType : uint8_t { INT32, INT64, STRING, BYTES, FIXED_ROW };
     enum class ValueType : uint8_t { INT32, INT64, FLOAT32, FLOAT64, BOOL, STRING, BYTES, LIST, MAP };
     enum class StateKind : uint8_t { VALUE, LIST, MAP_, REDUCING, AGGREGATING };
+    enum class NsType : uint8_t { VOID_NS, BYTES, TIME_WINDOW };
+    // MapState InnerMap specialization kind
+    enum class MapInnerKind : uint8_t { STRING_STRING, LONG_LONG, LONG_STRING, STRING_LONG };
 
     StateEngine* engine;
     int64_t table_id;       // StateEngine table registration id
     KeyType key_type;
     ValueType value_type;
     StateKind kind;
+    NsType ns_type = NsType::VOID_NS;
     bool void_namespace;
+    MapInnerKind map_inner_kind = MapInnerKind::STRING_STRING;
 
     // Type descriptors (for checkpoint format — used by C++ checkpoint codec).
     // key_layout holds the parsed key type layout (needed for FIXED_ROW arity).

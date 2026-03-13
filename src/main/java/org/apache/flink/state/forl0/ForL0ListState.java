@@ -7,6 +7,7 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalListState;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Preconditions;
 
 import java.io.IOException;
@@ -38,10 +39,14 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     private final int keyTypeId;
     private final int elementTypeId;
     private final boolean voidNamespace;
+    private final boolean isTimeWindowNs;
     private final boolean isRowDataKey;
     private final RowDataKeyAccessor rowDataKeyAccessor;
     private final boolean isRowDataElement;
     private final RowDataKeyAccessor rowDataElementAccessor;
+
+    private enum ListStrategy { LONG_ELEM_LONG_VOID, LONG_VOID, LONG_TW, GENERIC }
+    private final ListStrategy listStrategy;
 
     /** Reusable serialization buffers (single-threaded access). */
     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
@@ -66,37 +71,55 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
         this.elementTypeId = (elementSerializer instanceof org.apache.flink.api.common.typeutils.base.LongSerializer)
                 ? TypeAnalyzer.TYPE_INT64 : -1;
         this.voidNamespace = namespaceSerializer instanceof VoidNamespaceSerializer;
+        this.isTimeWindowNs = TypeAnalyzer.isTimeWindowSerializer(namespaceSerializer);
         this.isRowDataKey = TypeAnalyzer.isRowDataSerializer(keySerializer);
         this.rowDataKeyAccessor = isRowDataKey ? TypeAnalyzer.createRowDataKeyAccessor(keySerializer) : null;
         this.isRowDataElement = elementSerializer != null && TypeAnalyzer.isRowDataSerializer(elementSerializer);
         this.rowDataElementAccessor = isRowDataElement
                 ? TypeAnalyzer.createRowDataKeyAccessor(elementSerializer) : null;
+
+        if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64 && elementTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.listStrategy = ListStrategy.LONG_ELEM_LONG_VOID;
+        } else if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.listStrategy = ListStrategy.LONG_VOID;
+        } else if (isTimeWindowNs && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.listStrategy = ListStrategy.LONG_TW;
+        } else {
+            this.listStrategy = ListStrategy.GENERIC;
+        }
     }
 
     @SuppressWarnings("unchecked")
     @Override
     public Iterable<V> get() {
         try {
-            if (useLongElementPath()) {
-                long[] arr = NativeEngine.listGetLongElements(stateHandle,
-                        resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-                if (arr == null) {
-                    return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+            switch (listStrategy) {
+                case LONG_ELEM_LONG_VOID: {
+                    long[] arr = NativeEngine.listGetLongElements(stateHandle,
+                            resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    if (arr == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+                    List<V> list = new ArrayList<>(arr.length);
+                    for (long v : arr) { list.add((V) Long.valueOf(v)); }
+                    return list;
                 }
-                List<V> list = new ArrayList<>(arr.length);
-                for (long v : arr) { list.add((V) Long.valueOf(v)); }
-                return list;
+                case LONG_VOID: {
+                    byte[] data = NativeEngine.listGet(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    if (data == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+                    return deserializeList(data);
+                }
+                case LONG_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    byte[] data = NativeEngine.listGetWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    if (data == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+                    return deserializeList(data);
+                }
+                default: {
+                    byte[] data = NativeEngine.listGetGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    if (data == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+                    return deserializeList(data);
+                }
             }
-            byte[] data;
-            if (useInt64Path()) {
-                data = NativeEngine.listGet(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-            } else {
-                data = NativeEngine.listGetGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-            }
-            if (data == null) {
-                return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
-            }
-            return deserializeList(data);
         } catch (IOException e) {
             throw new RuntimeException("Failed to get ListState", e);
         }
@@ -106,24 +129,24 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     public void add(V value) {
         Preconditions.checkNotNull(value, "You cannot add null to a ListState.");
         try {
-            if (useLongElementPath()) {
-                NativeEngine.listAddLong(stateHandle,
-                        resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex,
-                        (Long) value);
-                return;
-            }
-            byte[] serialized = serializeElement(value);
-            if (useInt64Path()) {
-                NativeEngine.listAdd(stateHandle,
-                        resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex,
-                        serialized);
-            } else {
-                NativeEngine.listAddGeneric(stateHandle,
-                        serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex,
-                        serialized);
+            switch (listStrategy) {
+                case LONG_ELEM_LONG_VOID:
+                    NativeEngine.listAddLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, (Long) value);
+                    return;
+                case LONG_VOID:
+                    NativeEngine.listAdd(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElement(value));
+                    return;
+                case LONG_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.listAddWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd(), serializeElement(value));
+                    return;
+                }
+                default:
+                    NativeEngine.listAddGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElement(value));
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to add to ListState", e);
@@ -138,20 +161,21 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
             return;
         }
         try {
-            if (useLongElementPath()) {
-                long[] arr = new long[values.size()];
-                for (int i = 0; i < arr.length; i++) { arr[i] = (Long) values.get(i); }
-                NativeEngine.listUpdateLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, arr);
-                return;
-            }
-            byte[] serialized = serializeElementList(values);
-            if (useInt64Path()) {
-                NativeEngine.listUpdate(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, serialized);
-            } else {
-                NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, serialized);
+            switch (listStrategy) {
+                case LONG_ELEM_LONG_VOID: {
+                    long[] arr = new long[values.size()];
+                    for (int i = 0; i < arr.length; i++) { arr[i] = (Long) values.get(i); }
+                    NativeEngine.listUpdateLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, arr);
+                    return;
+                }
+                case LONG_VOID:
+                    NativeEngine.listUpdate(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElementList(values));
+                    return;
+                default:
+                    NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElementList(values));
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to update ListState", e);
@@ -165,20 +189,21 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
             return;
         }
         try {
-            if (useLongElementPath()) {
-                long[] arr = new long[values.size()];
-                for (int i = 0; i < arr.length; i++) { arr[i] = (Long) values.get(i); }
-                NativeEngine.listAddAllLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, arr);
-                return;
-            }
-            byte[] serialized = serializeElementList(values);
-            if (useInt64Path()) {
-                NativeEngine.listAddAll(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, serialized);
-            } else {
-                NativeEngine.listAddAllGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, serialized);
+            switch (listStrategy) {
+                case LONG_ELEM_LONG_VOID: {
+                    long[] arr = new long[values.size()];
+                    for (int i = 0; i < arr.length; i++) { arr[i] = (Long) values.get(i); }
+                    NativeEngine.listAddAllLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, arr);
+                    return;
+                }
+                case LONG_VOID:
+                    NativeEngine.listAddAll(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElementList(values));
+                    return;
+                default:
+                    NativeEngine.listAddAllGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElementList(values));
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to addAll to ListState", e);
@@ -225,22 +250,33 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     @Override
     public List<V> getInternal() {
         try {
-            if (useLongElementPath()) {
-                long[] arr = NativeEngine.listGetLongElements(stateHandle,
-                        resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-                if (arr == null) return null;
-                List<V> list = new ArrayList<>(arr.length);
-                for (long v : arr) { list.add((V) Long.valueOf(v)); }
-                return list;
+            switch (listStrategy) {
+                case LONG_ELEM_LONG_VOID: {
+                    long[] arr = NativeEngine.listGetLongElements(stateHandle,
+                            resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    if (arr == null) return null;
+                    List<V> list = new ArrayList<>(arr.length);
+                    for (long v : arr) { list.add((V) Long.valueOf(v)); }
+                    return list;
+                }
+                case LONG_VOID: {
+                    byte[] data = NativeEngine.listGet(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    if (data == null) return null;
+                    return deserializeList(data);
+                }
+                case LONG_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    byte[] data = NativeEngine.listGetWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    if (data == null) return null;
+                    return deserializeList(data);
+                }
+                default: {
+                    byte[] data = NativeEngine.listGetGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    if (data == null) return null;
+                    return deserializeList(data);
+                }
             }
-            byte[] data;
-            if (useInt64Path()) {
-                data = NativeEngine.listGet(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-            } else {
-                data = NativeEngine.listGetGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-            }
-            if (data == null) return null;
-            return deserializeList(data);
         } catch (IOException e) {
             throw new RuntimeException("Failed to get internal ListState", e);
         }
@@ -249,20 +285,21 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     @Override
     public void updateInternal(List<V> valueToStore) {
         try {
-            if (useLongElementPath()) {
-                long[] arr = new long[valueToStore.size()];
-                for (int i = 0; i < arr.length; i++) { arr[i] = (Long) valueToStore.get(i); }
-                NativeEngine.listUpdateLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, arr);
-                return;
-            }
-            byte[] serialized = serializeElementList(valueToStore);
-            if (useInt64Path()) {
-                NativeEngine.listUpdate(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, serialized);
-            } else {
-                NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, serialized);
+            switch (listStrategy) {
+                case LONG_ELEM_LONG_VOID: {
+                    long[] arr = new long[valueToStore.size()];
+                    for (int i = 0; i < arr.length; i++) { arr[i] = (Long) valueToStore.get(i); }
+                    NativeEngine.listUpdateLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, arr);
+                    return;
+                }
+                case LONG_VOID:
+                    NativeEngine.listUpdate(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElementList(valueToStore));
+                    return;
+                default:
+                    NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeElementList(valueToStore));
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to update internal ListState", e);
@@ -272,10 +309,19 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     @Override
     public void clear() {
         try {
-            if (useInt64Path()) {
-                NativeEngine.listClear(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-            } else {
-                NativeEngine.listClearGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+            switch (listStrategy) {
+                case LONG_ELEM_LONG_VOID:
+                case LONG_VOID:
+                    NativeEngine.listClear(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    return;
+                case LONG_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.listClearWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    return;
+                }
+                default:
+                    NativeEngine.listClearGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to clear ListState", e);
@@ -319,22 +365,12 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
 
     // ========== Serialization helpers ==========
 
-    /** Whether this state can use the INT64 fast path (requires INT64 key AND VoidNamespace). */
-    private boolean useInt64Path() {
-        return keyTypeId == TypeAnalyzer.TYPE_INT64 && voidNamespace;
-    }
-
     /** Resolve key to long — works for both primitive Long and RowData[BIGINT]. */
     private long resolveKeyAsLong(K key) {
         if (isRowDataKey) {
             return rowDataKeyAccessor.extractSingleLong(key);
         }
         return (Long) key;
-    }
-
-    /** Whether Long element zero-serialization fast path is available. */
-    private boolean useLongElementPath() {
-        return useInt64Path() && elementTypeId == TypeAnalyzer.TYPE_INT64;
     }
 
     /**
@@ -365,20 +401,44 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     private byte[] serializeElementList(List<V> elements) throws IOException {
         DataOutputSerializer out = new DataOutputSerializer(elements.size() * 32);
         out.writeInt(elements.size());
-        for (V elem : elements) {
-            Preconditions.checkNotNull(elem, "You cannot add null to a ListState.");
-            elementSerializer.serialize(elem, out);
+        if (isRowDataElement) {
+            for (V elem : elements) {
+                Preconditions.checkNotNull(elem, "You cannot add null to a ListState.");
+                byte[] raw = RowDataKeyAccessor.extractBinaryRowDataBytesCompat(elem);
+                if (raw != null) {
+                    out.write(raw);
+                } else {
+                    elementSerializer.serialize(elem, out);
+                }
+            }
+        } else {
+            for (V elem : elements) {
+                Preconditions.checkNotNull(elem, "You cannot add null to a ListState.");
+                elementSerializer.serialize(elem, out);
+            }
         }
         return out.getCopyOfBuffer();
     }
 
     /** Deserialize a list from: [count (int)] + [element bytes...]. */
+    @SuppressWarnings("unchecked")
     private List<V> deserializeList(byte[] data) throws IOException {
         DataInputDeserializer in = new DataInputDeserializer(data);
         int count = in.readInt();
         List<V> list = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            list.add(elementSerializer.deserialize(in));
+        if (isRowDataElement) {
+            int arity = rowDataElementAccessor.getArity();
+            for (int i = 0; i < count; i++) {
+                // Compat format: [4-byte size][raw BinaryRowData bytes]
+                int size = in.readInt();
+                byte[] raw = new byte[size];
+                in.readFully(raw);
+                list.add((V) RowDataKeyAccessor.wrapBinaryRowData(raw, arity));
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                list.add(elementSerializer.deserialize(in));
+            }
         }
         return list;
     }

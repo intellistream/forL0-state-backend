@@ -6,5 +6,5 @@ CXX_DEFINES = -DFORL0_HAS_AVX2=1 -DFORL0_SSE2=1 -Dforl0_engine_EXPORTS
 
 CXX_INCLUDES = -I/usr/lib/jvm/java-8-openjdk-amd64/include -I/usr/lib/jvm/java-8-openjdk-amd64/include/linux -I/home/user/projects/forL0-state-backend/src/main/native -I/home/user/projects/forL0-state-backend/src/main/native/engine -I/home/user/projects/forL0-state-backend/src/main/native/platform -I/home/user/projects/forL0-state-backend/src/main/native/checkpoint -I/home/user/projects/forL0-state-backend/src/main/native/jni
 
-CXX_FLAGS = -O3 -DNDEBUG -fPIC -O3 -DNDEBUG -march=native -Wall -Wextra -Wno-unused-parameter -std=gnu++17
+CXX_FLAGS = -O2 -g -DNDEBUG -fPIC -O3 -DNDEBUG -march=native -Wall -Wextra -Wno-unused-parameter -std=gnu++17
 

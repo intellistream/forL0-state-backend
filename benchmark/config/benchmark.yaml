@@ -9,15 +9,15 @@ flink:
 
 # Benchmark runtime settings
 runtime:
-  parallelism: 4              # Task parallelism
+  parallelism: 8              # Task parallelism
   checkpoint_interval: 0      # ms (0 = disabled)
   
 # WordCount benchmark settings
 # Uses KeyedProcessFunction + ValueState (VoidNamespace) for pure state access testing
 # No window/timer overhead - maximizes state backend impact on performance
 wordcount:
-  num_keys: 1000000           # Number of unique keys (high cardinality for SwissTable)
-  num_records: 1500000000     # Total number of records
+  num_keys: 10000000           # Number of unique keys (high cardinality for SwissTable)
+  num_records: 3000000000     # Total number of records
   arrival_rate: 0             # 0 = unlimited (full speed for max throughput)
   skew_factor: 0              # Zipf s parameter (0 = uniform distribution)
   warmup_duration: 0         # warmup duration in seconds (0 to disable)

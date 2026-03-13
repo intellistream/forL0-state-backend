@@ -8,14 +8,17 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalMapState;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 /**
  * ForL0 implementation of {@link InternalMapState}.
@@ -44,6 +47,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     private final int ukTypeId;
     private final int uvTypeId;
     private final boolean voidNamespace;
+    private final boolean isTimeWindowNs;
     private final boolean isRowDataKey;
     private final RowDataKeyAccessor rowDataKeyAccessor;
     private final boolean isRowDataUK;
@@ -51,9 +55,16 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     private final boolean isRowDataUV;
     private final RowDataKeyAccessor rowDataUVAccessor;
 
+    private enum MapStrategy {
+        LONG_LONG_VOID, LONG_BYTES_VOID, BYTES_LONG_VOID,
+        LONG_MAP_VOID, LONG_MAP_TW, GENERIC
+    }
+    private final MapStrategy mapStrategy;
+
     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
     private final DataOutputSerializer ukOut = new DataOutputSerializer(64);
     private final DataOutputSerializer uvOut = new DataOutputSerializer(128);
+    private final long[] primitiveBuf = new long[1];
 
     ForL0MapState(
             long stateHandle,
@@ -71,46 +82,120 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         this.userKeySerializer = userKeySerializer;
         this.userValueSerializer = userValueSerializer;
         this.keyTypeId = TypeAnalyzer.getTypeId(keySerializer);
-        this.ukTypeId = isPrimitiveLong(userKeySerializer) ? TypeAnalyzer.TYPE_INT64 : -1;
-        this.uvTypeId = isPrimitiveLong(userValueSerializer) ? TypeAnalyzer.TYPE_INT64 : -1;
+        // Use TypeAnalyzer (same as C++ registration) to detect INT64 — handles both
+        // raw LongSerializer and RowData-wrapped BIGINT.
+        this.ukTypeId = effectiveInt64TypeId(userKeySerializer);
+        this.uvTypeId = effectiveInt64TypeId(userValueSerializer);
         this.voidNamespace = namespaceSerializer instanceof VoidNamespaceSerializer;
+        this.isTimeWindowNs = TypeAnalyzer.isTimeWindowSerializer(namespaceSerializer);
         this.isRowDataKey = TypeAnalyzer.isRowDataSerializer(keySerializer);
         this.rowDataKeyAccessor = isRowDataKey ? TypeAnalyzer.createRowDataKeyAccessor(keySerializer) : null;
         this.isRowDataUK = userKeySerializer != null && TypeAnalyzer.isRowDataSerializer(userKeySerializer);
         this.rowDataUKAccessor = isRowDataUK ? TypeAnalyzer.createRowDataKeyAccessor(userKeySerializer) : null;
         this.isRowDataUV = userValueSerializer != null && TypeAnalyzer.isRowDataSerializer(userValueSerializer);
         this.rowDataUVAccessor = isRowDataUV ? TypeAnalyzer.createRowDataKeyAccessor(userValueSerializer) : null;
+
+        if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            if (ukTypeId == TypeAnalyzer.TYPE_INT64 && uvTypeId == TypeAnalyzer.TYPE_INT64) {
+                this.mapStrategy = MapStrategy.LONG_LONG_VOID;
+            } else if (ukTypeId == TypeAnalyzer.TYPE_INT64) {
+                this.mapStrategy = MapStrategy.LONG_BYTES_VOID;
+            } else if (uvTypeId == TypeAnalyzer.TYPE_INT64) {
+                this.mapStrategy = MapStrategy.BYTES_LONG_VOID;
+            } else {
+                this.mapStrategy = MapStrategy.LONG_MAP_VOID;
+            }
+        } else if (isTimeWindowNs && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.mapStrategy = MapStrategy.LONG_MAP_TW;
+        } else {
+            this.mapStrategy = MapStrategy.GENERIC;
+        }
     }
 
-    /** True only for actual LongSerializer — excludes RowData-wrapped BIGINT. */
-    private static boolean isPrimitiveLong(TypeSerializer<?> s) {
-        return s instanceof org.apache.flink.api.common.typeutils.base.LongSerializer;
+    /**
+     * Return TYPE_INT64 if the serializer is recognized as int64 by TypeAnalyzer
+     * (primitive Long OR RowData-wrapped single BIGINT), -1 otherwise.
+     * This MUST match the logic used during C++ state registration.
+     */
+    private static int effectiveInt64TypeId(TypeSerializer<?> s) {
+        if (s == null) return -1;
+        int id = TypeAnalyzer.getTypeId(s);
+        return (id == TypeAnalyzer.TYPE_INT64) ? TypeAnalyzer.TYPE_INT64 : -1;
+    }
+
+    /** Resolve user-key to long — works for both primitive Long and RowData[BIGINT]. */
+    private long resolveUKAsLong(UK userKey) {
+        if (isRowDataUK) {
+            return rowDataUKAccessor.extractSingleLong(userKey);
+        }
+        return (Long) userKey;
+    }
+
+    /** Resolve user-value to long — works for both primitive Long and RowData[BIGINT]. */
+    private long resolveUVAsLong(UV userValue) {
+        if (isRowDataUV) {
+            return rowDataUVAccessor.extractSingleLong(userValue);
+        }
+        return (Long) userValue;
+    }
+
+    /** Wrap a long value back to the UK type (Long or RowData). */
+    @SuppressWarnings("unchecked")
+    private UK wrapLongAsUK(long value) {
+        if (isRowDataUK) {
+            return (UK) rowDataUKAccessor.reconstructFromLong(value);
+        }
+        return (UK) Long.valueOf(value);
+    }
+
+    /** Wrap a long value back to the UV type (Long or RowData). */
+    @SuppressWarnings("unchecked")
+    private UV wrapLongAsUV(long value) {
+        if (isRowDataUV) {
+            return (UV) rowDataUVAccessor.reconstructFromLong(value);
+        }
+        return (UV) Long.valueOf(value);
     }
 
     @SuppressWarnings("unchecked")
     @Override
     public UV get(UK userKey) {
         try {
-            if (useLongLongMapPath()) {
-                long uk = (Long) userKey;
-                if (!NativeEngine.mapContainsLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, uk)) {
-                    return null;
+            long k;
+            switch (mapStrategy) {
+                case LONG_LONG_VOID:
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    if (!NativeEngine.mapGetLongLongSafe(stateHandle, k, keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey), primitiveBuf))
+                        return null;
+                    return wrapLongAsUV(primitiveBuf[0]);
+                case LONG_BYTES_VOID:
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    byte[] lb = NativeEngine.mapGetLongBytes(stateHandle, k, keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
+                    return lb != null ? deserializeUserValue(lb) : null;
+                case BYTES_LONG_VOID: {
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    if (!NativeEngine.mapGetBytesLongSafe(stateHandle, k, keyContext.currentKeyGroupIndex, serializeUserKey(userKey), primitiveBuf))
+                        return null;
+                    return wrapLongAsUV(primitiveBuf[0]);
                 }
-                long result = NativeEngine.mapGetLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, uk);
-                return (UV) Long.valueOf(result);
+                case LONG_MAP_VOID: {
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    byte[] r = NativeEngine.mapGet(stateHandle, k, keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
+                    return r != null ? deserializeUserValue(r) : null;
+                }
+                case LONG_MAP_TW: {
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    byte[] r = NativeEngine.mapGetWithTW(stateHandle, k, keyContext.currentKeyGroupIndex,
+                            tw.getStart(), tw.getEnd(), serializeUserKey(userKey));
+                    return r != null ? deserializeUserValue(r) : null;
+                }
+                default: {
+                    byte[] r = NativeEngine.mapGetGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
+                    return r != null ? deserializeUserValue(r) : null;
+                }
             }
-            byte[] ukBytes = serializeUserKey(userKey);
-            byte[] result;
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                result = NativeEngine.mapGet(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes);
-            } else {
-                result = NativeEngine.mapGetGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes);
-            }
-            return result != null ? deserializeUserValue(result) : null;
         } catch (IOException e) {
             throw new RuntimeException("Failed to get from MapState", e);
         }
@@ -119,19 +204,35 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public void put(UK userKey, UV userValue) {
         try {
-            if (useLongLongMapPath()) {
-                NativeEngine.mapPutLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, (Long) userKey, (Long) userValue);
-                return;
-            }
-            byte[] ukBytes = serializeUserKey(userKey);
-            byte[] uvBytes = serializeUserValue(userValue);
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                NativeEngine.mapPut(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes, uvBytes);
-            } else {
-                NativeEngine.mapPutGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes, uvBytes);
+            long k;
+            switch (mapStrategy) {
+                case LONG_LONG_VOID:
+                    NativeEngine.mapPutLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey), resolveUVAsLong(userValue));
+                    return;
+                case LONG_BYTES_VOID:
+                    NativeEngine.mapPutLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey), serializeUserValue(userValue));
+                    return;
+                case BYTES_LONG_VOID:
+                    NativeEngine.mapPutBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeUserKey(userKey), resolveUVAsLong(userValue));
+                    return;
+                case LONG_MAP_VOID:
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    NativeEngine.mapPut(stateHandle, k, keyContext.currentKeyGroupIndex,
+                            serializeUserKey(userKey), serializeUserValue(userValue));
+                    return;
+                case LONG_MAP_TW: {
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.mapPutWithTW(stateHandle, k, keyContext.currentKeyGroupIndex,
+                            tw.getStart(), tw.getEnd(), serializeUserKey(userKey), serializeUserValue(userValue));
+                    return;
+                }
+                default:
+                    NativeEngine.mapPutGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeUserKey(userKey), serializeUserValue(userValue));
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to put to MapState", e);
@@ -151,18 +252,34 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public void remove(UK userKey) {
         try {
-            if (useLongLongMapPath()) {
-                NativeEngine.mapRemoveLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, (Long) userKey);
-                return;
-            }
-            byte[] ukBytes = serializeUserKey(userKey);
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                NativeEngine.mapRemove(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes);
-            } else {
-                NativeEngine.mapRemoveGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes);
+            long k;
+            switch (mapStrategy) {
+                case LONG_LONG_VOID:
+                    NativeEngine.mapRemoveLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
+                    return;
+                case LONG_BYTES_VOID:
+                    NativeEngine.mapRemoveLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
+                    return;
+                case BYTES_LONG_VOID:
+                    NativeEngine.mapRemoveBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
+                    return;
+                case LONG_MAP_VOID:
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    NativeEngine.mapRemove(stateHandle, k, keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
+                    return;
+                case LONG_MAP_TW: {
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.mapRemoveWithTW(stateHandle, k, keyContext.currentKeyGroupIndex,
+                            tw.getStart(), tw.getEnd(), serializeUserKey(userKey));
+                    return;
+                }
+                default:
+                    NativeEngine.mapRemoveGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to remove from MapState", e);
@@ -172,17 +289,29 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public boolean contains(UK userKey) {
         try {
-            if (useLongLongMapPath()) {
-                return NativeEngine.mapContainsLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, (Long) userKey);
-            }
-            byte[] ukBytes = serializeUserKey(userKey);
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                return NativeEngine.mapContains(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes);
-            } else {
-                return NativeEngine.mapContainsGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, ukBytes);
+            long k;
+            switch (mapStrategy) {
+                case LONG_LONG_VOID:
+                    return NativeEngine.mapContainsLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
+                case LONG_BYTES_VOID:
+                    return NativeEngine.mapContainsLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
+                case BYTES_LONG_VOID:
+                    return NativeEngine.mapContainsBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
+                case LONG_MAP_VOID:
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    return NativeEngine.mapContains(stateHandle, k, keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
+                case LONG_MAP_TW: {
+                    k = resolveKeyAsLong(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    return NativeEngine.mapContainsWithTW(stateHandle, k, keyContext.currentKeyGroupIndex,
+                            tw.getStart(), tw.getEnd(), serializeUserKey(userKey));
+                }
+                default:
+                    return NativeEngine.mapContainsGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to check contains in MapState", e);
@@ -193,26 +322,61 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public Iterable<Map.Entry<UK, UV>> entries() {
         try {
-            if (useLongLongMapPath()) {
-                long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-                if (arr == null) return Collections.emptySet();
-                Map<UK, UV> map = new HashMap<>(arr.length / 2 * 4 / 3 + 1);
-                for (int i = 0; i < arr.length; i += 2) {
-                    map.put((UK) Long.valueOf(arr[i]), (UV) Long.valueOf(arr[i + 1]));
+            switch (mapStrategy) {
+                case LONG_LONG_VOID: {
+                    long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    if (arr == null) return Collections.emptySet();
+                    Map<UK, UV> map = new HashMap<>(arr.length / 2 * 4 / 3 + 1);
+                    for (int i = 0; i < arr.length; i += 2)
+                        map.put(wrapLongAsUK(arr[i]), wrapLongAsUV(arr[i + 1]));
+                    return map.entrySet();
                 }
-                return map.entrySet();
+                case LONG_BYTES_VOID: {
+                    byte[] data = NativeEngine.mapEntriesLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesLongBytes(data).entrySet() : Collections.emptySet();
+                }
+                case BYTES_LONG_VOID: {
+                    byte[] data = NativeEngine.mapEntriesBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesBytesLong(data).entrySet() : Collections.emptySet();
+                }
+                case LONG_MAP_VOID: {
+                    // OPT-8: Lazy iteration — don't materialize full HashMap
+                    final long k = resolveKeyAsLong(keyContext.currentKey);
+                    final int kg = keyContext.currentKeyGroupIndex;
+                    return () -> {
+                        long iterH = NativeEngine.mapIteratorCreate(stateHandle, k, kg);
+                        return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                    };
+                }
+                case LONG_MAP_TW: {
+                    // OPT-8: Lazy iteration with TimeWindow namespace
+                    final long k = resolveKeyAsLong(keyContext.currentKey);
+                    final int kg = keyContext.currentKeyGroupIndex;
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    final long nsStart = tw.getStart(), nsEnd = tw.getEnd();
+                    return () -> {
+                        long iterH = NativeEngine.mapIteratorCreateWithTW(stateHandle, k, kg, nsStart, nsEnd);
+                        return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                    };
+                }
+                default: {
+                    // OPT-8: Lazy iteration for generic strategy
+                    final byte[] keyBytes;
+                    try {
+                        keyBytes = serializeKey(keyContext.currentKey);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to serialize key", e);
+                    }
+                    final int kg = keyContext.currentKeyGroupIndex;
+                    return () -> {
+                        long iterH = NativeEngine.mapIteratorCreateGeneric(stateHandle, keyBytes, kg);
+                        return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                    };
+                }
             }
-            byte[] data;
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                data = NativeEngine.mapEntries(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            } else {
-                data = NativeEngine.mapEntriesGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            }
-            if (data == null) return Collections.emptySet();
-            return deserializeEntries(data).entrySet();
         } catch (IOException e) {
             throw new RuntimeException("Failed to get entries from MapState", e);
         }
@@ -222,26 +386,42 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public Iterable<UK> keys() {
         try {
-            if (useLongLongMapPath()) {
-                long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-                if (arr == null) return Collections.emptySet();
-                List<UK> keys = new ArrayList<>(arr.length / 2);
-                for (int i = 0; i < arr.length; i += 2) {
-                    keys.add((UK) Long.valueOf(arr[i]));
+            switch (mapStrategy) {
+                case LONG_LONG_VOID: {
+                    long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    if (arr == null) return Collections.emptySet();
+                    List<UK> keys = new ArrayList<>(arr.length / 2);
+                    for (int i = 0; i < arr.length; i += 2) keys.add(wrapLongAsUK(arr[i]));
+                    return keys;
                 }
-                return keys;
+                case LONG_BYTES_VOID: {
+                    byte[] data = NativeEngine.mapEntriesLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesLongBytes(data).keySet() : Collections.emptySet();
+                }
+                case BYTES_LONG_VOID: {
+                    byte[] data = NativeEngine.mapEntriesBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesBytesLong(data).keySet() : Collections.emptySet();
+                }
+                case LONG_MAP_VOID: {
+                    byte[] data = NativeEngine.mapEntries(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntries(data).keySet() : Collections.emptySet();
+                }
+                case LONG_MAP_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    byte[] data = NativeEngine.mapEntriesWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    return data != null ? deserializeEntries(data).keySet() : Collections.emptySet();
+                }
+                default: {
+                    byte[] data = NativeEngine.mapEntriesGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntries(data).keySet() : Collections.emptySet();
+                }
             }
-            byte[] data;
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                data = NativeEngine.mapEntries(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            } else {
-                data = NativeEngine.mapEntriesGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            }
-            if (data == null) return Collections.emptySet();
-            return deserializeEntries(data).keySet();
         } catch (IOException e) {
             throw new RuntimeException("Failed to get keys from MapState", e);
         }
@@ -251,26 +431,42 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public Iterable<UV> values() {
         try {
-            if (useLongLongMapPath()) {
-                long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-                if (arr == null) return Collections.emptyList();
-                List<UV> vals = new ArrayList<>(arr.length / 2);
-                for (int i = 1; i < arr.length; i += 2) {
-                    vals.add((UV) Long.valueOf(arr[i]));
+            switch (mapStrategy) {
+                case LONG_LONG_VOID: {
+                    long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    if (arr == null) return Collections.emptyList();
+                    List<UV> vals = new ArrayList<>(arr.length / 2);
+                    for (int i = 1; i < arr.length; i += 2) vals.add(wrapLongAsUV(arr[i]));
+                    return vals;
                 }
-                return vals;
+                case LONG_BYTES_VOID: {
+                    byte[] data = NativeEngine.mapEntriesLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesLongBytes(data).values() : Collections.emptyList();
+                }
+                case BYTES_LONG_VOID: {
+                    byte[] data = NativeEngine.mapEntriesBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesBytesLong(data).values() : Collections.emptyList();
+                }
+                case LONG_MAP_VOID: {
+                    byte[] data = NativeEngine.mapEntries(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntries(data).values() : Collections.emptyList();
+                }
+                case LONG_MAP_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    byte[] data = NativeEngine.mapEntriesWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    return data != null ? deserializeEntries(data).values() : Collections.emptyList();
+                }
+                default: {
+                    byte[] data = NativeEngine.mapEntriesGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntries(data).values() : Collections.emptyList();
+                }
             }
-            byte[] data;
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                data = NativeEngine.mapEntries(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            } else {
-                data = NativeEngine.mapEntriesGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            }
-            if (data == null) return Collections.emptyList();
-            return deserializeEntries(data).values();
         } catch (IOException e) {
             throw new RuntimeException("Failed to get values from MapState", e);
         }
@@ -280,26 +476,44 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public Iterator<Map.Entry<UK, UV>> iterator() {
         try {
-            if (useLongLongMapPath()) {
-                long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-                if (arr == null) return Collections.emptyIterator();
-                Map<UK, UV> map = new HashMap<>(arr.length / 2 * 4 / 3 + 1);
-                for (int i = 0; i < arr.length; i += 2) {
-                    map.put((UK) Long.valueOf(arr[i]), (UV) Long.valueOf(arr[i + 1]));
+            switch (mapStrategy) {
+                case LONG_LONG_VOID: {
+                    long[] arr = NativeEngine.mapEntriesLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    if (arr == null) return Collections.emptyIterator();
+                    Map<UK, UV> map = new HashMap<>(arr.length / 2 * 4 / 3 + 1);
+                    for (int i = 0; i < arr.length; i += 2)
+                        map.put(wrapLongAsUK(arr[i]), wrapLongAsUV(arr[i + 1]));
+                    return map.entrySet().iterator();
                 }
-                return map.entrySet().iterator();
+                case LONG_BYTES_VOID: {
+                    byte[] data = NativeEngine.mapEntriesLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesLongBytes(data).entrySet().iterator() : Collections.emptyIterator();
+                }
+                case BYTES_LONG_VOID: {
+                    byte[] data = NativeEngine.mapEntriesBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return data != null ? deserializeEntriesBytesLong(data).entrySet().iterator() : Collections.emptyIterator();
+                }
+                case LONG_MAP_VOID: {
+                    long iterH = NativeEngine.mapIteratorCreate(stateHandle,
+                            resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                }
+                case LONG_MAP_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    long iterH = NativeEngine.mapIteratorCreateWithTW(stateHandle,
+                            resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
+                            tw.getStart(), tw.getEnd());
+                    return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                }
+                default: {
+                    long iterH = NativeEngine.mapIteratorCreateGeneric(stateHandle,
+                            serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                }
             }
-            byte[] data;
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                data = NativeEngine.mapEntries(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            } else {
-                data = NativeEngine.mapEntriesGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            }
-            if (data == null) return Collections.emptyIterator();
-            return deserializeEntries(data).entrySet().iterator();
         } catch (IOException e) {
             throw new RuntimeException("Failed to iterate MapState", e);
         }
@@ -308,12 +522,22 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public boolean isEmpty() {
         try {
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                return NativeEngine.mapIsEmpty(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            } else {
-                return NativeEngine.mapIsEmptyGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
+            switch (mapStrategy) {
+                case LONG_LONG_VOID:
+                case LONG_BYTES_VOID:
+                case BYTES_LONG_VOID:
+                case LONG_MAP_VOID:
+                    return NativeEngine.mapIsEmpty(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                case LONG_MAP_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    byte[] data = NativeEngine.mapEntriesWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    return data == null;
+                }
+                default:
+                    return NativeEngine.mapIsEmptyGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to check isEmpty on MapState", e);
@@ -323,12 +547,23 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public void clear() {
         try {
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                NativeEngine.mapClear(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
-            } else {
-                NativeEngine.mapClearGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex);
+            switch (mapStrategy) {
+                case LONG_LONG_VOID:
+                case LONG_BYTES_VOID:
+                case BYTES_LONG_VOID:
+                case LONG_MAP_VOID:
+                    NativeEngine.mapClear(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
+                    return;
+                case LONG_MAP_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.mapClearWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    return;
+                }
+                default:
+                    NativeEngine.mapClearGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex);
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to clear MapState", e);
@@ -380,12 +615,6 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         return (Long) key;
     }
 
-    /** Whether Long key + Long UK + Long UV zero-serialization path is available. */
-    private boolean useLongLongMapPath() {
-        return voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64
-                && ukTypeId == TypeAnalyzer.TYPE_INT64 && uvTypeId == TypeAnalyzer.TYPE_INT64;
-    }
-
     @SuppressWarnings("unchecked")
     private byte[] serializeKey(K key) throws IOException {
         keyOut.clear();
@@ -426,16 +655,140 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     }
 
     /** Deserialize entries from C++: [count (int)] + [uk_bytes, uv_bytes ...]. */
+    @SuppressWarnings("unchecked")
     private Map<UK, UV> deserializeEntries(byte[] data) throws IOException {
         DataInputDeserializer in = new DataInputDeserializer(data);
         int count = in.readInt();
         Map<UK, UV> map = new HashMap<>(count * 4 / 3 + 1);
         for (int i = 0; i < count; i++) {
-            UK uk = userKeySerializer.deserialize(in);
-            UV uv = userValueSerializer.deserialize(in);
+            UK uk;
+            if (isRowDataUK) {
+                // Zero-copy: read [4-byte size][raw] produced by extractBinaryRowDataBytesCompat
+                int ukSize = in.readInt();
+                byte[] ukRaw = new byte[ukSize];
+                in.readFully(ukRaw);
+                uk = (UK) RowDataKeyAccessor.wrapBinaryRowData(ukRaw, rowDataUKAccessor.getArity());
+            } else {
+                uk = userKeySerializer.deserialize(in);
+            }
+            UV uv;
+            if (isRowDataUV) {
+                int uvSize = in.readInt();
+                byte[] uvRaw = new byte[uvSize];
+                in.readFully(uvRaw);
+                uv = (UV) RowDataKeyAccessor.wrapBinaryRowData(uvRaw, rowDataUVAccessor.getArity());
+            } else {
+                uv = userValueSerializer.deserialize(in);
+            }
             map.put(uk, uv);
         }
         return map;
+    }
+
+    /** Deserialize LongBytes entries: [count(4B)][uk0(8B)][uv0_len(4B)][uv0_bytes]... */
+    @SuppressWarnings("unchecked")
+    private Map<UK, UV> deserializeEntriesLongBytes(byte[] data) throws IOException {
+        DataInputDeserializer in = new DataInputDeserializer(data);
+        int count = in.readInt();
+        Map<UK, UV> map = new HashMap<>(count * 4 / 3 + 1);
+        for (int i = 0; i < count; i++) {
+            long uk = in.readLong();
+            int uvLen = in.readInt();
+            byte[] uvBytes = new byte[uvLen];
+            in.readFully(uvBytes);
+            map.put(wrapLongAsUK(uk), deserializeUserValue(uvBytes));
+        }
+        return map;
+    }
+
+    /** Deserialize BytesLong entries: [count(4B)][uk0_len(4B)][uk0_bytes][uv0(8B)]... */
+    @SuppressWarnings("unchecked")
+    private Map<UK, UV> deserializeEntriesBytesLong(byte[] data) throws IOException {
+        DataInputDeserializer in = new DataInputDeserializer(data);
+        int count = in.readInt();
+        Map<UK, UV> map = new HashMap<>(count * 4 / 3 + 1);
+        for (int i = 0; i < count; i++) {
+            int ukLen = in.readInt();
+            byte[] ukBytes = new byte[ukLen];
+            in.readFully(ukBytes);
+            UK uk;
+            if (isRowDataUK) {
+                // Zero-copy: ukBytes is [4-byte size][raw BinaryRowData]
+                uk = (UK) RowDataKeyAccessor.wrapBinaryRowDataCompat(ukBytes, rowDataUKAccessor.getArity());
+            } else {
+                DataInputDeserializer ukIn = new DataInputDeserializer(ukBytes);
+                uk = userKeySerializer.deserialize(ukIn);
+            }
+            long uv = in.readLong();
+            map.put(uk, wrapLongAsUV(uv));
+        }
+        return map;
+    }
+
+    // ========== Streaming iterator for generic InnerMap ==========
+
+    /**
+     * Lazy iterator backed by a native C++ InnerMap iterator.
+     * Each {@link #next()} call fetches one entry via JNI, avoiding full
+     * materialization of the map in Java. Auto-destroys when exhausted.
+     */
+    private class NativeMapEntryIterator implements Iterator<Map.Entry<UK, UV>> {
+        private long iterHandle;
+        private byte[] prefetched;
+
+        NativeMapEntryIterator(long iterHandle) {
+            this.iterHandle = iterHandle;
+            this.prefetched = NativeEngine.mapIteratorNext(iterHandle);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return prefetched != null;
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public Map.Entry<UK, UV> next() {
+            if (prefetched == null) throw new NoSuchElementException();
+            byte[] current = prefetched;
+            prefetched = NativeEngine.mapIteratorNext(iterHandle);
+            if (prefetched == null) {
+                NativeEngine.mapIteratorDestroy(iterHandle);
+                iterHandle = 0;
+            }
+            try {
+                DataInputDeserializer in = new DataInputDeserializer(current);
+                UK uk;
+                if (isRowDataUK) {
+                    int ukSize = in.readInt();
+                    byte[] ukRaw = new byte[ukSize];
+                    in.readFully(ukRaw);
+                    uk = (UK) RowDataKeyAccessor.wrapBinaryRowData(ukRaw, rowDataUKAccessor.getArity());
+                } else {
+                    uk = userKeySerializer.deserialize(in);
+                }
+                UV uv;
+                if (isRowDataUV) {
+                    int uvSize = in.readInt();
+                    byte[] uvRaw = new byte[uvSize];
+                    in.readFully(uvRaw);
+                    uv = (UV) RowDataKeyAccessor.wrapBinaryRowData(uvRaw, rowDataUVAccessor.getArity());
+                } else {
+                    uv = userValueSerializer.deserialize(in);
+                }
+                return new AbstractMap.SimpleImmutableEntry<>(uk, uv);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to deserialize MapState entry", e);
+            }
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        protected void finalize() {
+            if (iterHandle != 0) {
+                NativeEngine.mapIteratorDestroy(iterHandle);
+            }
+        }
     }
 
     // ========== Factory Methods ==========

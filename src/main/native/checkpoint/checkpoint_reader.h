@@ -121,9 +121,74 @@ inline InnerMap read_flink_value<InnerMap>(ReadBuffer& buf, const TypeLayout& la
     return result;
 }
 
+// Typed InnerMap reader variants.
+
+template <>
+inline InnerMapLongLong read_flink_value<InnerMapLongLong>(ReadBuffer& buf, const TypeLayout&) {
+    int32_t total_bytes = buf.read_int();
+    if (total_bytes < 4) return {};
+    InnerMapLongLong result;
+    int32_t count = buf.read_int();
+    for (int32_t i = 0; i < count; ++i) {
+        int64_t uk = buf.read_long();
+        int64_t uv = buf.read_long();
+        result[uk] = uv;
+    }
+    return result;
+}
+
+template <>
+inline InnerMapLongString read_flink_value<InnerMapLongString>(ReadBuffer& buf, const TypeLayout& layout) {
+    int32_t total_bytes = buf.read_int();
+    if (total_bytes < 4) return {};
+    InnerMapLongString result;
+    int32_t count = buf.read_int();
+    const TypeLayout* uv_layout = nullptr;
+    if (layout.type_id == TypeId::MAP && layout.children.size() >= 2) {
+        uv_layout = layout.children[1].get();
+    }
+    for (int32_t i = 0; i < count; ++i) {
+        int64_t uk = buf.read_long();
+        std::string uv;
+        if (uv_layout) {
+            uv = buf.read_element_bytes(*uv_layout);
+        }
+        result[uk] = std::move(uv);
+    }
+    return result;
+}
+
+template <>
+inline InnerMapStringLong read_flink_value<InnerMapStringLong>(ReadBuffer& buf, const TypeLayout& layout) {
+    int32_t total_bytes = buf.read_int();
+    if (total_bytes < 4) return {};
+    InnerMapStringLong result;
+    int32_t count = buf.read_int();
+    const TypeLayout* uk_layout = nullptr;
+    if (layout.type_id == TypeId::MAP && layout.children.size() >= 2) {
+        uk_layout = layout.children[0].get();
+    }
+    for (int32_t i = 0; i < count; ++i) {
+        std::string uk;
+        if (uk_layout) {
+            uk = buf.read_element_bytes(*uk_layout);
+        }
+        int64_t uv = buf.read_long();
+        result[std::move(uk)] = uv;
+    }
+    return result;
+}
+
 // Skip VoidNamespace bytes (1 byte: 0)
 inline void skip_void_namespace(ReadBuffer& buf) {
     buf.skip(1);
+}
+
+// Read TimeWindow namespace: [ns_start(8B BE)][ns_end(8B BE)]
+inline TimeWindow read_time_window_namespace(ReadBuffer& buf) {
+    int64_t start = buf.read_long();
+    int64_t end = buf.read_long();
+    return TimeWindow(start, end);
 }
 
 // FixedRow: read from BinaryRowData format (length-prefixed).
@@ -170,6 +235,20 @@ public:
             K key = read_flink_value<K>(buf, key_layout_);
             V value = read_flink_value<V>(buf, value_layout_);
             table.put(key_group, key, std::move(value));
+        }
+    }
+
+    // Read entries with TimeWindow namespaces: reads [ns_start][ns_end]
+    // and inserts into the namespace-aware table.
+    void read_entries_tw(ReadBuffer& buf,
+                         StateTable<K, V>& table,
+                         int key_group,
+                         int32_t entry_count) {
+        for (int32_t i = 0; i < entry_count; ++i) {
+            TimeWindow tw = read_time_window_namespace(buf);
+            K key = read_flink_value<K>(buf, key_layout_);
+            V value = read_flink_value<V>(buf, value_layout_);
+            table.template put<TimeWindow>(key_group, tw, key, std::move(value));
         }
     }
 

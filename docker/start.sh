@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+################################################################################
+#  启动 ForL0 Docker 测试集群
+#  用法: ./start.sh
+################################################################################
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+echo "=== 启动 ForL0 Flink Docker 测试集群 ==="
+echo "  JM:  1 × (2核 8G)"
+echo "  TM:  2 × (4核 20G, 4 slots, heap 16G)"
+echo "  并行度: 8"
+echo ""
+
+# 拉取基础镜像（如果不存在）
+if ! docker image inspect eclipse-temurin:8-jre >/dev/null 2>&1; then
+    echo "[1/3] 拉取 eclipse-temurin:8-jre 镜像..."
+    docker pull eclipse-temurin:8-jre
+else
+    echo "[1/3] 基础镜像已存在"
+fi
+
+# 启动集群
+echo "[2/3] 启动容器..."
+docker compose up -d
+
+# 等待 JM 就绪
+echo "[3/3] 等待 JobManager 就绪..."
+for i in $(seq 1 30); do
+    if curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
+        echo ""
+        echo "=== 集群启动成功 ==="
+
+        # 等待 TM 注册
+        sleep 3
+        TM_COUNT=$(curl -sf http://localhost:8081/taskmanagers | grep -o '"id"' | wc -l)
+        SLOTS=$(curl -sf http://localhost:8081/overview | grep -o '"slots-total":[0-9]*' | cut -d: -f2)
+
+        echo "  TaskManager 数量: ${TM_COUNT}"
+        echo "  总 Slot 数:       ${SLOTS:-pending}"
+        echo "  Web UI:           http://localhost:8081"
+        echo ""
+        echo "提交作业示例:"
+        echo "  \$FLINK_HOME/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
+        echo ""
+        echo "查看日志:"
+        echo "  docker compose -f $(pwd)/docker-compose.yml logs -f"
+        exit 0
+    fi
+    printf "."
+    sleep 2
+done
+
+echo ""
+echo "警告: JobManager 未在 60 秒内就绪，请检查日志:"
+echo "  docker compose logs jobmanager"
+exit 1

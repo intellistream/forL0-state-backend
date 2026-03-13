@@ -221,6 +221,141 @@ public class ForL0StateTypesITCase {
         Assertions.assertEquals(1, finalCounts.get("k2").get("z").intValue());
     }
 
+    /**
+     * Tests MapState with Long key and Long value to exercise InnerMapLongLong specialization.
+     */
+    @Test
+    void testMapStateLongLong() throws Exception {
+        StreamExecutionEnvironment env = setupEnv();
+
+        List<Tuple3<String, Long, Long>> inputs = Arrays.asList(
+                Tuple3.of("k1", 1L, 100L),
+                Tuple3.of("k1", 2L, 200L),
+                Tuple3.of("k1", 1L, 50L),
+                Tuple3.of("k2", 1L, 300L),
+                Tuple3.of("k2", 3L, 400L)
+        );
+
+        DataStream<Tuple3<String, Long, Long>> ds = env
+                .fromCollection(inputs)
+                .assignTimestampsAndWatermarks(WatermarkStrategy.noWatermarks());
+
+        SingleOutputStreamOperator<Tuple3<String, Long, Long>> out = ds
+                .keyBy((KeySelector<Tuple3<String, Long, Long>, String>) v -> v.f0)
+                .flatMap(new RichFlatMapFunction<Tuple3<String, Long, Long>, Tuple3<String, Long, Long>>() {
+                    private transient MapState<Long, Long> map;
+                    @Override
+                    public void open(Configuration parameters) {
+                        map = getRuntimeContext().getMapState(new MapStateDescriptor<>("ms-ll", Types.LONG, Types.LONG));
+                    }
+                    @Override
+                    public void flatMap(Tuple3<String, Long, Long> value, Collector<Tuple3<String, Long, Long>> out) throws Exception {
+                        Long cur = map.get(value.f1);
+                        if (cur == null) cur = 0L;
+                        cur += value.f2;
+                        map.put(value.f1, cur);
+                        out.collect(Tuple3.of(value.f0, value.f1, cur));
+                    }
+                });
+
+        Map<String, Map<Long, Long>> finalCounts = new HashMap<>();
+        try (CloseableIterator<Tuple3<String, Long, Long>> it = out.executeAndCollect()) {
+            while (it.hasNext()) {
+                Tuple3<String, Long, Long> r = it.next();
+                finalCounts.computeIfAbsent(r.f0, k -> new HashMap<>()).merge(r.f1, r.f2, Math::max);
+            }
+        }
+        Assertions.assertEquals(150L, finalCounts.get("k1").get(1L).longValue());
+        Assertions.assertEquals(200L, finalCounts.get("k1").get(2L).longValue());
+        Assertions.assertEquals(300L, finalCounts.get("k2").get(1L).longValue());
+        Assertions.assertEquals(400L, finalCounts.get("k2").get(3L).longValue());
+    }
+
+    /**
+     * Tests ListState with Long elements to exercise the typed element path.
+     */
+    @Test
+    void testListStateLong() throws Exception {
+        StreamExecutionEnvironment env = setupEnv();
+
+        DataStream<Tuple2<String, Long>> ds = env
+                .fromElements(
+                        Tuple2.of("a", 10L), Tuple2.of("b", 20L),
+                        Tuple2.of("a", 30L), Tuple2.of("a", 40L),
+                        Tuple2.of("b", 50L))
+                .assignTimestampsAndWatermarks(WatermarkStrategy.noWatermarks());
+
+        SingleOutputStreamOperator<Tuple2<String, Integer>> out = ds
+                .keyBy((KeySelector<Tuple2<String, Long>, String>) v -> v.f0)
+                .flatMap(new RichFlatMapFunction<Tuple2<String, Long>, Tuple2<String, Integer>>() {
+                    private transient ListState<Long> list;
+                    @Override
+                    public void open(Configuration parameters) {
+                        list = getRuntimeContext().getListState(new ListStateDescriptor<>("ls-long", Types.LONG));
+                    }
+                    @Override
+                    public void flatMap(Tuple2<String, Long> value, Collector<Tuple2<String, Integer>> out) throws Exception {
+                        list.add(value.f1);
+                        int size = 0;
+                        for (@SuppressWarnings("unused") Long ignored : list.get()) size++;
+                        out.collect(Tuple2.of(value.f0, size));
+                    }
+                });
+
+        Map<String, Integer> finalCounts;
+        try (CloseableIterator<Tuple2<String, Integer>> it = out.executeAndCollect()) {
+            finalCounts = collectMaxPerKey(it);
+        }
+        Assertions.assertEquals(3, finalCounts.get("a"));
+        Assertions.assertEquals(2, finalCounts.get("b"));
+    }
+
+    /**
+     * Tests MapState with Long key and String value to exercise InnerMapLongString path.
+     */
+    @Test
+    void testMapStateLongString() throws Exception {
+        StreamExecutionEnvironment env = setupEnv();
+
+        List<Tuple3<String, Long, String>> inputs = Arrays.asList(
+                Tuple3.of("k1", 1L, "a"),
+                Tuple3.of("k1", 2L, "b"),
+                Tuple3.of("k1", 1L, "c"),
+                Tuple3.of("k2", 1L, "d")
+        );
+
+        DataStream<Tuple3<String, Long, String>> ds = env
+                .fromCollection(inputs)
+                .assignTimestampsAndWatermarks(WatermarkStrategy.noWatermarks());
+
+        SingleOutputStreamOperator<Tuple3<String, Long, String>> out = ds
+                .keyBy((KeySelector<Tuple3<String, Long, String>, String>) v -> v.f0)
+                .flatMap(new RichFlatMapFunction<Tuple3<String, Long, String>, Tuple3<String, Long, String>>() {
+                    private transient MapState<Long, String> map;
+                    @Override
+                    public void open(Configuration parameters) {
+                        map = getRuntimeContext().getMapState(new MapStateDescriptor<>("ms-ls", Types.LONG, Types.STRING));
+                    }
+                    @Override
+                    public void flatMap(Tuple3<String, Long, String> value, Collector<Tuple3<String, Long, String>> out) throws Exception {
+                        map.put(value.f1, value.f2);
+                        out.collect(Tuple3.of(value.f0, value.f1, map.get(value.f1)));
+                    }
+                });
+
+        Map<String, Map<Long, String>> finals = new HashMap<>();
+        try (CloseableIterator<Tuple3<String, Long, String>> it = out.executeAndCollect()) {
+            while (it.hasNext()) {
+                Tuple3<String, Long, String> r = it.next();
+                finals.computeIfAbsent(r.f0, k -> new HashMap<>()).put(r.f1, r.f2);
+            }
+        }
+        // Last write wins
+        Assertions.assertEquals("c", finals.get("k1").get(1L));
+        Assertions.assertEquals("b", finals.get("k1").get(2L));
+        Assertions.assertEquals("d", finals.get("k2").get(1L));
+    }
+
     private static Map<String, Integer> collectMaxPerKey(CloseableIterator<Tuple2<String, Integer>> it) {
         Map<String, Integer> max = new HashMap<>();
         while (it.hasNext()) {

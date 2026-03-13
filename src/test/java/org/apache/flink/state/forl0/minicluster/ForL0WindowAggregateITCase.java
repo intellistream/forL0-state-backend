@@ -2,14 +2,22 @@ package org.apache.flink.state.forl0.minicluster;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
+import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
+import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.util.CloseableIterator;
@@ -17,6 +25,12 @@ import org.apache.flink.util.Collector;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -173,6 +187,141 @@ public class ForL0WindowAggregateITCase {
         // Count total records processed
         long totalCount = results.stream().mapToLong(r -> r.f1).sum();
         System.out.println("High load test: " + results.size() + " windows, total count: " + totalCount);
+    }
+
+    // --- Window + checkpoint/restore probes ---
+    static final AtomicLong WINDOW_SUM_PROBE = new AtomicLong(0);
+
+    /**
+     * Unbounded source emitting (key, eventTimestamp) tuples with steadily advancing time.
+     */
+    public static class UnboundedEventTimeSource extends RichParallelSourceFunction<Tuple2<String, Long>> {
+        private volatile boolean running = true;
+        private final int numKeys;
+        private final long intervalMs;
+
+        public UnboundedEventTimeSource(int numKeys, long intervalMs) {
+            this.numKeys = numKeys;
+            this.intervalMs = intervalMs;
+        }
+
+        @Override
+        public void run(SourceContext<Tuple2<String, Long>> ctx) throws Exception {
+            long ts = 1000L;
+            long i = 0;
+            while (running) {
+                String key = "key" + (i % numKeys);
+                synchronized (ctx.getCheckpointLock()) {
+                    ctx.collect(Tuple2.of(key, ts));
+                }
+                if (i % numKeys == numKeys - 1) {
+                    ts += intervalMs;
+                }
+                i++;
+                Thread.sleep(1L);
+            }
+        }
+
+        @Override
+        public void cancel() { running = false; }
+    }
+
+    /**
+     * Sink that tracks total aggregated window output via probe.
+     */
+    public static class WindowOutputSink extends RichFlatMapFunction<Tuple3<String, Long, Long>, Long> {
+        @Override
+        public void flatMap(Tuple3<String, Long, Long> value, Collector<Long> out) throws Exception {
+            WINDOW_SUM_PROBE.addAndGet(value.f1);
+        }
+    }
+
+    /**
+     * Tests window aggregation with checkpoint/restore to verify TimeWindow namespace + COW.
+     */
+    @Test
+    void testWindowAggregateCheckpointRestore() throws Exception {
+        WINDOW_SUM_PROBE.set(0);
+
+        // 1) First run with windowed aggregation
+        Configuration conf1 = new Configuration();
+        conf1.setString("state.backend", "org.apache.flink.state.forl0.ForL0StateBackendFactory");
+        StreamExecutionEnvironment env1 = StreamExecutionEnvironment.getExecutionEnvironment();
+        env1.configure(conf1, Thread.currentThread().getContextClassLoader());
+        env1.setParallelism(1);
+        env1.enableCheckpointing(500);
+        env1.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+
+        env1.addSource(new UnboundedEventTimeSource(5, 100))
+            .returns(new org.apache.flink.api.common.typeinfo.TypeHint<Tuple2<String, Long>>() {})
+            .assignTimestampsAndWatermarks(
+                WatermarkStrategy.<Tuple2<String, Long>>forBoundedOutOfOrderness(Duration.ofMillis(50))
+                    .withTimestampAssigner((event, ts) -> event.f1))
+            .name("src").uid("src")
+            .keyBy(t -> t.f0)
+            .window(TumblingEventTimeWindows.of(Duration.ofMillis(500)))
+            .aggregate(new CountAggregator(), new WindowResultFunction())
+            .name("window").uid("window")
+            .flatMap(new WindowOutputSink())
+            .name("sink").uid("sink")
+            .addSink(new DiscardingSink<>())
+            .name("discard").uid("discard");
+
+        final org.apache.flink.core.execution.JobClient client1 = env1.executeAsync("window-ckpt-1");
+
+        // Wait for some window output (generous timeout)
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (System.nanoTime() < deadline && WINDOW_SUM_PROBE.get() < 5) {
+            Thread.sleep(100);
+        }
+        long sumBeforeSavepoint = WINDOW_SUM_PROBE.get();
+        Assertions.assertTrue(sumBeforeSavepoint > 0, "Should have produced window output before savepoint");
+
+        // Trigger savepoint
+        Path spDir = Files.createTempDirectory("forl0-sp-window");
+        String spPath = client1.triggerSavepoint(spDir.toUri().toString()).get(30, TimeUnit.SECONDS);
+        client1.cancel().get(10, TimeUnit.SECONDS);
+
+        // 2) Restore from savepoint
+        WINDOW_SUM_PROBE.set(0);
+
+        Configuration conf2 = new Configuration();
+        conf2.setString("state.backend", "org.apache.flink.state.forl0.ForL0StateBackendFactory");
+        conf2.setString("execution.savepoint.path", spPath);
+        StreamExecutionEnvironment env2 = StreamExecutionEnvironment.getExecutionEnvironment();
+        env2.configure(conf2, Thread.currentThread().getContextClassLoader());
+        env2.setParallelism(1);
+        env2.enableCheckpointing(500);
+        env2.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+
+        env2.addSource(new UnboundedEventTimeSource(5, 100))
+            .returns(new org.apache.flink.api.common.typeinfo.TypeHint<Tuple2<String, Long>>() {})
+            .assignTimestampsAndWatermarks(
+                WatermarkStrategy.<Tuple2<String, Long>>forBoundedOutOfOrderness(Duration.ofMillis(50))
+                    .withTimestampAssigner((event, ts) -> event.f1))
+            .name("src").uid("src")
+            .keyBy(t -> t.f0)
+            .window(TumblingEventTimeWindows.of(Duration.ofMillis(500)))
+            .aggregate(new CountAggregator(), new WindowResultFunction())
+            .name("window").uid("window")
+            .flatMap(new WindowOutputSink())
+            .name("sink").uid("sink")
+            .addSink(new DiscardingSink<>())
+            .name("discard").uid("discard");
+
+        final org.apache.flink.core.execution.JobClient client2 = env2.executeAsync("window-ckpt-2");
+
+        // Wait for continued output after restore
+        long deadline2 = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (System.nanoTime() < deadline2 && WINDOW_SUM_PROBE.get() < 5) {
+            Thread.sleep(100);
+        }
+
+        try { client2.cancel().get(10, TimeUnit.SECONDS); } catch (Throwable ignore) {}
+
+        long sumAfterRestore = WINDOW_SUM_PROBE.get();
+        Assertions.assertTrue(sumAfterRestore > 0,
+                "Window aggregation should continue producing output after restore, got " + sumAfterRestore);
     }
 
     /**

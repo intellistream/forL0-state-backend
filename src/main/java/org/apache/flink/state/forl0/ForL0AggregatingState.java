@@ -11,6 +11,7 @@ import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.core.memory.MemorySegmentBridge;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalAggregatingState;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.util.Preconditions;
 
@@ -43,6 +44,7 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
     private final int keyTypeId;
     private final int valueTypeId;
     private final boolean voidNamespace;
+    private final boolean isTimeWindowNs;
     private final boolean isRowDataKey;
     private final RowDataKeyAccessor rowDataKeyAccessor;
     private final boolean isRowDataAcc;
@@ -52,6 +54,9 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
     private final DataOutputSerializer accOut = new DataOutputSerializer(128);
     private final long[] nativePtrBuf;
     private final int rowDataAccArity;
+
+    private enum KeyNsStrategy { LONG_VOID, LONG_TW, GENERIC }
+    private final KeyNsStrategy keyNsStrategy;
 
     ForL0AggregatingState(
             long stateHandle,
@@ -69,6 +74,7 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
         this.keyTypeId = TypeAnalyzer.getTypeId(keySerializer);
         this.valueTypeId = TypeAnalyzer.getTypeId(valueSerializer);
         this.voidNamespace = namespaceSerializer instanceof VoidNamespaceSerializer;
+        this.isTimeWindowNs = TypeAnalyzer.isTimeWindowSerializer(namespaceSerializer);
         this.isRowDataKey = TypeAnalyzer.isRowDataSerializer(keySerializer);
         this.rowDataKeyAccessor = isRowDataKey ? TypeAnalyzer.createRowDataKeyAccessor(keySerializer) : null;
         this.isRowDataAcc = TypeAnalyzer.isRowDataSerializer(valueSerializer);
@@ -76,38 +82,69 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
                 ? TypeAnalyzer.createRowDataKeyAccessor(valueSerializer) : null;
         this.nativePtrBuf = isRowDataAcc ? new long[2] : null;
         this.rowDataAccArity = isRowDataAcc ? rowDataAccAccessor.getArity() : 0;
+
+        if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.keyNsStrategy = KeyNsStrategy.LONG_VOID;
+        } else if (isTimeWindowNs && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.keyNsStrategy = KeyNsStrategy.LONG_TW;
+        } else {
+            this.keyNsStrategy = KeyNsStrategy.GENERIC;
+        }
     }
 
     @Override
     public OUT get() {
         try {
-            // Long key fast path: avoid key serialization
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                long k = resolveKeyAsLong(keyContext.currentKey);
-                ACC accumulator;
-                if (isRowDataAcc && NativeEngine.valueGetLongStringPtr(stateHandle, k, keyContext.currentKeyGroupIndex, nativePtrBuf)) {
-                    accumulator = wrapNativePtrAsAcc();
-                } else if (!isRowDataAcc) {
-                    byte[] data = NativeEngine.valueGetLongString(stateHandle, k, keyContext.currentKeyGroupIndex);
-                    if (data == null) return null;
-                    accumulator = deserializeAcc(data);
-                } else {
-                    return null;
+            switch (keyNsStrategy) {
+                case LONG_VOID: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    ACC accumulator;
+                    if (isRowDataAcc && NativeEngine.valueGetLongStringPtr(stateHandle, k, kg, nativePtrBuf)) {
+                        accumulator = wrapNativePtrAsAcc();
+                    } else if (!isRowDataAcc) {
+                        byte[] data = NativeEngine.valueGetLongString(stateHandle, k, kg);
+                        if (data == null) return null;
+                        accumulator = deserializeAcc(data);
+                    } else {
+                        return null;
+                    }
+                    return aggregateFunction.getResult(accumulator);
                 }
-                return aggregateFunction.getResult(accumulator);
+                case LONG_TW: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    int kg = keyContext.currentKeyGroupIndex;
+                    long nsStart = tw.getStart(), nsEnd = tw.getEnd();
+                    ACC accumulator;
+                    // OPT-10: RowData zero-copy for TimeWindow
+                    if (isRowDataAcc && NativeEngine.valueGetLongStringPtrWithTW(stateHandle, k, kg, nsStart, nsEnd, nativePtrBuf)) {
+                        accumulator = wrapNativePtrAsAcc();
+                    } else if (!isRowDataAcc) {
+                        byte[] data = NativeEngine.valueGetLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd);
+                        if (data == null) return null;
+                        accumulator = deserializeAcc(data);
+                    } else {
+                        return null;
+                    }
+                    return aggregateFunction.getResult(accumulator);
+                }
+                default: {
+                    byte[] keyBytes = serializeKey(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    ACC accumulator;
+                    if (isRowDataAcc && NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, kg, nativePtrBuf)) {
+                        accumulator = wrapNativePtrAsAcc();
+                    } else if (!isRowDataAcc) {
+                        byte[] data = NativeEngine.aggGetGeneric(stateHandle, keyBytes, kg);
+                        if (data == null) return null;
+                        accumulator = deserializeAcc(data);
+                    } else {
+                        return null;
+                    }
+                    return aggregateFunction.getResult(accumulator);
+                }
             }
-            byte[] keyBytes = serializeKey(keyContext.currentKey);
-            ACC accumulator;
-            if (isRowDataAcc && NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, keyContext.currentKeyGroupIndex, nativePtrBuf)) {
-                accumulator = wrapNativePtrAsAcc();
-            } else if (!isRowDataAcc) {
-                byte[] data = NativeEngine.aggGetGeneric(stateHandle, keyBytes, keyContext.currentKeyGroupIndex);
-                if (data == null) return null;
-                accumulator = deserializeAcc(data);
-            } else {
-                return null;
-            }
-            return aggregateFunction.getResult(accumulator);
         } catch (IOException e) {
             throw new RuntimeException("Failed to get AggregatingState", e);
         }
@@ -118,41 +155,76 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
         Preconditions.checkNotNull(value, "You cannot add null to an AggregatingState.");
 
         try {
-            // Long key fast path: avoid key serialization
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                long k = resolveKeyAsLong(keyContext.currentKey);
-                int keyGroup = keyContext.currentKeyGroupIndex;
-
-                ACC accumulator;
-                if (isRowDataAcc && NativeEngine.valueGetLongStringPtr(stateHandle, k, keyGroup, nativePtrBuf)) {
-                    accumulator = wrapNativePtrAsAcc();
-                } else if (!isRowDataAcc) {
-                    byte[] oldBytes = NativeEngine.valueGetLongString(stateHandle, k, keyGroup);
-                    accumulator = (oldBytes != null) ? deserializeAcc(oldBytes) : aggregateFunction.createAccumulator();
-                } else {
-                    accumulator = aggregateFunction.createAccumulator();
+            switch (keyNsStrategy) {
+                case LONG_VOID: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    if (isRowDataAcc) {
+                        ACC accumulator;
+                        if (NativeEngine.valueGetLongStringPtr(stateHandle, k, kg, nativePtrBuf)) {
+                            accumulator = aggregateFunction.add(value, wrapNativePtrAsAcc());
+                        } else {
+                            accumulator = aggregateFunction.add(value, aggregateFunction.createAccumulator());
+                        }
+                        NativeEngine.valuePutLongString(stateHandle, k, kg, serializeAcc(accumulator));
+                    } else {
+                        ACC freshAcc = aggregateFunction.add(value, aggregateFunction.createAccumulator());
+                        byte[] newBytes = serializeAcc(freshAcc);
+                        byte[] oldBytes = NativeEngine.valueGetAndPutLongBytes(stateHandle, k, kg, newBytes);
+                        if (oldBytes != null) {
+                            ACC merged = aggregateFunction.merge(deserializeAcc(oldBytes), freshAcc);
+                            NativeEngine.valuePutLongString(stateHandle, k, kg, serializeAcc(merged));
+                        }
+                    }
+                    return;
                 }
-                accumulator = aggregateFunction.add(value, accumulator);
-
-                byte[] newBytes = serializeAcc(accumulator);
-                NativeEngine.valuePutLongString(stateHandle, k, keyGroup, newBytes);
-                return;
+                case LONG_TW: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    long nsStart = tw.getStart(), nsEnd = tw.getEnd();
+                    if (isRowDataAcc) {
+                        // OPT-10: RowData zero-copy for TimeWindow
+                        ACC accumulator;
+                        if (NativeEngine.valueGetLongStringPtrWithTW(stateHandle, k, kg, nsStart, nsEnd, nativePtrBuf)) {
+                            accumulator = aggregateFunction.add(value, wrapNativePtrAsAcc());
+                        } else {
+                            accumulator = aggregateFunction.add(value, aggregateFunction.createAccumulator());
+                        }
+                        NativeEngine.valuePutLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd, serializeAcc(accumulator));
+                    } else {
+                        ACC freshAcc = aggregateFunction.add(value, aggregateFunction.createAccumulator());
+                        byte[] newBytes = serializeAcc(freshAcc);
+                        byte[] oldBytes = NativeEngine.valueGetAndPutLongBytesWithTW(stateHandle, k, kg, nsStart, nsEnd, newBytes);
+                        if (oldBytes != null) {
+                            ACC merged = aggregateFunction.merge(deserializeAcc(oldBytes), freshAcc);
+                            NativeEngine.valuePutLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd, serializeAcc(merged));
+                        }
+                    }
+                    return;
+                }
+                default: {
+                    byte[] keyBytes = serializeKey(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    if (isRowDataAcc) {
+                        ACC accumulator;
+                        if (NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, kg, nativePtrBuf)) {
+                            accumulator = aggregateFunction.add(value, wrapNativePtrAsAcc());
+                        } else {
+                            accumulator = aggregateFunction.add(value, aggregateFunction.createAccumulator());
+                        }
+                        NativeEngine.aggAddGeneric(stateHandle, keyBytes, kg, serializeAcc(accumulator));
+                    } else {
+                        ACC freshAcc = aggregateFunction.add(value, aggregateFunction.createAccumulator());
+                        byte[] newBytes = serializeAcc(freshAcc);
+                        byte[] oldBytes = NativeEngine.valueGetAndPutGenericBytes(stateHandle, keyBytes, kg, newBytes);
+                        if (oldBytes != null) {
+                            ACC merged = aggregateFunction.merge(deserializeAcc(oldBytes), freshAcc);
+                            NativeEngine.aggAddGeneric(stateHandle, keyBytes, kg, serializeAcc(merged));
+                        }
+                    }
+                }
             }
-            byte[] keyBytes = serializeKey(keyContext.currentKey);
-            ACC accumulator;
-            if (isRowDataAcc && NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, keyContext.currentKeyGroupIndex, nativePtrBuf)) {
-                accumulator = wrapNativePtrAsAcc();
-            } else if (!isRowDataAcc) {
-                byte[] oldBytes = NativeEngine.aggGetGeneric(stateHandle, keyBytes, keyContext.currentKeyGroupIndex);
-                accumulator = (oldBytes != null) ? deserializeAcc(oldBytes) : aggregateFunction.createAccumulator();
-            } else {
-                accumulator = aggregateFunction.createAccumulator();
-            }
-
-            accumulator = aggregateFunction.add(value, accumulator);
-
-            byte[] newBytes = serializeAcc(accumulator);
-            NativeEngine.aggAddGeneric(stateHandle, keyBytes, keyContext.currentKeyGroupIndex, newBytes);
         } catch (IOException e) {
             throw new RuntimeException("Failed to add to AggregatingState", e);
         }
@@ -193,28 +265,41 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
     @Override
     public ACC getInternal() {
         try {
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                long k = resolveKeyAsLong(keyContext.currentKey);
-                if (isRowDataAcc) {
-                    if (NativeEngine.valueGetLongStringPtr(stateHandle, k, keyContext.currentKeyGroupIndex, nativePtrBuf)) {
-                        return wrapNativePtrAsAcc();
+            switch (keyNsStrategy) {
+                case LONG_VOID: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    if (isRowDataAcc) {
+                        if (NativeEngine.valueGetLongStringPtr(stateHandle, k, kg, nativePtrBuf)) return wrapNativePtrAsAcc();
+                        return null;
                     }
-                    return null;
+                    byte[] data = NativeEngine.valueGetLongString(stateHandle, k, kg);
+                    return data != null ? deserializeAcc(data) : null;
                 }
-                byte[] data = NativeEngine.valueGetLongString(stateHandle, k, keyContext.currentKeyGroupIndex);
-                if (data == null) return null;
-                return deserializeAcc(data);
-            }
-            byte[] keyBytes = serializeKey(keyContext.currentKey);
-            if (isRowDataAcc) {
-                if (NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, keyContext.currentKeyGroupIndex, nativePtrBuf)) {
-                    return wrapNativePtrAsAcc();
+                case LONG_TW: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    long nsStart = tw.getStart(), nsEnd = tw.getEnd();
+                    // OPT-10: RowData zero-copy for TimeWindow
+                    if (isRowDataAcc) {
+                        if (NativeEngine.valueGetLongStringPtrWithTW(stateHandle, k, kg, nsStart, nsEnd, nativePtrBuf)) return wrapNativePtrAsAcc();
+                        return null;
+                    }
+                    byte[] data = NativeEngine.valueGetLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd);
+                    return data != null ? deserializeAcc(data) : null;
                 }
-                return null;
+                default: {
+                    byte[] keyBytes = serializeKey(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    if (isRowDataAcc) {
+                        if (NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, kg, nativePtrBuf)) return wrapNativePtrAsAcc();
+                        return null;
+                    }
+                    byte[] data = NativeEngine.aggGetGeneric(stateHandle, keyBytes, kg);
+                    return data != null ? deserializeAcc(data) : null;
+                }
             }
-            byte[] data = NativeEngine.aggGetGeneric(stateHandle, keyBytes, keyContext.currentKeyGroupIndex);
-            if (data == null) return null;
-            return deserializeAcc(data);
         } catch (IOException e) {
             throw new RuntimeException("Failed to get internal AggregatingState", e);
         }
@@ -223,15 +308,23 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
     @Override
     public void updateInternal(ACC valueToStore) {
         try {
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                long k = resolveKeyAsLong(keyContext.currentKey);
-                byte[] accBytes = serializeAcc(valueToStore);
-                NativeEngine.valuePutLongString(stateHandle, k, keyContext.currentKeyGroupIndex, accBytes);
-                return;
+            switch (keyNsStrategy) {
+                case LONG_VOID: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    NativeEngine.valuePutLongString(stateHandle, k, keyContext.currentKeyGroupIndex, serializeAcc(valueToStore));
+                    return;
+                }
+                case LONG_TW: {
+                    long k = resolveKeyAsLong(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.valuePutLongStringWithTW(stateHandle, k, keyContext.currentKeyGroupIndex,
+                            tw.getStart(), tw.getEnd(), serializeAcc(valueToStore));
+                    return;
+                }
+                default:
+                    NativeEngine.aggAddGeneric(stateHandle, serializeKey(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, serializeAcc(valueToStore));
             }
-            byte[] keyBytes = serializeKey(keyContext.currentKey);
-            byte[] accBytes = serializeAcc(valueToStore);
-            NativeEngine.aggAddGeneric(stateHandle, keyBytes, keyContext.currentKeyGroupIndex, accBytes);
         } catch (IOException e) {
             throw new RuntimeException("Failed to update internal AggregatingState", e);
         }
@@ -240,12 +333,19 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
     @Override
     public void clear() {
         try {
-            if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
-                NativeEngine.valueClearLong(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-                return;
+            switch (keyNsStrategy) {
+                case LONG_VOID:
+                    NativeEngine.valueClearLong(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+                    return;
+                case LONG_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.valueClearWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    return;
+                }
+                default:
+                    NativeEngine.valueClearGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
             }
-            byte[] keyBytes = serializeKey(keyContext.currentKey);
-            NativeEngine.valueClearGeneric(stateHandle, keyBytes, keyContext.currentKeyGroupIndex);
         } catch (IOException e) {
             throw new RuntimeException("Failed to clear AggregatingState", e);
         }

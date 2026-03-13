@@ -74,17 +74,75 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         auto kind = to_state_kind(stateType);
         bool is_value_state = (kind == StateHandle::StateKind::VALUE);
 
+        // Pre-parse type descriptor to extract layout info needed for registration.
+        // MapState needs UK/UV types from parsed value_layout to select InnerMap specialization.
+        std::unique_ptr<TypeLayout> parsed_key_layout;
+        std::unique_ptr<TypeLayout> parsed_ns_layout;
+        std::unique_ptr<TypeLayout> parsed_val_layout;
+        if (typeDescriptor) {
+            jsize descLen = env->GetArrayLength(typeDescriptor);
+            if (descLen > 0) {
+                std::vector<uint8_t> desc(descLen);
+                env->GetByteArrayRegion(typeDescriptor, 0, descLen,
+                                        reinterpret_cast<jbyte*>(desc.data()));
+                try {
+                    size_t offset = 0;
+                    parsed_key_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
+                    parsed_ns_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
+                    parsed_val_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
+                } catch (const std::exception&) {}
+            }
+        }
+
+        // Determine MapState InnerMap kind from parsed value layout UK/UV children.
+        StateHandle::MapInnerKind map_inner_kind = StateHandle::MapInnerKind::STRING_STRING;
+        if (kind == StateHandle::StateKind::MAP_ && parsed_val_layout
+            && parsed_val_layout->type_id == TypeId::MAP
+            && parsed_val_layout->children.size() >= 2) {
+            TypeId uk_id = parsed_val_layout->children[0]->type_id;
+            TypeId uv_id = parsed_val_layout->children[1]->type_id;
+            if (uk_id == TypeId::INT64 && uv_id == TypeId::INT64) {
+                map_inner_kind = StateHandle::MapInnerKind::LONG_LONG;
+            } else if (uk_id == TypeId::INT64) {
+                map_inner_kind = StateHandle::MapInnerKind::LONG_STRING;
+            } else if (uv_id == TypeId::INT64) {
+                map_inner_kind = StateHandle::MapInnerKind::STRING_LONG;
+            }
+        }
+
         // Determine actual storage types (must match Java JNI access patterns)
         StateHandle::KeyType stored_key_type;
         StateHandle::ValueType stored_value_type;
 
-        // CRITICAL: When void_ns is false, Java ALWAYS uses the generic byte[] JNI path
+        // CRITICAL: When void_ns is false and namespace is not a known specialization,
+        // Java ALWAYS uses the generic byte[] JNI path
         // (serializing key+namespace together). The C++ table MUST be <std::string, std::string>
-        // to match. Typed specializations are ONLY valid for VoidNamespace states.
-        if (!void_ns) {
+        // to match. Typed specializations are valid for VoidNamespace and TimeWindow states.
+        bool is_time_window_ns = (nsTypeId == 21);  // TYPE_TIME_WINDOW
+        if (!void_ns && !is_time_window_ns) {
             table_id = engine->register_state<std::string, std::string>(name, void_ns);
             stored_key_type = StateHandle::KeyType::BYTES;
             stored_value_type = StateHandle::ValueType::BYTES;
+        } else if (is_time_window_ns) {
+            // TimeWindow namespace: register typed tables (same specialization as VoidNamespace).
+            // Java will use *WithTW JNI methods with typed key/value.
+            if (keyTypeId == 2 && (valueTypeId == 2 || valueTypeId == 1)) {
+                table_id = engine->register_state<int64_t, int64_t>(name, void_ns);
+                stored_key_type = StateHandle::KeyType::INT64;
+                stored_value_type = StateHandle::ValueType::INT64;
+            } else if (keyTypeId == 2 && valueTypeId == 4) {
+                table_id = engine->register_state<int64_t, double>(name, void_ns);
+                stored_key_type = StateHandle::KeyType::INT64;
+                stored_value_type = StateHandle::ValueType::FLOAT64;
+            } else if (keyTypeId == 2) {
+                table_id = engine->register_state<int64_t, std::string>(name, void_ns);
+                stored_key_type = StateHandle::KeyType::INT64;
+                stored_value_type = StateHandle::ValueType::BYTES;
+            } else {
+                table_id = engine->register_state<std::string, std::string>(name, void_ns);
+                stored_key_type = StateHandle::KeyType::BYTES;
+                stored_value_type = StateHandle::ValueType::BYTES;
+            }
         } else if (is_value_state) {
             // Only register specialized types that have MATCHING Java fast paths.
             if (keyTypeId == 2 && (valueTypeId == 2 || valueTypeId == 1)) {
@@ -149,10 +207,23 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             }
             stored_value_type = StateHandle::ValueType::LIST;
         } else if (kind == StateHandle::StateKind::MAP_) {
-            // MapState: store std::unordered_map<std::string, std::string> (InnerMap) per key
+            // MapState: select InnerMap specialization based on UK/UV types.
             if (keyTypeId == 2) {
-                table_id = engine->register_state<int64_t, InnerMap>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::INT64;
+                switch (map_inner_kind) {
+                    case StateHandle::MapInnerKind::LONG_LONG:
+                        table_id = engine->register_state<int64_t, InnerMapLongLong>(name, void_ns);
+                        break;
+                    case StateHandle::MapInnerKind::LONG_STRING:
+                        table_id = engine->register_state<int64_t, InnerMapLongString>(name, void_ns);
+                        break;
+                    case StateHandle::MapInnerKind::STRING_LONG:
+                        table_id = engine->register_state<int64_t, InnerMapStringLong>(name, void_ns);
+                        break;
+                    default:
+                        table_id = engine->register_state<int64_t, InnerMap>(name, void_ns);
+                        break;
+                }
             } else {
                 table_id = engine->register_state<std::string, InnerMap>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::BYTES;
@@ -188,45 +259,23 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         handle->key_type = stored_key_type;
         handle->value_type = stored_value_type;
         handle->kind = kind;
+        handle->ns_type = is_time_window_ns ? StateHandle::NsType::TIME_WINDOW
+                        : (void_ns ? StateHandle::NsType::VOID_NS
+                                   : StateHandle::NsType::BYTES);
         handle->void_namespace = void_ns;
+        handle->map_inner_kind = map_inner_kind;
 
-        // Register StateHandle pointer in engine for checkpoint type dispatch
-        engine->register_state_handle_ptr(table_id, handle);
+        // Register StateHandle pointer in engine for checkpoint type dispatch.
+        // Engine takes ownership and will free on destruction.
+        engine->register_state_handle_ptr(table_id, handle,
+            [](void* p) { delete static_cast<StateHandle*>(p); });
 
-        // Parse type descriptor if provided.
-        // Descriptor format: [key_type][ns_type][value_type] — three sequential layouts.
-        // We need the VALUE layout (third element) for checkpoint serialization.
-        if (typeDescriptor) {
-            jsize descLen = env->GetArrayLength(typeDescriptor);
-            if (descLen > 0) {
-                std::vector<uint8_t> desc(descLen);
-                env->GetByteArrayRegion(typeDescriptor, 0, descLen,
-                                        reinterpret_cast<jbyte*>(desc.data()));
-                try {
-                    size_t offset = 0;
-                    // Parse key layout
-                    auto key_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
-                    // Parse namespace layout (skip it)
-                    auto ns_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
-                    // Parse value layout — this is what we need
-                    auto val_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
-
-                    // Store key layout for FIXED_ROW (needed for arity in checkpoint)
-                    if (key_layout && key_layout->type_id == TypeId::FIXED_ROW) {
-                        handle->key_layout = std::move(key_layout);
-                    }
-
-                    if (val_layout) {
-                        // Store the complete value layout (keep tree intact for
-                        // checkpoint reader's read_flink_value which accesses children).
-                        handle->value_layout = std::move(val_layout);
-                    }
-                    (void)key_layout;
-                    (void)ns_layout;
-                } catch (const std::exception&) {
-                    // Type descriptor parsing is optional — fallback to default layouts
-                }
-            }
+        // Move pre-parsed layouts to handle (parsed earlier for MapState dispatch).
+        if (parsed_key_layout && parsed_key_layout->type_id == TypeId::FIXED_ROW) {
+            handle->key_layout = std::move(parsed_key_layout);
+        }
+        if (parsed_val_layout) {
+            handle->value_layout = std::move(parsed_val_layout);
         }
 
         return to_handle(handle);
@@ -269,8 +318,25 @@ Java_org_apache_flink_state_forl0_NativeEngine_stateEntries(
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::MAP) {
-            auto* tbl = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
-            return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+            // Dispatch based on InnerMap specialization
+            switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::LONG_LONG: {
+                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+                case StateHandle::MapInnerKind::LONG_STRING: {
+                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+                case StateHandle::MapInnerKind::STRING_LONG: {
+                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+                default: {
+                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+            }
         }
         if (kt == StateHandle::KeyType::FIXED_ROW && vt == StateHandle::ValueType::INT64) {
             auto* tbl = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
@@ -296,6 +362,30 @@ Java_org_apache_flink_state_forl0_NativeEngine_stateEntries(
         if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::BYTES) {
             auto* tbl = handle->engine->get_state_table<int32_t, std::string>(handle->table_id);
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+        }
+        if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::LIST) {
+            auto* tbl = handle->engine->get_state_table<int32_t, ElementList>(handle->table_id);
+            return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+        }
+        if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::MAP) {
+            switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::LONG_LONG: {
+                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMapLongLong>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+                case StateHandle::MapInnerKind::LONG_STRING: {
+                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMapLongString>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+                case StateHandle::MapInnerKind::STRING_LONG: {
+                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMapStringLong>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+                default: {
+                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMap>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
+            }
         }
         if (vt == StateHandle::ValueType::LIST) {
             auto* tbl = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
@@ -342,7 +432,20 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
             } else if (vt == StateHandle::ValueType::LIST) {
                 emit_keys(handle->engine->get_state_table<int64_t, ElementList>(handle->table_id));
             } else if (vt == StateHandle::ValueType::MAP) {
-                emit_keys(handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id));
+                switch (handle->map_inner_kind) {
+                    case StateHandle::MapInnerKind::LONG_LONG:
+                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id));
+                        break;
+                    case StateHandle::MapInnerKind::LONG_STRING:
+                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id));
+                        break;
+                    case StateHandle::MapInnerKind::STRING_LONG:
+                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id));
+                        break;
+                    default:
+                        emit_keys(handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id));
+                        break;
+                }
             } else {
                 // BYTES or STRING value type → <int64_t, std::string>
                 emit_keys(handle->engine->get_state_table<int64_t, std::string>(handle->table_id));
@@ -410,8 +513,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
         }
 
         if (buf.size() <= 4) return nullptr;
-        return string_to_jbytearray(env,
-                std::string(reinterpret_cast<const char*>(buf.data()), buf.size()));
+        return buffer_to_jbytearray(env, buf.data(), buf.size());
     })
 }
 

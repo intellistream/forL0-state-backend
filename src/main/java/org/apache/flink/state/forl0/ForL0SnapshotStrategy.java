@@ -117,59 +117,72 @@ public class ForL0SnapshotStrategy<K>
 
             snapshotCloseableRegistry.registerCloseable(streamWithResultProvider);
 
-            final CheckpointStateOutputStream localStream =
-                    streamWithResultProvider.getCheckpointOutputStream();
+            try {
+                final CheckpointStateOutputStream localStream =
+                        streamWithResultProvider.getCheckpointOutputStream();
 
-            final DataOutputViewStreamWrapper outView =
-                    new DataOutputViewStreamWrapper(localStream);
+                final DataOutputViewStreamWrapper outView =
+                        new DataOutputViewStreamWrapper(localStream);
 
-            // Write metadata (serialization proxy)
-            serializationProxy.write(outView);
+                // Write metadata (serialization proxy)
+                serializationProxy.write(outView);
 
-            final long[] keyGroupRangeOffsets = new long[keyGroupRange.getNumberOfKeyGroups()];
+                final long[] keyGroupRangeOffsets = new long[keyGroupRange.getNumberOfKeyGroups()];
 
-            // Write each key group's data
-            for (int keyGroupPos = 0;
-                    keyGroupPos < keyGroupRange.getNumberOfKeyGroups();
-                    ++keyGroupPos) {
-                int keyGroupId = keyGroupRange.getKeyGroupId(keyGroupPos);
+                // Write each key group's data
+                for (int keyGroupPos = 0;
+                        keyGroupPos < keyGroupRange.getNumberOfKeyGroups();
+                        ++keyGroupPos) {
+                    int keyGroupId = keyGroupRange.getKeyGroupId(keyGroupPos);
 
-                keyGroupRangeOffsets[keyGroupPos] = localStream.getPos();
-                outView.writeInt(keyGroupId);
+                    keyGroupRangeOffsets[keyGroupPos] = localStream.getPos();
+                    outView.writeInt(keyGroupId);
 
-                // Write PQ state data for this key group using the standard Flink mechanism
-                Map<StateUID, StateSnapshot> pqSnapshots = syncPartResource.getPqSnapshots();
-                for (Map.Entry<StateUID, StateSnapshot> entry : pqSnapshots.entrySet()) {
-                    StateSnapshot.StateKeyGroupWriter writer = entry.getValue().getKeyGroupWriter();
+                    // Write PQ state data for this key group using the standard Flink mechanism
+                    Map<StateUID, StateSnapshot> pqSnapshots = syncPartResource.getPqSnapshots();
+                    for (Map.Entry<StateUID, StateSnapshot> entry : pqSnapshots.entrySet()) {
+                        StateSnapshot.StateKeyGroupWriter writer = entry.getValue().getKeyGroupWriter();
+                        try (OutputStream kgCompressionOut =
+                                keyGroupCompressionDecorator.decorateWithCompression(localStream)) {
+                            DataOutputViewStreamWrapper kgCompressionView =
+                                    new DataOutputViewStreamWrapper(kgCompressionOut);
+                            kgCompressionView.writeShort(syncPartResource.getStateId(entry.getKey()));
+                            writer.writeStateInKeyGroup(kgCompressionView, keyGroupId);
+                        }
+                    }
+
+                    // Write KV state data from C++ engine for this key group.
+                    // Always write a compression block (even if empty) so restore can rely on
+                    // the fixed block count: numPQStates + 1 blocks per key group.
+                    byte[] keyGroupData = NativeEngine.writeKeyGroupData(engineHandle, keyGroupId);
                     try (OutputStream kgCompressionOut =
                             keyGroupCompressionDecorator.decorateWithCompression(localStream)) {
-                        DataOutputViewStreamWrapper kgCompressionView =
-                                new DataOutputViewStreamWrapper(kgCompressionOut);
-                        kgCompressionView.writeShort(syncPartResource.getStateId(entry.getKey()));
-                        writer.writeStateInKeyGroup(kgCompressionView, keyGroupId);
+                        if (keyGroupData != null && keyGroupData.length > 0) {
+                            kgCompressionOut.write(keyGroupData);
+                        }
                     }
                 }
 
-                // Write KV state data from C++ engine for this key group.
-                // Always write a compression block (even if empty) so restore can rely on
-                // the fixed block count: numPQStates + 1 blocks per key group.
-                byte[] keyGroupData = NativeEngine.writeKeyGroupData(engineHandle, keyGroupId);
-                try (OutputStream kgCompressionOut =
-                        keyGroupCompressionDecorator.decorateWithCompression(localStream)) {
-                    if (keyGroupData != null && keyGroupData.length > 0) {
-                        kgCompressionOut.write(keyGroupData);
-                    }
-                }
-            }
+                // Release COW snapshot state — data has been fully written
+                NativeEngine.releaseSnapshot(engineHandle);
 
-            if (snapshotCloseableRegistry.unregisterCloseable(streamWithResultProvider)) {
-                KeyGroupRangeOffsets kgOffs =
-                        new KeyGroupRangeOffsets(keyGroupRange, keyGroupRangeOffsets);
-                SnapshotResult<StreamStateHandle> result =
-                        streamWithResultProvider.closeAndFinalizeCheckpointStreamResult();
-                return toKeyedStateHandleSnapshotResult(result, kgOffs, KeyGroupsStateHandle::new);
-            } else {
-                throw new IOException("Stream already unregistered.");
+                if (snapshotCloseableRegistry.unregisterCloseable(streamWithResultProvider)) {
+                    KeyGroupRangeOffsets kgOffs =
+                            new KeyGroupRangeOffsets(keyGroupRange, keyGroupRangeOffsets);
+                    SnapshotResult<StreamStateHandle> result =
+                            streamWithResultProvider.closeAndFinalizeCheckpointStreamResult();
+                    return toKeyedStateHandleSnapshotResult(result, kgOffs, KeyGroupsStateHandle::new);
+                } else {
+                    throw new IOException("Stream already unregistered.");
+                }
+            } catch (Exception e) {
+                // Ensure COW snapshot is released even on failure
+                try {
+                    NativeEngine.releaseSnapshot(engineHandle);
+                } catch (Exception suppressed) {
+                    e.addSuppressed(suppressed);
+                }
+                throw e;
             }
         };
     }

@@ -107,6 +107,15 @@ public:
         buf_.insert(buf_.end(), data, data + len);
     }
 
+    // OPT-9: Patch a big-endian int32 at a previously written position.
+    // Used with the "placeholder + patch" pattern to avoid temp WriteBuffer.
+    void patch_int(size_t offset, int32_t v) {
+        buf_[offset]     = static_cast<uint8_t>((v >> 24) & 0xFF);
+        buf_[offset + 1] = static_cast<uint8_t>((v >> 16) & 0xFF);
+        buf_[offset + 2] = static_cast<uint8_t>((v >> 8) & 0xFF);
+        buf_[offset + 3] = static_cast<uint8_t>(v & 0xFF);
+    }
+
     // --- VarInt (used in some Flink formats) ---
 
     void write_varint(int32_t value) {
@@ -156,30 +165,28 @@ public:
                 break;
             }
             case TypeId::LIST: {
-                // List: value is ElementList (std::vector<std::string>)
-                // Write as [total_byte_length(4)][count(4)][elem1_bytes][elem2_bytes]...
+                // OPT-9: Direct write with placeholder length
                 auto* vec = static_cast<const ElementList*>(data);
-                WriteBuffer inner;
-                inner.write_int(static_cast<int32_t>(vec->size()));
+                size_t len_pos = buf_.size();
+                write_int(0);  // placeholder
+                write_int(static_cast<int32_t>(vec->size()));
                 for (const auto& elem : *vec) {
-                    inner.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
+                    write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
                 }
-                write_int(static_cast<int32_t>(inner.size()));
-                write_raw(inner.data(), inner.size());
+                patch_int(len_pos, static_cast<int32_t>(buf_.size() - len_pos - 4));
                 break;
             }
             case TypeId::MAP: {
-                // Map: value is InnerMap (std::unordered_map<std::string, std::string>)
-                // Write as [total_byte_length(4)][count(4)][uk1][uv1][uk2][uv2]...
+                // OPT-9: Direct write with placeholder length
                 auto* inner_map = static_cast<const InnerMap*>(data);
-                WriteBuffer inner;
-                inner.write_int(static_cast<int32_t>(inner_map->size()));
+                size_t len_pos = buf_.size();
+                write_int(0);  // placeholder
+                write_int(static_cast<int32_t>(inner_map->size()));
                 for (const auto& [uk, uv] : *inner_map) {
-                    inner.write_raw(reinterpret_cast<const uint8_t*>(uk.data()), uk.size());
-                    inner.write_raw(reinterpret_cast<const uint8_t*>(uv.data()), uv.size());
+                    write_raw(reinterpret_cast<const uint8_t*>(uk.data()), uk.size());
+                    write_raw(reinterpret_cast<const uint8_t*>(uv.data()), uv.size());
                 }
-                write_int(static_cast<int32_t>(inner.size()));
-                write_raw(inner.data(), inner.size());
+                patch_int(len_pos, static_cast<int32_t>(buf_.size() - len_pos - 4));
                 break;
             }
             case TypeId::FIXED_ROW: {

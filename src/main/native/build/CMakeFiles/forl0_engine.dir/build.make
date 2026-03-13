@@ -125,10 +125,24 @@ CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/user/projects/forL0-state-backend/src/main/native/jni/jni_map_state.cpp -o CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.s
 
+CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o: CMakeFiles/forl0_engine.dir/flags.make
+CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o: ../jni/jni_tw_state.cpp
+CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o: CMakeFiles/forl0_engine.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/user/projects/forL0-state-backend/src/main/native/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o -MF CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o.d -o CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o -c /home/user/projects/forL0-state-backend/src/main/native/jni/jni_tw_state.cpp
+
+CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/user/projects/forL0-state-backend/src/main/native/jni/jni_tw_state.cpp > CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.i
+
+CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/user/projects/forL0-state-backend/src/main/native/jni/jni_tw_state.cpp -o CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.s
+
 CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o: CMakeFiles/forl0_engine.dir/flags.make
 CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o: ../jni/jni_checkpoint.cpp
 CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o: CMakeFiles/forl0_engine.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/user/projects/forL0-state-backend/src/main/native/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/user/projects/forL0-state-backend/src/main/native/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o -MF CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o.d -o CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o -c /home/user/projects/forL0-state-backend/src/main/native/jni/jni_checkpoint.cpp
 
 CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.i: cmake_force
@@ -145,6 +159,7 @@ forl0_engine_OBJECTS = \
 "CMakeFiles/forl0_engine.dir/jni/jni_value_state.cpp.o" \
 "CMakeFiles/forl0_engine.dir/jni/jni_list_state.cpp.o" \
 "CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.o" \
+"CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o" \
 "CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o"
 
 # External object files for target forl0_engine
@@ -154,10 +169,11 @@ libforl0_engine.so: CMakeFiles/forl0_engine.dir/jni/forl0_jni.cpp.o
 libforl0_engine.so: CMakeFiles/forl0_engine.dir/jni/jni_value_state.cpp.o
 libforl0_engine.so: CMakeFiles/forl0_engine.dir/jni/jni_list_state.cpp.o
 libforl0_engine.so: CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.o
+libforl0_engine.so: CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o
 libforl0_engine.so: CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o
 libforl0_engine.so: CMakeFiles/forl0_engine.dir/build.make
 libforl0_engine.so: CMakeFiles/forl0_engine.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/user/projects/forL0-state-backend/src/main/native/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Linking CXX shared library libforl0_engine.so"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/user/projects/forL0-state-backend/src/main/native/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Linking CXX shared library libforl0_engine.so"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/forl0_engine.dir/link.txt --verbose=$(VERBOSE)
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold "Copying libforl0_engine to resources/native/"
 	/usr/bin/cmake -E make_directory /home/user/projects/forL0-state-backend/src/main/native/../resources/native

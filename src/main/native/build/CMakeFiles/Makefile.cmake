@@ -24,9 +24,11 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/usr/share/cmake-3.22/Modules/Compiler/CMakeCommonCompilerMacros.cmake"
   "/usr/share/cmake-3.22/Modules/Compiler/GNU-CXX.cmake"
   "/usr/share/cmake-3.22/Modules/Compiler/GNU.cmake"
+  "/usr/share/cmake-3.22/Modules/FindGTest.cmake"
   "/usr/share/cmake-3.22/Modules/FindJNI.cmake"
   "/usr/share/cmake-3.22/Modules/FindPackageHandleStandardArgs.cmake"
   "/usr/share/cmake-3.22/Modules/FindPackageMessage.cmake"
+  "/usr/share/cmake-3.22/Modules/GoogleTest.cmake"
   "/usr/share/cmake-3.22/Modules/Internal/CheckCompilerFlag.cmake"
   "/usr/share/cmake-3.22/Modules/Internal/CheckSourceCompiles.cmake"
   "/usr/share/cmake-3.22/Modules/Platform/Linux-GNU-CXX.cmake"
@@ -49,4 +51,5 @@ set(CMAKE_MAKEFILE_PRODUCTS
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/forl0_engine.dir/DependInfo.cmake"
+  "CMakeFiles/forl0_tests.dir/DependInfo.cmake"
   )

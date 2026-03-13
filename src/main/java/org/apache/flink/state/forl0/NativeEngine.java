@@ -181,10 +181,26 @@ public final class NativeEngine {
 
     // --- Zero-copy pointer return: writes [nativeAddress, size] into out array ---
     // Returns true if value found, false if not. Caller wraps as off-heap MemorySegment.
+    //
+    // SAFETY: The returned pointer references std::string::data() inside a SwissTable slot.
+    // It is valid only until the next write operation (put/remove/rehash) on the same
+    // StateTable. The caller must consume or copy the data before any state mutation.
 
     public static native boolean valueGetLongStringPtr(long stateHandle, long key, int keyGroup, long[] out);
 
     public static native boolean valueGetGenericPtr(long stateHandle, byte[] key, int keyGroup, long[] out);
+
+    // --- Combined get: single JNI call, single hash lookup ---
+    // Returns true if key exists and writes value to out[0]; returns false otherwise.
+    // For double values, out[0] stores the raw bits (use Double.longBitsToDouble).
+
+    public static native boolean valueGetLongLongSafe(long stateHandle, long key, int keyGroup, long[] out);
+
+    public static native boolean valueGetLongDoubleSafe(long stateHandle, long key, int keyGroup, long[] out);
+
+    public static native boolean valueGetIntLongSafe(long stateHandle, int key, int keyGroup, long[] out);
+
+    public static native boolean valueGetIntDoubleSafe(long stateHandle, int key, int keyGroup, long[] out);
 
     // --- ValueState existence check ---
 
@@ -274,17 +290,57 @@ public final class NativeEngine {
 
     public static native void mapClearGeneric(long stateHandle, byte[] key, int keyGroup);
 
+    // --- MapState streaming iterator (generic InnerMap) ---
+    /** Create iterator for int64 key + void namespace. Returns 0 if empty. */
+    public static native long mapIteratorCreate(long stateHandle, long key, int keyGroup);
+    /** Create iterator for generic key path. Returns 0 if empty. */
+    public static native long mapIteratorCreateGeneric(long stateHandle, byte[] key, int keyGroup);
+    /** Create iterator for int64 key + TimeWindow namespace. Returns 0 if empty. */
+    public static native long mapIteratorCreateWithTW(long stateHandle, long key, int keyGroup, long nsStart, long nsEnd);
+    /** Advance iterator: return [uk_bytes][uv_bytes] for one entry, or null if exhausted. */
+    public static native byte[] mapIteratorNext(long iterHandle);
+    /** Destroy iterator and free native memory. */
+    public static native void mapIteratorDestroy(long iterHandle);
+
     // --- MapState Long UK/UV zero-serialization paths ---
     /** Get UV(long) by Long key + Long UK. Returns Long.MIN_VALUE if absent. */
     public static native long mapGetLongLong(long stateHandle, long key, int keyGroup, long userKey);
     /** Check existence by Long key + Long UK. */
     public static native boolean mapContainsLongLong(long stateHandle, long key, int keyGroup, long userKey);
+    /** Combined get: returns true + writes value to buf[0] if found. Single lookup. */
+    public static native boolean mapGetLongLongSafe(long stateHandle, long key, int keyGroup, long userKey, long[] buf);
+    /** Combined get for BytesLong: returns true + writes value to buf[0] if found. Single lookup. */
+    public static native boolean mapGetBytesLongSafe(long stateHandle, long key, int keyGroup, byte[] userKey, long[] buf);
     /** Put Long UK + Long UV. */
     public static native void mapPutLongLong(long stateHandle, long key, int keyGroup, long userKey, long userValue);
     /** Remove by Long UK. */
     public static native void mapRemoveLongLong(long stateHandle, long key, int keyGroup, long userKey);
     /** Get all entries as interleaved long[] [uk0,uv0,uk1,uv1,...]. Returns null if empty. */
     public static native long[] mapEntriesLongLong(long stateHandle, long key, int keyGroup);
+
+    // --- MapState Long UK + Bytes UV paths (InnerMapLongString) ---
+    /** Get UV(bytes) by Long key + Long UK. Returns null if absent. */
+    public static native byte[] mapGetLongBytes(long stateHandle, long key, int keyGroup, long userKey);
+    /** Put Long UK + bytes UV. */
+    public static native void mapPutLongBytes(long stateHandle, long key, int keyGroup, long userKey, byte[] userValue);
+    /** Remove by Long UK (Long-Bytes InnerMap). */
+    public static native void mapRemoveLongBytes(long stateHandle, long key, int keyGroup, long userKey);
+    /** Check existence by Long UK (Long-Bytes InnerMap). */
+    public static native boolean mapContainsLongBytes(long stateHandle, long key, int keyGroup, long userKey);
+    /** Get all entries: [count(4B)][uk0(8B)][uv0_len(4B)][uv0_bytes]... Returns null if empty. */
+    public static native byte[] mapEntriesLongBytes(long stateHandle, long key, int keyGroup);
+
+    // --- MapState Bytes UK + Long UV paths (InnerMapStringLong) ---
+    /** Get UV(long) by Long key + bytes UK. Returns Long.MIN_VALUE if absent. */
+    public static native long mapGetBytesLong(long stateHandle, long key, int keyGroup, byte[] userKey);
+    /** Put bytes UK + Long UV. */
+    public static native void mapPutBytesLong(long stateHandle, long key, int keyGroup, byte[] userKey, long userValue);
+    /** Remove by bytes UK (Bytes-Long InnerMap). */
+    public static native void mapRemoveBytesLong(long stateHandle, long key, int keyGroup, byte[] userKey);
+    /** Check existence by bytes UK (Bytes-Long InnerMap). */
+    public static native boolean mapContainsBytesLong(long stateHandle, long key, int keyGroup, byte[] userKey);
+    /** Get all entries: [count(4B)][uk0_len(4B)][uk0_bytes][uv0(8B)]... Returns null if empty. */
+    public static native byte[] mapEntriesBytesLong(long stateHandle, long key, int keyGroup);
 
     // ========================================================================
     //  ReducingState / AggregatingState operations
@@ -317,6 +373,9 @@ public final class NativeEngine {
 
     /** Prepare for snapshot — returns snapshot version. */
     public static native long prepareSnapshot(long engineHandle);
+
+    /** Release snapshot — frees COW state in all state tables. */
+    public static native void releaseSnapshot(long engineHandle);
 
     /**
      * Write a key group's state data into the provided buffer.
@@ -387,4 +446,63 @@ public final class NativeEngine {
     public static native byte[] valueGetFixedRowGeneric(long stateHandle, long[] keyFields, int keyGroup);
 
     public static native void valuePutFixedRowGeneric(long stateHandle, long[] keyFields, int keyGroup, byte[] value);
+
+    // --- FixedLengthRow combined get: single JNI call, single hash lookup ---
+
+    public static native boolean valueGetFixedRowLongSafe(long stateHandle, long[] keyFields, int keyGroup, long[] out);
+
+    public static native boolean valueGetFixedRowDoubleSafe(long stateHandle, long[] keyFields, int keyGroup, long[] out);
+
+    /** Zero-copy pointer return for FixedRow key + string value. Writes [address, size] to out. */
+    public static native boolean valueGetFixedRowGenericPtr(long stateHandle, long[] keyFields, int keyGroup, long[] out);
+
+    // ========================================================================
+    //  TimeWindow namespace operations (*WithTW suffix)
+    //  Namespace passed as (long nsStart, long nsEnd) instead of serialized bytes.
+    // ========================================================================
+
+    // --- ValueState: long key + long value + TimeWindow ns ---
+    public static native boolean valueGetLongLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long[] out);
+    public static native void valuePutLongLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long value);
+    public static native boolean valueContainsWithTW(long h, long key, int kg, long nsStart, long nsEnd);
+    public static native void valueClearWithTW(long h, long key, int kg, long nsStart, long nsEnd);
+
+    // --- ValueState: long key + String/bytes value + TimeWindow ns ---
+    public static native byte[] valueGetLongStringWithTW(long h, long key, int kg, long nsStart, long nsEnd);
+    public static native void valuePutLongStringWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] value);
+    // OPT-10: Zero-copy native pointer access for RowData accumulators with TimeWindow
+    public static native boolean valueGetLongStringPtrWithTW(long h, long key, int kg, long nsStart, long nsEnd, long[] out);
+
+    // --- ValueState: long key + double value + TimeWindow ns ---
+    public static native boolean valueGetLongDoubleWithTW(long h, long key, int kg, long nsStart, long nsEnd, long[] out);
+    public static native void valuePutLongDoubleWithTW(long h, long key, int kg, long nsStart, long nsEnd, double value);
+
+    // --- ReducingState: long key + long value + TimeWindow ns ---
+    public static native boolean reduceGetLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long[] out);
+    public static native void reduceAddLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long value, int builtinAggType);
+    public static native void reduceClearWithTW(long h, long key, int kg, long nsStart, long nsEnd);
+
+    // --- ReducingState: combined get+put (saves 1 JNI call on first insert) ---
+    /** If key exists: returns true, writes old value to out[0]. If absent: inserts newValue, returns false. */
+    public static native boolean reduceGetAndPutLong(long h, long key, int kg, long newValue, long[] out);
+    public static native boolean reduceGetAndPutLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long newValue, long[] out);
+
+    // --- OPT-2: Combined get-and-put for bytes values (ReducingState/AggregatingState read-modify-write) ---
+    /** If key exists: writes newValue, returns old value bytes. If absent: writes newValue, returns null. */
+    public static native byte[] valueGetAndPutLongBytes(long h, long key, int kg, byte[] newValue);
+    public static native byte[] valueGetAndPutLongBytesWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] newValue);
+    public static native byte[] valueGetAndPutGenericBytes(long h, byte[] key, int kg, byte[] newValue);
+
+    // --- ListState: long key + TimeWindow ns ---
+    public static native byte[] listGetWithTW(long h, long key, int kg, long nsStart, long nsEnd);
+    public static native void listAddWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] element);
+    public static native void listClearWithTW(long h, long key, int kg, long nsStart, long nsEnd);
+
+    // --- MapState: long key + TimeWindow ns (generic UK/UV via bytes) ---
+    public static native byte[] mapGetWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] userKey);
+    public static native void mapPutWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] userKey, byte[] userValue);
+    public static native void mapRemoveWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] userKey);
+    public static native boolean mapContainsWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] userKey);
+    public static native byte[] mapEntriesWithTW(long h, long key, int kg, long nsStart, long nsEnd);
+    public static native void mapClearWithTW(long h, long key, int kg, long nsStart, long nsEnd);
 }

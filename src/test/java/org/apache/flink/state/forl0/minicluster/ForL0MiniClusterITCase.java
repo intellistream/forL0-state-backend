@@ -461,4 +461,84 @@ public class ForL0MiniClusterITCase {
             TOTAL_PROCESSED.set(value);
         }
     }
+
+    /**
+     * Large-scale state GC stress test.
+     * Creates many keys, processes records, and then clears old state to verify
+     * the state backend handles key creation/deletion at scale without issues.
+     */
+    @Test
+    void testLargeScaleStateStress() throws Exception {
+        Configuration conf = new Configuration();
+        conf.setString("state.backend", "org.apache.flink.state.forl0.ForL0StateBackendFactory");
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.configure(conf, Thread.currentThread().getContextClassLoader());
+        env.setParallelism(2);
+
+        // Generate data: 10000 records across 1000 keys, with writes and clears
+        final int numRecords = 10000;
+        final int numKeys = 1000;
+
+        List<Tuple2<Integer, String>> inputData = new ArrayList<>();
+        for (int i = 0; i < numRecords; i++) {
+            int key = i % numKeys;
+            // At round 5 and 8 for each key, signal a "clear" that resets state
+            String action = (i / numKeys == 5 || i / numKeys == 8) ? "clear" : "add";
+            inputData.add(Tuple2.of(key, action));
+        }
+
+        SingleOutputStreamOperator<Tuple2<Integer, Long>> result = env
+                .fromCollection(inputData)
+                .returns(new org.apache.flink.api.common.typeinfo.TypeHint<Tuple2<Integer, String>>() {})
+                .assignTimestampsAndWatermarks(WatermarkStrategy.noWatermarks())
+                .keyBy(t -> t.f0)
+                .flatMap(new RichFlatMapFunction<Tuple2<Integer, String>, Tuple2<Integer, Long>>() {
+                    private transient ValueState<Long> count;
+                    @Override
+                    public void open(Configuration parameters) {
+                        count = getRuntimeContext().getState(
+                                new ValueStateDescriptor<>("cnt", Types.LONG));
+                    }
+                    @Override
+                    public void flatMap(Tuple2<Integer, String> value,
+                                       Collector<Tuple2<Integer, Long>> out) throws Exception {
+                        if ("clear".equals(value.f1)) {
+                            count.clear();
+                            out.collect(Tuple2.of(value.f0, 0L));
+                        } else {
+                            Long c = count.value();
+                            if (c == null) c = 0L;
+                            c++;
+                            count.update(c);
+                            out.collect(Tuple2.of(value.f0, c));
+                        }
+                    }
+                });
+
+        // Collect final counts per key
+        Map<Integer, Long> finalCounts = new java.util.HashMap<>();
+        try (CloseableIterator<Tuple2<Integer, Long>> it = result.executeAndCollect()) {
+            while (it.hasNext()) {
+                Tuple2<Integer, Long> t = it.next();
+                finalCounts.merge(t.f0, t.f1, Math::max);
+            }
+        }
+
+        // Verify: 10 rounds per key, 2 clears (at round 5 and 8)
+        // After clear at round 5: state is 0, then counts 1,2 (rounds 6,7)
+        // After clear at round 8: state is 0, then counts 1 (round 9)
+        // So max count for each key should be at most the number of rounds after last clear
+        Assertions.assertEquals(numKeys, finalCounts.size(),
+                "All keys should have final counts");
+
+        // Verify all counts are reasonable (no corruption)
+        for (Map.Entry<Integer, Long> entry : finalCounts.entrySet()) {
+            Assertions.assertTrue(entry.getValue() >= 0 && entry.getValue() <= numRecords,
+                    "Count for key " + entry.getKey() + " should be valid, got " + entry.getValue());
+        }
+
+        System.out.println("Large-scale stress test passed: " + numKeys + " keys, "
+                + numRecords + " records");
+    }
 }

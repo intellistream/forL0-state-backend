@@ -12,6 +12,7 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/user/projects/forL0-state-backend/src/main/native/jni/jni_checkpoint.cpp" "CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o" "gcc" "CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o.d"
   "/home/user/projects/forL0-state-backend/src/main/native/jni/jni_list_state.cpp" "CMakeFiles/forl0_engine.dir/jni/jni_list_state.cpp.o" "gcc" "CMakeFiles/forl0_engine.dir/jni/jni_list_state.cpp.o.d"
   "/home/user/projects/forL0-state-backend/src/main/native/jni/jni_map_state.cpp" "CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.o" "gcc" "CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.o.d"
+  "/home/user/projects/forL0-state-backend/src/main/native/jni/jni_tw_state.cpp" "CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o" "gcc" "CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o.d"
   "/home/user/projects/forL0-state-backend/src/main/native/jni/jni_value_state.cpp" "CMakeFiles/forl0_engine.dir/jni/jni_value_state.cpp.o" "gcc" "CMakeFiles/forl0_engine.dir/jni/jni_value_state.cpp.o.d"
   )
 

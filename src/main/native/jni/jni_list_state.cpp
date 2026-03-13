@@ -30,8 +30,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGet(
         for (const auto& elem : *vec) {
             buf.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
         }
-        return string_to_jbytearray(env,
-            std::string(reinterpret_cast<const char*>(buf.data()), buf.size()));
+        return buffer_to_jbytearray(env, buf.data(), buf.size());
     })
 }
 
@@ -50,8 +49,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetGeneric(
         for (const auto& elem : *vec) {
             buf.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
         }
-        return string_to_jbytearray(env,
-            std::string(reinterpret_cast<const char*>(buf.data()), buf.size()));
+        return buffer_to_jbytearray(env, buf.data(), buf.size());
     })
 }
 
@@ -73,10 +71,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddLong(
         for (int i = 7; i >= 0; --i) { buf[i] = static_cast<uint8_t>(elem & 0xFF); elem >>= 8; }
         std::string elem_str(reinterpret_cast<const char*>(buf), 8);
 
-        ElementList* vec = table->get(keyGroup, k);
-        if (vec) {
-            vec->push_back(std::move(elem_str));
-        } else {
+        if (!table->modify_in_place(keyGroup, k, [&](ElementList& v) {
+            v.push_back(std::move(elem_str));
+        })) {
             ElementList new_vec;
             new_vec.push_back(std::move(elem_str));
             table->put(keyGroup, k, std::move(new_vec));
@@ -168,9 +165,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAllLongElements(
         }
         ElementList* vec = table->get(keyGroup, k);
         if (vec) {
-            vec->insert(vec->end(),
-                std::make_move_iterator(new_elems.begin()),
-                std::make_move_iterator(new_elems.end()));
+            table->modify_in_place(keyGroup, k, [&](ElementList& v) {
+                v.insert(v.end(),
+                    std::make_move_iterator(new_elems.begin()),
+                    std::make_move_iterator(new_elems.end()));
+            });
         } else {
             table->put(keyGroup, k, std::move(new_elems));
         }
@@ -187,10 +186,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAdd(
         int64_t k = static_cast<int64_t>(key);
         std::string elem = jbytearray_to_string(env, element);
 
-        ElementList* vec = table->get(keyGroup, k);
-        if (vec) {
-            vec->push_back(std::move(elem));
-        } else {
+        if (!table->modify_in_place(keyGroup, k, [&](ElementList& v) {
+            v.push_back(std::move(elem));
+        })) {
             ElementList new_vec;
             new_vec.push_back(std::move(elem));
             table->put(keyGroup, k, std::move(new_vec));
@@ -208,10 +206,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddGeneric(
         std::string k = jbytearray_to_string(env, key);
         std::string elem = jbytearray_to_string(env, element);
 
-        ElementList* vec = table->get(keyGroup, k);
-        if (vec) {
-            vec->push_back(std::move(elem));
-        } else {
+        if (!table->modify_in_place(keyGroup, k, [&](ElementList& v) {
+            v.push_back(std::move(elem));
+        })) {
             ElementList new_vec;
             new_vec.push_back(std::move(elem));
             table->put(keyGroup, k, std::move(new_vec));
@@ -298,9 +295,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAll(
 
         ElementList* vec = table->get(keyGroup, k);
         if (vec) {
-            vec->insert(vec->end(),
-                std::make_move_iterator(new_elems.begin()),
-                std::make_move_iterator(new_elems.end()));
+            table->modify_in_place(keyGroup, k, [&](ElementList& v) {
+                v.insert(v.end(),
+                    std::make_move_iterator(new_elems.begin()),
+                    std::make_move_iterator(new_elems.end()));
+            });
         } else {
             table->put(keyGroup, k, std::move(new_elems));
         }
@@ -323,9 +322,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAllGeneric(
 
         ElementList* vec = table->get(keyGroup, k);
         if (vec) {
-            vec->insert(vec->end(),
-                std::make_move_iterator(new_elems.begin()),
-                std::make_move_iterator(new_elems.end()));
+            table->modify_in_place(keyGroup, k, [&](ElementList& v) {
+                v.insert(v.end(),
+                    std::make_move_iterator(new_elems.begin()),
+                    std::make_move_iterator(new_elems.end()));
+            });
         } else {
             table->put(keyGroup, k, std::move(new_elems));
         }

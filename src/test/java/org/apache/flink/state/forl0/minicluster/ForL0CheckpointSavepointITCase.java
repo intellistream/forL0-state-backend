@@ -2,6 +2,10 @@ package org.apache.flink.state.forl0.minicluster;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
@@ -465,5 +469,134 @@ public class ForL0CheckpointSavepointITCase {
         try { client2.cancel().get(10, TimeUnit.SECONDS); } catch (Throwable ignore) {}
         Assertions.assertTrue(probed, "恢复后探测超时");
         Assertions.assertEquals(N, RESTORED_SNAPSHOT.get(), "checkpoint 恢复瞬间的状态值不一致");
+    }
+
+    // --- Savepoint compatibility probes for multi-state ---
+    static volatile boolean COMPAT_PROBE_MODE = false;
+    static volatile CountDownLatch COMPAT_PROBE_LATCH = null;
+    static final AtomicLong COMPAT_VALUE_PROBE = new AtomicLong(-1);
+    static final AtomicLong COMPAT_LIST_SIZE_PROBE = new AtomicLong(-1);
+    static final AtomicLong COMPAT_MAP_TOTAL_PROBE = new AtomicLong(-1);
+
+    /**
+     * Stateful operator using Value + List + Map state for savepoint compatibility test.
+     */
+    public static class MultiTypeStatefulOp extends RichFlatMapFunction<Long, Long> {
+        private transient ValueState<Long> counter;
+        private transient ListState<Long> history;
+        private transient MapState<Long, Long> indexed;
+        private transient boolean probed = false;
+
+        @Override
+        public void open(Configuration parameters) {
+            counter = getRuntimeContext().getState(new ValueStateDescriptor<>("cnt", Types.LONG));
+            history = getRuntimeContext().getListState(new ListStateDescriptor<>("hist", Types.LONG));
+            indexed = getRuntimeContext().getMapState(new MapStateDescriptor<>("idx", Types.LONG, Types.LONG));
+        }
+
+        @Override
+        public void flatMap(Long value, Collector<Long> out) throws Exception {
+            if (COMPAT_PROBE_MODE && !probed) {
+                Long v = counter.value();
+                COMPAT_VALUE_PROBE.set(v != null ? v : 0L);
+                long listCount = 0;
+                for (@SuppressWarnings("unused") Long x : history.get()) listCount++;
+                COMPAT_LIST_SIZE_PROBE.set(listCount);
+                long mapTotal = 0;
+                for (java.util.Map.Entry<Long, Long> e : indexed.entries()) {
+                    mapTotal += e.getValue();
+                }
+                COMPAT_MAP_TOTAL_PROBE.set(mapTotal);
+                probed = true;
+                CountDownLatch latch = COMPAT_PROBE_LATCH;
+                if (latch != null) latch.countDown();
+                return;
+            }
+            Long s = counter.value();
+            if (s == null) s = 0L;
+            s++;
+            counter.update(s);
+            history.add(s);
+            indexed.put(s, s * 10);
+            STATE_SUM_PROBE.set(s);
+        }
+    }
+
+    /**
+     * Savepoint compatibility: Value + List + MapState<Long,Long> checkpoint & restore.
+     * Verifies that the optimized checkpoint format correctly preserves all state types.
+     */
+    @Test
+    void testSavepointCompatibilityMultiStateTypes() throws Exception {
+        final long N = 200L;
+        STATE_SUM_PROBE.set(0);
+        COMPAT_PROBE_MODE = false;
+
+        // 1) First run
+        Configuration conf1 = new Configuration();
+        conf1.setString("state.backend", "org.apache.flink.state.forl0.ForL0StateBackendFactory");
+        StreamExecutionEnvironment env1 = StreamExecutionEnvironment.getExecutionEnvironment();
+        env1.configure(conf1, Thread.currentThread().getContextClassLoader());
+        env1.setParallelism(1);
+        env1.enableCheckpointing(200);
+
+        DataStream<Long> s1 = env1
+                .addSource(new ControlledSource(N)).name("src").uid("src")
+                .assignTimestampsAndWatermarks(WatermarkStrategy.noWatermarks());
+
+        s1.keyBy(v -> 0)
+          .flatMap(new MultiTypeStatefulOp()).name("stateful").uid("stateful")
+          .addSink(new DiscardingSink<>()).name("sink").uid("sink");
+
+        final org.apache.flink.core.execution.JobClient client1 = env1.executeAsync("compat-1");
+
+        // Wait for all records to be processed
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (System.nanoTime() < deadline && STATE_SUM_PROBE.get() < N) {
+            Thread.sleep(20);
+        }
+        Assertions.assertTrue(STATE_SUM_PROBE.get() >= N, "Should process all records");
+
+        Path spDir = Files.createTempDirectory("forl0-sp-compat");
+        String spPath = client1.triggerSavepoint(spDir.toUri().toString()).get(30, TimeUnit.SECONDS);
+        client1.cancel().get(10, TimeUnit.SECONDS);
+
+        // 2) Restore and probe
+        COMPAT_PROBE_MODE = true;
+        COMPAT_PROBE_LATCH = new CountDownLatch(1);
+        COMPAT_VALUE_PROBE.set(-1);
+        COMPAT_LIST_SIZE_PROBE.set(-1);
+        COMPAT_MAP_TOTAL_PROBE.set(-1);
+
+        Configuration conf2 = new Configuration();
+        conf2.setString("state.backend", "org.apache.flink.state.forl0.ForL0StateBackendFactory");
+        conf2.setString("execution.savepoint.path", spPath);
+        StreamExecutionEnvironment env2 = StreamExecutionEnvironment.getExecutionEnvironment();
+        env2.configure(conf2, Thread.currentThread().getContextClassLoader());
+        env2.setParallelism(1);
+        env2.enableCheckpointing(200);
+
+        DataStream<Long> s2 = env2
+                .addSource(new ControlledSource(1)).name("src").uid("src")
+                .assignTimestampsAndWatermarks(WatermarkStrategy.noWatermarks());
+
+        s2.keyBy(v -> 0)
+          .flatMap(new MultiTypeStatefulOp()).name("stateful").uid("stateful")
+          .addSink(new DiscardingSink<>()).name("sink").uid("sink");
+
+        final org.apache.flink.core.execution.JobClient client2 = env2.executeAsync("compat-2");
+
+        boolean probed = COMPAT_PROBE_LATCH.await(20, TimeUnit.SECONDS);
+        try { client2.cancel().get(10, TimeUnit.SECONDS); } catch (Throwable ignore) {}
+
+        Assertions.assertTrue(probed, "Probe should complete");
+        Assertions.assertEquals(N, COMPAT_VALUE_PROBE.get(),
+                "ValueState should be restored to N");
+        Assertions.assertEquals(N, COMPAT_LIST_SIZE_PROBE.get(),
+                "ListState should have N entries");
+        // Map entries: keys 1..N with values 10,20,...,N*10 → sum = 10 * N*(N+1)/2
+        long expectedMapTotal = 10L * N * (N + 1) / 2;
+        Assertions.assertEquals(expectedMapTotal, COMPAT_MAP_TOTAL_PROBE.get(),
+                "MapState<Long,Long> total should match");
     }
 }
