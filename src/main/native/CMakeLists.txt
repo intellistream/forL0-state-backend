@@ -66,6 +66,9 @@ set(FORL0_SOURCES
 # --------------------------------------------------------------------------
 add_library(forl0_engine SHARED ${FORL0_SOURCES})
 
+# Link libdl for dlopen/dlsym (required on glibc < 2.34, e.g. Kunpeng/Kylin/CentOS)
+target_link_libraries(forl0_engine PRIVATE ${CMAKE_DL_LIBS})
+
 target_include_directories(forl0_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/engine

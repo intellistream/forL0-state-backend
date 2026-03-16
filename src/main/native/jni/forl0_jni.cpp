@@ -4,6 +4,7 @@
 #include <jni.h>
 #include "jni_utils.h"
 #include "state_engine.h"
+#include "l0_allocator.h"
 #include "type_layout.h"
 #include "flink_binary_format.h"
 
@@ -30,9 +31,16 @@ extern "C" {
 
 JNIEXPORT jlong JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
-        JNIEnv* env, jclass, jint startKeyGroup, jint numKeyGroups, jint totalKeyGroups) {
+        JNIEnv* env, jclass, jint startKeyGroup, jint numKeyGroups, jint totalKeyGroups,
+        jboolean l0Enabled, jlong l0Capacity, jlong l0MaxPerAlloc) {
     JNI_ENTRY_RETURN(jlong, 0, {
-        auto* engine = new StateEngine(startKeyGroup, numKeyGroups, totalKeyGroups);
+        Allocator* alloc = &DefaultAllocator::instance();
+        if (l0Enabled) {
+            alloc = new L0Allocator(
+                static_cast<size_t>(l0Capacity),
+                static_cast<size_t>(l0MaxPerAlloc));
+        }
+        auto* engine = new StateEngine(startKeyGroup, numKeyGroups, totalKeyGroups, alloc);
         return to_handle(engine);
     })
 }
@@ -41,7 +49,24 @@ JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
         JNIEnv* env, jclass, jlong engineHandle) {
     JNI_ENTRY_VOID({
-        delete from_handle<StateEngine>(engineHandle);
+        auto* engine = from_handle<StateEngine>(engineHandle);
+        Allocator* alloc = engine->allocator();
+        // Log L0 stats BEFORE deleting engine (delete clears all allocations).
+        auto* l0alloc = dynamic_cast<L0Allocator*>(alloc);
+        if (l0alloc) {
+            fprintf(stderr, "[ForL0-L0Allocator] Shutdown: l0_active=%d, "
+                    "l0_total_allocs=%zu, heap_allocs=%zu, "
+                    "l0_current=%zu, l0_used=%zuKB/%zuMB\n",
+                    l0alloc->is_l0_active(),
+                    l0alloc->l0_total_alloc_count(), l0alloc->heap_alloc_count(),
+                    l0alloc->l0_alloc_count(),
+                    l0alloc->l0_allocated() / 1024, l0alloc->l0_capacity() / (1024*1024));
+        }
+        delete engine;
+        // Clean up L0Allocator (DefaultAllocator is a singleton, skip it).
+        if (l0alloc) {
+            delete l0alloc;
+        }
     })
 }
 

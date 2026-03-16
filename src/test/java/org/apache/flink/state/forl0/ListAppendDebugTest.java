@@ -33,6 +33,9 @@ public class ListAppendDebugTest {
                 org.apache.flink.runtime.state.AbstractStateBackend.getCompressionDecorator(new org.apache.flink.api.common.ExecutionConfig()),
                 new org.apache.flink.runtime.state.heap.HeapPriorityQueueSetFactory(keyGroupRange, keyGroupRange.getNumberOfKeyGroups(), 128),
                 true,
+                false,  // l0CacheEnabled
+                0L,     // l0CacheSize
+                0L,     // l0CacheMaxPerAlloc
                 new org.apache.flink.core.fs.CloseableRegistry());
         
         ForL0KeyedStateBackend<Long> backend = builder.build();

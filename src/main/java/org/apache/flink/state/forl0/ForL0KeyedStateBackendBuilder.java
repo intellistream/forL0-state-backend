@@ -68,6 +68,10 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     private final HeapPriorityQueueSetFactory priorityQueueSetFactory;
     /** Whether asynchronous snapshot is enabled. */
     private final boolean asynchronousSnapshots;
+    /** L0 Cache configuration. */
+    private final boolean l0CacheEnabled;
+    private final long l0CacheSize;
+    private final long l0CacheMaxPerAlloc;
 
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
@@ -82,6 +86,9 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             StreamCompressionDecorator keyGroupCompressionDecorator,
             HeapPriorityQueueSetFactory priorityQueueSetFactory,
             boolean asynchronousSnapshots,
+            boolean l0CacheEnabled,
+            long l0CacheSize,
+            long l0CacheMaxPerAlloc,
             CloseableRegistry cancelStreamRegistry) {
         super(
                 kvStateRegistry,
@@ -97,6 +104,9 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 cancelStreamRegistry);
         this.priorityQueueSetFactory = priorityQueueSetFactory;
         this.asynchronousSnapshots = asynchronousSnapshots;
+        this.l0CacheEnabled = l0CacheEnabled;
+        this.l0CacheSize = l0CacheSize;
+        this.l0CacheMaxPerAlloc = l0CacheMaxPerAlloc;
     }
 
     @Override
@@ -109,9 +119,12 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         // Create C++ engine
         int startKeyGroup = keyGroupRange.getStartKeyGroup();
         int numKeyGroups = keyGroupRange.getNumberOfKeyGroups();
-        long engineHandle = NativeEngine.createEngine(startKeyGroup, numKeyGroups, numberOfKeyGroups);
-        LOG.info("[ForL0] C++ engine created: handle={}, keyGroups=[{}, {}), total={}",
-                engineHandle, startKeyGroup, startKeyGroup + numKeyGroups, numberOfKeyGroups);
+        long engineHandle = NativeEngine.createEngine(
+                startKeyGroup, numKeyGroups, numberOfKeyGroups,
+                l0CacheEnabled, l0CacheSize, l0CacheMaxPerAlloc);
+        LOG.info("[ForL0] C++ engine created: handle={}, keyGroups=[{}, {}), total={}, l0Enabled={}",
+                engineHandle, startKeyGroup, startKeyGroup + numKeyGroups, numberOfKeyGroups,
+                l0CacheEnabled);
 
         // Native state handles (populated lazily by backend on first state registration)
         Map<String, Long> nativeStateHandles = new HashMap<>();

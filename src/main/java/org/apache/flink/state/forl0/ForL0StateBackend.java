@@ -58,6 +58,11 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     /** Whether to use async snapshots. */
     private final boolean asyncSnapshots;
 
+    /** L0 Cache configuration. */
+    private final boolean l0CacheEnabled;
+    private final long l0CacheSize;
+    private final long l0CacheMaxPerAlloc;
+
     // -----------------------------------------------------------------------
 
     /**
@@ -74,6 +79,9 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
      */
     public ForL0StateBackend(boolean asyncSnapshots) {
         this.asyncSnapshots = asyncSnapshots;
+        this.l0CacheEnabled = ForL0Options.L0_CACHE_ENABLED.defaultValue();
+        this.l0CacheSize = ForL0Options.L0_CACHE_SIZE.defaultValue();
+        this.l0CacheMaxPerAlloc = ForL0Options.L0_CACHE_MAX_PER_ALLOC.defaultValue();
         LOG.info("[ForL0] ForL0StateBackend created (asyncSnapshots={})", asyncSnapshots);
     }
 
@@ -83,6 +91,13 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         // Configure async snapshots
         this.asyncSnapshots = config.getOptional(ForL0Options.ASYNC_SNAPSHOTS)
                 .orElse(original.asyncSnapshots);
+        // Configure L0 Cache
+        this.l0CacheEnabled = config.getOptional(ForL0Options.L0_CACHE_ENABLED)
+                .orElse(original.l0CacheEnabled);
+        this.l0CacheSize = config.getOptional(ForL0Options.L0_CACHE_SIZE)
+                .orElse(original.l0CacheSize);
+        this.l0CacheMaxPerAlloc = config.getOptional(ForL0Options.L0_CACHE_MAX_PER_ALLOC)
+                .orElse(original.l0CacheMaxPerAlloc);
     }
 
     // -----------------------------------------------------------------------
@@ -137,6 +152,9 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                     getCompressionDecorator(parameters.getEnv().getExecutionConfig()),
                     priorityQueueSetFactory,
                     asyncSnapshots,
+                    l0CacheEnabled,
+                    l0CacheSize,
+                    l0CacheMaxPerAlloc,
                     parameters.getCancelStreamRegistry())
                     .build();
         } catch (BackendBuildingException e) {

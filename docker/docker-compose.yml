@@ -3,7 +3,7 @@
 #
 #  规格:
 #    - JobManager:    1 容器, 8G
-#    - TaskManager:   2 容器, 32G, 每个 TM 并行度 4 (CPU 不限制)
+#    - TaskManager:   2 容器, 4核 32G, 每个 TM 并行度 4
 #    - 总并行度:      8
 #
 #  启动:  docker compose up -d
@@ -59,6 +59,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: "4"
           memory: 32G
     networks:
       - flink-net
@@ -84,6 +85,7 @@ services:
     deploy:
       resources:
         limits:
+          cpus: "4"
           memory: 32G
     networks:
       - flink-net

@@ -91,7 +91,8 @@ public final class NativeEngine {
     // ========================================================================
 
     /** Create a new StateEngine. Returns native handle. */
-    public static native long createEngine(int startKeyGroup, int numKeyGroups, int totalKeyGroups);
+    public static native long createEngine(int startKeyGroup, int numKeyGroups, int totalKeyGroups,
+                                           boolean l0Enabled, long l0CapacityBytes, long l0MaxPerAllocBytes);
 
     /** Destroy a StateEngine and free all native memory. */
     public static native void destroyEngine(long engineHandle);

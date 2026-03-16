@@ -831,6 +831,7 @@ public:
     int start_key_group() const { return start_key_group_; }
     int num_key_groups() const { return num_key_groups_; }
     int total_key_groups() const { return total_key_groups_; }
+    Allocator* allocator() const { return alloc_; }
 
     const std::unordered_map<int64_t, std::unique_ptr<StateTableHandle>>& state_handles() const {
         return state_handles_;

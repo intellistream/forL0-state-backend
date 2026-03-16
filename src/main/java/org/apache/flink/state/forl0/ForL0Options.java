@@ -52,6 +52,13 @@ public class ForL0Options {
                     .defaultValue(256L * 1024 * 1024)  // 256MB default
                     .withDescription("Size of L0 Cache memory pool in bytes.");
 
+    public static final ConfigOption<Long> L0_CACHE_MAX_PER_ALLOC =
+            ConfigOptions.key("state.backend.forl0.l0-cache.max-per-alloc")
+                    .longType()
+                    .defaultValue(64L * 1024)  // 64KB default
+                    .withDescription("Maximum single allocation size (bytes) that can use L0 memory. " +
+                            "Allocations larger than this threshold will always use heap memory.");
+
     // ========== Internal Constants ==========
 
     /** Minimum table capacity. */
