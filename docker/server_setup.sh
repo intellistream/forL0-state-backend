@@ -16,15 +16,6 @@ cd "$(dirname "$0")"
 
 REPO_ROOT="$(cd .. && pwd)"
 
-# 兼容 Docker Compose V1 (docker-compose) 和 V2 (docker compose)
-if docker compose version &>/dev/null; then
-    DOCKER_COMPOSE="docker compose"
-elif command -v docker-compose &>/dev/null; then
-    DOCKER_COMPOSE="docker-compose"
-else
-    echo "✗ docker compose 或 docker-compose 未找到"
-    exit 1
-fi
 SKIP_NATIVE=false
 SKIP_DOCKER_LOAD=false
 
@@ -176,36 +167,22 @@ echo "[5/5] 启动 Docker 集群..."
 cd "${REPO_ROOT}/docker"
 
 export FLINK_HOME="${FLINK_DIR}"
-$DOCKER_COMPOSE up -d
+bash docker_run.sh stop 2>/dev/null || true
+bash docker_run.sh start
 
-# 等待 JM 就绪
-echo "      等待 JobManager 就绪..."
-for i in $(seq 1 30); do
-    if curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
-        sleep 3
-        TM_COUNT=$(curl -sf http://localhost:8081/taskmanagers | grep -o '"id"' | wc -l || echo "?")
-        echo ""
-        echo "============================================================"
-        echo "  ✓ 集群启动成功!"
-        echo "============================================================"
-        echo "  TaskManager 数量: ${TM_COUNT}"
-        echo "  State Backend:    ForL0StateBackend"
-        echo "  L0 Cache:         ${L0_AVAILABLE}"
-        echo "  Web UI:           http://localhost:8081"
-        echo ""
-        echo "  查看 L0 初始化日志:"
-        echo "    $DOCKER_COMPOSE logs taskmanager-1 2>&1 | grep -i 'L0\\|ForL0'"
-        echo ""
-        echo "  提交作业:"
-        echo "    ${FLINK_DIR}/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
-        echo ""
-        exit 0
-    fi
-    sleep 2
-    printf "."
-done
-
+# docker_run.sh start 已包含等待逻辑，这里显示最终状态
 echo ""
-echo "⚠ JobManager 未在 60 秒内就绪，请检查日志:"
-echo "  $DOCKER_COMPOSE logs jobmanager"
-exit 1
+echo "============================================================"
+echo "  部署完成!"
+echo "============================================================"
+echo "  State Backend: ForL0StateBackend"
+echo "  L0 Cache:      ${L0_AVAILABLE}"
+echo "  Web UI:        http://localhost:8081"
+echo ""
+echo "  管理集群:"
+echo "    docker/docker_run.sh status   # 查看状态"
+echo "    docker/docker_run.sh logs tm1 # 查看 TM1 日志"
+echo "    docker/docker_run.sh stop     # 停止集群"
+echo ""
+echo "  提交作业:"
+echo "    ${FLINK_DIR}/bin/flink run -m localhost:8081 -c <MainClass> <jar>"

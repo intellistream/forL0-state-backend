@@ -9,9 +9,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # 兼容 Docker Compose V1/V2
-if docker compose version &>/dev/null; then
+if docker compose version >/dev/null 2>&1; then
     DOCKER_COMPOSE="docker compose"
-elif command -v docker-compose &>/dev/null; then
+elif docker-compose version >/dev/null 2>&1; then
     DOCKER_COMPOSE="docker-compose"
 else
     echo "✗ docker compose 或 docker-compose 未找到"; exit 1
