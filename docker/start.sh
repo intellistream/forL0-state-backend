@@ -7,6 +7,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# 兼容 Docker Compose V1/V2
+if docker compose version &>/dev/null; then
+    DOCKER_COMPOSE="docker compose"
+elif command -v docker-compose &>/dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    echo "✗ docker compose 或 docker-compose 未找到"; exit 1
+fi
+
 echo "=== 启动 ForL0 Flink Docker 测试集群 ==="
 echo "  JM:  1 × (2核 8G)"
 echo "  TM:  2 × (4核 20G, 4 slots, heap 16G)"
@@ -23,7 +32,7 @@ fi
 
 # 启动集群
 echo "[2/3] 启动容器..."
-docker compose up -d
+$DOCKER_COMPOSE up -d
 
 # 等待 JM 就绪
 echo "[3/3] 等待 JobManager 就绪..."
@@ -45,7 +54,7 @@ for i in $(seq 1 30); do
         echo "  \$FLINK_HOME/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
         echo ""
         echo "查看日志:"
-        echo "  docker compose -f $(pwd)/docker-compose.yml logs -f"
+        echo "  $DOCKER_COMPOSE -f $(pwd)/docker-compose.yml logs -f"
         exit 0
     fi
     printf "."
@@ -54,5 +63,5 @@ done
 
 echo ""
 echo "警告: JobManager 未在 60 秒内就绪，请检查日志:"
-echo "  docker compose logs jobmanager"
+echo "  $DOCKER_COMPOSE logs jobmanager"
 exit 1
