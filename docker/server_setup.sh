@@ -83,27 +83,33 @@ if [[ "$SKIP_NATIVE" == "false" ]]; then
     echo ""
     echo "[3/5] 编译 Native 库 (aarch64)..."
     NATIVE_DIR="${REPO_ROOT}/src/main/native"
-    BUILD_DIR="${NATIVE_DIR}/build"
 
     # 检查编译工具
-    if ! command -v cmake &>/dev/null; then
-        echo "      ✗ cmake 未安装，请先安装: yum install cmake 或 dnf install cmake"
-        exit 1
-    fi
     if ! command -v g++ &>/dev/null; then
         echo "      ✗ g++ 未安装，请先安装: yum install gcc-c++ 或 dnf install gcc-c++"
         exit 1
     fi
 
-    mkdir -p "$BUILD_DIR"
-    cd "$BUILD_DIR"
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DFORL0_BUILD_TESTS=OFF
-    make -j"$(nproc)"
+    cd "$NATIVE_DIR"
 
-    # 复制到 resources/native
-    RESOURCE_NATIVE="${REPO_ROOT}/src/main/resources/native"
-    mkdir -p "$RESOURCE_NATIVE"
-    cp libforl0_engine.so "$RESOURCE_NATIVE/"
+    if command -v cmake &>/dev/null; then
+        # 优先使用 cmake
+        BUILD_DIR="${NATIVE_DIR}/build"
+        mkdir -p "$BUILD_DIR"
+        cd "$BUILD_DIR"
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DFORL0_BUILD_TESTS=OFF
+        make -j"$(nproc)"
+        RESOURCE_NATIVE="${REPO_ROOT}/src/main/resources/native"
+        mkdir -p "$RESOURCE_NATIVE"
+        cp libforl0_engine.so "$RESOURCE_NATIVE/"
+    else
+        # 无 cmake，使用 Makefile
+        echo "      (cmake 未安装，使用 Makefile 编译)"
+        make clean
+        make -j"$(nproc)"
+        make install
+    fi
+
     echo "      ✓ libforl0_engine.so 编译完成并复制到 resources/native/"
     cd "${REPO_ROOT}/docker"
 else
