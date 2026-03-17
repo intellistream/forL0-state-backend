@@ -53,6 +53,9 @@ services:
       - ../src/main/resources/native:/opt/flink/native:ro
       - flink-checkpoints:/opt/flink-data/checkpoints
       - tm1-logs:/opt/flink/log
+      - /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro
+    devices:
+      - /dev/hisi_l0:/dev/hisi_l0
     environment:
       FLINK_HOME: /opt/flink
     command: ["/opt/flink/bin/taskmanager.sh", "start-foreground"]
@@ -60,7 +63,7 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 32G
+          memory: 16G
     networks:
       - flink-net
 
@@ -79,6 +82,9 @@ services:
       - ../src/main/resources/native:/opt/flink/native:ro
       - flink-checkpoints:/opt/flink-data/checkpoints
       - tm2-logs:/opt/flink/log
+      - /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro
+    devices:
+      - /dev/hisi_l0:/dev/hisi_l0
     environment:
       FLINK_HOME: /opt/flink
     command: ["/opt/flink/bin/taskmanager.sh", "start-foreground"]
@@ -86,7 +92,7 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 32G
+          memory: 16G
     networks:
       - flink-net
 

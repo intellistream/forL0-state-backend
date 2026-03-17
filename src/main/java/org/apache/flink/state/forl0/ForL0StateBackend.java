@@ -2,6 +2,7 @@ package org.apache.flink.state.forl0;
 
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.configuration.IllegalConfigurationException;
+import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.core.execution.SavepointFormatType;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackend;
@@ -80,8 +81,8 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     public ForL0StateBackend(boolean asyncSnapshots) {
         this.asyncSnapshots = asyncSnapshots;
         this.l0CacheEnabled = ForL0Options.L0_CACHE_ENABLED.defaultValue();
-        this.l0CacheSize = ForL0Options.L0_CACHE_SIZE.defaultValue();
-        this.l0CacheMaxPerAlloc = ForL0Options.L0_CACHE_MAX_PER_ALLOC.defaultValue();
+        this.l0CacheSize = ForL0Options.L0_CACHE_SIZE.defaultValue().getBytes();
+        this.l0CacheMaxPerAlloc = ForL0Options.L0_CACHE_MAX_PER_ALLOC.defaultValue().getBytes();
         LOG.info("[ForL0] ForL0StateBackend created (asyncSnapshots={})", asyncSnapshots);
     }
 
@@ -95,8 +96,10 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         this.l0CacheEnabled = config.getOptional(ForL0Options.L0_CACHE_ENABLED)
                 .orElse(original.l0CacheEnabled);
         this.l0CacheSize = config.getOptional(ForL0Options.L0_CACHE_SIZE)
+                .map(MemorySize::getBytes)
                 .orElse(original.l0CacheSize);
         this.l0CacheMaxPerAlloc = config.getOptional(ForL0Options.L0_CACHE_MAX_PER_ALLOC)
+                .map(MemorySize::getBytes)
                 .orElse(original.l0CacheMaxPerAlloc);
     }
 

@@ -3,6 +3,7 @@ package org.apache.flink.state.forl0;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
+import org.apache.flink.configuration.MemorySize;
 
 /**
  * Configuration options for ForL0StateBackend.
@@ -46,18 +47,18 @@ public class ForL0Options {
                     .withDescription("Whether to enable L0 Cache memory allocation. " +
                             "This requires the native library and Kunpeng CPU with L0 support.");
 
-    public static final ConfigOption<Long> L0_CACHE_SIZE =
+    public static final ConfigOption<MemorySize> L0_CACHE_SIZE =
             ConfigOptions.key("state.backend.forl0.l0-cache.size")
-                    .longType()
-                    .defaultValue(256L * 1024 * 1024)  // 256MB default
-                    .withDescription("Size of L0 Cache memory pool in bytes.");
+                    .memoryType()
+                    .defaultValue(MemorySize.ofMebiBytes(256))
+                    .withDescription("Size of L0 Cache memory pool. Examples: 256mb, 1gb.");
 
-    public static final ConfigOption<Long> L0_CACHE_MAX_PER_ALLOC =
+    public static final ConfigOption<MemorySize> L0_CACHE_MAX_PER_ALLOC =
             ConfigOptions.key("state.backend.forl0.l0-cache.max-per-alloc")
-                    .longType()
-                    .defaultValue(64L * 1024)  // 64KB default
-                    .withDescription("Maximum single allocation size (bytes) that can use L0 memory. " +
-                            "Allocations larger than this threshold will always use heap memory.");
+                    .memoryType()
+                    .defaultValue(new MemorySize(64 * 1024))
+                    .withDescription("Maximum single allocation size that can use L0 memory. " +
+                            "Allocations larger than this threshold will always use heap memory. Examples: 64kb, 128kb.");
 
     // ========== Internal Constants ==========
 

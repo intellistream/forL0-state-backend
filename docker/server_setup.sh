@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+################################################################################
+#  鲲鹏服务器一键部署脚本 (在服务器上执行)
+#
+#  前提:
+#    1. 已 clone 仓库到服务器
+#    2. Docker 镜像已保存在 docker/images/
+#    3. FLINK_HOME 环境变量已设置，或 Flink 安装在 /home/user/flink
+#    4. 服务器有 GCC/CMake 用于编译 native 库
+#
+#  用法: ./server_setup.sh [--skip-native] [--skip-docker-load]
+################################################################################
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+REPO_ROOT="$(cd .. && pwd)"
+SKIP_NATIVE=false
+SKIP_DOCKER_LOAD=false
+
+for arg in "$@"; do
+    case $arg in
+        --skip-native) SKIP_NATIVE=true ;;
+        --skip-docker-load) SKIP_DOCKER_LOAD=true ;;
+    esac
+done
+
+echo "============================================================"
+echo "  ForL0 State Backend - 鲲鹏服务器部署"
+echo "============================================================"
+echo "  仓库路径: ${REPO_ROOT}"
+echo "  FLINK_HOME: ${FLINK_HOME:-/home/user/flink}"
+echo ""
+
+# ---- Step 1: 加载 Docker 镜像 ----
+if [[ "$SKIP_DOCKER_LOAD" == "false" ]]; then
+    IMAGE_FILE="images/eclipse-temurin-8-jre.tar"
+    if [[ -f "$IMAGE_FILE" ]]; then
+        if docker image inspect eclipse-temurin:8-jre >/dev/null 2>&1; then
+            echo "[1/5] Docker 镜像已存在，跳过加载"
+        else
+            echo "[1/5] 加载 Docker 镜像..."
+            docker load -i "$IMAGE_FILE"
+            echo "      ✓ 镜像加载成功"
+        fi
+    else
+        echo "[1/5] ✗ 镜像文件不存在: ${IMAGE_FILE}"
+        echo "      请先在 macOS 上运行 ./save_docker_image.sh 并提交到仓库"
+        exit 1
+    fi
+else
+    echo "[1/5] 跳过 Docker 镜像加载"
+fi
+
+# ---- Step 2: 检查 L0 硬件 ----
+echo ""
+echo "[2/5] 检查 L0 硬件环境..."
+L0_AVAILABLE=true
+
+if [[ -f /usr/lib64/libl0mempool.so ]]; then
+    echo "      ✓ libl0mempool.so 存在"
+else
+    echo "      ✗ libl0mempool.so 不存在 (/usr/lib64/libl0mempool.so)"
+    L0_AVAILABLE=false
+fi
+
+if [[ -e /dev/hisi_l0 ]]; then
+    echo "      ✓ /dev/hisi_l0 设备存在"
+else
+    echo "      ✗ /dev/hisi_l0 设备不存在"
+    L0_AVAILABLE=false
+fi
+
+if [[ "$L0_AVAILABLE" == "true" ]]; then
+    echo "      ✓ L0 硬件可用，将使用 L0 Cache 加速"
+else
+    echo "      ⚠ L0 硬件不可用，将回退到 Heap 内存"
+    echo "      (ForL0 StateBackend 仍可工作，只是不使用 L0 Cache)"
+fi
+
+# ---- Step 3: 编译 Native 库 ----
+if [[ "$SKIP_NATIVE" == "false" ]]; then
+    echo ""
+    echo "[3/5] 编译 Native 库 (aarch64)..."
+    NATIVE_DIR="${REPO_ROOT}/src/main/native"
+    BUILD_DIR="${NATIVE_DIR}/build"
+
+    # 检查编译工具
+    if ! command -v cmake &>/dev/null; then
+        echo "      ✗ cmake 未安装，请先安装: yum install cmake 或 dnf install cmake"
+        exit 1
+    fi
+    if ! command -v g++ &>/dev/null; then
+        echo "      ✗ g++ 未安装，请先安装: yum install gcc-c++ 或 dnf install gcc-c++"
+        exit 1
+    fi
+
+    mkdir -p "$BUILD_DIR"
+    cd "$BUILD_DIR"
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DFORL0_BUILD_TESTS=OFF
+    make -j"$(nproc)"
+
+    # 复制到 resources/native
+    RESOURCE_NATIVE="${REPO_ROOT}/src/main/resources/native"
+    mkdir -p "$RESOURCE_NATIVE"
+    cp libforl0_engine.so "$RESOURCE_NATIVE/"
+    echo "      ✓ libforl0_engine.so 编译完成并复制到 resources/native/"
+    cd "${REPO_ROOT}/docker"
+else
+    echo ""
+    echo "[3/5] 跳过 Native 库编译"
+fi
+
+# ---- Step 4: 安装 ForL0 JAR 到 Flink ----
+echo ""
+echo "[4/5] 安装 ForL0 JAR..."
+FLINK_DIR="${FLINK_HOME:-/home/user/flink}"
+JAR_NAME="flink-statebackend-forl0-1.0-SNAPSHOT.jar"
+DEPLOY_JAR="${REPO_ROOT}/docker/deploy/${JAR_NAME}"
+TARGET_JAR="${REPO_ROOT}/target/${JAR_NAME}"
+
+if [[ ! -d "$FLINK_DIR" ]]; then
+    echo "      ✗ FLINK_HOME 不存在: ${FLINK_DIR}"
+    echo "      请设置 FLINK_HOME 环境变量指向 Flink 安装目录"
+    exit 1
+fi
+
+# 优先使用 deploy/ 下的预编译 JAR，其次使用 target/ 下的
+if [[ -f "$DEPLOY_JAR" ]]; then
+    cp "$DEPLOY_JAR" "${FLINK_DIR}/lib/"
+    echo "      ✓ JAR (deploy/) 已复制到 ${FLINK_DIR}/lib/"
+elif [[ -f "$TARGET_JAR" ]]; then
+    cp "$TARGET_JAR" "${FLINK_DIR}/lib/"
+    echo "      ✓ JAR (target/) 已复制到 ${FLINK_DIR}/lib/"
+else
+    echo "      ✗ JAR 不存在"
+    echo "      请在 macOS 上运行 docker/save_docker_image.sh 并推送到仓库"
+    exit 1
+fi
+
+# ---- Step 5: 启动 Docker 集群 ----
+echo ""
+echo "[5/5] 启动 Docker 集群..."
+cd "${REPO_ROOT}/docker"
+
+export FLINK_HOME="${FLINK_DIR}"
+docker compose up -d
+
+# 等待 JM 就绪
+echo "      等待 JobManager 就绪..."
+for i in $(seq 1 30); do
+    if curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
+        sleep 3
+        TM_COUNT=$(curl -sf http://localhost:8081/taskmanagers | grep -o '"id"' | wc -l || echo "?")
+        echo ""
+        echo "============================================================"
+        echo "  ✓ 集群启动成功!"
+        echo "============================================================"
+        echo "  TaskManager 数量: ${TM_COUNT}"
+        echo "  State Backend:    ForL0StateBackend"
+        echo "  L0 Cache:         ${L0_AVAILABLE}"
+        echo "  Web UI:           http://localhost:8081"
+        echo ""
+        echo "  查看 L0 初始化日志:"
+        echo "    docker compose logs taskmanager-1 2>&1 | grep -i 'L0\\|ForL0'"
+        echo ""
+        echo "  提交作业:"
+        echo "    ${FLINK_DIR}/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
+        echo ""
+        exit 0
+    fi
+    sleep 2
+    printf "."
+done
+
+echo ""
+echo "⚠ JobManager 未在 60 秒内就绪，请检查日志:"
+echo "  docker compose logs jobmanager"
+exit 1

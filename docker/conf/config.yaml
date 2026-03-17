@@ -24,9 +24,9 @@ taskmanager:
   numberOfTaskSlots: 4
   memory:
     process:
-      size: 18g
+      size: 16g
     managed:
-      size: 1g
+      size: 0g
 
 parallelism:
   default: 8
@@ -37,7 +37,12 @@ parallelism:
 
 state:
   backend:
-    type: hashmap #org.apache.flink.state.forl0.ForL0StateBackendFactory
+    type: org.apache.flink.state.forl0.ForL0StateBackendFactory
+    forl0:
+      l0-cache:
+        enabled: true
+        size: 24mb
+        max-per-alloc: 128kb
   checkpoints:
     dir: file:///opt/flink-data/checkpoints
   checkpoint-storage: filesystem
