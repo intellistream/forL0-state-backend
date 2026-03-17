@@ -11,9 +11,24 @@
 # --------------------------------------------------------------------------
 # JNI paths (auto-detect JAVA_HOME)
 # --------------------------------------------------------------------------
-JAVA_HOME ?= $(shell readlink -f $$(which java) | sed 's|/bin/java$$||')
+ifndef JAVA_HOME
+    # Try: 1) java -XshowSettings  2) readlink which java
+    JAVA_HOME := $(shell java -XshowSettings:property -version 2>&1 | grep 'java.home' | awk -F'= ' '{print $$2}')
+    ifeq ($(JAVA_HOME),)
+        JAVA_HOME := $(shell readlink -f $$(which java) 2>/dev/null | sed 's|/bin/java$$||')
+    endif
+endif
+
 JNI_INCLUDE := $(JAVA_HOME)/include
+# JDK 8 on some distros has jni.h one level up from jre
+ifeq ($(wildcard $(JNI_INCLUDE)/jni.h),)
+    JNI_INCLUDE := $(JAVA_HOME)/../include
+endif
 JNI_INCLUDE_OS := $(wildcard $(JNI_INCLUDE)/linux $(JNI_INCLUDE)/darwin)
+
+$(info JAVA_HOME     = $(JAVA_HOME))
+$(info JNI_INCLUDE   = $(JNI_INCLUDE))
+$(info JNI_INCLUDE_OS= $(JNI_INCLUDE_OS))
 
 # --------------------------------------------------------------------------
 # Compiler settings
