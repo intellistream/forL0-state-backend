@@ -11,18 +11,25 @@
 # --------------------------------------------------------------------------
 # JNI paths (auto-detect JAVA_HOME)
 # --------------------------------------------------------------------------
-ifndef JAVA_HOME
-    # Try: 1) java -XshowSettings  2) readlink which java
-    JAVA_HOME := $(shell java -XshowSettings:property -version 2>&1 | grep 'java.home' | awk -F'= ' '{print $$2}')
-    ifeq ($(JAVA_HOME),)
-        JAVA_HOME := $(shell readlink -f $$(which java) 2>/dev/null | sed 's|/bin/java$$||')
+ifeq ($(strip $(JAVA_HOME)),)
+    # Method 1: java -XshowSettings (returns JRE path on JDK8, e.g. /usr/lib/jvm/java-8/jre)
+    JAVA_HOME := $(shell java -XshowSettings:property -version 2>&1 | grep 'java.home' | awk -F'= ' '{print $$2}' | sed 's|/jre$$||')
+    ifeq ($(strip $(JAVA_HOME)),)
+        # Method 2: resolve symlinks from $(which java)
+        JAVA_HOME := $(shell readlink -f $$(which java) 2>/dev/null | sed -e 's|/jre/bin/java$$||' -e 's|/bin/java$$||')
+    endif
+    ifeq ($(strip $(JAVA_HOME)),)
+        $(error JAVA_HOME is not set and could not be auto-detected. Please set it: make JAVA_HOME=/path/to/jdk)
     endif
 endif
 
+# Find jni.h: check JAVA_HOME/include first, then JAVA_HOME/../include (JRE layout)
 JNI_INCLUDE := $(JAVA_HOME)/include
-# JDK 8 on some distros has jni.h one level up from jre
 ifeq ($(wildcard $(JNI_INCLUDE)/jni.h),)
     JNI_INCLUDE := $(JAVA_HOME)/../include
+endif
+ifeq ($(wildcard $(JNI_INCLUDE)/jni.h),)
+    $(error jni.h not found. JAVA_HOME=$(JAVA_HOME), tried $(JAVA_HOME)/include and $(JAVA_HOME)/../include. Is a full JDK (not JRE) installed?)
 endif
 JNI_INCLUDE_OS := $(wildcard $(JNI_INCLUDE)/linux $(JNI_INCLUDE)/darwin)
 
