@@ -90,10 +90,27 @@ if [[ "$SKIP_NATIVE" == "false" ]]; then
         exit 1
     fi
 
+    # 自动检测 JAVA_HOME（如果未设置）
+    if [[ -z "${JAVA_HOME:-}" ]]; then
+        # 常见路径
+        for jdk_path in /usr/local/java /usr/lib/jvm/java /usr/lib/jvm/java-1.8.0 /usr/lib/jvm/java-8; do
+            if [[ -f "${jdk_path}/include/jni.h" ]]; then
+                export JAVA_HOME="$jdk_path"
+                echo "      自动检测 JAVA_HOME=${JAVA_HOME}"
+                break
+            fi
+        done
+        if [[ -z "${JAVA_HOME:-}" ]]; then
+            echo "      ✗ JAVA_HOME 未设置且无法自动检测"
+            echo "      请设置: export JAVA_HOME=/usr/local/java (或你的 JDK 路径)"
+            exit 1
+        fi
+    fi
+    echo "      JAVA_HOME=${JAVA_HOME}"
+
     cd "$NATIVE_DIR"
 
     if command -v cmake &>/dev/null; then
-        # 优先使用 cmake
         BUILD_DIR="${NATIVE_DIR}/build"
         mkdir -p "$BUILD_DIR"
         cd "$BUILD_DIR"
@@ -103,11 +120,10 @@ if [[ "$SKIP_NATIVE" == "false" ]]; then
         mkdir -p "$RESOURCE_NATIVE"
         cp libforl0_engine.so "$RESOURCE_NATIVE/"
     else
-        # 无 cmake，使用 Makefile
         echo "      (cmake 未安装，使用 Makefile 编译)"
         make clean
-        make -j"$(nproc)"
-        make install
+        make JAVA_HOME="${JAVA_HOME}" -j"$(nproc)"
+        make JAVA_HOME="${JAVA_HOME}" install
     fi
 
     echo "      ✓ libforl0_engine.so 编译完成并复制到 resources/native/"
