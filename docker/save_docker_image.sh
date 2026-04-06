@@ -20,9 +20,12 @@ echo "=== 准备离线部署文件 ==="
 echo ""
 
 # ---- 1. Docker 镜像 ----
+# 鲲鹏服务器是 ARM64 (aarch64)，必须拉取 linux/arm64 镜像
+PLATFORM="linux/arm64"
+
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "[1/2] 拉取镜像 ${IMAGE} ..."
-    docker pull "$IMAGE"
+    echo "[1/2] 拉取镜像 ${IMAGE} (${PLATFORM}) ..."
+    docker pull --platform "$PLATFORM" "$IMAGE"
 else
     echo "[1/2] 镜像 ${IMAGE} 已存在"
 fi

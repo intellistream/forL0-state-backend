@@ -36,10 +36,6 @@ public class ForL0StateBackendFactory implements StateBackendFactory<ForL0StateB
     public ForL0StateBackend createFromConfig(ReadableConfig config, ClassLoader classLoader)
             throws IllegalConfigurationException {
         LOG.info("[ForL0] Creating ForL0StateBackend from configuration.");
-        
-        boolean asyncSnapshots = config.getOptional(ForL0Options.ASYNC_SNAPSHOTS)
-                .orElse(true);
-        
-        return new ForL0StateBackend(asyncSnapshots);
+        return new ForL0StateBackend().configure(config, classLoader);
     }
 }

@@ -113,7 +113,7 @@
 %%
 %% The "title" command has an optional parameter,
 %% allowing the author to define a "short title" to be used in page headers.
-\title{Locality Driven State Management for In-Memory Stream Processing}
+\title{Locality-Driven In-Memory State Management for State-Intensive Stream Processing}
 
 %%
 %% The "author" command and its associated commands are used to define
@@ -197,7 +197,7 @@
 %% The abstract is a short summary of the work to be presented in the
 %% article.
 \begin{abstract}
-State access is increasingly the dominant cost in large-state stream processing, where per-record updates and timer-driven workloads turn random memory accesses into a memory-bound bottleneck. Existing backends often suffer from fragmented object layouts and long indirection chains, causing frequent cache misses that inflate tail latency and cap throughput. This paper presents a cache-friendly state storage design that shortens the access path and improves locality without changing stream-processing semantics or snapshot/restore compatibility. The design combines compact hash indexing with control-byte based parallel matching, an inlined key/value layout that aligns probing and key validation within the same cache line, and a lightweight storage hierarchy that organizes state by key-group and namespace to concentrate working sets. We evaluate the approach on Linux using (i) flink-state-benchmark microbenchmarks for isolated backend behavior and (ii) the benchset end-to-end suite for application-level impact. Across workloads with high update rates and window/timer pressure, results show consistently higher throughput, lower latency, reduced cache-miss intensity, and a clearer shift away from memory-bound execution.
+In-memory state backends increasingly dominate the cost of state-intensive stream processing workloads, where per-record updates, window maintenance, and timer firing turn irregular state accesses into a memory-system bottleneck. Existing designs often rely on fragmented heap-resident layouts and long indirection chains, which amplify cache misses and introduce garbage collection interference under constrained memory budgets. This paper presents a locality-driven in-memory state management design that improves memory efficiency without changing stream-processing semantics or snapshot/restore compatibility. The design combines compact hash indexing with control-byte based parallel matching, an inlined key/value layout that keeps probing and key validation close in the memory hierarchy, and a lightweight native state engine that shortens the access path while reducing JVM object and GC overhead. It further organizes state by key-group and namespace so that related accesses stay within smaller and more stable working sets during windowed and timer-heavy execution. We evaluate the approach on Linux using flink-state-benchmark microbenchmarks and the benchset end-to-end suite. Across state-intensive workloads, the results show higher throughput, lower latency, reduced cache-miss intensity, lower GC disturbance, and a clearer shift away from memory-bound execution.
 \end{abstract}
 
 %%

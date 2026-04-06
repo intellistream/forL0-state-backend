@@ -76,7 +76,6 @@ do_start() {
         -v "${CONF_DIR}:/opt/flink/conf:ro" \
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         -e FLINK_HOME=/opt/flink \
-        --memory 8g \
         "$IMAGE" \
         /opt/flink/bin/jobmanager.sh start-foreground
 
