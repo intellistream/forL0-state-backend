@@ -68,6 +68,7 @@ do_start() {
         --name "$JM" \
         --hostname jobmanager \
         --network "$NETWORK" \
+        --privileged \
         -p 8081:8081 \
         -v "${FLINK_DIR}/bin:/opt/flink/bin:ro" \
         -v "${FLINK_DIR}/lib:/opt/flink/lib:ro" \
@@ -85,6 +86,7 @@ do_start() {
         --name "$TM1" \
         --hostname taskmanager-1 \
         --network "$NETWORK" \
+        --privileged \
         -v "${FLINK_DIR}/bin:/opt/flink/bin:ro" \
         -v "${FLINK_DIR}/lib:/opt/flink/lib:ro" \
         -v "${FLINK_DIR}/plugins:/opt/flink/plugins:ro" \
@@ -104,6 +106,7 @@ do_start() {
         --name "$TM2" \
         --hostname taskmanager-2 \
         --network "$NETWORK" \
+        --privileged \
         -v "${FLINK_DIR}/bin:/opt/flink/bin:ro" \
         -v "${FLINK_DIR}/lib:/opt/flink/lib:ro" \
         -v "${FLINK_DIR}/plugins:/opt/flink/plugins:ro" \

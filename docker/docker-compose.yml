@@ -31,6 +31,7 @@ services:
     environment:
       FLINK_HOME: /opt/flink
     command: ["/opt/flink/bin/jobmanager.sh", "start-foreground"]
+    privileged: true
     deploy:
       resources:
         limits:
@@ -60,6 +61,7 @@ services:
     environment:
       FLINK_HOME: /opt/flink
     command: ["/opt/flink/bin/taskmanager.sh", "start-foreground"]
+    privileged: true
     deploy:
       resources:
         limits:
@@ -89,6 +91,7 @@ services:
     environment:
       FLINK_HOME: /opt/flink
     command: ["/opt/flink/bin/taskmanager.sh", "start-foreground"]
+    privileged: true
     deploy:
       resources:
         limits:
