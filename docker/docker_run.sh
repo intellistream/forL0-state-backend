@@ -80,6 +80,10 @@ do_start() {
         "$IMAGE" \
         /opt/flink/bin/jobmanager.sh start-foreground
 
+    # 获取 JM 容器 IP（Docker 内置 DNS 在某些服务器上不可用，需要用 --add-host）
+    JM_IP=$(docker inspect "$JM" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+    echo "      JobManager IP: ${JM_IP}"
+
     # ---- TaskManager 1 ----
     echo "[2/3] 启动 TaskManager-1..."
     docker run -d \
@@ -87,6 +91,7 @@ do_start() {
         --hostname taskmanager-1 \
         --network "$NETWORK" \
         --privileged \
+        --add-host jobmanager:${JM_IP} \
         -v "${FLINK_DIR}/bin:/opt/flink/bin:ro" \
         -v "${FLINK_DIR}/lib:/opt/flink/lib:ro" \
         -v "${FLINK_DIR}/plugins:/opt/flink/plugins:ro" \
@@ -107,6 +112,7 @@ do_start() {
         --hostname taskmanager-2 \
         --network "$NETWORK" \
         --privileged \
+        --add-host jobmanager:${JM_IP} \
         -v "${FLINK_DIR}/bin:/opt/flink/bin:ro" \
         -v "${FLINK_DIR}/lib:/opt/flink/lib:ro" \
         -v "${FLINK_DIR}/plugins:/opt/flink/plugins:ro" \
