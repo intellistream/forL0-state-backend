@@ -29,13 +29,37 @@ nexmark.metric.reporter.port: 9098
 # Benchmark workload configuration (events.num)
 #==============================================================================
 
+# Q8: 1亿条
 nexmark.workload.suite.100m.events.num: 100000000
 nexmark.workload.suite.100m.tps: 10000000
-nexmark.workload.suite.100m.queries: "q0,q1,q2,q3,q4,q5,q7,q8,q9,q10,q11,q12,q13,q14,q15,q16,q17,q18,q19,q20,q21,q22"
-nexmark.workload.suite.100m.queries.cep: "q0,q1,q2,q3"
-nexmark.workload.suite.100m.warmup.duration: 120s
-nexmark.workload.suite.100m.warmup.events.num: 100000000
-nexmark.workload.suite.100m.warmup.tps: 10000000
+nexmark.workload.suite.100m.queries: "q8"
+nexmark.workload.suite.100m.warmup.duration: 0s
+nexmark.workload.suite.100m.warmup.events.num: 0
+nexmark.workload.suite.100m.warmup.tps: 0
+
+# Q4, Q5, Q11, Q18, Q19: 8千万条
+nexmark.workload.suite.80m.events.num: 80000000
+nexmark.workload.suite.80m.tps: 10000000
+nexmark.workload.suite.80m.queries: "q4,q5,q11,q18,q19"
+nexmark.workload.suite.80m.warmup.duration: 0s
+nexmark.workload.suite.80m.warmup.events.num: 0
+nexmark.workload.suite.80m.warmup.tps: 0
+
+# Q20: 6千万条
+nexmark.workload.suite.60m.events.num: 60000000
+nexmark.workload.suite.60m.tps: 10000000
+nexmark.workload.suite.60m.queries: "q20"
+nexmark.workload.suite.60m.warmup.duration: 0s
+nexmark.workload.suite.60m.warmup.events.num: 0
+nexmark.workload.suite.60m.warmup.tps: 0
+
+# Q9: 4千万条
+nexmark.workload.suite.40m.events.num: 40000000
+nexmark.workload.suite.40m.tps: 10000000
+nexmark.workload.suite.40m.queries: "q9"
+nexmark.workload.suite.40m.warmup.duration: 0s
+nexmark.workload.suite.40m.warmup.events.num: 0
+nexmark.workload.suite.40m.warmup.tps: 0
 
 #==============================================================================
 # Benchmark workload configuration (tps, legacy mode)
