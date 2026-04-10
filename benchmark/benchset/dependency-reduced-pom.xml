@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.apache.flink</groupId>
+  <artifactId>benchset</artifactId>
+  <name>ForL0 State Backend Benchmark Set v4</name>
+  <version>1.0-SNAPSHOT</version>
+  <description>High state pressure benchmark set for ForL0 StateBackend.
+        Designed to maximize state access density with realistic business scenarios.
+        All benchmarks use Long keys to trigger SwissTableLong specialization.
+        
+        Included benchmarks (v4):
+        - fraud: Fraud Detection - 7 states, 23 ops/record
+        - recommend: Realtime Recommendation - 6 states, 18 ops/record
+        - metric: Multi-Metric Aggregation - 10 states, 20 ops/record
+        - session: Session Sequence - 5 states, 15 ops/record
+        - join: Multi-Stream Join - 8 states, 25 ops/record</description>
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.8.1</version>
+        <configuration>
+          <source>${java.version}</source>
+          <target>${java.version}</target>
+        </configuration>
+      </plugin>
+      <plugin>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.2.4</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer>
+                  <mainClass>org.apache.flink.benchmark.benchset.BenchsetMain</mainClass>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-streaming-java</artifactId>
+      <version>1.20.0</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-clients</artifactId>
+      <version>1.20.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+  <properties>
+    <java.version>1.8</java.version>
+    <scala.binary.version>2.12</scala.binary.version>
+    <flink.version>1.20.0</flink.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+</project>

@@ -1,12 +1,25 @@
+# Maven build outputs
 target/
+*.jar
+*.war
+*.ear
+*.class
+
+# Maven wrapper
 !.mvn/wrapper/maven-wrapper.jar
+
+# Docker image for offline deployment
+!docker/images/*.tar
+
+# Pre-built JAR for offline server deployment
+!docker/deploy/*.jar
+
+# Nexmark distribution for offline deployment
+!docker/deploy/nexmark-flink/
+!docker/deploy/nexmark-flink/**
+
 !**/src/main/**/target/
 !**/src/test/**/target/
-
-# 保留编译好的 JAR 文件用于部署
-!target/*.jar
-!benchmark/wordcount/target/*.jar
-!benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
@@ -33,8 +46,6 @@ target/
 /nbdist/
 /.nb-gradle/
 build/
-!**/src/main/**/build/
-!**/src/test/**/build/
 
 ### VS Code ###
 .vscode/
@@ -42,12 +53,12 @@ build/
 ### Mac OS ###
 .DS_Store
 
-# 忽略 reference 目录
-reference/
-
 ### Benchmark ###
 # Benchmark results (all generated files)
 benchmark/results/
+
+# Results directory at root level
+/results/
 
 # External JARs (download manually)
 benchmark/lib/*.jar
@@ -61,3 +72,6 @@ benchmark/scripts/utils/__pycache__/
 *.pyc
 .venv/
 venv/
+
+# Flink source code (for VTune debugging)
+flink-source/

@@ -1,0 +1,65 @@
+################################################################################
+#  ForL0 State Backend - Docker 测试环境 Flink 配置
+#  规格: 1 JM (2核8G) + 2 TM (4核20G, 4 slots each)
+#  总并行度: 2 × 4 = 8
+################################################################################
+
+#==============================================================================
+# Common
+#==============================================================================
+
+jobmanager:
+  bind-host: 0.0.0.0
+  rpc:
+    address: jobmanager
+    port: 6123
+  memory:
+    process:
+      size: 6g
+  execution:
+    failover-strategy: region
+
+taskmanager:
+  bind-host: 0.0.0.0
+  numberOfTaskSlots: 4
+  memory:
+    process:
+      size: 14g
+    managed:
+      size: 0g
+
+parallelism:
+  default: 8
+
+#==============================================================================
+# State Backend
+#==============================================================================
+
+state:
+  backend:
+    type: org.apache.flink.state.forl0.ForL0StateBackendFactory
+    forl0:
+      l0-cache:
+        enabled: true
+        size: 24mb
+        max-per-alloc: 128kb
+  checkpoints:
+    dir: file:///opt/flink-data/checkpoints
+  checkpoint-storage: filesystem
+
+#==============================================================================
+# Rest & Web UI
+#==============================================================================
+
+rest:
+  address: jobmanager
+  bind-address: 0.0.0.0
+
+#==============================================================================
+# Java Options (Java 8, native library path)
+#==============================================================================
+
+env:
+  java:
+    opts:
+      all: -Djava.library.path=/opt/flink/native -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps

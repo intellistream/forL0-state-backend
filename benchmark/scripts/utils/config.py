@@ -22,13 +22,6 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def get_mode_config(config, mode=None):
-    """Get configuration for the specified mode (local or cluster)."""
-    if mode is None:
-        mode = config.get('mode', 'local')
-    return config.get(mode, config.get('local', {}))
-
-
 def get_flink_home():
     """Get Flink home directory."""
     config = load_config()
@@ -118,20 +111,19 @@ def parse_json_from_output(output, start_marker="JSON_RESULT_START", end_marker=
     return None
 
 
-def save_result(result, test_name, backend, mode):
+def save_result(result, test_name, backend):
     """Save benchmark result to JSON file."""
     import json
     
     results_dir = get_results_dir('raw')
     timestamp = get_timestamp()
-    filename = f"{test_name}_{backend}_{mode}_{timestamp}.json"
+    filename = f"{test_name}_{backend}_{timestamp}.json"
     filepath = results_dir / filename
     
     # Add metadata
     result['_metadata'] = {
         'test_name': test_name,
         'backend': backend,
-        'mode': mode,
         'timestamp': timestamp,
         'datetime': datetime.now().isoformat()
     }

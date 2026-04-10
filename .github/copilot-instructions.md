@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，旨在充分利用鲲鹏 CPU 的 L0 Cache 特性，通过缓存友好的数据结构和分层索引架构优化状态访问性能。
+ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，采用 Swiss Tables 架构（对齐 hash-smith SwissMap），通过 SWAR 并行匹配实现高效的状态访问。
 
 ## 技术栈
 
@@ -16,45 +16,85 @@ ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实�
 
 ## 核心架构
 
-### 双层索引设计
+### Lightweight StateStore 架构
 
 ```
-ForL0StateMap
-├── L0Table (热点缓存层, L0 Memory)
-│   └── 使用 NativeL0MemoryAllocator (JNI)
-└── MainTable (全量索引层, Flink MemoryManager)
-    └── 使用 MemoryManagerAllocator
+ForL0StateStore<K, N, S> (StateSnapshotRestore 接口)
+├── VoidNamespace 模式: SwissTable<K,S>[] tables    // 直接访问，零 HashMap 开销
+└── General Namespace 模式: Map<N, SwissTable<K,S>>[] namespaceMaps
+    └── SwissTable<K, S>                            // 每个 namespace 独立的表
+        ├── ctrl[]          // 控制字节 (EMPTY=0x80, DELETED=0xFE, FULL=h2)
+        ├── entries[]       // AoS 交织布局 [k0,v0,k1,v1,...] (slot i → entries[2i], entries[2i+1])
+        └── hashes[]        // 32位 hash 存储 (用于 rehash/grow)
+```
+
+### Hash 位分配 (对齐 hash-smith SwissMap)
+
+```
+32 位 hash (smear function from Guava):
+├── H1 = hash >>> 7     // 高 25 位，用于探测起始 group
+└── H2 = hash & 0x7F    // 低 7 位，存入 ctrl 字节
+
+Hash 计算:
+int h = key.hashCode();
+int hash = (int)(0x1b873593 * Integer.rotateLeft(h * 0xcc9e2d51, 15));
 ```
 
 ### 关键组件
 
 | 组件 | 职责 | 位置 |
 |------|------|------|
-| `ForL0StateBackend` | StateBackend 入口 | `runtime/state/heap/` |
-| `ForL0KeyedStateBackend` | KeyedStateBackend 实现 | `runtime/state/heap/` |
-| `ForL0StateMap` | 核心状态存储,双层索引 | `runtime/state/heap/` |
-| `L0Table` | 热点缓存,多种替换策略 | `runtime/state/heap/` |
-| `MainTable` | 主索引表,支持局部扩展 | `runtime/state/heap/` |
-| `EntryArena` | 键值存储区 | `runtime/state/heap/` |
-| `NativeL0Memory` | JNI 桥接类 | `runtime/state/heap/space/` |
+| `ForL0StateBackend` | StateBackend 入口 | `state/forl0/` |
+| `ForL0KeyedStateBackend` | KeyedStateBackend 实现 | `state/forl0/` |
+| `ForL0StateStore` | 状态存储 (KeyGroup → Namespace → SwissTable) | `state/forl0/` |
+| `SwissTable` | SWAR 并行匹配的哈希表存储 | `state/forl0/` |
+| `NativeL0Memory` | JNI 桥接类 (L0 Cache) | `state/forl0/space/` |
 | `forl0_native.c` | C 实现 (L0/模拟模式) | `src/main/native/` |
 
-### 内存管理
+### SwissTable 核心算法
 
-- **MainTable**: 使用 Flink `MemoryManager` 管理的堆外内存
-- **L0Table**: 使用 JNI 分配的 native 内存
-  - L0 模式: `libl0mempool.so` (鲲鹏 L0 硬件)
-  - 模拟模式: 标准 `malloc/free`
+```java
+// SWAR 并行匹配 (8 slots 同时比较)
+static long matchH2(long ctrlWord, long pattern) {
+    long x = ctrlWord ^ pattern;
+    return (x - LSB) & ~x & MSB;
+}
+
+// put 返回值编码
+static final int NEW_FLAG = 1 << 16;   // 新插入标志
+static final int SLOT_MASK = 0xFFFF;   // 槽位掩码
+static final int NEED_REHASH = -1;     // 需要 rehash
+static final int NEED_GROW = -2;       // 需要 grow
+
+// 使用示例 (AoS 布局直接访问)
+int result = table.put(hash, key);
+if (result == SwissTable.NEED_REHASH) {
+    table.rehash();
+    continue;
+}
+if (result == SwissTable.NEED_GROW) {
+    table.grow();
+    continue;
+}
+int slot = result & SwissTable.SLOT_MASK;
+table.entries[(slot << 1) + 1] = value;  // 直接访问，无方法调用
+```
+
+### Namespace 组织
+
+- **VoidNamespace 特化**: 自动检测 VoidNamespaceSerializer，跳过 HashMap 层
+- **Namespace 清理**: 删除后检查 SwissTable.isEmpty()，自动从 HashMap 移除空 namespace
+- **内存隔离**: 每个 namespace 独立的 SwissTable，避免 key 冲突
 
 ## 代码规范
 
 ### Java 代码
 
-1. **包结构**: `org.apache.flink.runtime.state.heap.*`
+1. **包结构**: `org.apache.flink.state.forl0.*`
 2. **命名约定**:
    - 类名: `ForL0` 前缀表示本项目组件
    - 常量: 全大写下划线分隔
-   - 64B 对齐相关常量使用 `*_SIZE`, `*_OFFSET` 后缀
+   - AoS 访问: `entries[(slot << 1)]` (key), `entries[(slot << 1) + 1]` (value)
 3. **日志**: 使用 SLF4J (`LoggerFactory.getLogger`)
 4. **注释**: 
    - 公共 API 使用 Javadoc
@@ -67,7 +107,7 @@ ForL0StateMap
 2. **条件编译**: 
    - `L0_NOT_SUPPORTED`: macOS 下定义,跳过 L0 相关代码
    - `#ifndef L0_NOT_SUPPORTED ... #endif` 包裹 L0 专用代码
-3. **JNI 命名**: `Java_org_apache_flink_runtime_state_heap_space_NativeL0Memory_*`
+3. **JNI 命名**: `Java_org_apache_flink_state_forl0_space_NativeL0Memory_*`
 4. **内存对齐**: 使用 `posix_memalign` 保证 64 字节对齐
 
 ### 测试
@@ -75,6 +115,10 @@ ForL0StateMap
 1. **单元测试**: `src/test/java/` 下,使用 JUnit 5
 2. **命名**: `*Test.java` 或 `*ITCase.java`
 3. **Native 测试**: 需要 native 库可用,使用 `@EnabledIf("isNativeAvailable")`
+
+### 文档
+
+1. 除非用户要求，否则禁止创建新的说明文档
 
 ## 常见任务
 
@@ -102,16 +146,16 @@ make install                # 复制到 resources/native/
 - Allocator 实现不需要并发支持
 - 避免在热路径使用同步原语
 
-### 内存布局
+### 内存布局 (AoS - Array of Structures)
 
-- 所有索引结构 **64 字节对齐** (缓存行对齐)
-- L0Table slot: 16 bytes (Tag + Valid + Extension + Pointer)
-- MainTable slot: 10 bytes (Tag + Pointer)
-- MainTable bucket: 64 bytes (6 slots + 4 expansion pointers)
+- SwissTable ctrl[]: 每 slot 1 字节控制字节
+- SwissTable entries[]: AoS 交织布局 (slot i → entries[2*i] key, entries[2*i+1] value)
+- SwissTable hashes[]: slot i → 32位 hash (用于 rehash/grow)
+- Table 容量: INITIAL=64, 负载因子 87.5%
 
 ### 错误处理
 
-- Native 库加载失败 → 抛出异常,L0Table 不可用
+- Native 库加载失败 → 抛出异常,L0 Cache 不可用
 - 内存分配失败 → 抛出 `L0MemoryAllocationException`
 - 不提供降级到堆内存的选项
 
@@ -170,7 +214,6 @@ python generate_report.py
 
 | 指标 | 说明 | 平台支持 |
 |------|------|----------|
-| L0Table 命中率 | L0 热点缓存命中率 | macOS ✅ / Linux ✅ |
 | 吞吐量/延迟 | 性能基准指标 | macOS ✅ / Linux ✅ |
 | 火焰图 (CPU/Alloc) | Async Profiler | macOS ✅ / Linux ✅ |
 | CPU Cache 统计 | cache-misses 等 | macOS ❌ / Linux ✅ |
@@ -179,7 +222,7 @@ python generate_report.py
 
 ## 贡献指南
 
-1. 修改前先理解双层索引架构
+1. 修改前先理解 Swiss Tables 架构和 SWAR 并行匹配
 2. Native 代码修改需要重新编译库
 3. 保持与 Flink 原生 API 的兼容性
 4. 测试代码使用 `[BENCHMARK_TEST]` 注释标注

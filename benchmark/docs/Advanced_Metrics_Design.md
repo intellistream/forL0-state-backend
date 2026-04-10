@@ -1,19 +1,18 @@
 # 高级性能指标采集方案
 
+> ⚠️ **注意**：ForL0 StateBackend 已从 L0Table + MainTable 双层架构迁移到 SwissMap 架构。
+> L0Table 相关的指标采集功能已弃用，本文档中相关部分仅供历史参考。
+> 当前有效的指标采集方式：Async Profiler 火焰图和硬件性能计数器（Linux）。
+
 ## 实现状态
 
 | 功能 | 状态 | 平台支持 | 说明 |
 |------|------|----------|------|
-| L0Table 指标采集 | ✅ 已完成 | macOS ✅ / Linux ✅ | `L0TableMetricsCollector.java` |
-| 指标集成到 Backend | ✅ 已完成 | macOS ✅ / Linux ✅ | `ForL0KeyedStateBackend.java` |
-| WordCount 日志解析 | ✅ 已完成 | macOS ✅ / Linux ✅ | `run_wordcount.py` |
-| NexMark 日志解析 | ✅ 已完成 | macOS ✅ / Linux ✅ | `run_nexmark.py` |
-| 时序图表生成 | ✅ 已完成 | macOS ✅ / Linux ✅ | `generate_report.py` (支持多测试合并) |
 | 火焰图 (CPU/Alloc) | ✅ 已完成 | macOS ✅ / Linux ✅ | Async Profiler `-e itimer/cpu/alloc` |
 | CPU Cache 命中率 | ✅ 已完成 | macOS ❌ / Linux ✅ | Async Profiler `-e cache-misses` (需要 perf_events) |
+| ~~L0Table 指标采集~~ | ⛔ 已弃用 | - | 已迁移到 SwissMap 架构 |
 
 **启用方式**：
-- **L0Table 指标**：当使用 L0Allocator 时自动启用
 - **火焰图/Cache 统计**：使用 `--profile` 参数启用
 
 ## 平台限制说明

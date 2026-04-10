@@ -758,9 +758,8 @@ def plot_state_entries_timeline(output_dir):
     # so max slots should be the total for all subtasks, not per subtask.
     try:
         config = load_config()
-        mode = config.get('mode', 'local')
-        mode_config = config.get(mode, {})
-        parallelism = mode_config.get('parallelism', 2)
+        runtime_config = config.get('runtime', {})
+        parallelism = runtime_config.get('parallelism', 2)
         
         # Get l0_cache_size from forl0 backend config
         l0_cache_size = 14  # default
@@ -1330,9 +1329,10 @@ def generate_report(results, output_dir):
         
         <!-- WordCount Section -->
         <div class="section">
-            <h2>📝 WordCount Benchmark</h2>
+            <h2>📝 Stateful WordCount Benchmark</h2>
             
             <h3>Configuration</h3>
+            <p class="note">Uses KeyedProcessFunction + ValueState (VoidNamespace) for pure state access testing.</p>
             <div class="config-grid">
                 <div class="config-item">
                     <div class="label">Key Count</div>
@@ -1343,16 +1343,12 @@ def generate_report(results, output_dir):
                     <div class="value">{{ wc_config.num_records | default('N/A') }}</div>
                 </div>
                 <div class="config-item">
-                    <div class="label">Window Size</div>
-                    <div class="value">{{ wc_config.window_size | default('5000') }}ms</div>
-                </div>
-                <div class="config-item">
-                    <div class="label">Slide Size</div>
-                    <div class="value">{{ wc_config.slide_size | default('200') }}ms</div>
-                </div>
-                <div class="config-item">
                     <div class="label">Skew Factor</div>
-                    <div class="value">{{ wc_config.skew_factor | default('1.1') }}</div>
+                    <div class="value">{{ wc_config.skew_factor | default('0') }}</div>
+                </div>
+                <div class="config-item">
+                    <div class="label">Arrival Rate</div>
+                    <div class="value">{{ wc_config.arrival_rate | default('unlimited') }}</div>
                 </div>
             </div>
             
@@ -1379,48 +1375,9 @@ def generate_report(results, output_dir):
                 </span>
             </div>
             
-            <h3>Latency Comparison</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Percentile</th>
-                        <th>HashMap (ms)</th>
-                        <th>ForL0 (ms)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><strong>P50</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_p50 }}</td>
-                        <td class="value-cell">{{ wc_forl0_p50 }}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>P95</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_p95 }}</td>
-                        <td class="value-cell">{{ wc_forl0_p95 }}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>P99</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_p99 }}</td>
-                        <td class="value-cell">{{ wc_forl0_p99 }}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Max</strong></td>
-                        <td class="value-cell">{{ wc_hashmap_max }}</td>
-                        <td class="value-cell">{{ wc_forl0_max }}</td>
-                    </tr>
-                </tbody>
-            </table>
-            
-            <div class="figures-row">
-                <div class="figure-container">
-                    <img src="../figures/wordcount_throughput.png" alt="WordCount Throughput Comparison">
-                    <p class="figure-caption">Figure 1: Throughput Comparison</p>
-                </div>
-                <div class="figure-container">
-                    <img src="../figures/latency_cdf.png" alt="Latency CDF" onerror="this.parentElement.style.display='none'">
-                    <p class="figure-caption">Figure 2: Latency CDF</p>
-                </div>
+            <div class="figure-container" style="margin-top: 1.5rem;">
+                <img src="../figures/wordcount_throughput.png" alt="WordCount Throughput Comparison">
+                <p class="figure-caption">Figure 1: Throughput Comparison</p>
             </div>
         </div>
         
@@ -1708,16 +1665,7 @@ def generate_report(results, output_dir):
         <div class="section">
             <h2>📌 Conclusion</h2>
             <p>{{ conclusion }}</p>
-            
-            {% if not all_pass %}
-            <div style="margin-top: 1rem; padding: 1rem; background: #fef3c7; border-radius: 0.5rem; border-left: 4px solid #f59e0b;">
-                <strong>⚠️ Note:</strong> The current test was run in <strong>{{ mode }}</strong> mode. 
-                {% if mode == 'local' %}
-                ForL0 uses simulation mode on Mac, not real L0 Cache hardware. 
-                The 60% improvement target is expected to be achieved on the production server (鲲鹏920 with L0 Cache).
-                {% endif %}
-            </div>
-            {% endif %}
+        </div>
         </div>
     </div>
     
@@ -1731,9 +1679,7 @@ def generate_report(results, output_dir):
     
     # Prepare data
     config = load_config()
-    mode = config.get('mode', 'local')
-    mode_config = config.get(mode, {})
-    wc_config = mode_config.get('wordcount', {})
+    wc_config = config.get('wordcount', {})
     
     wc_hashmap = results.get('wordcount', {}).get('hashmap', {})
     wc_forl0 = results.get('wordcount', {}).get('forl0', {})
@@ -1753,10 +1699,6 @@ def generate_report(results, output_dir):
         wc_badge_class = 'danger'
     wc_imp_sign = '+' if wc_tpc_imp >= 0 else ''
     wc_negative_class = 'negative' if wc_tpc_imp < 0 else ''
-    
-    # Latency data
-    hashmap_latency = wc_hashmap.get('latency_ms', {})
-    forl0_latency = wc_forl0.get('latency_ms', {})
     
     # NexMark data
     nexmark_descriptions = {
@@ -2031,14 +1973,15 @@ def generate_report(results, output_dir):
     
     cache_supported = platform.system() == 'Linux'
     
+    runtime_config = config.get('runtime', {})
+    
     # Render template
     template = Template(html_template)
     report = template.render(
         timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         summary=summary,
         all_pass=all_pass,
-        mode=mode,
-        parallelism=mode_config.get('parallelism', 8),
+        parallelism=runtime_config.get('parallelism', 8),
         total_benchmarks=total_benchmarks,
         wc_config=wc_config,
         wc_hashmap_tpc=f'{wc_hashmap_tpc:,.0f}' if wc_hashmap_tpc else 'N/A',
@@ -2047,14 +1990,6 @@ def generate_report(results, output_dir):
         wc_badge_class=wc_badge_class,
         wc_imp_sign=wc_imp_sign,
         wc_negative_class=wc_negative_class,
-        wc_hashmap_p50=hashmap_latency.get('p50', 'N/A'),
-        wc_hashmap_p95=hashmap_latency.get('p95', 'N/A'),
-        wc_hashmap_p99=hashmap_latency.get('p99', 'N/A'),
-        wc_hashmap_max=hashmap_latency.get('max', 'N/A'),
-        wc_forl0_p50=forl0_latency.get('p50', 'N/A'),
-        wc_forl0_p95=forl0_latency.get('p95', 'N/A'),
-        wc_forl0_p99=forl0_latency.get('p99', 'N/A'),
-        wc_forl0_max=forl0_latency.get('max', 'N/A'),
         nexmark_rows=nexmark_rows,
         verification_rows=verification_rows,
         conclusion=conclusion,
@@ -2109,7 +2044,6 @@ def main():
     print("\nGenerating figures...")
     plot_wordcount_comparison(results, figures_dir)
     plot_nexmark_comparison(results, figures_dir)
-    plot_latency_cdf(results, figures_dir)
     plot_improvement_summary(results, figures_dir)
     
     # [BENCHMARK_TEST] Generate L0Table metrics figures if available

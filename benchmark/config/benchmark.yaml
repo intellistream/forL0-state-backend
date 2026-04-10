@@ -1,8 +1,5 @@
 # ForL0 StateBackend Benchmark Configuration
 
-# Run mode: local (Mac development) or cluster (production server)
-mode: cluster
-
 # Flink cluster settings
 flink:
   # Flink home directory (set via environment variable or override here)
@@ -10,57 +7,107 @@ flink:
   # REST API endpoint
   rest_url: "http://localhost:8081"
 
-# Local mode settings (for development/testing on Mac)
-local:
-  parallelism: 4
-  checkpoint_interval: 0  # 0 = disabled, or set to 10000 for 10s
+# Benchmark runtime settings
+runtime:
+  parallelism: 8              # Task parallelism
+  checkpoint_interval: 0      # ms (0 = disabled)
   
-  wordcount:
-    num_keys: 1000000         # 500万 key (增加状态规模)
-    num_records: 20000000     # 2000万条 (确保作业运行足够长时间 > 20秒)
-    arrival_rate: 0           # 无限制，全速运行 (消除限流开销)
-    skew_factor: 1.1          # Zipf s parameter 
-    window_size: 5000         # milliseconds
-    slide_size: 200           # milliseconds
-  
-  nexmark:
-    # NexMark queries to run (stateful queries with window/aggregation)
-    queries: "q4,q5,q7,q8"    # 本地测试4个状态密集型查询
-    events: 50000000          
-    tps: 100000000              # events per second (local mode)
-    warmup_events: 1000000     # warmup events
-    warmup_duration: 10        # warmup duration in seconds
+# WordCount benchmark settings
+# Uses KeyedProcessFunction + ValueState (VoidNamespace) for pure state access testing
+# No window/timer overhead - maximizes state backend impact on performance
+wordcount:
+  num_keys: 10000000           # Number of unique keys (high cardinality for SwissTable)
+  num_records: 3000000000     # Total number of records
+  arrival_rate: 0             # 0 = unlimited (full speed for max throughput)
+  skew_factor: 0              # Zipf s parameter (0 = uniform distribution)
+  warmup_duration: 0         # warmup duration in seconds (0 to disable)
 
-# Cluster mode settings (for production server)
-cluster:
-  parallelism: 4              # 2 TM x 4 slots
-  checkpoint_interval: 0  # ms (10s)
+
+# NexMark benchmark settings
+nexmark:
+  # NexMark queries to run (all stateful queries for full benchmark)
+  queries: "q4,q5,q7,q8,q9,q11,q12,q18,q19,q20"
+  # Data volume per query (as specified in test plan)
+  q4_events: 160000000         # 8000万
+  q5_events: 160000000         # 8000万
+  q7_events: 160000000         # 8000万
+  q8_events: 200000000        # 1亿
+  q9_events: 80000000         # 4000万
+  q11_events: 160000000        # 8000万
+  q12_events: 160000000        # 8000万
+  q18_events: 160000000        # 8000万
+  q19_events: 160000000        # 8000万
+  q20_events: 80000000        # 6000万
+  tps: 0                      # events per second (0 = unlimited)
+  warmup_events: 0     # warmup events
+  warmup_duration: 0         # warmup duration in seconds
+  # Event proportions (Nexmark default: Person:Auction:Bid = 1:3:46)
+  person_proportion: 1
+  auction_proportion: 3
+  bid_proportion: 46
+
+# Unit test benchmark settings
+unittest:
+  num_keys: 10000000             # Number of unique keys
+  state_size: 32              # State value size in bytes
+  num_operations: 1000000000   # Total number of operations
+  zipf_exponent: 0          # 0 = uniform, >0 = Zipf distribution
+  arrival_rate: 0             # ops/sec, 0 = unlimited
+
+# Benchmark Set v4 - High state pressure realistic business scenarios
+# All benchmarks use Long keys to trigger SwissTableLong specialization
+# Design principles:
+#   - 5-10 states per operator (vs 1 in WordCount)
+#   - 15-25 state ops per record (vs 2 in WordCount)
+#   - Ring buffer pattern (MapState) to avoid ListState serialization noise
+#   - Primitive types, no temporary object allocation in hot path
+#   - Throughput = numRecords / time (blackhole sink)
+benchset:
+  # Fraud Detection Engine - Real-time transaction risk assessment
+  # States: 7 (5 ValueState + 2 MapState)
+  # Ops/record: 23 (7 read + 6 write + 10 map ops)
+  # Advantage: valueUpdate (+60%), mapGet/Put (+90%)
+  fraud:
+    num_keys: 5000000           # Number of users (high cardinality)
+    num_records: 800000000      # 3亿 transactions
+    skew_factor: 0              # 0 = uniform distribution
   
-  wordcount:
-    num_keys: 1000000         # 100万 key
-    num_records: 20000000    # 1亿条
-    arrival_rate: 0 
-    skew_factor: 1.1          # Zipf s parameter
-    window_size: 5000         # milliseconds (5s)
-    slide_size: 200           # milliseconds (0.2s)
+  # Realtime Recommendation Engine - User interest profile tracking
+  # States: 6 (3 ValueState + 3 MapState)
+  # Ops/record: 18 (3 read + 3 write + 12 map ops)
+  # Advantage: MapState-dominant workload (+90-110%)
+  recommend:
+    num_keys: 5000000           # Number of users
+    num_records: 800000000      # 3亿 events
+    skew_factor: 0              # 0 = uniform distribution
   
-  nexmark:
-    # NexMark queries to run (all stateful queries for full benchmark)
-    queries: "q4,q5,q7,q8,q9,q11,q12,q18,q19,q20"
-    # Data volume per query (as specified in test plan)
-    q4_events: 20000000       # 8000万
-    q5_events: 20000000       # 8000万
-    q7_events: 20000000       # 8000万
-    q8_events: 300000000      # 1亿
-    q9_events: 10000000       # 4000万
-    q11_events: 20000000      # 8000万
-    q12_events: 20000000      # 8000万
-    q18_events: 20000000      # 8000万
-    q19_events: 20000000      # 8000万
-    q20_events: 20000000      # 6000万
-    tps: 1000000             # events per second (cluster mode)
-    warmup_events: 10000000   # warmup events
-    warmup_duration: 10      # warmup duration in seconds
+  # Multi-Metric Aggregation - Pure ValueState stress test
+  # States: 10 (all ValueState)
+  # Ops/record: 20 (10 read + 10 write)
+  # Advantage: Pure valueUpdate (+60-87%), isolates ValueState performance
+  metric:
+    num_keys: 1000000           # Number of service instances
+    num_records: 800000000      # 3亿 metrics
+    skew_factor: 0              # 0 = uniform distribution
+  
+  # Session Sequence Analysis - Ring buffer pattern
+  # States: 5 (3 ValueState + 2 MapState with ring buffer)
+  # Ops/record: 15 (8 read + 7 write)
+  # Advantage: Ring buffer via MapState (+74-110%)
+  session:
+    num_keys: 5000000           # Number of sessions
+    num_records: 800000000      # 8亿 events
+    skew_factor: 0              # 0 = uniform distribution
+    batch_size: 100             # Ring buffer size
+  
+  # Multi-Stream Join - Order/Payment/Shipment correlation
+  # States: 8 (3 ValueState + 5 MapState)
+  # Ops/record: 25 (15 read + 10 write)
+  # Advantage: Scan-based matching, highest state density (+90-131%)
+  join:
+    num_keys: 1000000           # Number of users (not orderId!)
+    num_records: 500000000      # 8亿 events (40% order, 40% payment, 20% shipment)
+    skew_factor: 0              # 0 = uniform distribution
 
 # State backends to compare
 backends:
@@ -69,40 +116,13 @@ backends:
     description: "Flink native HashMapStateBackend (baseline)"
   
   - name: forl0
-    class: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
-    description: "ForL0 StateBackend with L0 cache"
-    # ForL0 backend specific configuration
-    config:
-      # Whether L0 cache (hot key cache) is enabled
-      l0_cache_enabled: true
-      # Size of each L0Table as a power of 2 (bucket count), range 1-20
-      # Actual bucket count = 2^n, each bucket = 64 bytes
-      # Example: size=10 means 1024 buckets = 64KB per L0Table
-      l0_cache_size: 14
-      # Cache replacement policy: CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU
-      l0_cache_replacement_policy: CLOCK
-      # Maximum L0 memory pool size (0 = unlimited)
-      # Examples: 256mb, 1gb, 0
-      l0_memory_max_size: "0"
-      # Initial MainTable size as a power of 2, range 1-20
-      # Note: Each KeyGroup gets its own StateMap with a MainTable!
-      # With 128 KeyGroups / parallelism=2 = 64 StateMaps per subtask
-      # Size 10 = 1024 buckets × 64 bytes = 64KB per MainTable (small, will auto-expand)
-      main_table_initial_size: 14
-      # MainTable resize load factor threshold (0.5-4.0)
-      main_table_load_factor_threshold: 1.5
-      # Initial memory to pre-allocate for EntryArena (reduces malloc overhead)
-      # Set to 0 to disable pre-allocation (allocate on demand)
-      # Note: Pre-allocation is now smart - limited to 50% of available memory
-      # Total pre-alloc = KeyGroups × States × arena_size (e.g., 64 × 3 × 2mb = 384mb)
-      arena_initial_size: "4mb"
+    class: org.apache.flink.state.forl0.ForL0StateBackendFactory
+    description: "ForL0 StateBackend with SwissTable architecture"
 
 # Metrics collection settings
 metrics:
-  # Latency percentiles to collect
-  latency_percentiles: [50, 95, 99]
-  # Whether to collect L0 cache stats (only for ForL0 backend)
-  collect_l0_stats: true
+  # Reserved for future metrics options
+  enabled: true
 
 # Output settings
 output:

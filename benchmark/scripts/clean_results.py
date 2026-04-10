@@ -16,7 +16,6 @@ def clean_results(confirm: bool = True) -> None:
         RESULTS_DIR / "figures", 
         RESULTS_DIR / "reports",
         RESULTS_DIR / "latency",
-        RESULTS_DIR / "l0metrics",
         RESULTS_DIR / "profiles",
         RESULTS_DIR / "hardware",
     ]

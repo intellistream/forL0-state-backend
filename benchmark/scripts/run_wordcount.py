@@ -2,15 +2,16 @@
 """
 Run WordCount benchmark via Flink cluster.
 
-Both local and remote modes submit jobs to a Flink cluster via REST API.
-- Local: Start Flink cluster locally with `$FLINK_HOME/bin/start-cluster.sh`
-- Remote: Connect to remote Flink cluster
+Submit jobs to a Flink cluster via REST API.
+Start Flink cluster with `$FLINK_HOME/bin/start-cluster.sh`
 
 Usage:
     python run_wordcount.py --backend hashmap
     python run_wordcount.py --backend forl0
     python run_wordcount.py --backend all
-    python run_wordcount.py --backend all --profile  # With flame graphs + hardware metrics
+    python run_wordcount.py --backend all --profile cpu      # Async-profiler flame graphs
+    python run_wordcount.py --backend all --profile uarch    # VTune uarch analysis
+    python run_wordcount.py --backend all --profile memory   # VTune memory analysis
 """
 
 import argparse
@@ -27,19 +28,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from datetime import datetime
 from utils.config import (
-    load_config, get_mode_config, get_benchmark_root,
+    load_config, get_benchmark_root,
     get_wordcount_jar, get_flink_home, get_results_dir,
     get_timestamp, parse_json_from_output, save_result
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
-from utils.l0_metrics import (
-    parse_l0table_metrics_by_time, 
-    normalize_metrics_time,
-    save_l0table_metrics as save_l0_metrics_file,
-    get_l0_metrics_summary
-)
+from utils.vtune_profiler import VTuneProfiler, get_profiler_summary as get_vtune_summary
 from utils.hardware_metrics import HardwareMetricsCollector
-
 
 def check_flink_cluster(rest_url: str) -> bool:
     """Check if Flink cluster is running."""
@@ -59,6 +54,61 @@ def get_job_status(rest_url: str, job_id: str) -> dict:
     except Exception:
         pass
     return {}
+
+
+def cancel_job(rest_url: str, job_id: str) -> bool:
+    """Cancel a running Flink job via REST API."""
+    try:
+        # Use PATCH to cancel (Flink 1.12+)
+        resp = requests.patch(
+            f"{rest_url}/jobs/{job_id}",
+            params={'mode': 'cancel'},
+            timeout=30
+        )
+        if resp.status_code in [200, 202]:
+            return True
+        # Fallback to DELETE for older versions
+        resp = requests.delete(f"{rest_url}/jobs/{job_id}/cancel", timeout=30)
+        return resp.status_code in [200, 202]
+    except Exception as e:
+        print(f"  WARNING: Failed to cancel job: {e}")
+        return False
+
+
+def submit_job_async(cmd: list, rest_url: str) -> Optional[str]:
+    """Submit a Flink job asynchronously and return job ID."""
+    import re
+    
+    # Run flink run in detached mode
+    detached_cmd = cmd.copy()
+    # Insert -d flag after 'flink run'
+    run_idx = detached_cmd.index('run')
+    detached_cmd.insert(run_idx + 1, '-d')
+    
+    try:
+        result = subprocess.run(
+            detached_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        output = result.stdout + result.stderr
+        
+        # Parse job ID from output: "Job has been submitted with JobID <id>"
+        match = re.search(r'JobID\s+([a-f0-9]+)', output)
+        if match:
+            return match.group(1)
+        
+        print(f"  WARNING: Could not parse job ID from output:\n{output}")
+        return None
+        
+    except subprocess.TimeoutExpired:
+        print("  ERROR: Job submission timed out")
+        return None
+    except Exception as e:
+        print(f"  ERROR: Job submission failed: {e}")
+        return None
 
 
 def wait_for_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> dict:
@@ -83,7 +133,7 @@ def wait_for_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> 
     return {'state': 'TIMEOUT'}
 
 
-def parse_job_runtime(output: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
+def parse_job_runtime(output: str, wc_config: dict, runtime_config: dict) -> Optional[dict]:
     """Parse Job Runtime from flink run output and calculate metrics."""
     import re
     
@@ -96,7 +146,7 @@ def parse_job_runtime(output: str, wc_config: dict, mode_config: dict) -> Option
     runtime_s = runtime_ms / 1000.0
     
     num_records = wc_config.get('num_records', 10000000)
-    parallelism = mode_config.get('parallelism', 2)
+    parallelism = runtime_config.get('parallelism', 2)
     
     throughput = num_records / runtime_s
     throughput_per_core = throughput / parallelism
@@ -145,50 +195,7 @@ def parse_latency_file_path(output: str, flink_home: str) -> Optional[str]:
     return None
 
 
-def collect_l0_metrics_for_query(
-    flink_home: str, 
-    backend: str, 
-    query: str, 
-    start_time: datetime,
-    results_dir: Path
-) -> Optional[str]:
-    """
-    [BENCHMARK_TEST] Collect L0 metrics for a specific query run.
-    
-    Args:
-        flink_home: Path to Flink installation
-        backend: Backend name (e.g., "forl0")
-        query: Query name (e.g., "wordcount")
-        start_time: Job start timestamp - only collect metrics after this time
-        results_dir: Directory to save the metrics file
-        
-    Returns:
-        Path to the saved metrics file, or None if no metrics collected
-    """
-    end_time = datetime.now()
-    
-    # Parse metrics within time window
-    metrics = parse_l0table_metrics_by_time(flink_home, start_time, end_time)
-    if not metrics:
-        print(f"  [L0 Metrics] No metrics found for {query}")
-        return None
-    
-    # Normalize time to be relative to job start
-    metrics = normalize_metrics_time(metrics, start_time)
-    
-    # Save to file
-    filepath = save_l0_metrics_file(metrics, backend, query, results_dir)
-    
-    # Print summary
-    summary = get_l0_metrics_summary(metrics)
-    print(f"  [L0 Metrics] Collected {len(metrics)} samples for {query}")
-    if summary:
-        print(f"  [L0 Metrics] Overall hit rate: {summary.get('overall_hit_rate', 0):.1f}%")
-    
-    return filepath
-
-
-def parse_taskmanager_log(flink_home: str, wc_config: dict, mode_config: dict) -> Optional[dict]:
+def parse_taskmanager_log(flink_home: str, wc_config: dict, runtime_config: dict) -> Optional[dict]:
     """Parse benchmark results from TaskManager stdout (.out file)."""
     import glob
     
@@ -248,9 +255,7 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
         'l0_cache_size': 'state.backend.forl0.l0-cache.size',
         'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
         'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
-        'main_table_initial_size': 'state.backend.forl0.main-table.initial-size',
         'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
-        'arena_initial_size': 'state.backend.forl0.arena.initial-size',
     }
     
     for yaml_key, flink_key in config_mapping.items():
@@ -267,6 +272,91 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
     return args
 
 
+def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str) -> bool:
+    """
+    Run a warmup job for JIT compilation and cache warming.
+    
+    Args:
+        cmd: Flink run command
+        rest_url: Flink REST API URL
+        warmup_duration: Warmup duration in seconds
+        backend: Backend name for logging
+        
+    Returns:
+        True if warmup completed successfully
+    """
+    print(f"\n--- Warmup Phase ({warmup_duration}s) ---")
+    print(f"  Submitting warmup job...")
+    
+    # Create warmup command: disable latency sampling and L0 metrics
+    warmup_cmd = []
+    skip_next = False
+    for i, arg in enumerate(cmd):
+        if skip_next:
+            skip_next = False
+            continue
+        # Skip latency directory argument
+        if arg == '--latencyDir':
+            skip_next = True
+            continue
+        # Disable L0 metrics collector during warmup
+        if 'metricsCollector.enabled=true' in arg:
+            warmup_cmd.append(arg.replace('enabled=true', 'enabled=false'))
+        else:
+            warmup_cmd.append(arg)
+    
+    job_id = submit_job_async(warmup_cmd, rest_url)
+    if not job_id:
+        print("  WARNING: Failed to submit warmup job, skipping warmup")
+        return False
+    
+    print(f"  Warmup job submitted: {job_id}")
+    
+    # Wait for warmup duration
+    start_time = time.time()
+    last_state = None
+    
+    while time.time() - start_time < warmup_duration:
+        status = get_job_status(rest_url, job_id)
+        state = status.get('state', 'UNKNOWN')
+        
+        if state != last_state:
+            print(f"  Job state: {state}")
+            last_state = state
+        
+        # If job finished early (e.g., data exhausted), that's fine
+        if state in ['FINISHED', 'FAILED', 'CANCELED']:
+            print(f"  Warmup job ended early with state: {state}")
+            return state != 'FAILED'
+        
+        elapsed = int(time.time() - start_time)
+        remaining = warmup_duration - elapsed
+        if remaining > 0 and remaining % 10 == 0:
+            print(f"  Warmup: {elapsed}s elapsed, {remaining}s remaining...")
+        
+        time.sleep(1)
+    
+    # Cancel warmup job
+    print(f"  Warmup complete, cancelling job...")
+    if cancel_job(rest_url, job_id):
+        # Wait for job to be fully cancelled
+        for _ in range(30):
+            status = get_job_status(rest_url, job_id)
+            state = status.get('state', 'UNKNOWN')
+            if state in ['CANCELED', 'FINISHED', 'FAILED']:
+                print(f"  Warmup job cancelled successfully")
+                break
+            time.sleep(0.5)
+    else:
+        print(f"  WARNING: Failed to cancel warmup job")
+    
+    # Small delay to let resources be released
+    time.sleep(2)
+    
+    print(f"--- Warmup Phase Complete ---\n")
+    return True
+
+
 def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None) -> Optional[dict]:
     """Run WordCount benchmark on Flink cluster.
     
@@ -276,9 +366,8 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         profile_mode: Profiling mode ('cpu' for flame graphs, 'cache' for cache statistics, None to disable)
     """
     
-    mode = config.get('mode', 'local')
-    mode_config = get_mode_config(config, mode)
-    wc_config = mode_config.get('wordcount', {})
+    runtime_config = config.get('runtime', {})
+    wc_config = config.get('wordcount', {})
     flink_config = config.get('flink', {})
     
     flink_home = get_flink_home()
@@ -316,21 +405,17 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
     forl0_args = get_forl0_config_args(config, backend)
     cmd.extend(forl0_args)
     
-    # Set up latency samples directory
-    latency_dir = get_results_dir('latency')
-    
     # Add JAR and arguments
+    # WordCount now uses KeyedProcessFunction + ValueState (VoidNamespace)
+    # No window parameters needed - pure state access testing
     cmd.extend([
         jar_path,
         '--numKeys', str(wc_config.get('num_keys', 1000000)),
         '--numRecords', str(wc_config.get('num_records', 100000000)),
-        '--arrivalRate', str(wc_config.get('arrival_rate', 230000)),
-        '--skewFactor', str(wc_config.get('skew_factor', 1.1)),
-        '--windowSize', str(wc_config.get('window_size', 5)),
-        '--slideSize', str(wc_config.get('slide_size', 200)),
-        '--parallelism', str(mode_config.get('parallelism', 2)),
-        '--checkpointInterval', str(mode_config.get('checkpoint_interval', 10000)),
-        '--latencyDir', str(latency_dir),
+        '--arrivalRate', str(wc_config.get('arrival_rate', 0)),
+        '--skewFactor', str(wc_config.get('skew_factor', 0)),
+        '--parallelism', str(runtime_config.get('parallelism', 2)),
+        '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 0)),
         '--backend', backend,
     ])
     
@@ -338,27 +423,50 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
     print(f"Flink cluster: {rest_url}")
     print(f"Command: {' '.join(cmd)}\n")
     
+    # [BENCHMARK_TEST] Run warmup phase if configured
+    warmup_duration = wc_config.get('warmup_duration', 0)
+    if warmup_duration > 0:
+        run_warmup_job(cmd, rest_url, warmup_duration, backend)
+    
     # [BENCHMARK_TEST] Initialize profiler and hardware metrics if enabled
+    # Note: Profiling starts AFTER warmup to capture steady-state performance
     profiler = None
+    vtune_profiler = None
     hw_collector = None
     
     if profile_mode:
-        profiler = AsyncProfiler()
-        if profiler.is_available():
-            print(f"  Async Profiler: {profiler.get_version()}")
-            print(f"  Supported events: {profiler.get_supported_events()}")
-            print(f"  Profiling mode: {profile_mode}")
+        # Determine if using VTune or async-profiler
+        if profile_mode in ['uarch', 'memory', 'hotspots']:
+            # VTune profiler
+            vtune_profiler = VTuneProfiler()
+            if vtune_profiler.is_available():
+                print(f"  Intel VTune: {vtune_profiler.get_version()}")
+                analysis_type = vtune_profiler.ANALYSIS_TYPES[profile_mode]
+                print(f"  Analysis type: {analysis_type}")
+                print(f"  Note: VTune will start 20s after job begins (steady state)")
+            else:
+                print("  WARNING: Intel VTune Profiler not available")
+                print("           Check if vtune is in PATH or set VTUNE_PROFILER_DIR")
+                vtune_profiler = None
         else:
-            print("  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)")
-            profiler = None
+            # Async profiler (cpu/cache)
+            profiler = AsyncProfiler()
+            if profiler.is_available():
+                print(f"  Async Profiler: {profiler.get_version()}")
+                print(f"  Supported events: {profiler.get_supported_events()}")
+                print(f"  Profiling mode: {profile_mode}")
+            else:
+                print("  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)")
+                profiler = None
         
         # Hardware metrics collection
         # - For 'cpu' mode: collect memory only (profiler handles CPU)
         # - For 'cache' mode: pass profiler for JFR analysis
+        # - For VTune modes: no additional hardware collection (VTune handles it)
         if profile_mode == 'cache':
             hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')), profiler=profiler)
             print(f"  Hardware metrics: enabled (cache mode, perf available: {hw_collector.is_perf_available()})")
-        elif profile_mode:
+        elif profile_mode == 'cpu':
             # CPU mode: only collect memory, no cache stats
             hw_collector = HardwareMetricsCollector(str(get_results_dir('hardware')), profiler=None)
             print(f"  Hardware metrics: memory only (cpu mode)")
@@ -370,36 +478,42 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         # [BENCHMARK_TEST] Start profiling before job submission
         tm_pids = []
         jfr_file = None
-        if profiler:
+        profiler_files = None  # Initialize profiler_files
+        vtune_result_dir = None
+        
+        # Find TaskManager PIDs
+        if profiler or vtune_profiler:
             tm_pids = find_taskmanager_pids(flink_home)
-            if tm_pids:
-                print(f"  Profiling TaskManager PIDs: {tm_pids}")
-                profiles_dir = get_results_dir('profiles')
-                
-                if profile_mode == 'cpu':
-                    # CPU profiling: flame graphs
-                    profiler.start(
-                        pid=tm_pids[0],
-                        events=['cpu', 'alloc'],
-                        output_dir=str(profiles_dir),
-                        backend=backend,
-                        output_format='html',
-                        duration=None
-                    )
-                    print(f"  Started CPU profiling (cpu + alloc)")
-                elif profile_mode == 'cache':
-                    # Cache profiling: HTML flame graph for cache-misses
-                    profiler.start(
-                        pid=tm_pids[0],
-                        events=['cache-misses'],
-                        output_dir=str(profiles_dir),
-                        backend=backend,
-                        output_format='html',
-                        duration=None
-                    )
-                    print(f"  Started cache profiling (cache-misses)")
-            else:
+            if not tm_pids:
                 print("  WARNING: No TaskManager PIDs found for profiling")
+        
+        # Start async-profiler if needed (cpu/cache modes)
+        if profiler and tm_pids:
+            print(f"  Profiling TaskManager PIDs: {tm_pids}")
+            profiles_dir = get_results_dir('profiles')
+            
+            if profile_mode == 'cpu':
+                # CPU profiling: flame graphs
+                profiler.start(
+                    pid=tm_pids[0],
+                    events=['cpu', 'alloc'],
+                    output_dir=str(profiles_dir),
+                    backend=backend,
+                    output_format='html',
+                    duration=None
+                )
+                print(f"  Started CPU profiling (cpu + alloc)")
+            elif profile_mode == 'cache':
+                # Cache profiling: HTML flame graph for cache-misses
+                profiler.start(
+                    pid=tm_pids[0],
+                    events=['cache-misses'],
+                    output_dir=str(profiles_dir),
+                    backend=backend,
+                    output_format='html',
+                    duration=None
+                )
+                print(f"  Started cache profiling (cache-misses)")
         
         # [BENCHMARK_TEST] Start hardware metrics collection before job
         if hw_collector:
@@ -419,6 +533,28 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
                         query='wordcount',
                         backend=backend
                     )
+        
+        # [BENCHMARK_TEST] Start VTune profiler in background thread (with 20s delay)
+        vtune_thread = None
+        if vtune_profiler and tm_pids:
+            import threading
+            
+            def start_vtune_delayed():
+                """Start VTune profiling after 20 second delay."""
+                nonlocal vtune_result_dir
+                # VTune results will be saved to ~/vtune-results (default)
+                vtune_result_dir = vtune_profiler.start(
+                    pid=tm_pids[0],
+                    analysis_type=profile_mode,
+                    backend=backend,
+                    query='wordcount',
+                    duration=60,  # Profile for 60 seconds
+                    delay=20      # Wait 20 seconds before starting
+                )
+            
+            vtune_thread = threading.Thread(target=start_vtune_delayed, daemon=True)
+            vtune_thread.start()
+            print(f"  VTune profiling will start in background (20s delay)")
         
         # Submit job (blocking mode - wait for completion)
         result = subprocess.run(
@@ -447,35 +583,27 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
                     print(f"  [HW] Cache miss rate: {cache_stats.cache_miss_rate:.2%}")
             hw_collector.save_results("wordcount_hw")
         
+        # [BENCHMARK_TEST] Wait for VTune thread to complete
+        if vtune_thread:
+            print("  Waiting for VTune profiling to complete...")
+            vtune_thread.join(timeout=120)  # Wait up to 2 minutes
+            if vtune_result_dir:
+                print(f"  VTune results saved to: {vtune_result_dir}")
+        
         # Parse result - first try from TaskManager log (has full metrics)
-        benchmark_result = parse_taskmanager_log(flink_home, wc_config, mode_config)
+        benchmark_result = parse_taskmanager_log(flink_home, wc_config, runtime_config)
         
         # If no result from log, try to parse Job Runtime from flink run output
         if not benchmark_result:
-            benchmark_result = parse_job_runtime(output, wc_config, mode_config)
+            benchmark_result = parse_job_runtime(output, wc_config, runtime_config)
         
         # Parse latency samples file path from output
         latency_file = parse_latency_file_path(output, flink_home)
         
-        # [BENCHMARK_TEST] Collect L0TABLE metrics for ForL0 backend with time filtering
-        l0_metrics_file = None
-        if backend == 'forl0':
-            l0_metrics_file = collect_l0_metrics_for_query(
-                flink_home=flink_home,
-                backend=backend,
-                query='wordcount',
-                start_time=job_start_time,
-                results_dir=get_results_dir('l0metrics')
-            )
-        
         if benchmark_result:
             benchmark_result['backend'] = backend
-            benchmark_result['mode'] = mode
             if latency_file:
                 benchmark_result['latency_samples_file'] = latency_file
-            # [BENCHMARK_TEST] Include L0 metrics file path
-            if l0_metrics_file:
-                benchmark_result['l0_metrics_file'] = l0_metrics_file
             # [BENCHMARK_TEST] Include profiler output files
             if profiler_files:
                 benchmark_result['profiler_files'] = profiler_files
@@ -520,10 +648,10 @@ def main():
     results = {}
     
     for backend in backends:
-        result = run_wordcount(config, backend, enable_profile=args.profile)
+        result = run_wordcount(config, backend, profile_mode='cpu' if args.profile else None)
         if result:
             results[backend] = result
-            save_result(result, 'wordcount', backend, config.get('mode', 'local'))
+            save_result(result, 'wordcount', backend)
     
     # Print comparison if both backends were run
     if len(results) == 2:

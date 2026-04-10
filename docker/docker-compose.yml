@@ -1,0 +1,111 @@
+################################################################################
+#  ForL0 State Backend - Docker 测试环境
+#
+#  规格:
+#    - JobManager:    1 容器, 8G
+#    - TaskManager:   2 容器, 4核 32G, 每个 TM 并行度 4
+#    - 总并行度:      8
+#
+#  启动:  docker compose up -d
+#  停止:  docker compose down
+#  日志:  docker compose logs -f [jobmanager|taskmanager-1|taskmanager-2]
+#  Web UI: http://localhost:8081
+################################################################################
+
+services:
+  jobmanager:
+    image: eclipse-temurin:8-jre
+    hostname: jobmanager
+    container_name: flink-jobmanager
+    ports:
+      - "8081:8081"
+    volumes:
+      - ${FLINK_HOME:-/home/user/flink}/bin:/opt/flink/bin:ro
+      - ${FLINK_HOME:-/home/user/flink}/lib:/opt/flink/lib:ro
+      - ${FLINK_HOME:-/home/user/flink}/plugins:/opt/flink/plugins:ro
+      - ${FLINK_HOME:-/home/user/flink}/opt:/opt/flink/opt:ro
+      - ./conf:/opt/flink/conf:ro
+      - ../src/main/resources/native:/opt/flink/native:ro
+      - flink-checkpoints:/opt/flink-data/checkpoints
+      - jm-logs:/opt/flink/log
+    environment:
+      FLINK_HOME: /opt/flink
+    command: ["/opt/flink/bin/jobmanager.sh", "start-foreground"]
+    privileged: true
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 8G
+    networks:
+      - flink-net
+
+  taskmanager-1:
+    image: eclipse-temurin:8-jre
+    hostname: taskmanager-1
+    container_name: flink-taskmanager-1
+    depends_on:
+      - jobmanager
+    volumes:
+      - ${FLINK_HOME:-/home/user/flink}/bin:/opt/flink/bin:ro
+      - ${FLINK_HOME:-/home/user/flink}/lib:/opt/flink/lib:ro
+      - ${FLINK_HOME:-/home/user/flink}/plugins:/opt/flink/plugins:ro
+      - ${FLINK_HOME:-/home/user/flink}/opt:/opt/flink/opt:ro
+      - ./conf:/opt/flink/conf:ro
+      - ../src/main/resources/native:/opt/flink/native:ro
+      - flink-checkpoints:/opt/flink-data/checkpoints
+      - tm1-logs:/opt/flink/log
+      - /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro
+    devices:
+      - /dev/hisi_l0:/dev/hisi_l0
+    environment:
+      FLINK_HOME: /opt/flink
+    command: ["/opt/flink/bin/taskmanager.sh", "start-foreground"]
+    privileged: true
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 16G
+    networks:
+      - flink-net
+
+  taskmanager-2:
+    image: eclipse-temurin:8-jre
+    hostname: taskmanager-2
+    container_name: flink-taskmanager-2
+    depends_on:
+      - jobmanager
+    volumes:
+      - ${FLINK_HOME:-/home/user/flink}/bin:/opt/flink/bin:ro
+      - ${FLINK_HOME:-/home/user/flink}/lib:/opt/flink/lib:ro
+      - ${FLINK_HOME:-/home/user/flink}/plugins:/opt/flink/plugins:ro
+      - ${FLINK_HOME:-/home/user/flink}/opt:/opt/flink/opt:ro
+      - ./conf:/opt/flink/conf:ro
+      - ../src/main/resources/native:/opt/flink/native:ro
+      - flink-checkpoints:/opt/flink-data/checkpoints
+      - tm2-logs:/opt/flink/log
+      - /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro
+    devices:
+      - /dev/hisi_l0:/dev/hisi_l0
+    environment:
+      FLINK_HOME: /opt/flink
+    command: ["/opt/flink/bin/taskmanager.sh", "start-foreground"]
+    privileged: true
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 16G
+    networks:
+      - flink-net
+
+volumes:
+  flink-checkpoints:
+  jm-logs:
+  tm1-logs:
+  tm2-logs:
+
+networks:
+  flink-net:
+    driver: bridge

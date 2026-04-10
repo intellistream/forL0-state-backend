@@ -6,7 +6,9 @@ Usage:
     python run_benchmark.py --test all --backend all          # Run everything
     python run_benchmark.py --test wordcount --backend forl0  # WordCount only
     python run_benchmark.py --test nexmark --query q5,q8      # NexMark specific queries
-    python run_benchmark.py --test all --profile              # With flame graphs
+    python run_benchmark.py --test all --profile cpu          # With flame graphs
+    python run_benchmark.py --test all --profile uarch        # With VTune uarch analysis
+    python run_benchmark.py --test all --profile memory       # With VTune memory analysis
 """
 
 import argparse
@@ -16,7 +18,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from run_wordcount import run_wordcount, save_result
-from run_nexmark import NexMarkRunner
+from run_nexmark import NexmarkRunner
+from run_unittest import run_unittest
+from run_benchset import run_benchset, print_benchset_summary, BENCHMARKS as BENCHSET_BENCHMARKS
 from utils.config import load_config
 
 
@@ -24,7 +28,9 @@ def run_all_benchmarks(config, backends, profile=False):
     """Run all benchmarks with specified backends."""
     results = {
         'wordcount': {},
-        'nexmark': {}
+        'nexmark': {},
+        'unittest': {},
+        'benchset': {}
     }
     
     for backend in backends:
@@ -45,6 +51,26 @@ def print_summary(results, backends):
     print("\n" + "=" * 70)
     print("                    BENCHMARK SUMMARY")
     print("=" * 70)
+    
+    # Unit Test summary
+    print("\n## Unit Test Benchmark")
+    print("-" * 50)
+    ut_results = results.get('unittest', {})
+    
+    for backend in backends:
+        if backend in ut_results:
+            result = ut_results[backend]
+            tput = result.get('throughput', 'N/A')
+            if isinstance(tput, (int, float)):
+                print(f"{backend:20s}: {tput:>15,.0f} ops/sec")
+    
+    # Calculate improvement
+    if 'hashmap' in ut_results and 'forl0' in ut_results:
+        hashmap_tp = ut_results['hashmap'].get('throughput', 0)
+        forl0_tp = ut_results['forl0'].get('throughput', 0)
+        if hashmap_tp > 0:
+            improvement = ((forl0_tp - hashmap_tp) / hashmap_tp) * 100
+            print(f"{'Improvement':20s}: {improvement:>15.1f}%")
     
     # WordCount summary
     print("\n## WordCount Benchmark")
@@ -198,56 +224,99 @@ Examples:
   # Run specific NexMark queries
   python run_benchmark.py --test nexmark --query q5,q8
   
-  # Run with flame graph profiling
-  python run_benchmark.py --test wordcount --backend all --profile
+  # Run with async-profiler flame graphs
+  python run_benchmark.py --test wordcount --backend all --profile cpu
+  
+  # Run with VTune microarchitecture analysis
+  python run_benchmark.py --test wordcount --backend all --profile uarch
+  
+  # Run with VTune memory access analysis
+  python run_benchmark.py --test wordcount --backend all --profile memory
         """
     )
     
-    parser.add_argument('--test', choices=['wordcount', 'nexmark', 'all'], default='all',
+    parser.add_argument('--test', choices=['unittest', 'wordcount', 'nexmark', 'benchset', 'all'], default='all',
                        help='Test to run (default: all)')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='all',
                        help='State backend to use (default: all)')
     parser.add_argument('--query', type=str, default=None,
                        help='NexMark queries to run (comma-separated, e.g., q5,q8). Default: from config')
-    parser.add_argument('--profile', '-p', type=str, default=None, choices=['cpu', 'cache'],
-                       help='Enable profiling: cpu (flame graphs) or cache (cache statistics)')
+    parser.add_argument('--profile', '-p', type=str, default=None, 
+                       choices=['cpu', 'cache', 'uarch', 'memory', 'hotspots'],
+                       help='Enable profiling: cpu (flame graphs), cache (cache stats), '
+                            'uarch (VTune uarch-exploration), memory (VTune memory-access), '
+                            'hotspots (VTune hotspots with call stacks)')
+    parser.add_argument('--mini-batch', action='store_true',
+                       help='Enable mini-batch mode (buffer + sort by key, no pre-aggregation). '
+                            'Overrides config file setting.')
     
     args = parser.parse_args()
     
     config = load_config()
-    mode = config.get('mode', 'local')
-    mode_config = config.get(mode, {})
     
     # Determine backends
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
     
     # Determine NexMark queries
-    nexmark_queries = args.query if args.query else mode_config.get('nexmark', {}).get('queries', 'q5')
+    nexmark_queries = args.query if args.query else config.get('nexmark', {}).get('queries', 'q5')
     
     print("=" * 60)
     print("ForL0 StateBackend Benchmark")
     print("=" * 60)
-    print(f"Mode: {mode}")
     print(f"Test: {args.test}")
     print(f"Backends: {', '.join(backends)}")
     if args.test in ['nexmark', 'all']:
         print(f"NexMark Queries: {nexmark_queries}")
     if args.profile:
-        print(f"Profiling: Enabled (flame graphs)")
+        profile_desc = {
+            'cpu': 'CPU flame graphs (async-profiler)',
+            'cache': 'Cache statistics (async-profiler)',
+            'uarch': 'Microarchitecture analysis (Intel VTune)',
+            'memory': 'Memory access analysis (Intel VTune)'
+        }.get(args.profile, args.profile)
+        print(f"Profiling: {profile_desc}")
+    if args.mini_batch:
+        print(f"Mini-batch: ENABLED (buffer + sort by key, no pre-aggregation)")
     print("=" * 60)
     
-    results = {'wordcount': {}, 'nexmark': {}}
+    results = {'unittest': {}, 'wordcount': {}, 'nexmark': {}, 'benchset': {}}
+    
+    # Run Unit Test benchmarks
+    if args.test in ['unittest', 'all']:
+        print("\n" + "=" * 60)
+        print("Running Unit Test Benchmark")
+        print("=" * 60)
+        unittest_config = config.get('unittest', {})
+        for backend in backends:
+            result = run_unittest(
+                config, backend,
+                num_keys=unittest_config.get('num_keys', 1000),
+                state_size=unittest_config.get('state_size', 100),
+                num_operations=unittest_config.get('num_operations', 1000000),
+                zipf_exponent=unittest_config.get('zipf_exponent', 0),
+                arrival_rate=unittest_config.get('arrival_rate', 0),
+                profile_mode=args.profile
+            )
+            if result:
+                results['unittest'][backend] = result
+                save_result(result, 'unittest', backend)
     
     # Run WordCount benchmarks
     if args.test in ['wordcount', 'all']:
         print("\n" + "=" * 60)
         print("Running WordCount Benchmark")
         print("=" * 60)
+        
+        # Get mini-batch settings from config or CLI override
+        wc_config = config.get('wordcount', {})
         for backend in backends:
-            result = run_wordcount(config, backend, profile_mode=args.profile)
+            result = run_wordcount(
+                config, backend, 
+                profile_mode=args.profile
+            )
             if result:
                 results['wordcount'][backend] = result
-                save_result(result, 'wordcount', backend, mode)
+                save_result(result, 'wordcount', backend)
     
     # Run NexMark benchmarks
     if args.test in ['nexmark', 'all']:
@@ -255,12 +324,11 @@ Examples:
         print("Running NexMark Benchmark")
         print("=" * 60)
         try:
-            runner = NexMarkRunner(config)
+            runner = NexmarkRunner(config)
             nexmark_results = runner.run(
                 backends=backends,
                 queries=nexmark_queries,
-                profile_mode=args.profile,
-                restart_cluster=True
+                profile_mode=args.profile
             )
             # Store results in our format
             for backend, metrics in nexmark_results.items():
@@ -271,6 +339,30 @@ Examples:
             print("  cd benchmark/nexmark-src && mvn clean package -DskipTests")
         except Exception as e:
             print(f"\n[Error] NexMark failed: {e}")
+    
+    # Run Benchset (realistic business scenarios)
+    if args.test in ['benchset', 'all']:
+        print("\n" + "=" * 60)
+        print("Running Benchset (Realistic Business Scenarios)")
+        print("=" * 60)
+        try:
+            benchset_results = run_benchset(
+                config, 
+                backends, 
+                BENCHSET_BENCHMARKS,
+                profile_mode=args.profile
+            )
+            results['benchset'] = benchset_results
+            # Print benchset-specific summary
+            print_benchset_summary(benchset_results, backends)
+        except FileNotFoundError as e:
+            print(f"\n[Warning] Benchset not available: {e}")
+            print("To run Benchset, first compile it:")
+            print("  cd benchmark/benchset && mvn clean package -DskipTests")
+        except Exception as e:
+            print(f"\n[Error] Benchset failed: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Print summary
     print_summary(results, backends)

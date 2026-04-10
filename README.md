@@ -1,12 +1,12 @@
 # ForL0 State Backend
 
-ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，旨在充分利用**鲲鹏 CPU 的 L0 Cache 特性**，通过缓存友好的数据结构和分层索引架构来优化状态访问性能。
+ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，采用 **Swiss Tables 架构**（对齐 Go 1.24），通过 SWAR 并行匹配和 Extendible Hashing 实现高效的状态访问。
 
 ## 项目概述
 
-ForL0 State Backend 采用双层索引结构设计：
-- **L0 Table**：热点缓存层，使用 JNI 分配的 L0 内存，为高频访问的键提供极低延迟的访问
-- **Main Table**：主索引表，使用 Flink MemoryManager 管理的堆外内存，存储全量状态数据
+ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
+- **SwissTable**：存储层，采用 SWAR 并行匹配（8 slots 同时比较），87.5% 负载因子
+- **ForL0StateMap**：Directory 路由层，实现 Extendible Hashing 动态扩容，支持增量 split
 
 ### 运行模式
 
@@ -20,22 +20,21 @@ ForL0 State Backend 采用双层索引结构设计：
 ## 核心特性
 
 ### 🚀 性能优化
-- **缓存友好设计**：64 字节对齐的桶结构，匹配 CPU 缓存行
-- **多级索引**：L0 缓存 + 主表的分层架构减少访问延迟
-- **局部扩展**：主表支持局部树状扩展，避免全局重哈希
-- **多种替换策略**：支持 LRU、LFU、CLOCK、TinyLFU、Sampled-LRU 等缓存替换算法
+- **SWAR 并行匹配**：8 个 slot 同时比较，对齐 Go 1.24 Swiss Tables
+- **Extendible Hashing**：增量 split 避免全局重哈希，仅迁移 50% 数据
+- **Hash 存储优化**：存储完整 64 位 hash，split/grow 时无需重新计算
+- **高负载因子**：87.5% 负载因子，空间利用率优于传统哈希表
 
 ### 🔧 架构特点
-- **键值分离**：索引指向堆外的 Entry 数据块
-- **JNI Native 内存**：L0Table 使用 JNI 分配的原生内存，支持 L0 硬件加速
-- **扩展桶池**：统一管理扩展桶，最多支持 255 个扩展桶/主桶
-- **内存管理**：MainTable 基于 Flink MemoryManager，L0Table 使用独立的 NativeL0MemoryAllocator
+- **2 层架构**：ForL0StateMap (Directory) → SwissTable (存储)
+- **堆内对象存储**：状态对象直接存储在堆内，零序列化开销
+- **控制字节设计**：EMPTY=0x80, DELETED=0xFE, FULL=h2 (低 7 位)
+- **JNI Native 内存**：支持 L0 硬件加速（鲲鹏 CPU）
 - **状态快照**：完整支持 Flink 的检查点机制
 
 ### 📊 监控统计
-- **多维度指标**：L0 缓存命中率、主表负载因子、扩展桶使用率
+- **Table 统计**：条目数、负载因子、split 次数
 - **模式检测**：运行时可查询当前 L0/模拟模式状态
-- **性能统计**：访问计数、驱逐率、内存使用量等
 
 ## 快速开始
 
@@ -98,24 +97,10 @@ sudo ldconfig
 state.backend: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
 
 # ========== ForL0 StateBackend 可选配置 ==========
+# 注意：新版 SwissMap 架构使用自适应扩容，大部分配置已不再需要
 
-# L0 缓存开关（默认 true）
-state.backend.forl0.l0-cache.enabled: true
-
-# 单个 L0Table 大小（2的幂次，默认10 = 1024 buckets = 64KB）
-state.backend.forl0.l0-cache.size: 10
-
-# L0 缓存替换策略：CLOCK, LRU, LFU, TINY_LFU, SAMPLED_LRU（默认 CLOCK）
-state.backend.forl0.l0-cache.replacement-policy: CLOCK
-
-# L0 内存池总容量（所有 L0Table 共享，默认 0 = 无限制）
+# Native 内存池总容量（默认 0 = 无限制）
 state.backend.forl0.l0-memory.max-size: 256mb
-
-# MainTable 初始大小（2的幂次，默认10 = 1024 buckets）
-state.backend.forl0.main-table.initial-size: 10
-
-# MainTable 负载因子阈值（默认 1.5）
-state.backend.forl0.main-table.load-factor-threshold: 1.5
 ```
 
 **编程方式配置：**
@@ -123,19 +108,12 @@ state.backend.forl0.main-table.load-factor-threshold: 1.5
 ```java
 import org.apache.flink.runtime.state.heap.ForL0StateBackend;
 import org.apache.flink.runtime.state.heap.ForL0StateBackendConfig;
-import org.apache.flink.runtime.state.heap.L0Table;
 
 // 使用默认配置
 ForL0StateBackend stateBackend = new ForL0StateBackend();
 
 // 或使用自定义配置
 ForL0StateBackendConfig config = ForL0StateBackendConfig.builder()
-    .setL0CacheEnabled(true)
-    .setL0CacheSize(12)  // 4096 buckets
-    .setL0ReplacementPolicy(L0Table.ReplacementPolicy.CLOCK)
-    .setL0MemoryMaxBytes(256 * 1024 * 1024L)  // 256MB
-    .setMainTableInitialSize(10)
-    .setMainTableLoadFactorThreshold(1.5)
     .build();
 ForL0StateBackend stateBackend = new ForL0StateBackend(config);
 
@@ -144,14 +122,11 @@ env.setStateBackend(stateBackend);
 
 #### 配置项说明
 
+> 注意：SwissMap 架构使用自适应增量扩容，无需手动配置负载因子等参数。
+
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `state.backend.forl0.l0-cache.enabled` | Boolean | `true` | 是否启用 L0 热点缓存 |
-| `state.backend.forl0.l0-cache.size` | Integer | `10` | 单个 L0Table 大小（2的幂次，范围 1-20） |
-| `state.backend.forl0.l0-cache.replacement-policy` | String | `CLOCK` | 缓存替换策略 |
-| `state.backend.forl0.l0-memory.max-size` | MemorySize | `0` (无限制) | L0 内存池总容量 |
-| `state.backend.forl0.main-table.initial-size` | Integer | `10` | MainTable 初始大小（2的幂次） |
-| `state.backend.forl0.main-table.load-factor-threshold` | Double | `1.5` | MainTable 扩容负载因子 |
+| `state.backend.forl0.l0-memory.max-size` | MemorySize | `0` (无限制) | Native 内存池总容量 |
 
 #### 3. 验证部署
 
@@ -198,7 +173,11 @@ MapState<String, Integer> mapState = getRuntimeContext().getMapState(mapDescript
 ├────────────────────────────────┼────────────────────────────────┤
 │    Flink MemoryManager         │        JNI Native Memory       │
 │    (Off-heap managed memory)   │  (L0 mode / Simulation mode)   │
-└────────────────────────────────┴────────────────────────────────┘
+├────────────────────────────────┴────────────────────────────────┤
+│                      HeapEntryStore (堆内)                       │
+│              Object[] 数组存储 HeapStateEntry 对象               │
+│                   (零序列化，直接对象引用)                        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 数据结构布局
@@ -230,30 +209,33 @@ MapState<String, Integer> mapState = getRuntimeContext().getMapState(mapDescript
 |------|------|
 | `ForL0StateBackend` | StateBackend 工厂入口 |
 | `ForL0KeyedStateBackend` | KeyedStateBackend 实现 |
-| `ForL0StateMap` | 核心状态存储，组合双层索引 |
-| `L0Table` | 热点缓存，支持多种替换策略 |
-| `MainTable` | 主索引表，支持局部扩展 |
-| `EntryArena` | 键值对物理存储 |
+| `ForL0StateMap` | StateMap 接口 + Directory 路由 + Extendible Hashing |
+| `SwissTable` | SWAR 并行匹配的哈希表存储层 |
 | `NativeL0Memory` | JNI 桥接，L0/模拟模式切换 |
-| `NativeL0MemoryAllocator` | L0Table 内存分配器 |
-| `MemoryManagerAllocator` | MainTable 内存分配器 |
 
 ## 性能特性
 
-### 查找操作流程
-1. 优先查询 L0 Table 缓存
-2. L0 未命中时查询 Main Table
-3. 主桶未命中时查询扩展桶
-4. 成功查找时更新 L0 缓存（热点提升）
+### 查找操作流程 (SWAR 并行匹配)
+1. 计算 hash，通过 `hash >>> globalShift` 定位 SwissTable
+2. 计算 H1 (`hash >>> 7`) 确定探测起始 group
+3. 加载 8 字节 ctrl word，SWAR 并行匹配 H2 (`hash & 0x7F`)
+4. 对匹配的 slot 进行 key/namespace equals 验证
+5. 未找到则线性探测下一个 group
 
-### 替换策略
-| 策略 | 说明 | 适用场景 |
-|------|------|----------|
-| **CLOCK** | 时钟算法，1-bit 访问标记 | **默认推荐**，低开销高性能 |
-| **LRU** | 最近最少使用 | 时间局部性强的工作负载 |
-| **LFU** | 最不频繁使用 | 频率局部性强的工作负载 |
-| **TinyLFU** | 带衰减的 TinyLFU | 混合访问模式 |
-| **Sampled-LRU** | 随机采样 + LRU | 轻量级近似 LRU |
+### SWAR 算法
+```java
+// 8 slots 同时比较 (Single Word, All Results)
+static long matchH2(long ctrlWord, int h2) {
+    long pattern = LSB * (h2 & 0xFFL);  // 0x0101010101010101L * h2
+    long x = ctrlWord ^ pattern;
+    return (x - LSB) & ~x & MSB;         // MSB = 0x8080808080808080L
+}
+```
+
+### Extendible Hashing
+- **增量扩容**：split 仅迁移 50% 数据到新表
+- **Directory 翻倍**：当 localDepth > globalDepth 时 directory 翻倍
+- **Go 风格去重**：`if (t.index == i) t.index = 2 * i` 避免重复处理
 
 ## 运行时 API
 
@@ -274,21 +256,6 @@ int modeCode = NativeL0Memory.getMode();
 // 0 = 未初始化, 1 = 模拟模式, 2 = L0 模式
 ```
 
-### L0 缓存统计
-```java
-L0TableStats stats = l0Table.getStats();
-double hitRate = stats.getHitRate();
-double evictionRate = stats.getEvictionRate();
-long accessCount = stats.getAccessCount();
-```
-
-### 主表统计
-```java
-MainTableStats stats = mainTable.getStats();
-double loadFactor = stats.getLoadFactor();
-int extensionBucketsUsed = stats.getExtensionBucketsUsed();
-```
-
 ## 测试
 
 ### 运行单元测试
@@ -297,8 +264,11 @@ int extensionBucketsUsed = stats.getExtensionBucketsUsed();
 # 运行所有测试
 mvn test
 
-# 运行特定测试类
-mvn test -Dtest=L0TableTest
+# 运行 SwissTable 测试
+mvn test -Dtest=SwissTableTest
+
+# 运行 ForL0StateMap 测试
+mvn test -Dtest=ForL0StateMapTest
 
 # 运行 Native 内存测试
 mvn test -Dtest=NativeL0MemoryTest
@@ -307,13 +277,13 @@ mvn test -Dtest=NativeL0MemoryTest
 ## 项目状态
 
 ### ✅ 已实现功能
-- 双表架构 (L0Table + MainTable)
-- 多种替换策略 (LRU/LFU/CLOCK/TinyLFU/Sampled-LRU)
+- Swiss Tables 架构 (对齐 Go 1.24)
+- SWAR 并行匹配 (8 slots 同时比较)
+- Extendible Hashing 增量扩容
+- Hash 存储优化 (split/grow 无需重新计算)
 - JNI Native 内存分配
 - L0 硬件支持 (libl0mempool.so)
 - 运行时模式自动检测
-- 扩展桶池管理
-- 完整的统计监控
 - Flink StateBackend 集成
 - Checkpoint/Savepoint 支持
 
@@ -332,7 +302,8 @@ forL0-state-backend/
 │   │   ├── ForL0StateMap.java          # 核心双层索引实现
 │   │   ├── L0Table.java                # 热点缓存
 │   │   ├── MainTable.java              # 主索引表
-│   │   ├── EntryArena.java             # 键值存储
+│   │   ├── HeapEntryStore.java         # 堆内对象存储
+│   │   ├── HeapStateEntry.java         # 状态条目 (key/ns/state)
 │   │   └── space/                      # 内存分配器
 │   │       ├── NativeL0Memory.java     # JNI 桥接
 │   │       └── NativeL0MemoryAllocator.java
@@ -350,6 +321,7 @@ forL0-state-backend/
 ## 文档
 
 - 📖 [详细设计说明书](ForL0-State-Backend设计说明书.md)
+- 📝 [Swiss Tables 重构设计](dev_notes/SwissTable_Refactoring_Plan.md)
 - 📝 [L0 内存分配设计](dev_notes/L0_Memory_Allocation_Design.md)
 
 ## 联系方式

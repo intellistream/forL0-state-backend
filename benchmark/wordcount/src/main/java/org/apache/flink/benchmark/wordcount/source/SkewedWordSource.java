@@ -37,7 +37,7 @@ import java.util.Random;
  *   <li>s = 1.2: approximately 30% skew</li>
  * </ul>
  */
-public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, Long>> {
+public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<Long, Long>> {
     
     private static final long serialVersionUID = 1L;
     
@@ -76,7 +76,7 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
     }
     
     @Override
-    public void run(SourceContext<Tuple2<String, Long>> ctx) throws Exception {
+    public void run(SourceContext<Tuple2<Long, Long>> ctx) throws Exception {
         int parallelism = getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks();
         int subtaskIndex = getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
         
@@ -87,8 +87,10 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
             ? numRecords  // Last subtask handles remaining records
             : startRecord + recordsPerSubtask;
         
-        // Create Zipf distribution for skewed key selection
-        ZipfDistribution zipf = new ZipfDistribution(numKeys, skewFactor);
+        // Create distribution for key selection
+        // When skewFactor <= 0, use uniform distribution; otherwise use Zipf distribution
+        final boolean useUniform = skewFactor <= 0;
+        ZipfDistribution zipf = useUniform ? null : new ZipfDistribution(numKeys, skewFactor);
         Random random = new Random(subtaskIndex);  // Seed for reproducibility
         
         // Rate limiting: calculate per-subtask rate
@@ -99,26 +101,20 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
         long count = 0;
         long batchCount = 0;
         long lastBatchTime = System.nanoTime();
-        long batchTimestamp = System.currentTimeMillis();  // Timestamp for current batch
         
         while (running && count < (endRecord - startRecord)) {
-            // Generate key using Zipf distribution
-            int keyIndex = zipf.sample();
-            String word = "word_" + keyIndex;
+            // Generate key using uniform or Zipf distribution
+            long key = useUniform ? random.nextInt(numKeys) : zipf.sample();
             
-            // Use batch timestamp for end-to-end latency calculation
-            // Update timestamp at the start of each batch to reduce syscall overhead
-            long timestamp = batchTimestamp;
-            
-            // Emit record
+            // Emit record: (key, 1L)
             synchronized (ctx.getCheckpointLock()) {
-                ctx.collect(Tuple2.of(word, timestamp));
+                ctx.collect(Tuple2.of(key, 1L));
             }
             
             count++;
             batchCount++;
             
-            // Rate limiting and batch timestamp update
+            // Rate limiting
             if (ratePerSubtask > 0 && batchCount >= batchSize) {
                 long elapsed = System.nanoTime() - lastBatchTime;
                 long sleepNanos = batchIntervalNanos - elapsed;
@@ -131,11 +127,8 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, 
                     }
                 }
                 lastBatchTime = System.nanoTime();
-                batchTimestamp = System.currentTimeMillis();  // Update batch timestamp
                 batchCount = 0;
             } else if (ratePerSubtask == 0 && batchCount >= 10000) {
-                // For unlimited rate, update timestamp every 10k records
-                batchTimestamp = System.currentTimeMillis();
                 batchCount = 0;
             }
             
