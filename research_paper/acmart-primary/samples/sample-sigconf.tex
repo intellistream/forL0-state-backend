@@ -1,5 +1,5 @@
 %%
-%% This is file `sample-sigconf.tex',
+%% This is file `main.tex',
 %% generated with the docstrip utility.
 %%
 %% The original source files were:
@@ -11,7 +11,7 @@
 %% For the copyright see the source file.
 %% 
 %% Any modified versions of this file must be renamed
-%% with new filenames distinct from sample-sigconf.tex.
+%% with new filenames distinct from the ACM sample file names.
 %% 
 %% For distribution of the original source see the terms
 %% for copying and modification in the file samples.dtx.
@@ -45,6 +45,9 @@
 %%
 %%
 \documentclass[sigconf]{acmart}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{amsmath}
 %%
 %% \BibTeX command to typeset BibTeX logo in the docs
 \AtBeginDocument{%
@@ -113,7 +116,7 @@
 %%
 %% The "title" command has an optional parameter,
 %% allowing the author to define a "short title" to be used in page headers.
-\title{Locality-Driven In-Memory State Management for State-Intensive Stream Processing}
+\title{Locality Driven State Management for In-Memory Stream Processing}
 
 %%
 %% The "author" command and its associated commands are used to define
@@ -197,7 +200,7 @@
 %% The abstract is a short summary of the work to be presented in the
 %% article.
 \begin{abstract}
-In-memory state backends increasingly dominate the cost of state-intensive stream processing workloads, where per-record updates, window maintenance, and timer firing turn irregular state accesses into a memory-system bottleneck. Existing designs often rely on fragmented heap-resident layouts and long indirection chains, which amplify cache misses and introduce garbage collection interference under constrained memory budgets. This paper presents a locality-driven in-memory state management design that improves memory efficiency without changing stream-processing semantics or snapshot/restore compatibility. The design combines compact hash indexing with control-byte based parallel matching, an inlined key/value layout that keeps probing and key validation close in the memory hierarchy, and a lightweight native state engine that shortens the access path while reducing JVM object and GC overhead. It further organizes state by key-group and namespace so that related accesses stay within smaller and more stable working sets during windowed and timer-heavy execution. We evaluate the approach on Linux using flink-state-benchmark microbenchmarks and the benchset end-to-end suite. Across state-intensive workloads, the results show higher throughput, lower latency, reduced cache-miss intensity, lower GC disturbance, and a clearer shift away from memory-bound execution.
+In-memory state-intensive stream processing is often limited less by operator computation than by the physical organization of state. Under frequent updates, window maintenance, and timer firing, fragmented heap layouts and long indirection chains turn routine state accesses into cache-miss-heavy, memory-bound execution, inflating tail latency and runtime jitter in latency-sensitive deployments, especially when memory budgets are tight. Existing in-memory backends largely prioritize semantic generality, JVM integration, and checkpoint compatibility, leaving locality and working-set control underexploited. We therefore design a locality-driven Flink state backend that combines compact metadata-guided probing, namespace-aware hierarchical partitioning, and a lightweight native storage engine. The implementation uses a thin Java compatibility layer over native hot-path storage. The evaluation combines isolated microbenchmarks and end-to-end streaming workloads, comparing against standard in-memory baselines with throughput, tail latency, cache-miss intensity, memory-bound stall breakdown, GC behavior, and memory footprint as primary metrics, including memory-constrained settings. The broader conclusion is that improving in-memory stream processing requires rethinking the physical organization of state, not merely accelerating individual state operations, while preserving Flink semantics and snapshot compatibility.
 \end{abstract}
 
 %%
@@ -245,33 +248,24 @@ In-memory state backends increasingly dominate the cost of state-intensive strea
 \maketitle
 
 \section{Introduction}
-Stateful stream processing systems have become a critical substrate for real-time analytics, monitoring, and decision-making.
-In these systems, correctness and expressiveness rely on maintaining large volumes of operator state---for example, keyed windows, aggregations, and timers---that must be accessed and updated for every incoming record.
-As state sizes grow and workloads become increasingly update-heavy, the execution profile shifts: compute becomes secondary, while state access dominates end-to-end throughput and tail latency.
+Stateful stream processing systems underpin real-time analytics, fraud detection, market surveillance, industrial monitoring, and other latency-sensitive applications in which both correctness and runtime stability matter. Modern engines provide mature semantics for time, windows, fault tolerance, and recovery, but these guarantees rely on reading and updating state for nearly every incoming record~\cite{akidau2013millwheel,akidau2015dataflow,murray2013naiad,carbone2017flinkstate,armbrust2018structured}. As workloads become more state-intensive, the dominant cost increasingly shifts away from operator computation and toward the backend that serves keyed state, window state, and timer-related accesses.
 
-Despite decades of optimization in stream processing engines, state access in common in-memory backends often remains memory-bound.
-The dominant cost is not hashing or comparison, but cache misses caused by random access patterns, fragmented object layouts, and deep chains of indirections.
-Each record update may trigger multiple pointer dereferences across scattered heap objects, turning high-level state operations into repeated stalls on last-level cache and DRAM.
-This effect is amplified in distributed deployments where large keyed state, frequent timer firing, and window maintenance concentrate pressure on the memory subsystem and increase sensitivity to locality.
+For in-memory backends, this shift exposes a memory-system bottleneck. Frequent per-record updates, window maintenance, and timer firing create irregular accesses over large keyed state, so even memory-resident state can become strongly memory-bound. The symptoms are high cache-miss rates, long dependent access chains, inflated tail latency, and runtime jitter. These effects matter in practice because many deployments operate under tight memory budgets, and backend inefficiency translates directly into lower throughput, worse p99 latency, or higher infrastructure cost.
 
-This paper argues that state management should be redesigned with locality as a first-class goal, while preserving the semantics and operational guarantees that practitioners rely on.
-Our approach replaces pointer-heavy organization with a compact indexing structure that enables parallel matching over control metadata and keeps probing and key validation close in the memory hierarchy.
-We further adopt an inlined key/value layout to reduce fragmentation and improve cache-line utilization, and we streamline the access path so that routing to the right state fragment requires fewer layers of indirection.
+The difficulty is that existing in-memory backends are usually optimized first for generality, semantic correctness, JVM integration, and checkpoint or recovery support, rather than for cache locality. As a result, state is often represented as pointer-heavy object graphs with separated metadata and payload, while routing a single logical access may traverse several layers of generic containers before reaching useful data. Namespace structure is also underexploited: hot windows or timer-related sub-state can interfere with unrelated namespaces inside larger tables, expanding the working set and worsening cache thrashing. In other words, the backend problem is not merely hash computation; it is the physical organization of state in memory.
 
-Locality improvements in streaming are not solely a matter of making a single hash table faster.
-Streaming state is naturally structured by keys, key-groups, and namespaces (e.g., per-window or per-operator sub-state), and exploiting this structure is essential for concentrating working sets.
-Accordingly, we organize state hierarchically so that related state for a given key-group and namespace maps to small, independent sub-tables, reducing cache thrashing and improving predictability under mixed workloads.
-Importantly, these changes are designed to be compatible with existing state semantics and snapshot/restore workflows, enabling adoption without altering application logic.
+This paper takes that view as its starting point. We present a locality-driven state backend for Flink built around three complementary ideas. First, we use compact metadata-guided probing: control-byte fingerprints and word-parallel matching filter candidate slots before touching payload, while a slot-centric layout keeps each key association adjacent to its value. Second, we organize state hierarchically as state $\rightarrow$ key group $\rightarrow$ namespace $\rightarrow$ sub-table so that hot working sets become smaller and more stable under namespace-heavy workloads. Third, we move the hot-path storage engine into lightweight native code, allowing tighter control over memory layout and reducing JVM heap-object pressure without changing the external state model.
 
-We evaluate the design on Linux using both isolated microbenchmarks (via flink-state-benchmark) and an end-to-end benchmark suite (benchset) that exercises realistic application pipelines.
-Across a range of state sizes and key/namespace distributions, the results show consistent trends: higher throughput, lower tail latency, fewer cache misses, and a clearer shift away from memory-bound execution.
-These gains are most pronounced under high state pressure---windowed workloads with frequent updates and timer activity---highlighting the importance of cache-aware state storage for scalable, parallel stream processing.
+The implementation uses a split architecture. Java remains the compatibility shell responsible for Flink API integration, state registration, serializer and type analysis, metadata tracking, and snapshot orchestration, while native code holds the off-heap state engine and serves the critical read and write path. Within the native engine, each registered state is partitioned by key group and namespace and stored in compact sub-tables. This architecture is designed to preserve Flink's keyed-state semantics and snapshot or restore compatibility while changing only the physical realization of in-memory state.
+
+The goal of this paper is therefore not to claim that a standalone hash table is faster in isolation. The goal is to show that cache-friendly layout, namespace-aware organization, and reduced JVM-heap dependence together form a practical backend design for state-intensive stream processing. To test that claim, our evaluation combines isolated microbenchmarks based on flink-state-benchmark with end-to-end streaming workloads from benchset. We focus on throughput, average and tail latency, cache misses, memory-bound stall breakdown, GC disturbance, and memory footprint, with particular attention to memory-constrained settings where heap pressure is expected to matter most.
 
 Our contributions are:
 \begin{itemize}
-\item A locality-driven design for in-memory stream state that reduces cache-miss intensity via compact indexing and parallel matching.
-\item A lightweight state storage organization that shortens the access path and mitigates object fragmentation through inlined layouts.
-\item A namespace-aware, hierarchical state organization that improves working-set locality for distributed and parallel streaming workloads.
+\item We argue that backend performance for in-memory, state-intensive stream processing should be understood primarily as a memory-layout and memory-management problem.
+\item We present a locality-driven Flink state backend that combines compact metadata-guided probing, slot-centric payload placement, and namespace-aware hierarchical partitioning.
+\item We implement the design as a Java compatibility shell plus a lightweight native state engine, preserving Flink state semantics and snapshot compatibility while shortening the hot path and reducing heap pressure.
+\item We define an evaluation methodology that measures not only throughput but also tail latency, cache misses, memory-bound stalls, GC behavior, and memory footprint under both regular and memory-constrained workloads.
 \end{itemize}
 
 \section{Background and Motivation}
@@ -280,74 +274,335 @@ Modern stream processing applications increasingly rely on large, mutable state 
 However, the dominant cost of stateful execution is often not arithmetic, but memory stalls triggered by state access: lookups and updates traverse scattered allocations, repeatedly missing in caches and amplifying tail latency.
 This behavior is especially pronounced when keys are high-cardinality and access patterns approximate random probes across large memory regions.
 
+We formalize the problem as locality-aware state management for keyed stream processing.
+Let $\mathcal{K}$ be the key domain, $\mathcal{N}$ the namespace domain (e.g., windows or operator sub-state), and $\mathcal{S}$ the set of logical state variables (e.g., value state, map state).
+A stream execution induces a sequence of state operations
+\(
+\mathcal{O} = \langle o_1, o_2, \dots, o_m \rangle,
+\)
+where each operation is of the form
+\(
+o_i = (\mathrm{op}_i, k_i, n_i, s_i, x_i),
+\)
+with $k_i\in\mathcal{K}$, $n_i\in\mathcal{N}$, $s_i\in\mathcal{S}$, and $x_i$ an optional payload (e.g., a value to write).
+The state backend implements the semantics of these operations (e.g., lookup, update, delete) and must preserve correctness and recoverability.
+
+We view a backend design as choosing a physical organization $\Theta$ (layout + routing) that maps each logical access to a concrete sequence of memory references (metadata reads, key validation reads, and value reads/writes).
+Given a workload distribution over operations, our goal is to reduce cache-miss-driven stalls so as to minimize latency (and thereby maximize throughput), while preserving the semantics of state operations:
+\begin{align}
+\min_{\Theta} \quad & \mathbb{E}_{o\sim \mathcal{O}}\big[ T(o;\Theta) \big] \\[-0.25em]
+\text{s.t.}\quad & \forall o\in\mathcal{O}:\; \mathrm{Sem}(o;\Theta)=\mathrm{Sem}(o;\Theta_{\mathrm{baseline}}).
+\label{eq:problem}
+\end{align}
+Here $T(o;\Theta)$ is the per-operation latency contribution of state access on the critical path. For a fixed operator pipeline and input rate, reducing $\mathbb{E}[T]$ increases sustainable throughput; conversely, throughput improvements can be viewed as a consequence of lowering the stall component of $T$.
+To connect the objective to cache behavior, we use a locality-centric model that emphasizes memory stalls due to cache misses:
+\begin{equation}
+T(o;\Theta) \approx T_{\mathrm{cpu}}(o;\Theta) + \alpha\,\mathrm{Miss}_{\mathrm{LLC}}(o;\Theta) + \beta\,\mathrm{Miss}_{\mathrm{DRAM}}(o;\Theta),
+\label{eq:stall-model}
+\end{equation}
+where $\mathrm{Miss}_{\mathrm{LLC}}$ and $\mathrm{Miss}_{\mathrm{DRAM}}$ denote last-level cache and DRAM miss events attributable to state access, and $\alpha,\beta$ reflect their amortized stall costs. In memory-bound regimes, lowering miss intensity is therefore the most direct way to reduce latency and improve throughput.
+
+Figure~\ref{fig:state-access-path} sketches the baseline access path and the root causes of cache-miss amplification.
+In a typical in-memory backend, a single logical state operation consults metadata, follows multiple pointers to locate a candidate entry, and then fetches key/value material from separately allocated objects.
+Because these memory locations are weakly correlated across consecutive records, hardware prefetching is ineffective and latency is dominated by last-level cache and DRAM misses.
+
 The problem is exacerbated by two structural properties of common in-memory state organizations.
 First, state is frequently stored in fragmented layouts with per-entry object overhead, which separates metadata from payload and forces extra cache lines to be touched during a single access.
 Second, the access path is layered: routing through multiple abstraction levels introduces additional indirections and branches, making state operations sensitive to pointer chasing rather than data movement.
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder.} Replace this box with a schematic figure.
+  Suggested content: (i) baseline access path (logical request $\rightarrow$ routing $\rightarrow$ lookup/update), (ii) fragmented metadata/payload layout, (iii) cache-miss amplification under window/timer-driven bursts, and (iv) where the redesign improves locality.
+  \vspace{0.5em}}}
+  \Description{A schematic comparing the baseline in-memory state access path (routing and pointer chasing across fragmented objects) with a locality-aware redesign that filters candidates using compact metadata before touching payload, highlighting where cache misses are amplified under window and timer bursts.}
+  \caption{Baseline state access path in common in-memory backends and where cache misses are amplified under state-heavy streaming workloads.}
+  \label{fig:state-access-path}
+\end{figure}
 
 \subsection{Motivation}
 Streaming workloads intensify these issues because they couple high update rates with time- and window-driven maintenance.
 Windowed operators repeatedly read-modify-write state for the same logical key over time, while timers introduce bursts of accesses that compete for cache capacity.
 Under sustained throughput, this mix increases cache churn and makes performance hinge on how efficiently the state layout serves irregular, fine-grained accesses.
 
+To ground the motivation in measurements, we first characterize Flink's default in-memory Heap state backend under representative state-heavy streaming workloads (update-heavy keyed operators with windows/timers).
+Using hardware performance counters, we observe that state access exhibits (i) high cache-miss intensity (especially at the last-level cache) and (ii) a large fraction of cycles spent in memory-bound execution, with substantial pressure attributable to both L3 and DRAM.
+Figures~\ref{fig:primary-cache-miss} and~\ref{fig:primary-topdown} summarize these observations.
+Together, these measurements indicate that, for such workloads, performance is limited less by compute and more by locality and data movement, motivating a backend design that directly targets cache behavior and memory stalls.
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (Primary study).} Cache miss rate of Flink Heap state backend.
+  Replace with a plot (e.g., LLC misses per kilo-instruction or miss ratio) across workloads/state sizes.
+  \vspace{0.5em}}}
+  \Description{A placeholder plot for the primary study showing that the Flink Heap state backend has a high last-level cache miss rate under state-heavy streaming workloads.}
+  \caption{Cache-miss intensity of Flink Heap state backend under state-heavy workloads (placeholder).}
+  \label{fig:primary-cache-miss}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (Primary study).} Top-down breakdown showing high \emph{Memory Bound}, with large \emph{L3 Bound} and \emph{DRAM Bound} components.
+  Replace with a stacked-bar (or similar) across workloads.
+  \vspace{0.5em}}}
+  \Description{A placeholder plot for the primary study showing a top-down microarchitectural analysis where Memory Bound is high, with large contributions from L3 Bound and DRAM Bound for the Heap state backend.}
+  \caption{Top-down analysis of execution stalls for Flink Heap state backend (placeholder).}
+  \label{fig:primary-topdown}
+\end{figure}
+
+These observations are consistent with a broad literature on stateful streaming systems, which has largely prioritized semantics, fault tolerance, and operational concerns such as recovery, out-of-order handling, and elasticity~\cite{akidau2013millwheel,akidau2015dataflow,murray2013naiad,carbone2017flinkstate,hoffmann2019megaphone}.
+Other lines of work emphasize incremental or transaction-oriented processing for streaming analytics~\cite{chandramouli2014trill,ahmad2012dbtoaster,meehan2015sstore}, addressing how to maintain and update derived state efficiently as inputs evolve.
+Across these systems, state remains a central abstraction, but the steady-state cost of fine-grained state access is often treated as an implementation detail behind a backend interface; in practice, many deployments still rely on general-purpose in-memory structures or embedded key-value stores, where object overhead and indirection can make performance highly sensitive to cache behavior~\cite{carbone2017flinkstate}.
+This motivates a complementary focus: improving the cache locality and access-path length of the in-memory state representation itself, while keeping the established semantics and operational contract intact.
+
 These observations motivate a design goal beyond a faster lookup primitive: state storage should be explicitly locality-aware.
 We seek compactness to reduce footprint and cache working-set size, short access paths to minimize indirections and branches, and layout choices that co-locate the information needed for probing and validation within a small number of cache lines.
-Finally, because stream processing systems depend on strict state semantics and operational tooling, these improvements must preserve existing correctness guarantees and remain compatible with snapshot and restore workflows.
+Finally, because stream processing systems depend on strict state semantics and operational tooling, these improvements must preserve existing correctness guarantees.
 
-\section{Design Overview}
-Our design targets the dominant bottleneck in large-state stream processing: memory stalls during fine-grained state access.
-Rather than optimizing isolated instructions, we treat state management as a data-layout problem and redesign the storage path to minimize cache misses and indirections.
-At a high level, the system combines compact indexing, cache-aware probing, and a lightweight organization that leverages the natural structure of streaming state.
+\section{Challenges}
+\label{sec:challenges}
+\textbf{C1. Random access amplified by fragmentation.}
+State lookups and updates approximate random probes over a high-cardinality key space, so performance quickly becomes dominated by cache misses rather than by hash computation.
+Existing in-memory backends often represent state as a graph of heap objects (per-entry objects, boxed keys/values, and separate metadata), which fragments logically adjacent data.
+As a result, a single logical access touches multiple cache lines across distant addresses (routing metadata, bucket/entry metadata, key material, and the value), inflating last-level cache and DRAM misses when the working set exceeds cache capacity.
+The core difficulty is that locality must be improved without changing the observable semantics of state operations.
 
-The first pillar is locality-driven layout with compact indexing.
-State entries are stored in a contiguous, allocation-efficient format, and the lookup path consults small control metadata to quickly identify candidate positions.
-To reduce branchy per-slot checks, the design uses control-byte based parallel matching at a conceptual level, enabling a probe to filter multiple candidates using a small, cache-resident summary before touching payload.
-This shifts work from pointer chasing toward sequential, cache-friendly reads.
+\textbf{C2. Long access chains and dependent pointer chasing.}
+Beyond layout, the state access path itself is often layered: routing through key-group selection, namespace maps, and generic container abstractions introduces multiple pointer dereferences and branches before any useful payload is reached.
+These dependent loads serialize (the next address is unknown until the previous load completes), which reduces memory-level parallelism and makes hardware prefetching ineffective.
+Consequently, even when operator logic is simple, the end-to-end per-record latency is dominated by stall time on the critical path.
 
-The second pillar is a lightweight access path that routes operations to the right state fragment with minimal layering.
-Streaming state is naturally partitioned by key-group and namespace (e.g., per-window or per-operator sub-state).
-We exploit this structure by organizing storage as a hierarchy from key-group to namespace to small sub-tables, which concentrates working sets and reduces cache thrashing under mixed access patterns.
-Crucially, sub-tables remain independent units, improving locality when workloads exhibit skew or when timers and window maintenance create bursts.
+\textbf{C3. Namespace interference and unstable working sets.}
+Streaming state is naturally scoped by execution context (key group and namespace, e.g., windows/timers), and at any moment only a small subset of namespaces may be hot.
+However, generic storage frequently co-mingles many namespaces in large tables or treats namespaces as an afterthought, so unrelated working sets compete for the same cache capacity.
+Timer firing and window maintenance further create bursty access patterns that evict useful data and amplify capacity/conflict misses, increasing latency variance and hurting tail performance.
+The challenge is to exploit namespace structure to isolate working sets and reduce cache interference under mixed and bursty workloads.
 
-The third pillar is compatibility.
-The design preserves the observable semantics of state operations and supports existing operational workflows for snapshot and restore.
-From a system perspective, the redesign changes internal layout and routing decisions while maintaining deterministic behavior and compatibility with established checkpointing expectations.
+These challenges motivate the mechanisms described in Section~\ref{sec:design}.
 
-We summarize the design principles as follows:
+\section{Design}
+\label{sec:design}
+This section presents a locality-driven state-store design built around three key ideas. Together they reduce cache-miss-driven stalls and dependent pointer chasing, directly targeting the objective in Eq.~(\ref{eq:problem}) and the miss-dominated cost model in Eq.~(\ref{eq:stall-model}). Each idea resolves one of the challenges (C1--C3) in Section~\ref{sec:challenges}.
+
+\subsection{Design overview}
+Our goal is to minimize the per-record state-access latency $T(o;\Theta)$ (Eq.~\ref{eq:problem}) by lowering the cache-miss and memory-stall components that dominate memory-bound execution (Eq.~\ref{eq:stall-model}). We do so with three design ideas:
 \begin{itemize}
-\item \textbf{Locality first}: prioritize contiguous layouts and predictable access over pointer-rich structures.
-\item \textbf{Compact metadata}: keep control information small and cache-resident to guide probes.
-\item \textbf{Parallel candidate filtering}: use control-byte based parallel matching to reduce unnecessary payload touches.
-\item \textbf{Cache-line aligned validation}: co-locate probing and key/value validation within few cache lines.
-\item \textbf{Short access paths}: minimize indirections and branches in the routing and lookup pipeline.
-\item \textbf{Namespace-aware partitioning}: organize state by key-group and namespace into small sub-tables to concentrate working sets.
-\item \textbf{Semantics and snapshot compatibility}: preserve correctness guarantees and integrate with snapshot/restore workflows.
+  \item \textbf{Compact metadata-guided probing and layout} (addresses C1): keep probing metadata compact and cache-resident, and touch payload (keys/values) only for a small set of candidates; co-locate key association and value to reduce cache-line fetches on hits.
+  \item \textbf{Lightweight routing on the hot path} (addresses C2): shorten the access chain from a logical state request to the physical slot by reducing abstraction layers, branches, and dependent pointer dereferences.
+  \item \textbf{Namespace-partitioned state organization} (addresses C3): align physical partitioning with streaming execution context (key group and namespace) so that hot working sets stay small and interference across namespaces is reduced.
 \end{itemize}
 
-\section{Challenges and Solutions}
-\textbf{Random access and fragmentation.} In-memory state access is dominated by irregular probes over a large key space, and traditional layouts amplify this cost by scattering per-entry metadata and payload across many allocations. The root cause is not the hash computation itself, but the number of cache lines touched during probing and key validation, which quickly becomes limited by last-level cache and DRAM latency. Our principle is to make the common-case probe both compact and cache-guided: consult a small, contiguous summary first, then touch payload only for likely candidates. We therefore use compact indexing with control-byte parallel matching at a high level to filter candidates in batches, and adopt a key inlined layout so that probing metadata and key validation are served from the same cache line whenever possible.
+Figure~\ref{fig:architecture-overview} sketches the end-to-end pipeline. A record is routed to a key group and namespace, then served by a compact sub-table that first probes control metadata and only then validates candidate keys and reads/writes the value.
 
-\textbf{Deep object layers and long access chains.} In many backends, a single state operation traverses multiple abstraction layers and pointer-heavy structures before reaching the actual value, turning each update into a series of dependent loads. This indirection chain increases branchiness, defeats hardware prefetching, and makes performance sensitive to object placement rather than workload semantics. Our principle is to shorten the access path by collapsing layers and reducing the number of mandatory pointer dereferences on the hot path. The solution is a lightweight storage organization that routes directly to compact state fragments and keeps the critical lookup/update steps within a small, contiguous set of memory regions, reducing stalls due to pointer chasing.
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder.} Replace this box with an end-to-end pipeline schematic.
+  Suggested content: record $\rightarrow$ key-group routing $\rightarrow$ namespace routing $\rightarrow$ sub-table probe (control bytes $\rightarrow$ candidate lanes $\rightarrow$ key validation $\rightarrow$ value read/write).
+  Annotate which steps are metadata-only vs. payload-touching.
+  \vspace{0.5em}}}
+  \Description{An end-to-end architecture overview of the state access pipeline: a record is routed by key group and namespace to a small sub-table, which performs a metadata-guided probe using control bytes to find candidate slots before validating keys and reading or updating the value.}
+  \caption{End-to-end overview of the locality-aware state access pipeline.}
+  \label{fig:architecture-overview}
+\end{figure}
 
-\textbf{Underexploited namespace locality.} Streaming state is naturally segmented (e.g., by windows and operator sub-state), yet generic storage often mixes namespaces or treats them as an afterthought, causing unrelated working sets to compete for the same cache capacity. The root cause is a mismatch between the logical structure of stateful operators and the physical layout: bursts from timers and window maintenance can thrash caches when many namespaces share large tables. Our principle is to align physical partitioning with the execution context so that related accesses reuse cache lines and interference is contained. We organize state as KeyGroup $\rightarrow$ Namespace $\rightarrow$ small sub-table units, so that each namespace has an independent, cache-friendly working set and the system avoids pulling cold state into cache during localized updates.
+\subsection{Compact metadata-guided probing and layout (C1)}
+This mechanism addresses \textbf{C1} by reducing the number of cache lines touched per operation and by making the first probe stage mostly metadata-only.
+It directly targets the miss terms in Eq.~(\ref{eq:stall-model}) by (i) keeping control metadata compact and cache-resident, and (ii) minimizing payload touches that would otherwise trigger LLC/DRAM misses.
 
-\section{System Details}
-\textbf{Compact indexing with control-byte parallel matching.} The system represents each state sub-table using a compact index that separates a small, contiguous control region from the larger key/value payload region. Each probe first scans control bytes to identify candidate slots whose fingerprints match the queried key, using word-level parallel comparisons to filter multiple slots at once. This reduces branchy per-slot checks and keeps the first stage of probing mostly within cache-resident metadata. Only when a control match is found does the probe touch payload to validate the key and complete the operation.
+We perform \emph{metadata-first probing}: each sub-table is an open-addressed hash structure with a compact control region (one byte per slot) that stores a short fingerprint and encodes \textsc{Empty}/\textsc{Deleted}/\textsc{Full}.
+Probing proceeds in 8-slot groups: a lookup loads a control-word for the group, performs word-parallel comparisons to identify lanes whose fingerprints match, and only then validates candidates against the key.
+This reduces branchy per-slot checks and enables early termination when an empty control byte is observed.
 
-\textbf{Key inlined layout and cache-line behavior.} To improve spatial locality, keys and values are stored in an inlined, contiguous layout that avoids per-entry object fragmentation and reduces pointer chasing. During lookup and update, the probe pattern is designed so that the information needed for candidate validation (key material and associated value) is typically accessed in the same cache line or adjacent cache lines. This alignment helps hardware prefetching and lowers the effective miss rate under random-access workloads. As a result, a single state operation touches fewer distinct cache lines, which is critical when throughput is limited by last-level cache and DRAM latency.
+Figure~\ref{fig:subtable-layout} illustrates the sub-table layout and the two-stage probe that scans control metadata before touching keys and values.
 
-\textbf{Lightweight access path via KeyGroup and Namespace routing.} Stream processing engines naturally partition state by key-group for scalability and recovery, and further segment it by namespace to represent windows and operator sub-state. The system routes each access by first selecting the key-group shard, then selecting the namespace-local fragment, and finally executing the compact probe within a small sub-table. This organization makes locality an explicit part of routing: operations that share execution context tend to land in the same small working set. By constraining the hot path to a small number of predictable steps and by avoiding deep indirection chains, the access pipeline becomes both faster and more stable under mixed workloads.
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder.} Replace this box with a sub-table layout and probe schematic.
+  Suggested content: (i) 8-slot group with control bytes (EMPTY/DELETED/fingerprint), (ii) payload region with slot-centric key/value adjacency, (iii) probe flow: load ctrl word $\rightarrow$ parallel match $\rightarrow$ validate candidate keys $\rightarrow$ read/write values, (iv) early-stop on EMPTY.
+  \vspace{0.5em}}}
+  \Description{A diagram of the state sub-table layout, showing control bytes organized in 8-slot groups and a payload region where each slot keeps the key association adjacent to its value. The probe scans control metadata first using parallel matching and touches payload only for candidate lanes, with early termination on empty control bytes.}
+  \caption{Sub-table layout and metadata-guided probing using control-byte fingerprints.}
+  \label{fig:subtable-layout}
+\end{figure}
 
-\textbf{Snapshot/restore compatibility.} The design preserves the observable semantics of state operations while changing internal layout choices, so it can integrate with existing checkpoint and recovery workflows. Logically, snapshotting serializes the contents of state (keys, namespaces, and values) in a deterministic form that is independent of in-memory probing artifacts. On restore, the system reconstructs the compact organization from the serialized state, re-establishing the same logical mapping while allowing physical layout to be rebuilt for locality. This approach maintains compatibility with established snapshot formats and operational tooling while enabling cache-friendly execution during steady-state processing.
+To reduce cache-line fetches on hits, the payload region uses a slot-centric layout that keeps each key association adjacent to its value. When a fingerprint match is found, candidate validation reads key material from a compact representation when available; otherwise it dereferences non-inlined key material. In both cases, adjacency ensures that a hit triggers a small number of localized payload touches.
 
-\section{Evaluation}
+Because streaming workloads are update-heavy, the write path mirrors the read path: probe metadata, validate candidates, then update in place or claim an available slot. Deletions create tombstones to preserve probe invariants. Tombstones can lengthen probes under churn; we therefore treat tombstone ratio as a first-class signal and trigger rehashing when probe efficiency degrades.
+
+In the notation of Eq.~(\ref{eq:stall-model}), metadata-first probing reduces $\mathrm{Miss}_{\mathrm{LLC}}$ and $\mathrm{Miss}_{\mathrm{DRAM}}$ by avoiding unnecessary payload reads, and adjacency reduces the number of distinct cache lines fetched on hits. Maintenance (rehash/grow) preserves these benefits by preventing probe chains from growing due to tombstones or high load.
+
+Algorithms~\ref{alg:probe}--\ref{alg:rebuild} summarize the lookup, insert/update, and rebuild logic at a high level.
+
+\begin{algorithm}[t]
+  \caption{Metadata-guided probe (lookup path).}
+  \label{alg:probe}
+  \begin{algorithmic}[1]
+    \Procedure{Probe}{$T, h, k$}
+      \State $g \gets \Call{GroupIndex}{h}$ \Comment{starting group from high hash bits}
+      \State $f \gets \Call{Fingerprint}{h}$ \Comment{small hash fragment stored in control bytes}
+      \Loop
+        \State $ctrl \gets \Call{LoadCtrlWord}{T, g}$
+        \State $mask \gets \Call{MatchFingerprint}{ctrl, f}$
+        \While{$mask \ne 0$}
+          \State $i \gets \Call{NextLane}{mask}$
+          \State $s \gets \Call{GroupBase}{g} + i$
+          \State $a \gets \Call{SlotKeyAssoc}{T, s}$
+          \If{\Call{KeyEquals}{a, k}}
+            \State \Return $s$
+          \EndIf
+          \State $mask \gets \Call{ClearLane}{mask, i}$
+        \EndWhile
+        \If{\Call{HasEmpty}{ctrl}}
+          \State \Return \textsc{NotFound}
+        \EndIf
+        \State $g \gets \Call{NextGroup}{g}$
+      \EndLoop
+    \EndProcedure
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+  \caption{Insert/update with tombstones and maintenance triggers.}
+  \label{alg:put}
+  \begin{algorithmic}[1]
+    \Procedure{Put}{$T, h, k, v$}
+      \State $g \gets \Call{GroupIndex}{h}$
+      \State $f \gets \Call{Fingerprint}{h}$
+      \State $firstAvail \gets \bot$ \Comment{best EMPTY/DELETED slot observed so far}
+      \Loop
+        \State $ctrl \gets \Call{LoadCtrlWord}{T, g}$
+        \State $mask \gets \Call{MatchFingerprint}{ctrl, f}$
+        \While{$mask \ne 0$}
+          \State $i \gets \Call{NextLane}{mask}$
+          \State $s \gets \Call{GroupBase}{g} + i$
+          \State $a \gets \Call{SlotKeyAssoc}{T, s}$
+          \If{\Call{KeyEquals}{a, k}}
+            \State \Call{WriteValue}{T, s, v}
+            \State \Return \textsc{Updated}
+          \EndIf
+          \State $mask \gets \Call{ClearLane}{mask, i}$
+        \EndWhile
+        \If{$firstAvail = \bot$}
+          \State $firstAvail \gets \Call{FirstEmptyOrDeleted}{ctrl, g}$
+        \EndIf
+        \If{$\Call{HasEmpty}{ctrl}$}
+          \State \textbf{break}
+        \EndIf
+        \State $g \gets \Call{NextGroup}{g}$
+      \EndLoop
+      \State $s \gets firstAvail$
+      \State \Call{WriteKeyAssoc}{T, s, k} \Comment{optionally store compact fixed-width representation when available}
+      \State \Call{WriteValue}{T, s, v}
+      \State \Call{SetCtrl}{T, s, f}
+      \If{\Call{NeedMaintenance}{T}}
+        \State \Call{RequestRehashOrGrow}{T}
+      \EndIf
+      \State \Return \textsc{Inserted}
+    \EndProcedure
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+  \caption{Maintenance: rehash/grow via physical-layout rebuild.}
+  \label{alg:rebuild}
+  \begin{algorithmic}[1]
+    \Procedure{Rebuild}{$T, mode$} \Comment{$mode \in \{\textsc{Rehash}, \textsc{Grow}\}$}
+      \If{$mode = \textsc{Rehash}$}
+        \State $cap' \gets cap(T)$
+      \Else
+        \State $cap' \gets \Call{NextCapacity}{cap(T)}$
+      \EndIf
+      \State $T' \gets \Call{AllocateTable}{cap'}$ \Comment{control bytes initialized to EMPTY}
+      \ForAll{slots $s$ in $T$}
+        \State $c \gets \Call{SlotCtrl}{T, s}$
+        \If{\Call{IsFull}{c}}
+          \State $(k, v, h) \gets \Call{ReadLogicalEntry}{T, s}$
+          \State \Call{Put}{T', h, k, v} \Comment{re-insert using metadata-guided probing}
+        \EndIf
+      \EndFor
+      \State \Call{Replace}{T, T'} \Comment{swap references; reclaim old table}
+    \EndProcedure
+  \end{algorithmic}
+\end{algorithm}
+
+\subsection{Lightweight routing on the hot path (C2)}
+This mechanism addresses \textbf{C2} by shortening the access chain from a logical state operation to a physical slot probe. While C1 focuses on the memory layout \emph{within} a table, C2 focuses on reducing dependent pointer chasing \emph{before} probing begins.
+Fewer layers and indirections reduce the serial stall component on the critical path and improve the constant factors in $T_{\mathrm{cpu}}$ (Eq.~\ref{eq:stall-model}).
+
+A long access chain (map lookups, wrapper objects, nested containers) creates a sequence of dependent memory accesses where each next pointer is only known after the previous load returns. This serialization reduces memory-level parallelism and increases sensitivity to LLC/DRAM latency. By routing in a small number of predictable steps, we reduce the number of dependent loads required before reaching the metadata probe.
+
+Concretely, state is partitioned by key group, and further segmented by namespace for windows and operator sub-state. Each access selects the key-group shard, then the namespace-local fragment, and finally probes a compact sub-table. For effectively un-namespaced state, the fast path avoids an extra mapping layer and directly indexes a per-key-group table; for general namespaces, each key group maintains a small namespace map whose values are independent sub-tables.
+
+This routing also specializes the common case. In many operators, a large fraction of accesses fall into a single effective namespace (or a small fixed set). A specialized fast path for this case avoids a general-purpose namespace map, reducing both pointer chasing and cache churn in routing metadata. In terms of Eq.~(\ref{eq:stall-model}), this reduces the overhead inside $T_{\mathrm{cpu}}$ and can also lower miss intensity by touching fewer routing structures per operation.
+
+Figure~\ref{fig:kg-ns-hierarchy} visualizes the hierarchical organization (KeyGroup $\rightarrow$ Namespace $\rightarrow$ sub-tables) and highlights the fast path for effectively un-namespaced state.
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder.} Replace this box with a hierarchy diagram.
+  Suggested content: an array of key-group shards; within each shard either (i) direct table for the common un-namespaced case, or (ii) a small namespace map to independent sub-tables; annotate that each namespace has an isolated working set.
+  \vspace{0.5em}}}
+  \Description{A hierarchy diagram showing state partitioned by key group, and within each key group further organized by namespace into independent small sub-tables. The figure also indicates a fast path for effectively un-namespaced state that avoids an extra mapping layer.}
+  \caption{Hierarchical state organization that aligns physical layout with key-group and namespace execution context.}
+  \label{fig:kg-ns-hierarchy}
+\end{figure}
+
+\subsection{Namespace-partitioned organization for locality isolation (C3)}
+This mechanism addresses \textbf{C3} by aligning physical partitioning with streaming execution context so that hot working sets stay small and predictable.
+Intuitively, isolating state by key group and namespace reduces cache interference: frequently accessed namespaces do not have to compete with cold namespaces inside the same large table.
+
+We structure state hierarchically as KeyGroup $\rightarrow$ Namespace $\rightarrow$ sub-table. At the top level, an operator instance holds an array of key-group shards. Within each key group, state is further separated by namespace, and each namespace maps to an independent compact sub-table.
+This organization yields two locality benefits: (i) it bounds the working set that any single hot context must touch, and (ii) it reduces the probability that unrelated namespaces evict each other's metadata and payload from cache.
+
+Namespaces can become cold or empty as windows close and timers fire. When a namespace table becomes empty, we remove it from the namespace map so that cold namespaces do not accumulate as routing overhead or consume cache capacity. This keeps the per-key-group namespace metadata compact and improves locality under long-running jobs with many transient namespaces.
+
+Timer firing and window maintenance naturally concentrate accesses into a small set of active namespaces for short periods. By keeping those namespaces in separate sub-tables, bursts are less likely to churn through unrelated cold state, reducing conflict/capacity misses and stabilizing tail latency.
+
+Namespace isolation reduces both $\mathrm{Miss}_{\mathrm{LLC}}$ and $\mathrm{Miss}_{\mathrm{DRAM}}$ in Eq.~(\ref{eq:stall-model}) by shrinking the effective working set per hot context and lowering cache interference under mixed workloads.
+
+\section{Implementation Details}
+This section highlights the minimal implementation choices needed to reproduce the design in \S\ref{sec:design} in a Flink-compatible state backend. We keep it intentionally brief: the design rationale is fully captured in \S\ref{sec:design}.
+
+\subsection{Table representation and hash decomposition}
+Each namespace-local sub-table is an open-addressed structure with (i) a compact control-byte array (one byte per slot) and (ii) a dense slot array that stores the key association adjacent to the value (slot-centric layout). Control bytes encode \textsc{Empty}/\textsc{Deleted}/\textsc{Full} and store a short fingerprint; probing scans control metadata in 8-slot groups and touches payload only for candidate lanes (Alg.~\ref{alg:probe}).
+
+We compute a 32-bit mixed hash and split it into high bits $H_1$ (group selection) and low bits $H_2$ (fingerprint stored in control bytes). To keep hits localized, each slot stores key association and value contiguously; when a compact fixed-width key representation is available, we inline it to reduce extra dereferences during validation.
+
+\subsection{Routing and namespace fast path}
+We implement the KeyGroup $\rightarrow$ Namespace $\rightarrow$ sub-table organization described in \S\ref{sec:design}. An operator instance holds an array of key-group shards; within each shard, state is either routed through a fast path for the effectively un-namespaced case (e.g., \textsc{VoidNamespace}) by directly indexing a per-key-group table, or through a small namespace map whose values are independent sub-tables.
+
+To keep routing overhead bounded under long-running jobs, we remove a namespace entry when its sub-table becomes empty after deletions. This avoids retaining cold namespaces as persistent routing metadata and helps preserve locality isolation.
+
+\subsection{Maintenance: rehash and grow}
+We trigger maintenance based on probe-efficiency signals rather than on fixed operation counts. In particular, we track occupancy and tombstone ratio; high tombstone density motivates rehashing, while high occupancy motivates growth. Both operations rebuild the physical layout by allocating a fresh table, reinserting logical entries, and reconstructing control metadata (Alg.~\ref{alg:rebuild}).
+
+\subsection{Flink integration and access path}
+We implement the design by plugging into Flink's standard keyed-state abstractions. Our backend provides a keyed state backend that owns the per-operator state store and is responsible for routing each state access to the correct key group and namespace.
+
+On each record, Flink establishes the current key context (and thus the current key group). A state access then resolves the namespace from the state descriptor/serializer context and performs routing in the same order as \S\ref{sec:design}: (i) index the key-group shard, (ii) select the namespace-local sub-table (either via the fast path for \textsc{VoidNamespace} or via the per-key-group namespace map), and (iii) execute the metadata-guided probe for lookup/update (Alg.~\ref{alg:probe} and Alg.~\ref{alg:put}). This organization makes the implementation correspond directly to the three design mechanisms: compact metadata-driven probing and layout (C1), lightweight routing on the hot path (C2), and namespace-partitioned state organization for locality isolation (C3).
+
+\section{Experiments}
+\label{sec:experiments}
+
 \subsection{Setup}
-We evaluate the proposed cache-friendly state storage design on Linux, focusing on how layout and access-path changes translate into end-to-end streaming performance.
-Our methodology combines two complementary workloads: (i) \emph{flink-state-benchmark} microbenchmarks that isolate backend state operations and stress lookup/update patterns under controlled key and namespace distributions, and (ii) \emph{benchset} end-to-end benchmarks that exercise realistic application pipelines where state access is interleaved with operator logic, windows, and timer activity.
-All experiments compare against two widely used in-memory baselines: HashMapStateBackend and HeapStateBackend.
+We run experiments on a dedicated multi-core Linux server to avoid interference.
+We report CPU model, core count, cache hierarchy, DRAM capacity, and NUMA configuration (\textbf{fill in final numbers}).
+We use Apache Flink \textbf{1.20.0} with a fixed JDK version (\textbf{fill in}) and keep Flink job logic, serializers, and parallelism identical across runs; the only change between runs is the state backend.
 
-We report throughput and latency to capture both steady-state capacity and tail behavior.
-To connect performance to memory-system effects, we also measure cache miss rate and provide a memory-bound breakdown that attributes stalls to the memory hierarchy.
-Across both workload families, we sweep state size and access intensity (e.g., working-set growth and update ratios), and vary key/namespace distributions (uniform, skewed, and mixed) to evaluate robustness under different locality regimes.
+Unless otherwise stated, we compare: (i) the \textbf{proposed backend} and (ii) \textbf{HashMapStateBackend} (the standard in-memory heap backend; often referred to as \textbf{HeapStateBackend} in earlier Flink versions).
+We optionally include \textbf{RocksDBStateBackend} to contextualize in-memory vs. embedded-KV trade-offs; when included we report its configuration and interpret it as a different point in the design space.
+
+\subsection{Methodology}
+\label{sec:eval-methodology}
+\textbf{Protocol.} For each configuration point, we run to steady state, discard warm-up, and report the median across repeated trials. Unless otherwise stated, we use a fixed-duration warm-up (e.g., 2 minutes) followed by a fixed-duration measurement window (e.g., 5 minutes), repeat 5 times with identical inputs and random seeds, and report median with tail percentiles. We report tail percentiles because timer bursts and maintenance can amplify variance.
+
+\textbf{Workloads.} We use two complementary workload families: (i) flink-state-benchmark microbenchmarks to isolate state-access behavior under systematic sweeps, and (ii) benchset end-to-end pipelines to validate application-level impact.
 
 \begin{table}[t]
   \caption{Workloads used in evaluation and the primary behaviors they stress.}
@@ -357,11 +612,38 @@ Across both workload families, we sweep state size and access intensity (e.g., w
     \toprule
     \textbf{Workload} & \textbf{Level} & \textbf{What it stresses} \\
     \midrule
-    flink-state-benchmark microbenchmarks & Micro & Isolated state lookups/updates; key and namespace distribution sweeps; controlled window/timer-like access intensity \\
-    benchset end-to-end benchmarks & E2E & Application pipelines; sustained update pressure; windowed state and timer-driven bursts; interaction with runtime scheduling \\
+    flink-state-benchmark microbenchmarks & Micro & Isolated state lookups/updates; sweeps over working-set size, skew, read/write mix, and churn \\
+    benchset end-to-end benchmarks & E2E & Full pipelines; sustained updates; windowed state and timer-driven bursts; interaction with scheduling and GC \\
     \bottomrule
   \end{tabular}
 \end{table}
+
+\textbf{Metrics.} We report throughput and latency (including tail percentiles).
+To connect performance to memory-system effects, we collect cache-miss intensity and a memory-bound breakdown from hardware counters.
+For internal behavior, we report maintenance frequency (rehash/grow), memory footprint, and (when enabled) checkpoint overhead.
+
+\textbf{Parameter sweeps.} Across RQs we systematically sweep: working-set size (from cache-resident to DRAM-resident), operation mix (read-heavy to write-heavy), key distribution (uniform to Zipf-skewed; e.g., multiple Zipf parameters), namespace cardinality (e.g., 1, $10^3$, $10^5$ namespaces), and churn (insert/update/delete mixes; e.g., 0\%/20\%/50\% deletes). We keep operator logic and Flink configuration fixed while varying exactly one axis at a time.
+
+\textbf{Experimental design (research questions).} The core of our methodology is a question-driven experiment matrix. Each question below states what we want to establish and the experiments we design to establish it.
+\begin{itemize}
+  \item \textbf{RQ1 (End-to-end impact).} \emph{What is the end-to-end benefit of the proposed backend for realistic stateful streaming pipelines?}
+  \emph{Design:} run the benchset end-to-end suite (including at least one windowed and one timer-heavy pipeline) with identical Flink configurations across backends; report sustained throughput and latency percentiles (p50/p95/p99/p99.9). For one timer/window-heavy pipeline, additionally report a time series of throughput and high-percentile latency to expose burst-induced tail effects (e.g., timer firing bursts and maintenance spikes).
+
+  \item \textbf{RQ2 (Backend-level comparison).} \emph{How does the proposed backend compare under controlled state-access patterns, and where do improvements appear as the working set crosses cache boundaries?}
+  \emph{Design:} use flink-state-benchmark microbenchmarks to sweep working-set size across cache boundaries (L1/L2/L3 and DRAM-resident), and vary operation mixes (e.g., 100\% read, 50/50 read--update, update-heavy) and key/namespace distributions (uniform vs. Zipf-skewed). We report both throughput and tail latency, and mark the approximate cache-capacity transition points based on the working-set footprint.
+
+  \item \textbf{RQ3 (Internal mechanisms).} \emph{Which design mechanisms contribute most: C1 (metadata-guided probing/layout), C2 (lightweight routing), or C3 (namespace partitioning)?}
+  \emph{Design:} perform ablations that disable one mechanism at a time while keeping the rest identical (C1-only removed, C2-only removed, C3-only removed). We run the same microbenchmarks as in RQ2 and at least one representative end-to-end pipeline from RQ1, and report (i) normalized throughput/latency and (ii) hardware-counter deltas to connect each mechanism to cache behavior.
+
+  \item \textbf{RQ4 (Workload sensitivity).} \emph{How robust is the design across locality regimes and churn patterns?}
+  \emph{Design:} sweep (i) key skew (uniform vs. Zipf with multiple skew parameters), (ii) namespace cardinality (single namespace vs. many namespaces) and hot--cold mixes, (iii) churn (insert/update/delete mixes that create tombstones), and (iv) burst intensity (timer/window configurations that vary firing density). For each sweep we report throughput, tail latency, and maintenance counters (rehash/grow frequency and time) to quantify robustness under adversarial locality and mutation.
+
+  \item \textbf{RQ5 (Micro-architectural evidence).} \emph{Do hardware counters support the locality hypothesis, and do they correlate with throughput/latency improvements?}
+  \emph{Design:} collect hardware counters for representative micro and end-to-end runs; report cache-miss intensity (e.g., last-level-cache misses per record and per instruction) and a top-down style memory-bound breakdown. We use Linux \texttt{perf} for miss-intensity and cycle/instruction accounting, and Intel VTune to attribute stalls into front-end / back-end / memory-bound components.
+
+  \item \textbf{RQ6 (Overheads and trade-offs).} \emph{What are the costs: memory footprint, maintenance overhead, and checkpoint/recovery impact?}
+  \emph{Design:} measure bytes per logical entry (payload vs. metadata), GC activity, rehash/grow frequency and time (and its contribution to tail outliers), and checkpoint time/size (and restore time if evaluated). We report both steady-state overheads (bytes/entry, CPU overhead of maintenance) and operational overheads (checkpoint/recovery) to make the trade-offs explicit.
+\end{itemize}
 
 \begin{table}[t]
   \caption{Metrics reported and how they are collected.}
@@ -373,38 +655,109 @@ Across both workload families, we sweep state size and access intensity (e.g., w
     \midrule
     Throughput & Records processed per second under steady-state load & Benchmark harness reports; validated by runtime counters \\
     Latency & Per-record processing latency, including tail percentiles & Benchmark harness timestamps and percentile summaries \\
-    Cache miss rate & Miss intensity of relevant cache levels during execution & Hardware performance counters (e.g., Linux \texttt{perf}) \\
-    Memory-bound breakdown & Fraction of cycles attributable to memory stalls vs. retiring work & Counter-based top-down style analysis / stall attribution \\
+    Cache miss rate & Miss intensity of relevant cache levels during execution & Hardware performance counters (Linux \texttt{perf}/perf\_event) \\
+    Memory-bound breakdown & Fraction of cycles attributable to memory stalls vs. retiring work & Intel VTune top-down analysis / stall attribution \\
+    Maintenance overhead & Rehash/grow frequency and time; impact on tail latency & Backend-instrumented counters + benchmark timestamps \\
+    Memory footprint & Bytes per logical entry (including metadata) & Heap/off-heap accounting; JVM tooling (\textbf{fill in}) \\
+    Checkpoint overhead & Checkpoint time, size, and restore time (if enabled) & Flink checkpoint metrics and logs \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsection{Results}
-Across the microbenchmarks, the cache-friendly design consistently improves the efficiency of core state operations as the working set grows.
-The largest gains appear in lookup- and update-heavy mixes with low locality, where baselines incur repeated cache misses due to fragmented layouts and repeated pointer dereferences.
-By filtering candidates using compact metadata before touching payloads, the redesigned access path reduces the number of cache lines accessed per operation and makes performance less sensitive to object placement.
+\label{sec:eval-results}
+This subsection reports the measured results for RQ1--RQ6. Figures are grouped by end-to-end performance, microbenchmark characterization, ablations, sensitivity, hardware-counter evidence, and overheads.
 
-In end-to-end pipelines, higher state pressure amplifies these trends.
-When workloads involve windowed state and timer-driven bursts, the benefits become more pronounced because repeated accesses concentrate within execution-local fragments.
-Compared with general-purpose in-memory baselines, the proposed organization sustains higher throughput under sustained update rates and reduces latency variability, particularly in the tail, without relying on workload-specific tuning.
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (RQ1).} End-to-end throughput and tail latency.
+  Suggested content: per-workload throughput; latency percentiles; and a timer/window-heavy case study.
+  \vspace{0.5em}}}
+  \Description{Plots for end-to-end benchset results: throughput and tail latency across backends, plus a case study emphasizing timer/window bursts.}
+  \caption{RQ1: End-to-end impact on throughput and tail latency.}
+  \label{fig:rq1-e2e}
+\end{figure}
 
-We also observe that hardware-counter indicators align with the performance improvements.
-The proposed design lowers cache-miss intensity and shifts execution away from being dominated by memory stalls, which explains why improvements persist across different key and namespace distributions.
+\begin{figure*}[t]
+  \centering
+  \fbox{\parbox{0.96\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (RQ2).} Microbenchmark sweeps.
+  Suggested content: throughput and latency vs. working-set size; separate panels for read-heavy vs. write-heavy mixes; include uniform vs. skewed distributions.
+  \vspace{0.5em}}}
+  \Description{Microbenchmark results showing how throughput and latency change as the working set grows, under different operation mixes and locality regimes.}
+  \caption{RQ2: Backend-level comparison under controlled state-access patterns.}
+  \label{fig:rq2-micro}
+\end{figure*}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (RQ3).} Ablation results.
+  Suggested content: normalized throughput/latency and cache-miss intensity for each ablation.
+  \vspace{0.5em}}}
+  \Description{Ablation plots that isolate the impact of metadata gating/layout, routing, and namespace partitioning on performance and cache behavior.}
+  \caption{RQ3: Ablation study isolating contributions of major design mechanisms.}
+  \label{fig:rq3-ablation}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (RQ4).} Robustness and sensitivity.
+  Suggested content: performance and tail-latency trends under skew, namespace cardinality, churn, and burst intensity.
+  \vspace{0.5em}}}
+  \Description{Plots showing robustness across key/namespace distributions and sensitivity to churn and timer/window bursts.}
+  \caption{RQ4: Workload sensitivity across locality and churn regimes.}
+  \label{fig:rq4-sensitivity}
+\end{figure}
+
+\begin{figure*}[t]
+  \centering
+  \fbox{\parbox{0.96\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (RQ5).} Memory-system indicators.
+  Suggested content: cache-miss intensity and a memory-bound breakdown aligned with RQ1/RQ2 runs.
+  \vspace{0.5em}}}
+  \Description{Plots connecting backend performance to cache-miss intensity and stall attribution, comparing against baselines.}
+  \caption{RQ5: Hardware-counter evidence for reduced memory-system pressure.}
+  \label{fig:rq5-mem}
+\end{figure*}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\vspace{0.5em}
+  \textbf{Placeholder (RQ6).} Overheads and trade-offs.
+  Suggested content: bytes/entry; maintenance frequency; checkpoint time/size; and their impact on tail latency.
+  \vspace{0.5em}}}
+  \Description{Plots and tables quantifying memory footprint, maintenance overhead, and checkpointing costs across backends.}
+  \caption{RQ6: Overheads and trade-offs (footprint, maintenance, checkpointing).}
+  \label{fig:rq6-overheads}
+\end{figure}
 
 \subsection{Discussion}
-The results suggest that state performance in stream processing is primarily limited by memory-system behavior rather than compute, and that reducing cache misses is an effective lever to improve both throughput and tail latency.
+The evaluation is designed to test the hypothesis that state performance in stream processing is primarily limited by memory-system behavior rather than compute, and that reducing cache misses is an effective lever to improve both throughput and tail latency.
 The strongest benefits occur under windowed and timer-heavy workloads, where frequent updates and maintenance bursts repeatedly exercise the same key-group and namespace-local working sets.
-By shortening the access path and making probing more cache-guided, the design reduces stall-dominated execution and stabilizes performance under mixed access patterns; when locality is already high or the working set fits comfortably in cache, improvements remain but are naturally smaller.
+By shortening the access path and making probing more cache-guided, the design reduces stall-dominated execution and stabilizes performance under mixed access patterns. When locality is already high or the working set fits comfortably in cache, improvements remain but are naturally smaller, because the baseline pays fewer DRAM-level misses to begin with. The design also introduces modest metadata overhead (control bytes, stored hashes) and occasionally performs maintenance (e.g., rehashing to clear tombstones or growing the table) to preserve probe efficiency; these costs are amortized by the steady-state reduction in cache-line touches on the critical per-record path.
+
+An important implication is that steady-state locality optimizations are complementary to checkpoint/recovery optimizations. Faster checkpointing, incremental snapshotting, and parallel recovery reduce the time spent off the critical path during failures and recovery, while locality-driven probing reduces the per-record cost during normal execution. In practice, both costs matter: large-state jobs can be bottlenecked by steady-state access at high update rates and also constrained by recovery time objectives. A cache-friendly physical layout can therefore improve day-to-day throughput and tail latency while remaining compatible with system-level advances in fault tolerance.
 
 \section{Related Work}
 \subsection{State management in stream processing}
-Prior work on stateful stream processing has developed rich semantics and execution mechanisms for large-scale, fault-tolerant state, including keyed operators, windowing, timers, and checkpoint/recovery protocols. Research in this area has explored how to minimize coordination overhead, reduce checkpoint cost, and improve recovery time, as well as how to manage state growth via incremental snapshots, compaction, and state TTL policies. Our work is complementary: rather than changing state semantics or recovery protocols, we focus on the steady-state performance bottleneck that increasingly dominates under high update rates---the memory behavior of fine-grained state access. This perspective connects system-level streaming concerns (windows, timers, and per-record updates) to low-level locality effects, and motivates a cache-aware redesign of the in-memory access path while preserving the established correctness contract.
+Large-scale stream processors have established the core semantics and mechanisms for fault-tolerant stateful processing, including keyed state, windowing/timers, and checkpoint/recovery protocols~\cite{akidau2013millwheel,akidau2015dataflow,carbone2017flinkstate,armbrust2018structured,murray2013naiad,chandramouli2014trill,meehan2015sstore}. A recurring theme in these systems is that correctness and recovery are achieved through well-defined state abstractions and consistent snapshots; the remaining performance bottleneck increasingly shifts to the steady-state cost of fine-grained per-record state access at high update rates. Recent work has also explored elasticity and online state movement to cope with workload shifts, e.g., latency-conscious state migration in distributed dataflows~\cite{hoffmann2019megaphone}. Complementary to these directions, our paper targets the micro-architectural efficiency of the hot path itself: we preserve the state abstraction and snapshot contract, but redesign in-memory layout and probing so that lookups/updates touch fewer cache lines.
 
-\subsection{Cache-friendly hash table and indexing techniques}
-There is a long line of work on cache- and locality-aware indexing, including compact open-addressing designs, metadata-guided probing, and vectorized or word-parallel matching to reduce branches and random memory reads. These techniques often separate small control information from payload, enabling probes to filter candidates using cache-resident summaries before touching keys and values. Related ideas also appear in SIMD-friendly dictionary structures and in data-layout optimizations that co-locate frequently accessed fields to reduce cache-line footprint. Our design draws on these general principles but adapts them to the streaming-state setting, where the access pattern is dominated by repeated lookups and updates across large, mutable working sets and where preserving snapshot/restore behavior is a hard requirement.
+Recent work also revisits the performance costs of checkpointing and recovery, which can dominate for large state and frequent snapshots. Techniques include incremental checkpointing based on data-structure design~\cite{lin2022incrementalckpt}, analyses of how storage-layer behaviors such as log compaction interact with incremental checkpointing~\cite{chronarakis2019logcompaction}, and parallel recovery mechanisms that reduce restart time by recovering state fragments concurrently~\cite{liu2020fp4s}. Complementary studies bridge theory and practice for checkpoint-interval tuning and end-to-end fault-tolerance overheads in distributed streaming systems~\cite{jayasekara2022checkpointopt}. While these works focus on snapshot/recovery overheads and their scaling behavior, we focus on the steady-state per-record access path and its cache efficiency; the two directions are compatible and can be composed.
+
+At the methodology level, a growing body of work emphasizes the need for systematic evaluation of streaming state stores and their operational trade-offs~\cite{asyabi2022statebench}. Our evaluation follows this spirit, but focuses specifically on connecting cache behavior (miss intensity, stall time) to state-store design choices.
 
 \subsection{Distributed state backends and storage architectures}
-Distributed stream processors employ a range of state backend architectures, from purely in-memory representations to designs that integrate embedded stores or remote/disaggregated storage for capacity and durability. Prior work has studied trade-offs among throughput, latency, and operational properties such as elasticity, spill-to-disk behavior, and multi-tier caching. Other systems explore separating compute from storage or leveraging shared storage to simplify scaling and recovery. Our work targets a complementary point in this design space: improving the locality of in-memory state access within the execution process itself, so that per-record operations become less sensitive to cache misses and object indirection. This focus is particularly relevant in modern deployments where state remains logically large but is accessed at fine granularity, making cache behavior a first-order determinant of performance.
+Beyond purely in-process state, many deployments rely on embedded or external storage components (e.g., LSM-based engines) to trade CPU/cache efficiency for capacity and durability. Recent research revisits this design space with modern hardware: SSD-backed state stores reduce memory pressure but introduce I/O-aware access paths~\cite{lee2018ssdstate}, while RDMA-enabled designs push state access toward disaggregated or remote-memory architectures to reduce CPU overheads and improve scaling~\cite{delmonte2022rdma}. Other systems propose specialized state stores for stream engines, e.g., semantic-aware organization for large-scale state management~\cite{lee2023flowkv}.
+
+At larger scales, distributed state management introduces additional challenges around partitioning, placement, and metadata management. Rhino studies efficient management of very large distributed state for stream processing engines~\cite{delmonte2020rhino}. Amoeba aligns stream operators with externally managed state to support elasticity and operational flexibility~\cite{papaioannou2021amoeba}. Related work also explores general strategies for scaling out stateful operators~\cite{mudassar2019scalingout}. Our focus is orthogonal: we assume the standard per-task state interface and snapshot semantics, and improve the cache behavior of the in-memory access path that remains performance-critical even when the system adopts larger-scale state backends.
+
+\subsection{Cache-friendly hash table and indexing techniques}
+There is a long line of work on cache- and locality-aware hashing and indexing, including compact open addressing and collision-resolution schemes such as cuckoo hashing and hopscotch hashing~\cite{pagh2004cuckoo,herlihy2008hopscotch}, as well as cache-conscious techniques for reducing random accesses~\cite{askitis2005cache}. Micro-architectural analyses and optimizations have shown how probe structure, branch behavior, and memory access patterns dominate hash-table throughput on modern CPUs~\cite{ross2007hashprobes}. More recently, SIMD-aware hash-table designs leverage vector instructions to accelerate matching and reduce control-flow divergence~\cite{shankar2019simdhash}, and new hash-table designs explicitly optimize cache-line touches and write amplification under contemporary memory hierarchies~\cite{pandey2023iceberght}.
+
+Our design draws on these principles (metadata-first filtering, word-parallel matching, and cache-resident control information) but adapts them to streaming state: the hot path is dominated by repeated lookups/updates under continuous mutation, and the state store must preserve snapshot/restore semantics and namespace organization. Consequently, we emphasize a shortened access path and a physical layout aligned with key-group and namespace locality, rather than optimizing a standalone dictionary in isolation.
 
 \section{Conclusion}
 This paper argues that the limiting factor for large-state stream processing is increasingly the memory behavior of state access rather than the compute cost of operator logic. By making locality a first-class design goal, we show how compact indexing with parallel matching, inlined layouts, and a shortened access path can reduce cache-miss intensity while preserving state semantics and snapshot/restore compatibility. Organizing state by key-group and namespace further aligns physical layout with the execution context of windows and timers, helping isolate working sets and stabilize tail latency under mixed workloads. Our evaluation across isolated microbenchmarks and end-to-end pipelines demonstrates consistent improvements in throughput and latency trends, and provides evidence of a shift away from memory-bound execution. These results suggest that cache-aware state storage is a practical lever for scaling stateful operators in distributed and parallel streaming systems. Looking forward, we believe the same locality-first principles can be extended to multi-tier state hierarchies and adaptive partitioning policies that react to workload shifts while maintaining operational compatibility.
@@ -422,6 +775,205 @@ We thank the anonymous reviewers for their valuable feedback.
 %% The next two lines define the bibliography style to be used, and
 %% the bibliography file.
 \bibliographystyle{ACM-Reference-Format}
-%% \bibliography{references}
+
+\begin{thebibliography}{28}
+
+\bibitem{akidau2013millwheel}
+Tyler Akidau, Alex Balikov, Kaya Bekiroglu, Slava Chernyak, Josh Haberman, Reuven Lax, Sam McVeety, Daniel Mills, Paul Nordstrom, and Sam Whittle.
+2013.
+\textit{MillWheel: Fault-Tolerant Stream Processing at Internet Scale}.
+Proceedings of the VLDB Endowment (PVLDB) 6, 11 (2013), 1033--1044.
+\url{https://doi.org/10.14778/2536222.2536229}
+
+\bibitem{akidau2015dataflow}
+Tyler Akidau, Robert Bradshaw, Craig Chambers, Slava Chernyak, Rafael Fern{\'a}ndez-Moctezuma, Reuven Lax, Sam McVeety, Daniel Mills, Frances Perry, Eric Schmidt, and Sam Whittle.
+2015.
+\textit{The Dataflow Model: A Practical Approach to Balancing Correctness, Latency, and Cost in Massive-Scale, Unbounded, Out-of-Order Data Processing}.
+Proceedings of the VLDB Endowment (PVLDB) 8, 12 (2015), 1792--1803.
+\url{https://doi.org/10.14778/2824032.2824076}
+
+\bibitem{carbone2017flinkstate}
+Paris Carbone, Stephan Ewen, Gyula F{\'o}ra, Seif Haridi, Stefan Richter, and Kostas Tzoumas.
+2017.
+\textit{State Management in Apache Flink{\textregistered}: Consistent Stateful Distributed Stream Processing}.
+Proceedings of the VLDB Endowment (PVLDB) 10, 12 (2017), 1718--1729.
+\url{https://doi.org/10.14778/3137765.3137777}
+
+\bibitem{armbrust2018structured}
+Michael Armbrust, Tathagata Das, Joseph Torres, Burak Yavuz, Shixiong Zhu, Reynold Xin, Ali Ghodsi, Ion Stoica, Matei Zaharia.
+2018.
+\textit{Structured Streaming: A Declarative API for Real-Time Applications in Apache Spark}.
+In Proceedings of the 2018 International Conference on Management of Data (SIGMOD). ACM, 601--613.
+\url{https://doi.org/10.1145/3183713.3190664}
+
+\bibitem{murray2013naiad}
+Derek Gordon Murray, Frank McSherry, Rebecca Isaacs, Michael Isard, Paul Barham, and Mart{\'i}n Abadi.
+2013.
+\textit{Naiad: A Timely Dataflow System}.
+In Proceedings of the 24th ACM Symposium on Operating Systems Principles (SOSP). ACM, 439--455.
+\url{https://doi.org/10.1145/2517349.2522738}
+
+\bibitem{pagh2004cuckoo}
+Rasmus Pagh and Flemming Friche Rodler.
+2004.
+\textit{Cuckoo Hashing}.
+Journal of Algorithms 51, 2 (2004), 122--144.
+\url{https://doi.org/10.1016/j.jalgor.2003.12.002}
+
+\bibitem{herlihy2008hopscotch}
+Maurice Herlihy, Nir Shavit, and Moran Tzafrir.
+2008.
+\textit{Hopscotch Hashing}.
+In Distributed Computing (DISC), Lecture Notes in Computer Science 5218. Springer, 350--364.
+\url{https://doi.org/10.1007/978-3-540-87779-0_24}
+
+\bibitem{askitis2005cache}
+Nikolas Askitis and Justin Zobel.
+2005.
+\textit{Cache-Conscious Collision Resolution in String Hash Tables}.
+In String Processing and Information Retrieval (SPIRE), Lecture Notes in Computer Science 3772. Springer, 91--102.
+\url{https://doi.org/10.1007/11575832_11}
+
+\bibitem{chandramouli2014trill}
+Badrish Chandramouli, Jonathan Goldstein, Mike Barnett, and Robert DeLine.
+2014.
+\textit{Trill: A High-Performance Incremental Query Processor for Diverse Analytics}.
+Proceedings of the VLDB Endowment (PVLDB) (2014).
+\url{https://doi.org/10.14778/2735496.2735503}
+
+\bibitem{meehan2015sstore}
+John Meehan, Nesime Tatbul, Stan Zdonik, and Cansu Aslantas.
+2015.
+\textit{S-Store: Streaming Meets Transaction Processing}.
+Proceedings of the VLDB Endowment (PVLDB) (2015).
+\url{https://doi.org/10.14778/2831360.2831367}
+
+\bibitem{hoffmann2019megaphone}
+Moritz Hoffmann, Andrea Lattuada, and Frank McSherry.
+2019.
+\textit{Megaphone: Latency-Conscious State Migration for Distributed Streaming Dataflows}.
+Proceedings of the VLDB Endowment (PVLDB) (2019).
+\url{https://doi.org/10.14778/3329772.3329777}
+
+\bibitem{ahmad2012dbtoaster}
+Yanif Ahmad, Oliver Kennedy, Christoph Koch, and Milos Nikolic.
+2012.
+\textit{DBToaster: Higher-Order Delta Processing for Dynamic, Frequently Fresh Views}.
+Proceedings of the VLDB Endowment (PVLDB) (2012).
+\url{https://doi.org/10.14778/2336664.2336670}
+
+\bibitem{asyabi2022statebench}
+Esmail Asyabi, Yuanli Wang, John Liagouris, Vasiliki Kalavri, and Azer Bestavros.
+2022.
+\textit{A new benchmark harness for systematic and robust evaluation of streaming state stores}.
+In Proceedings of the Seventeenth European Conference on Computer Systems (EuroSys '22). ACM, 559--574.
+\url{https://doi.org/10.1145/3492321.3519592}
+
+\bibitem{delmonte2020rhino}
+Bonaventura Del Monte, Steffen Zeuch, Tilmann Rabl, and Volker Markl.
+2020.
+\textit{Rhino: Efficient Management of Very Large Distributed State for Stream Processing Engines}.
+In Proceedings of the 2020 ACM SIGMOD International Conference on Management of Data (SIGMOD/PODS '20). ACM, 2471--2486.
+\url{https://doi.org/10.1145/3318464.3389723}
+
+\bibitem{delmonte2022rdma}
+Bonaventura Del Monte, Steffen Zeuch, Tilmann Rabl, and Volker Markl.
+2022.
+\textit{Rethinking Stateful Stream Processing with RDMA}.
+In Proceedings of the 2022 International Conference on Management of Data (SIGMOD/PODS '22). ACM, 1078--1092.
+\url{https://doi.org/10.1145/3514221.3517826}
+
+\bibitem{lee2018ssdstate}
+Gyewon Lee, Jeongyoon Eo, Jangho Seo, Taegeon Um, and Byung-Gon Chun.
+2018.
+\textit{High-Performance Stateful Stream Processing on Solid-State Drives}.
+In Proceedings of the 9th Asia-Pacific Workshop on Systems (APSys '18). ACM, 1--7.
+\url{https://doi.org/10.1145/3265723.3265739}
+
+\bibitem{lee2023flowkv}
+Gyewon Lee, Jaewoo Maeng, Jinsol Park, Jangho Seo, Haeyoon Cho, Youngseok Yang, Taegeon Um, Jongsung Lee, Jae W. Lee, and Byung-Gon Chun.
+2023.
+\textit{FlowKV: A Semantic-Aware Store for Large-Scale State Management of Stream Processing Engines}.
+In Proceedings of the Eighteenth European Conference on Computer Systems (EuroSys '23). ACM, 768--783.
+\url{https://doi.org/10.1145/3552326.3567493}
+
+\bibitem{mudassar2019scalingout}
+Muhammad Mudassar, Yanlong Zhai, and Lejian Liao.
+2019.
+\textit{Efficient State Management for Scaling Out Stateful Operators in Stream Processing Systems}.
+Big Data 7, 3 (2019), 192--206.
+\url{https://doi.org/10.1089/big.2018.0093}
+
+\bibitem{papaioannou2021amoeba}
+Antonis Papaioannou and Kostas Magoutis.
+2021.
+\textit{Amoeba: aligning stream processing operators with externally-managed state}.
+In Proceedings of the 14th IEEE/ACM International Conference on Utility and Cloud Computing (UCC '21). ACM, 1--10.
+\url{https://doi.org/10.1145/3468737.3494096}
+
+\bibitem{pandey2023iceberght}
+Prashant Pandey, Michael A. Bender, Alex Conway, Martin Farach-Colton, William Kuszmaul, Guido Tagliavini, and Rob Johnson.
+2023.
+\textit{IcebergHT: High Performance Hash Tables Through Stability and Low Associativity}.
+Proceedings of the ACM on Management of Data 1, 1 (2023), 1--26.
+\url{https://doi.org/10.1145/3588727}
+
+\bibitem{ross2007hashprobes}
+Kenneth A. Ross.
+2007.
+\textit{Efficient Hash Probes on Modern Processors}.
+In 2007 IEEE 23rd International Conference on Data Engineering (ICDE). IEEE, 1297--1301.
+\url{https://doi.org/10.1109/ICDE.2007.368997}
+
+\bibitem{shankar2019simdhash}
+Dipti Shankar, Xiaoyi Lu, and Dhabaleswar K. Panda.
+2019.
+\textit{SIMD-Aware Hash Table Designs on Emerging CPU Architectures}.
+In 2019 IEEE International Symposium on Workload Characterization (IISWC). IEEE.
+\url{https://doi.org/10.1109/IISWC47752.2019.9042069}
+
+\bibitem{lin2022incrementalckpt}
+Chia-Yu Lin, Li-Chun Wang, and Shu-Ping Chang.
+2022.
+\textit{Incremental Checkpointing for Fault-Tolerant Stream Processing Systems: A Data Structure Approach}.
+IEEE Transactions on Emerging Topics in Computing 10, 1 (2022), 124--136.
+\url{https://doi.org/10.1109/TETC.2020.2986487}
+
+\bibitem{chronarakis2019logcompaction}
+Aris Chronarakis, Antonis Papaioannou, and Kostas Magoutis.
+2019.
+\textit{On the Impact of log Compaction on Incrementally Checkpointing Stateful Stream-Processing Operators}.
+In 2019 38th International Symposium on Reliable Distributed Systems Workshops (SRDSW). IEEE, 1--6.
+\url{https://doi.org/10.1109/SRDSW49218.2019.00008}
+
+\bibitem{liu2020fp4s}
+Pinchao Liu, Hailu Xu, Dilma Da Silva, Qingyang Wang, Sarker Tanzir Ahmed, and Liting Hu.
+2020.
+\textit{FP4S: Fragment-based Parallel State Recovery for Stateful Stream Applications}.
+In 2020 IEEE International Parallel and Distributed Processing Symposium (IPDPS). IEEE, 1102--1111.
+\url{https://doi.org/10.1109/IPDPS47924.2020.00116}
+
+\bibitem{zhang2020concurrent}
+Shuhao Zhang, Yingjun Wu, Feng Zhang, and Bingsheng He.
+2020.
+\textit{Towards Concurrent Stateful Stream Processing on Multicore Processors}.
+In 2020 IEEE 36th International Conference on Data Engineering (ICDE). IEEE, 1537--1548.
+\url{https://doi.org/10.1109/ICDE48307.2020.00136}
+
+\bibitem{sornalakshmi2023migration}
+K. Sornalakshmi and G. Vadivu.
+2023.
+\textit{An empirical analysis of stateful operator migration for online scheduling in distributed stream processing systems}.
+Microprocessors and Microsystems 98 (2023), 104811.
+\url{https://doi.org/10.1016/j.micpro.2023.104811}
+
+\bibitem{jayasekara2022checkpointopt}
+Sachini Jayasekara, Shanika Karunasekera, and Aaron Harwood.
+2022.
+\textit{Optimizing checkpoint-based fault-tolerance in distributed stream processing systems: Theory to practice}.
+Software: Practice and Experience 52, 1 (2022), 296--315.
+\url{https://doi.org/10.1002/spe.3021}
+
+\end{thebibliography}
 
 \end{document}
