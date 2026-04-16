@@ -100,6 +100,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
+        -e LD_LIBRARY_PATH=/usr/lib64 \
         --cpuset-cpus 4-7 \
         --memory 16g \
         "$IMAGE" \
@@ -121,6 +122,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
+        -e LD_LIBRARY_PATH=/usr/lib64 \
         --cpuset-cpus 8-11 \
         --memory 16g \
         "$IMAGE" \
