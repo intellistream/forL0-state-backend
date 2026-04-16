@@ -14,6 +14,16 @@
 using namespace forl0;
 
 // ============================================================================
+//  Helper: convert plain string to Flink StringValue serialized bytes
+// ============================================================================
+
+static std::string flink_string(const std::string& s) {
+    WriteBuffer buf;
+    buf.write_string_flink(s);
+    return std::string(reinterpret_cast<const char*>(buf.data()), buf.size());
+}
+
+// ============================================================================
 //  Helper: creates TypeLayout for common types
 // ============================================================================
 
@@ -207,8 +217,9 @@ TEST(CheckpointRoundTripTest, ValueStateTimeWindow) {
 TEST(CheckpointRoundTripTest, MapStateStringString) {
     StateTable<int64_t, InnerMap> source(0, 1, true);
 
-    InnerMap map1{{"k1", "v1"}, {"k2", "v2"}};
-    InnerMap map2{{"k3", "v3"}};
+    // InnerMap stores Flink-serialized byte strings (as from JNI)
+    InnerMap map1{{flink_string("k1"), flink_string("v1")}, {flink_string("k2"), flink_string("v2")}};
+    InnerMap map2{{flink_string("k3"), flink_string("v3")}};
     source.put(0, 10, std::move(map1));
     source.put(0, 20, std::move(map2));
 
@@ -274,7 +285,8 @@ TEST(CheckpointRoundTripTest, MapStateLongLong) {
 TEST(CheckpointRoundTripTest, MapStateLongString) {
     StateTable<int64_t, InnerMapLongString> source(0, 1, true);
 
-    InnerMapLongString map1{{1, "hello"}, {2, "world"}};
+    // Typed map string values store Flink-serialized bytes (as from JNI)
+    InnerMapLongString map1{{1, flink_string("hello")}, {2, flink_string("world")}};
     source.put(0, 10, std::move(map1));
 
     source.prepare_snapshot();
@@ -292,8 +304,8 @@ TEST(CheckpointRoundTripTest, MapStateLongString) {
 
     auto* m1 = restored.get(0, static_cast<int64_t>(10));
     ASSERT_NE(m1, nullptr);
-    ASSERT_EQ((*m1)[1], "hello");
-    ASSERT_EQ((*m1)[2], "world");
+    ASSERT_EQ((*m1)[1], flink_string("hello"));
+    ASSERT_EQ((*m1)[2], flink_string("world"));
 
     source.release_snapshot();
 }
@@ -305,7 +317,8 @@ TEST(CheckpointRoundTripTest, MapStateLongString) {
 TEST(CheckpointRoundTripTest, MapStateStringLong) {
     StateTable<int64_t, InnerMapStringLong> source(0, 1, true);
 
-    InnerMapStringLong map1{{"a", 100}, {"b", 200}};
+    // Typed map string keys store Flink-serialized bytes (as from JNI)
+    InnerMapStringLong map1{{flink_string("a"), 100}, {flink_string("b"), 200}};
     source.put(0, 10, std::move(map1));
 
     source.prepare_snapshot();
@@ -323,8 +336,8 @@ TEST(CheckpointRoundTripTest, MapStateStringLong) {
 
     auto* m1 = restored.get(0, static_cast<int64_t>(10));
     ASSERT_NE(m1, nullptr);
-    ASSERT_EQ((*m1)["a"], 100);
-    ASSERT_EQ((*m1)["b"], 200);
+    ASSERT_EQ((*m1)[flink_string("a")], 100);
+    ASSERT_EQ((*m1)[flink_string("b")], 200);
 
     source.release_snapshot();
 }
@@ -336,8 +349,9 @@ TEST(CheckpointRoundTripTest, MapStateStringLong) {
 TEST(CheckpointRoundTripTest, ListState) {
     StateTable<int64_t, ElementList> source(0, 1, true);
 
-    ElementList list1{"elem1", "elem2", "elem3"};
-    ElementList list2{"single"};
+    // ElementList stores Flink-serialized byte strings (as from JNI)
+    ElementList list1{flink_string("elem1"), flink_string("elem2"), flink_string("elem3")};
+    ElementList list2{flink_string("single")};
     source.put(0, 10, std::move(list1));
     source.put(0, 20, std::move(list2));
 

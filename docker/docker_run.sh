@@ -100,7 +100,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        --cpus 4 \
+        --cpuset-cpus 4-7 \
         --memory 16g \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
@@ -121,7 +121,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        --cpus 4 \
+        --cpuset-cpus 8-11 \
         --memory 16g \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
