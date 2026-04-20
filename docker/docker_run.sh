@@ -20,12 +20,32 @@ IMAGE="eclipse-temurin:8-jre"
 
 # L0 挂载参数 (仅当硬件存在时)
 L0_OPTS=()
+NUMA_HOST_PATH="${NUMA_LIB_HOST_PATH:-}"
+NUMA_CONTAINER_PATH="${NUMA_LIB_CONTAINER_PATH:-}"
+
+if [[ -z "$NUMA_HOST_PATH" ]]; then
+    for candidate in \
+        /lib/aarch64-linux-gnu/libnuma.so.1 \
+        /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
+        /lib64/libnuma.so.1 \
+        /usr/lib64/libnuma.so.1; do
+        if [[ -f "$candidate" ]]; then
+            NUMA_HOST_PATH="$candidate"
+            NUMA_CONTAINER_PATH="$candidate"
+            break
+        fi
+    done
+fi
+
 if [[ -e /dev/hisi_l0 ]]; then
     L0_OPTS+=(--device /dev/hisi_l0:/dev/hisi_l0)
 fi
 if [[ -f /usr/lib64/libl0mempool.so ]]; then
     L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib/libl0mempool.so:ro)
     L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro)
+fi
+if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
+    L0_OPTS+=(-v "${NUMA_HOST_PATH}:${NUMA_CONTAINER_PATH}:ro")
 fi
 
 # 容器名
@@ -47,6 +67,11 @@ do_start() {
     echo "=== 启动 ForL0 Flink Docker 集群 ==="
     echo "  FLINK_HOME: ${FLINK_DIR}"
     echo "  NATIVE:     ${NATIVE_DIR}"
+    if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
+        echo "  libnuma:    ${NUMA_HOST_PATH} -> ${NUMA_CONTAINER_PATH}"
+    else
+        echo "  libnuma:    未检测到；L0 可能因缺少 libnuma.so.1 而不可用"
+    fi
     echo ""
 
     # 检查
@@ -58,6 +83,11 @@ do_start() {
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         echo "✗ Docker 镜像 ${IMAGE} 不存在，请先: docker load -i images/eclipse-temurin-8-jre.tar"
         exit 1
+    fi
+    if [[ -z "$NUMA_HOST_PATH" ]]; then
+        echo "⚠ 未找到 libnuma.so.1，继续启动，但容器内 L0 lib 可能无法 dlopen"
+        echo "  如主机路径非常规，请设置: export NUMA_LIB_HOST_PATH=/path/to/libnuma.so.1"
+        echo "                        export NUMA_LIB_CONTAINER_PATH=/lib/aarch64-linux-gnu/libnuma.so.1"
     fi
 
     # 创建网络
@@ -101,7 +131,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/lib:/lib64 \
+        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
         --cpuset-cpus 4-7 \
         --memory 16g \
         "$IMAGE" \
@@ -123,7 +153,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/lib:/lib64 \
+        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
         --cpuset-cpus 8-11 \
         --memory 16g \
         "$IMAGE" \

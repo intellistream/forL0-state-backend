@@ -65,6 +65,23 @@ else
     L0_AVAILABLE=false
 fi
 
+NUMA_OK=false
+for numa_candidate in \
+    /lib/aarch64-linux-gnu/libnuma.so.1 \
+    /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
+    /lib64/libnuma.so.1 \
+    /usr/lib64/libnuma.so.1; do
+    if [[ -f "$numa_candidate" ]]; then
+        echo "      ✓ libnuma.so.1 存在 (${numa_candidate})"
+        NUMA_OK=true
+        break
+    fi
+done
+if [[ "$NUMA_OK" == "false" ]]; then
+    echo "      ✗ libnuma.so.1 不存在 (libl0mempool.so 的依赖将导致 dlopen 失败)"
+    L0_AVAILABLE=false
+fi
+
 if [[ -e /dev/hisi_l0 ]]; then
     echo "      ✓ /dev/hisi_l0 设备存在"
 else
