@@ -23,9 +23,9 @@ from utils.config import load_config, get_flink_home, save_result
 
 def get_client_usecase_jar() -> Optional[str]:
     """Get path to the packaged client usecase JAR."""
-    benchmark_root = Path(__file__).parent.parent.parent
-    target_dir = benchmark_root / 'client_usecase' / 'XX_6000c_Demo' / 'target'
-    deploy_dir = benchmark_root / '..' / 'docker' / 'deploy'
+    project_root = Path(__file__).parent.parent.parent
+    target_dir = project_root / 'client_usecase' / 'XX_6000c_Demo' / 'target'
+    deploy_dir = project_root / 'docker' / 'deploy'
 
     preferred_patterns = [
         'flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar',
