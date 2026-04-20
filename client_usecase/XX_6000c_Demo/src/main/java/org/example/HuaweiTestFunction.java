@@ -6,12 +6,12 @@ import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class HTestFunction extends MvIncrementProcessFunction<Tuple2<String, String>> {
+public class HuaweiTestFunction extends MvIncrementProcessFunction<Tuple2<String, String>> {
 
 
-    private final static Logger logger = LoggerFactory.getLogger(HTestFunction.class);
+    private final static Logger logger = LoggerFactory.getLogger(HuaweiTestFunction.class);
 
-    public HTestFunction(Time joinDuration, Time deduplicateDuration,
+    public HuaweiTestFunction(Time joinDuration, Time deduplicateDuration,
                               boolean enableListDirectEmitBorder, int listDirectEmitBorderSize) {
         super(joinDuration, deduplicateDuration, enableListDirectEmitBorder, listDirectEmitBorderSize);
     }

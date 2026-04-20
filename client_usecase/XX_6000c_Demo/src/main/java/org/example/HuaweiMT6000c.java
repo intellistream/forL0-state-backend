@@ -2,15 +2,18 @@ package org.example;
 
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
-import org.apache.flink.streaming.api.functions.source.ParallelSourceFunction;
+import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
+import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
+import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -20,112 +23,104 @@ import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
-public class Hxx6000c {
-    private static final Logger logger = LoggerFactory.getLogger(Hxx6000c.class);
+public class HuaweiMT6000c {
+    private static final Logger logger = LoggerFactory.getLogger(HuaweiMT6000c.class);
 
     public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        DataStream<PVMVLogType> inputStream1 = generatePVMVLog(env);
+        int parallelism = parameters.getInt("parallelism", env.getParallelism());
+        long checkpointInterval = parameters.getLong("checkpointInterval", 0L);
+        long leftNumRecords = parameters.getLong("leftNumRecords", 0L);
+        long rightNumRecords = parameters.getLong("rightNumRecords", 0L);
 
-        DataStream<PVMVLogType> inputStream2 = generatePVMVLog1(env);
+        env.setParallelism(parallelism);
+        if (checkpointInterval > 0) {
+            env.enableCheckpointing(checkpointInterval);
+        }
 
-        // simulate stream1 --> keyby --> keyedCoprocess->printSink
-        //          stream2 --> keyby  ./
+        DataStream<PVMVLogType> inputStream1 = env.addSource(
+            new CsvReplaySource(0L, 0, leftNumRecords));
+
+        DataStream<PVMVLogType> inputStream2 = env.addSource(
+            new CsvReplaySource(20L, 2, rightNumRecords));
+
         SingleOutputStreamOperator<Tuple2<String, String>> coProcess =
                 inputStream1.keyBy(PVMVLogType::joinKey)
-                        .connect(inputStream2.keyBy(PVMVLogType::joinKey)
-                        ).process(
-                                new HTestFunction(
-                                        Time.minutes(20),Time.minutes(20), false,100)).disableChaining();
-        coProcess.addSink(new PrintSinkFunction<>()).disableChaining();
+                        .connect(inputStream2.keyBy(PVMVLogType::joinKey))
+                        .process(new HuaweiTestFunction(
+                                Time.minutes(20), Time.minutes(20), false, 100))
+                        .disableChaining();
+        coProcess.addSink(new DiscardingSink<>()).disableChaining();
 
-        env.execute();
+        logger.info(
+            "Starting HuaweiMT6000c benchmark: parallelism={}, checkpointInterval={}, leftNumRecords={}, rightNumRecords={}",
+                parallelism,
+                checkpointInterval,
+            leftNumRecords,
+            rightNumRecords);
+
+        env.execute("client-usecase-xx6000c-benchmark");
     }
 
-    public static DataStream<PVMVLogType> generatePVMVLog(StreamExecutionEnvironment env) {
-        DataStream<PVMVLogType> inputStream = env.addSource(new ParallelSourceFunction<PVMVLogType>() {
-            private boolean running = true;
-            @Override
-            public void run(SourceContext<PVMVLogType> sourceContext) throws Exception {
-                //data1 1,000,000-6,000,000; data2 1-5,000,000; data3 5,000,000-10,000,000
-                InputStream is = Hxx6000c.class.getClassLoader().getResourceAsStream("data.csv");
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                    List<String> lines = reader.lines().collect(Collectors.toList());
-                    while (running) {
-                        long startTime = System.currentTimeMillis();
-                        long t=0;
-                        synchronized (sourceContext.getCheckpointLock()) {
-                            for (int i = 0; i < lines.size(); i++) {
-                                //确保文件行数与i的范围一致
-                                long line = Long.valueOf(lines.get(i).trim());
-                                PVMVLogType res = createPVMV(line);
-                                t=res.getEventTimeStamp();
-                                sourceContext.collect(res);
-                                if(System.currentTimeMillis()%10==1)sourceContext.collect(res);
-                                //logger.info("lefttimetp= {}" ,t);
-                            }
+    private static final class CsvReplaySource extends RichParallelSourceFunction<PVMVLogType> {
+        private final long lineOffset;
+        private final int perRecordDelayMs;
+        private final long maxRecords;
+        private volatile boolean running = true;
 
-                        }
-                        long millisToSleep = 1000 - (System.currentTimeMillis() - startTime);
+        private CsvReplaySource(long lineOffset, int perRecordDelayMs, long maxRecords) {
+            this.lineOffset = lineOffset;
+            this.perRecordDelayMs = perRecordDelayMs;
+            this.maxRecords = maxRecords;
+        }
+
+        @Override
+        public void run(SourceFunction.SourceContext<PVMVLogType> sourceContext) throws Exception {
+            List<String> lines = loadCsvLines();
+            long emitted = 0L;
+
+            while (running && (maxRecords <= 0 || emitted < maxRecords)) {
+                for (String rawLine : lines) {
+                    if (!running || (maxRecords > 0 && emitted >= maxRecords)) {
+                        return;
+                    }
+                    long line = Long.parseLong(rawLine.trim()) + lineOffset;
+                    PVMVLogType record = createPVMV(line);
+                    synchronized (sourceContext.getCheckpointLock()) {
+                        sourceContext.collect(record);
+                        emitted++;
+                    }
+                    if (perRecordDelayMs > 0) {
+                        Thread.sleep(perRecordDelayMs);
                     }
                 }
             }
+        }
 
-            @Override
-            public void cancel() {
-                running = false;
-            }
-        });
-
-        return inputStream;
+        @Override
+        public void cancel() {
+            running = false;
+        }
     }
 
-    public static DataStream<PVMVLogType> generatePVMVLog1(StreamExecutionEnvironment env) {
-        DataStream<PVMVLogType> inputStream = env.addSource(new ParallelSourceFunction<PVMVLogType>() {
-            private boolean running = true;
-            @Override
-            public void run(SourceContext<PVMVLogType> sourceContext) throws Exception {
-                InputStream is = Hxx6000c.class.getClassLoader().getResourceAsStream("data.csv");
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                    List<String> lines = reader.lines().collect(Collectors.toList());
-                    while (running) {
-                        long startTime = System.currentTimeMillis();
-                        long t=0;
-                        synchronized (sourceContext.getCheckpointLock()) {
-                            for (int i = 0; i < lines.size(); i++) {
-                                //确保文件行数与i的范围一致
-                                long line = Long.valueOf(lines.get(i).trim())+20;
-                                PVMVLogType res = createPVMV(line);
-                                sourceContext.collect(res);
-                                t=res.getEventTimeStamp();
-                                if(System.currentTimeMillis()%10==1)sourceContext.collect(res);
-                                //logger.info("righttimetp= {}" ,t);
-                                Thread.sleep(2);
-                            }
-
-                        }
-                        long millisToSleep = 1000 - (System.currentTimeMillis() - startTime);
-                    }
-                }
-            }
-
-            @Override
-            public void cancel() {
-                running = false;
-            }
-        });
-
-        return inputStream;
+    private static List<String> loadCsvLines() throws IOException {
+        InputStream inputStream = HuaweiMT6000c.class.getClassLoader().getResourceAsStream("data.csv");
+        if (inputStream == null) {
+            throw new IOException("data.csv not found in classpath");
+        }
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            return reader.lines().filter(line -> !line.trim().isEmpty()).collect(Collectors.toList());
+        }
     }
 
     public static PVMVLogType createPVMV(long line) throws IllegalAccessException {
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("UTC"));
-        // 转换为时间戳（毫秒）
         long timestampMillis = Instant.from(now).toEpochMilli();
-        line = line + timestampMillis;
-        PVMVLogType res = new PVMVLogType(timestampMillis,line);
-        res.setPvmvFlowInfo(Gen7KBData.genDataSimple());
-        return res;
+        long uniqueLine = line + timestampMillis;
+        PVMVLogType result = new PVMVLogType(timestampMillis, uniqueLine);
+        result.setPvmvFlowInfo(Gen7KBData.genDataSimple());
+        return result;
     }
 }
