@@ -24,6 +24,7 @@ if [[ -e /dev/hisi_l0 ]]; then
     L0_OPTS+=(--device /dev/hisi_l0:/dev/hisi_l0)
 fi
 if [[ -f /usr/lib64/libl0mempool.so ]]; then
+    L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib/libl0mempool.so:ro)
     L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro)
 fi
 
@@ -100,7 +101,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        -e LD_LIBRARY_PATH=/usr/lib64 \
+        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/lib:/lib64 \
         --cpuset-cpus 4-7 \
         --memory 16g \
         "$IMAGE" \
@@ -122,7 +123,7 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        -e LD_LIBRARY_PATH=/usr/lib64 \
+        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/lib:/lib64 \
         --cpuset-cpus 8-11 \
         --memory 16g \
         "$IMAGE" \

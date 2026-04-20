@@ -9,6 +9,7 @@
 
 #include "state_engine.h"
 #include "type_layout.h"
+#include "hot_cache.h"
 
 namespace forl0 {
 
@@ -120,6 +121,13 @@ struct StateHandle {
     NsType ns_type = NsType::VOID_NS;
     bool void_namespace;
     MapInnerKind map_inner_kind = MapInnerKind::STRING_STRING;
+
+    // Optional L0 hot-key cache attached to this state. Null when:
+    //   (a) HotCacheManager is not active (no L0 hardware / disabled), OR
+    //   (b) the state's <K,V> specialization is not yet covered (Phase A: only
+    //       int64 key + int64 value with VoidNamespace or TimeWindow ns).
+    // The HotCacheLL is owned by the StateEngine via HotCacheManager.
+    HotCacheLL* hot_cache_ll = nullptr;
 
     // Type descriptors (for checkpoint format — used by C++ checkpoint codec).
     // key_layout holds the parsed key type layout (needed for FIXED_ROW arity).

@@ -92,10 +92,42 @@ public final class NativeEngine {
 
     /** Create a new StateEngine. Returns native handle. */
     public static native long createEngine(int startKeyGroup, int numKeyGroups, int totalKeyGroups,
-                                           boolean l0Enabled, long l0CapacityBytes, long l0MaxPerAllocBytes);
+                                           boolean l0Enabled, long l0CapacityBytes);
 
     /** Destroy a StateEngine and free all native memory. */
     public static native void destroyEngine(long engineHandle);
+
+    // ========================================================================
+    //  Hot-cache metrics (design §8)
+    // ========================================================================
+
+    /**
+     * Populate {@code out} with manager-level hot-cache stats:
+     * {@code [active, capacity_bytes, used_bytes, total_sets, free_sets,
+     *         total_lookups, total_hits, total_invalidations, reserved]}.
+     * Caller SHOULD pass a {@code long[9]}; shorter arrays get the first N
+     * slots filled and the rest are not touched. All zeros if no manager is
+     * attached.
+     */
+    public static native void getHotCacheManagerStats(long engineHandle, long[] out);
+
+    /**
+     * Populate {@code out} with per-state hot-cache stats:
+     * {@code [attached, lookups, hits, invalidations]}.
+     * Caller MUST pass a {@code long[4]}. All zeros if no cache is attached.
+     */
+    public static native void getHotCacheStats(long stateHandle, long[] out);
+
+    /**
+     * Trigger an adaptive rebalance pass (design §6.3). For each attached
+     * cache whose recent window has accumulated at least {@code intervalOps}
+     * lookups with miss-rate above {@code missRateThreshold}, the cache's
+     * sets and stats are cleared so the hot working set gets re-learned.
+     * Returns the number of caches that were rebalanced.
+     */
+    public static native int rebalanceHotCache(long engineHandle,
+                                               long intervalOps,
+                                               double missRateThreshold);
 
     // ========================================================================
     //  State registration

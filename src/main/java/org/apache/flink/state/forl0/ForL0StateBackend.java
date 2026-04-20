@@ -62,7 +62,6 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     /** L0 Cache configuration. */
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
-    private final long l0CacheMaxPerAlloc;
 
     // -----------------------------------------------------------------------
 
@@ -82,7 +81,6 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         this.asyncSnapshots = asyncSnapshots;
         this.l0CacheEnabled = ForL0Options.L0_CACHE_ENABLED.defaultValue();
         this.l0CacheSize = ForL0Options.L0_CACHE_SIZE.defaultValue().getBytes();
-        this.l0CacheMaxPerAlloc = ForL0Options.L0_CACHE_MAX_PER_ALLOC.defaultValue().getBytes();
         LOG.info("[ForL0] ForL0StateBackend created (asyncSnapshots={})", asyncSnapshots);
     }
 
@@ -98,9 +96,6 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         this.l0CacheSize = config.getOptional(ForL0Options.L0_CACHE_SIZE)
                 .map(MemorySize::getBytes)
                 .orElse(original.l0CacheSize);
-        this.l0CacheMaxPerAlloc = config.getOptional(ForL0Options.L0_CACHE_MAX_PER_ALLOC)
-                .map(MemorySize::getBytes)
-                .orElse(original.l0CacheMaxPerAlloc);
     }
 
     // -----------------------------------------------------------------------
@@ -157,8 +152,8 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                     asyncSnapshots,
                     l0CacheEnabled,
                     l0CacheSize,
-                    l0CacheMaxPerAlloc,
-                    parameters.getCancelStreamRegistry())
+                    parameters.getCancelStreamRegistry(),
+                    parameters.getMetricGroup())
                     .build();
         } catch (BackendBuildingException e) {
             throw new IOException("Failed to build ForL0KeyedStateBackend", e);

@@ -2,9 +2,10 @@
 // Maps to NativeEngine.java native method declarations.
 
 #include <jni.h>
+#include <cstdio>
 #include "jni_utils.h"
 #include "state_engine.h"
-#include "l0_allocator.h"
+#include "hot_cache.h"
 #include "type_layout.h"
 #include "flink_binary_format.h"
 
@@ -32,15 +33,30 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
         JNIEnv* env, jclass, jint startKeyGroup, jint numKeyGroups, jint totalKeyGroups,
-        jboolean l0Enabled, jlong l0Capacity, jlong l0MaxPerAlloc) {
+        jboolean l0Enabled, jlong l0Capacity) {
     JNI_ENTRY_RETURN(jlong, 0, {
         Allocator* alloc = &DefaultAllocator::instance();
+        std::unique_ptr<HotCacheManager> mgr;
         if (l0Enabled) {
-            alloc = new L0Allocator(
-                static_cast<size_t>(l0Capacity),
-                static_cast<size_t>(l0MaxPerAlloc));
+            mgr = std::unique_ptr<HotCacheManager>(
+                new HotCacheManager(static_cast<size_t>(l0Capacity)));
+            // Hardware-gating telemetry per design §3.2.
+            if (mgr->is_active()) {
+                fprintf(stderr,
+                        "[ForL0-HotCache] L0 cache enabled: capacity=%zuMB, total_sets=%u\n",
+                        mgr->capacity_bytes() / (1024 * 1024), mgr->total_sets());
+            } else {
+                fprintf(stderr,
+                        "[ForL0-HotCache] WARN: L0 hardware not available (reason: %s); "
+                        "cache forcibly disabled.\n",
+                        mgr->failure_reason().c_str());
+                mgr.reset();  // Drop manager so cache_ pointers stay null.
+            }
+        } else {
+            fprintf(stderr, "[ForL0-HotCache] L0 cache disabled by config.\n");
         }
-        auto* engine = new StateEngine(startKeyGroup, numKeyGroups, totalKeyGroups, alloc);
+        auto* engine = new StateEngine(startKeyGroup, numKeyGroups, totalKeyGroups,
+                                       alloc, std::move(mgr));
         return to_handle(engine);
     })
 }
@@ -50,23 +66,92 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
         JNIEnv* env, jclass, jlong engineHandle) {
     JNI_ENTRY_VOID({
         auto* engine = from_handle<StateEngine>(engineHandle);
-        Allocator* alloc = engine->allocator();
-        // Log L0 stats BEFORE deleting engine (delete clears all allocations).
-        auto* l0alloc = dynamic_cast<L0Allocator*>(alloc);
-        if (l0alloc) {
-            fprintf(stderr, "[ForL0-L0Allocator] Shutdown: l0_active=%d, "
-                    "l0_total_allocs=%zu, heap_allocs=%zu, "
-                    "l0_current=%zu, l0_used=%zuKB/%zuMB\n",
-                    l0alloc->is_l0_active(),
-                    l0alloc->l0_total_alloc_count(), l0alloc->heap_alloc_count(),
-                    l0alloc->l0_alloc_count(),
-                    l0alloc->l0_allocated() / 1024, l0alloc->l0_capacity() / (1024*1024));
+        if (auto* mgr = engine->hot_cache_manager()) {
+            fprintf(stderr,
+                    "[ForL0-HotCache] Shutdown: capacity=%zuMB, used_bytes=%zuKB, "
+                    "total_sets=%u, free_sets=%u\n",
+                    mgr->capacity_bytes() / (1024 * 1024),
+                    mgr->used_bytes() / 1024,
+                    mgr->total_sets(), mgr->free_sets());
         }
         delete engine;
-        // Clean up L0Allocator (DefaultAllocator is a singleton, skip it).
-        if (l0alloc) {
-            delete l0alloc;
+    })
+}
+
+// --- Hot-cache metrics (design §8) ---
+// Layout of the returned long[9]:
+//   [0] active              (1 = L0 cache active, 0 = disabled / hw unavailable)
+//   [1] capacity_bytes      (actual bytes obtained from l0_mem_alloc)
+//   [2] used_bytes          (sets currently acquired × sizeof(HotSet))
+//   [3] total_sets
+//   [4] free_sets
+//   [5] total_lookups       (sum across all attached caches)
+//   [6] total_hits          (sum across all attached caches)
+//   [7] total_invalidations (sum across all attached caches)
+//   [8] reserved (0)
+// Java callers must pass an array of length >= 9. Older 6-slot callers get
+// the first 6 fields populated exactly as before (forward-compatible).
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_getHotCacheManagerStats(
+        JNIEnv* env, jclass, jlong engineHandle, jlongArray out) {
+    JNI_ENTRY_VOID({
+        auto* engine = from_handle<StateEngine>(engineHandle);
+        jsize n = env->GetArrayLength(out);
+        jlong buf[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+        if (auto* mgr = engine->hot_cache_manager()) {
+            buf[0] = mgr->is_active() ? 1 : 0;
+            buf[1] = static_cast<jlong>(mgr->capacity_bytes());
+            buf[2] = static_cast<jlong>(mgr->used_bytes());
+            buf[3] = static_cast<jlong>(mgr->total_sets());
+            buf[4] = static_cast<jlong>(mgr->free_sets());
+            buf[5] = static_cast<jlong>(mgr->total_lookups());
+            buf[6] = static_cast<jlong>(mgr->total_hits());
+            buf[7] = static_cast<jlong>(mgr->total_invalidations());
         }
+        jsize toWrite = (n < 9) ? n : 9;
+        env->SetLongArrayRegion(out, 0, toWrite, buf);
+    })
+}
+
+// Layout of the returned long[4] for a single state's attached HotCacheLL:
+//   [0] attached (1 = cache attached, 0 = not attached)
+//   [1] lookups  (hits + misses)
+//   [2] hits
+//   [3] invalidations
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_getHotCacheStats(
+        JNIEnv* env, jclass, jlong stateHandle, jlongArray out) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        jlong buf[4] = {0, 0, 0, 0};
+        if (handle->hot_cache_ll) {
+            buf[0] = 1;
+            buf[1] = static_cast<jlong>(handle->hot_cache_ll->lookups());
+            buf[2] = static_cast<jlong>(handle->hot_cache_ll->hits());
+            buf[3] = static_cast<jlong>(handle->hot_cache_ll->invalidations());
+        }
+        env->SetLongArrayRegion(out, 0, 4, buf);
+    })
+}
+
+// --- Hot-cache adaptive rebalance (design §6.3) ---
+// Triggers a best-effort rebalance pass across all caches. Returns the
+// number of caches whose state was reset. Callers typically invoke this
+// from a low-frequency timer (e.g., once per checkpoint) or a benchmark.
+
+JNIEXPORT jint JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_rebalanceHotCache(
+        JNIEnv* env, jclass, jlong engineHandle,
+        jlong intervalOps, jdouble missRateThreshold) {
+    JNI_ENTRY_RETURN(jint, 0, {
+        auto* engine = from_handle<StateEngine>(engineHandle);
+        auto* mgr = engine->hot_cache_manager();
+        if (!mgr) return 0;
+        return static_cast<jint>(mgr->rebalance_if_needed(
+            static_cast<uint64_t>(intervalOps),
+            static_cast<double>(missRateThreshold)));
     })
 }
 
@@ -301,6 +386,40 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         }
         if (parsed_val_layout) {
             handle->value_layout = std::move(parsed_val_layout);
+        }
+
+        // L0 hot-key cache attachment. Phase A covered <int64,int64>;
+        // Phase B extends the fast-path to <int64,double>, <int32,int64>,
+        // <int32,double> by bit-casting doubles to int64 and sign-extending
+        // int32 keys — all bit-exact round-trips through HotCacheLL.
+        // Phase B also covers TimeWindow namespace (via `hotcache_fold_tw_key`
+        // to fold (key, nsStart, nsEnd) into a single int64) and FIXED_ROW
+        // keys (via `hotcache_fold_fixed_row_key`). A fold collision can only
+        // cause a cache miss — the SwissTable lookup below always confirms.
+        // Variable-length values would require a pointer-mode cache with a
+        // SwissTable rehash hook; deferred until that hook exists.
+        if (auto* mgr = engine->hot_cache_manager()) {
+            const bool scalar_value =
+                stored_value_type == StateHandle::ValueType::INT64
+                || stored_value_type == StateHandle::ValueType::INT32
+                || stored_value_type == StateHandle::ValueType::FLOAT64;
+            const bool cacheable_key =
+                stored_key_type == StateHandle::KeyType::INT64
+                || stored_key_type == StateHandle::KeyType::INT32
+                || stored_key_type == StateHandle::KeyType::FIXED_ROW;
+            if (mgr->is_active()
+                && handle->kind == StateHandle::StateKind::VALUE
+                && cacheable_key
+                && scalar_value) {
+                // Default sets-per-state: 64 sets = 12 KB. acquire_ll rounds
+                // DOWN to a power of 2 if the manager is too full.
+                auto cache = mgr->acquire_ll(64);
+                if (cache) {
+                    // Manager retains ownership; release the unique_ptr so
+                    // the raw pointer survives until manager teardown.
+                    handle->hot_cache_ll = cache.release();
+                }
+            }
         }
 
         return to_handle(handle);

@@ -10,6 +10,7 @@ import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.fs.FSDataInputStream;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataInputViewStreamWrapper;
+import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackendBuilder;
 import org.apache.flink.runtime.state.BackendBuildingException;
@@ -71,7 +72,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     /** L0 Cache configuration. */
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
-    private final long l0CacheMaxPerAlloc;
+    /** Optional metric group for registering HotCache gauges. May be null in tests. */
+    private final MetricGroup metricGroup;
 
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
@@ -88,8 +90,31 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             boolean asynchronousSnapshots,
             boolean l0CacheEnabled,
             long l0CacheSize,
-            long l0CacheMaxPerAlloc,
             CloseableRegistry cancelStreamRegistry) {
+        this(kvStateRegistry, keySerializer, userCodeClassLoader, numberOfKeyGroups,
+                keyGroupRange, executionConfig, ttlTimeProvider, latencyTrackingStateConfig,
+                stateHandles, keyGroupCompressionDecorator, priorityQueueSetFactory,
+                asynchronousSnapshots, l0CacheEnabled, l0CacheSize, cancelStreamRegistry,
+                /* metricGroup */ null);
+    }
+
+    public ForL0KeyedStateBackendBuilder(
+            TaskKvStateRegistry kvStateRegistry,
+            TypeSerializer<K> keySerializer,
+            ClassLoader userCodeClassLoader,
+            int numberOfKeyGroups,
+            KeyGroupRange keyGroupRange,
+            ExecutionConfig executionConfig,
+            TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
+            @Nonnull Collection<KeyedStateHandle> stateHandles,
+            StreamCompressionDecorator keyGroupCompressionDecorator,
+            HeapPriorityQueueSetFactory priorityQueueSetFactory,
+            boolean asynchronousSnapshots,
+            boolean l0CacheEnabled,
+            long l0CacheSize,
+            CloseableRegistry cancelStreamRegistry,
+            MetricGroup metricGroup) {
         super(
                 kvStateRegistry,
                 keySerializer,
@@ -106,7 +131,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.asynchronousSnapshots = asynchronousSnapshots;
         this.l0CacheEnabled = l0CacheEnabled;
         this.l0CacheSize = l0CacheSize;
-        this.l0CacheMaxPerAlloc = l0CacheMaxPerAlloc;
+        this.metricGroup = metricGroup;
     }
 
     @Override
@@ -121,10 +146,16 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         int numKeyGroups = keyGroupRange.getNumberOfKeyGroups();
         long engineHandle = NativeEngine.createEngine(
                 startKeyGroup, numKeyGroups, numberOfKeyGroups,
-                l0CacheEnabled, l0CacheSize, l0CacheMaxPerAlloc);
+                l0CacheEnabled, l0CacheSize);
         LOG.info("[ForL0] C++ engine created: handle={}, keyGroups=[{}, {}), total={}, l0Enabled={}",
                 engineHandle, startKeyGroup, startKeyGroup + numKeyGroups, numberOfKeyGroups,
                 l0CacheEnabled);
+
+        // Register HotCache gauges on the provided MetricGroup (design §8).
+        // Always register so users can see whether the cache actually came up.
+        if (metricGroup != null) {
+            registerHotCacheMetrics(metricGroup, engineHandle);
+        }
 
         // Native state handles (populated lazily by backend on first state registration)
         Map<String, Long> nativeStateHandles = new HashMap<>();
@@ -669,5 +700,33 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
 
         registeredPQStates.put(metaInfo.getName(), wrapper);
         LOG.info("[ForL0] Restored PQ state '{}'", metaInfo.getName());
+    }
+
+    // -----------------------------------------------------------------------
+    //  HotCache metrics registration (design §8).
+    //
+    //  Always expose manager-level gauges so operators can tell whether their
+    //  `l0-cache.enabled=true` request actually resolved to an active cache —
+    //  especially important when hardware gating forces a fallback to
+    //  disabled (bytes_capacity == 0, active == 0).
+    // -----------------------------------------------------------------------
+    private static void registerHotCacheMetrics(MetricGroup parent, long engineHandle) {
+        try {
+            MetricGroup g = parent.addGroup("forl0").addGroup("hotcache");
+            // Snapshot cache every query; the values are atomic counters / plain
+            // longs in C++. Nine-slot scratch buffer avoids per-call allocation.
+            final long[] buf = new long[9];
+            g.gauge("active",             () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[0]; });
+            g.gauge("bytesCapacity",      () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[1]; });
+            g.gauge("bytesUsed",          () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[2]; });
+            g.gauge("totalSets",          () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[3]; });
+            g.gauge("freeSets",           () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[4]; });
+            g.gauge("lookups",            () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[5]; });
+            g.gauge("hits",               () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[6]; });
+            g.gauge("invalidations",      () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[7]; });
+        } catch (Throwable t) {
+            // Metric registration is best-effort; don't fail backend build.
+            LOG.warn("[ForL0] Failed to register HotCache metrics: {}", t.getMessage());
+        }
     }
 }

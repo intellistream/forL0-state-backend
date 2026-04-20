@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "hot_cache.h"
+
 #include "swiss_table.h"
 #include "type_layout.h"
 #include "allocator.h"
@@ -760,12 +762,14 @@ private:
 class StateEngine {
 public:
     StateEngine(int start_key_group, int num_key_groups, int total_key_groups,
-                Allocator* alloc = &DefaultAllocator::instance())
+                Allocator* alloc = &DefaultAllocator::instance(),
+                std::unique_ptr<HotCacheManager> hot_cache = nullptr)
         : start_key_group_(start_key_group),
           num_key_groups_(num_key_groups),
           total_key_groups_(total_key_groups),
           alloc_(alloc),
-          snapshot_version_(0) {}
+          snapshot_version_(0),
+          hot_cache_manager_(std::move(hot_cache)) {}
 
     ~StateEngine() = default;
 
@@ -832,6 +836,7 @@ public:
     int num_key_groups() const { return num_key_groups_; }
     int total_key_groups() const { return total_key_groups_; }
     Allocator* allocator() const { return alloc_; }
+    HotCacheManager* hot_cache_manager() const { return hot_cache_manager_.get(); }
 
     const std::unordered_map<int64_t, std::unique_ptr<StateTableHandle>>& state_handles() const {
         return state_handles_;
@@ -875,6 +880,7 @@ private:
     std::vector<OwnedPtr> owned_state_handles_;  // owns all StateHandle allocations
 
     uint64_t snapshot_version_;
+    std::unique_ptr<HotCacheManager> hot_cache_manager_;
 };
 
 }  // namespace forl0

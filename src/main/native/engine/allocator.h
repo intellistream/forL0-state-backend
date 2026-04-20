@@ -1,10 +1,7 @@
 // Memory allocator interface for SwissTable and StateEngine.
-// Default implementation uses aligned malloc. L0 Cache allocator can be
-// substituted via the Allocator interface.
-//
-// Split allocation: For large SwissTables, the ctrl array (hot, small) can be
-// placed in L0 memory while slots (cold, large) stay on heap. This eliminates
-// LLC misses on ctrl loads — the #1 bottleneck identified by VTune profiling.
+// The default implementation uses aligned malloc. L0 memory is NOT used here;
+// it is instead managed by HotCacheManager (see engine/hot_cache.h) as an
+// explicit hot-key cache above StateTable.
 
 #pragma once
 
@@ -34,9 +31,10 @@ public:
     // Deallocate a previously allocated block.
     virtual void deallocate(void* ptr, size_t size) = 0;
 
-    // Split allocation: allocate ctrl and slots separately.
-    // L0Allocator overrides this to place ctrl in L0 when the whole table is too large.
-    // Default: single contiguous allocation (ctrl followed by slots).
+    // Split allocation: allocate ctrl and slots separately. Default is a single
+    // contiguous allocation (ctrl followed by slots). The previous L0Allocator
+    // override has been removed — L0 is now a hot-key cache above StateTable,
+    // not a memory backend for SwissTable internals.
     virtual SplitResult allocate_split(size_t ctrl_size, size_t ctrl_align,
                                        size_t slots_size, size_t slots_align) {
         // Default: pack into one allocation (original behavior).
