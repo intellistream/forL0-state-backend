@@ -16,8 +16,8 @@ runtime:
 # Uses KeyedProcessFunction + ValueState (VoidNamespace) for pure state access testing
 # No window/timer overhead - maximizes state backend impact on performance
 wordcount:
-  num_keys: 10000000           # Number of unique keys (high cardinality for SwissTable)
-  num_records: 3000000000     # Total number of records
+  num_keys: 2000000           # Number of unique keys (high cardinality for SwissTable)
+  num_records: 2000000000     # Total number of records
   arrival_rate: 0             # 0 = unlimited (full speed for max throughput)
   skew_factor: 0              # Zipf s parameter (0 = uniform distribution)
   warmup_duration: 0         # warmup duration in seconds (0 to disable)
@@ -56,7 +56,8 @@ unittest:
 
 # Client usecase benchmark settings
 client_usecase:
-  num_records: 1000000        # Total input records across both sources
+  num_records: 5000         # Desired total input records across both sources for the whole job
+  timeout_seconds: 7200      # Client usecase is heavy; allow up to 2h before treating as timeout
 
 # Benchmark Set v4 - High state pressure realistic business scenarios
 # All benchmarks use Long keys to trigger SwissTableLong specialization

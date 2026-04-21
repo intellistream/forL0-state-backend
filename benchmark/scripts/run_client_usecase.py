@@ -8,6 +8,7 @@ configured like WordCount.
 """
 
 import argparse
+import math
 import subprocess
 import sys
 import time
@@ -57,6 +58,19 @@ def split_total_records(total_records: int) -> tuple[int, int]:
     return left_records, right_records
 
 
+def records_per_source_subtask(total_records: int, parallelism: int) -> int:
+    """
+    Compensate for the client usecase source implementation.
+
+    The customer job applies env parallelism to both sources and each source subtask
+    emits maxRecords independently. To approximate a desired total record count for a
+    stream, pass per-subtask records here.
+    """
+    if parallelism <= 0:
+        raise ValueError('parallelism must be > 0')
+    return max(1, math.ceil(total_records / parallelism))
+
+
 def run_client_usecase(
     config: dict,
     backend: str,
@@ -91,6 +105,10 @@ def run_client_usecase(
         return None
 
     left_records, right_records = split_total_records(total_input_records)
+    parallelism = int(runtime_config.get('parallelism', 1))
+    left_records_per_subtask = records_per_source_subtask(left_records, parallelism)
+    right_records_per_subtask = records_per_source_subtask(right_records, parallelism)
+    estimated_total_records = parallelism * (left_records_per_subtask + right_records_per_subtask)
 
     backends_list = {b['name']: b['class'] for b in config.get('backends', [])}
     backend_class = backends_list.get(backend, '')
@@ -102,20 +120,34 @@ def run_client_usecase(
 
     cmd.extend([
         jar_path,
-        '--leftNumRecords', str(left_records),
-        '--rightNumRecords', str(right_records),
-        '--parallelism', str(runtime_config.get('parallelism', 1)),
+        '--leftNumRecords', str(left_records_per_subtask),
+        '--rightNumRecords', str(right_records_per_subtask),
+        '--parallelism', str(parallelism),
         '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 0)),
     ])
 
     print(f"\n=== Running Client Usecase Benchmark ({backend} backend) ===\n")
     print(f"Flink cluster: {rest_url}")
-    print(f"Parameters: totalInputRecords={total_input_records}, leftRecords={left_records}, rightRecords={right_records}")
+    print(
+        'Parameters: '
+        f'desiredTotalInputRecords={total_input_records}, '
+        f'parallelism={parallelism}, '
+        f'leftStreamTarget={left_records}, '
+        f'rightStreamTarget={right_records}, '
+        f'leftPerSubtask={left_records_per_subtask}, '
+        f'rightPerSubtask={right_records_per_subtask}, '
+        f'estimatedActualTotal={estimated_total_records}'
+    )
+    print(
+        'Warning: customer source applies env parallelism to each source instance and uses event-time timers '
+        'without watermark emission. This runner compensates the record count at submission time, but long-running '
+        'jobs can still accumulate state faster than expected.'
+    )
     if profile_mode:
         print(f"Profiling requested but not implemented for client_usecase yet: {profile_mode}")
     print(f"Command: {' '.join(cmd)}\n")
 
-    timeout = 3600
+    timeout = max(3600, int(config.get('client_usecase', {}).get('timeout_seconds', 7200)))
 
     try:
         start_time = time.time()
@@ -135,20 +167,22 @@ def run_client_usecase(
             return None
 
         wall_time = end_time - start_time
-        throughput = total_input_records / wall_time if wall_time > 0 else 0
-        parallelism = runtime_config.get('parallelism', 1)
-
+        throughput = estimated_total_records / wall_time if wall_time > 0 else 0
         return {
             'benchmark': 'client-usecase',
             'backend': backend,
             'config': {
                 'num_records': total_input_records,
-                'left_num_records': left_records,
-                'right_num_records': right_records,
+                'left_num_records_target': left_records,
+                'right_num_records_target': right_records,
+                'left_num_records_per_subtask': left_records_per_subtask,
+                'right_num_records_per_subtask': right_records_per_subtask,
+                'estimated_actual_total_records': estimated_total_records,
                 'parallelism': parallelism,
                 'checkpoint_interval': runtime_config.get('checkpoint_interval', 0),
             },
-            'total_input_records': total_input_records,
+            'total_input_records': estimated_total_records,
+            'desired_total_input_records': total_input_records,
             'wall_time_seconds': wall_time,
             'throughput': throughput,
             'throughput_per_core': throughput / parallelism if parallelism > 0 else throughput,

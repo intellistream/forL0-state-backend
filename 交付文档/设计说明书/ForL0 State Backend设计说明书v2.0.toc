@@ -1,0 +1,41 @@
+\contentsline {section}{\numberline {1}整体架构设计}{3}{section.1}%
+\contentsline {subsection}{\numberline {1.1}总体架构}{3}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}状态访问优化路径}{3}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}原生状态表组织}{4}{subsection.1.3}%
+\contentsline {subsection}{\numberline {1.4}组件解耦与集成}{4}{subsection.1.4}%
+\contentsline {section}{\numberline {2}架构设计细节}{6}{section.2}%
+\contentsline {subsection}{\numberline {2.1}可复用组件与扩展组件}{6}{subsection.2.1}%
+\contentsline {subsubsection}{\numberline {2.1.1}ForL0StateBackend 与 ForL0KeyedStateBackend}{6}{subsubsection.2.1.1}%
+\contentsline {subsubsection}{\numberline {2.1.2}PriorityQueueManager / HeapPriorityQueue}{6}{subsubsection.2.1.2}%
+\contentsline {subsubsection}{\numberline {2.1.3}NativeEngine}{6}{subsubsection.2.1.3}%
+\contentsline {subsection}{\numberline {2.2}关键设计组件}{7}{subsection.2.2}%
+\contentsline {subsubsection}{\numberline {2.2.1}StateEngine}{7}{subsubsection.2.2.1}%
+\contentsline {subsubsection}{\numberline {2.2.2}状态布局与命名空间组织}{7}{subsubsection.2.2.2}%
+\contentsline {subsubsection}{\numberline {2.2.3}SwissTable}{7}{subsubsection.2.2.3}%
+\contentsline {subsubsection}{\numberline {2.2.4}状态访问策略与 JNI 快路径}{8}{subsubsection.2.2.4}%
+\contentsline {subsubsection}{\numberline {2.2.5}类型分析与布局描述}{9}{subsubsection.2.2.5}%
+\contentsline {subsection}{\numberline {2.3}原生状态组织实现}{9}{subsection.2.3}%
+\contentsline {subsubsection}{\numberline {2.3.1}结构组成}{9}{subsubsection.2.3.1}%
+\contentsline {subsubsection}{\numberline {2.3.2}RowData 快路径实现}{9}{subsubsection.2.3.2}%
+\contentsline {subsubsection}{\numberline {2.3.3}主要操作算法}{10}{subsubsection.2.3.3}%
+\contentsline {paragraph}{查询（Get）}{10}{subsubsection.2.3.3}%
+\contentsline {paragraph}{插入（Put）}{11}{algorithm.1}%
+\contentsline {paragraph}{更新（Update）}{11}{algorithm.2}%
+\contentsline {paragraph}{删除（Remove）}{11}{algorithm.3}%
+\contentsline {paragraph}{扩容与重哈希（Grow/Rehash）}{11}{algorithm.4}%
+\contentsline {paragraph}{快照一致性视图遍历}{13}{algorithm.5}%
+\contentsline {subsection}{\numberline {2.4}ForL0State 实现}{13}{subsection.2.4}%
+\contentsline {subsubsection}{\numberline {2.4.1}ForL0ValueState}{13}{subsubsection.2.4.1}%
+\contentsline {subsubsection}{\numberline {2.4.2}ForL0ListState}{13}{subsubsection.2.4.2}%
+\contentsline {subsubsection}{\numberline {2.4.3}ForL0MapState}{13}{subsubsection.2.4.3}%
+\contentsline {subsubsection}{\numberline {2.4.4}ForL0ReducingState 与 ForL0AggregatingState}{14}{subsubsection.2.4.4}%
+\contentsline {section}{\numberline {3}容错机制设计}{14}{section.3}%
+\contentsline {subsection}{\numberline {3.1}快照发起}{14}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}快照采集}{14}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Copy-On-Write 一致性模型}{15}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.4}Savepoint 与状态恢复}{15}{subsection.3.4}%
+\contentsline {subsection}{\numberline {3.5}资源回收与异常处理}{15}{subsection.3.5}%
+\contentsline {section}{\numberline {4}插件式集成设计}{16}{section.4}%
+\contentsline {subsection}{\numberline {4.1}加载机制}{16}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}运行时接入边界}{16}{subsection.4.2}%
+\contentsline {section}{\numberline {5}总结}{17}{section.5}%

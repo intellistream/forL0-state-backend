@@ -133,7 +133,7 @@ do_start() {
         -e FLINK_HOME=/opt/flink \
         -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
         --cpuset-cpus 4-7 \
-        --memory 16g \
+        --memory 32g \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
 
@@ -155,7 +155,7 @@ do_start() {
         -e FLINK_HOME=/opt/flink \
         -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
         --cpuset-cpus 8-11 \
-        --memory 16g \
+        --memory 32g \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
 
