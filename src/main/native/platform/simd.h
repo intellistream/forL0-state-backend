@@ -30,22 +30,38 @@ static_assert(kEmpty < kSentinel && kDeleted < kSentinel,
 // A group width of 16 bytes — matches SSE2 register / NEON register width.
 static constexpr size_t kGroupWidth = 16;
 
-// BitMask wraps a bitmask where each set bit indicates a match.
-// For SSE2: bit i corresponds to byte i (from _mm_movemask_epi8).
-// For NEON / portable: similar semantic via different encoding.
-struct BitMask {
-    uint32_t mask;
+// ----------------------------------------------------------------------------
+// BitMask — abseil-aligned template.
+//
+// Each backend chooses its own (storage_type, shift) combination:
+//   - SSE2 / portable: uint32_t mask, Shift=0  (one bit per slot: bits 0..15)
+//   - NEON           : uint64_t mask, Shift=2  (one bit per slot at bit slot*4,
+//                      derived from the vshrn_n_u16 nibble-compression trick —
+//                      this is the same idea abseil's GroupAArch64Impl uses)
+//
+// The invariant every backend maintains: within the storage, each logical slot
+// is represented by exactly ONE set bit, located at bit index (slot << Shift).
+// That lets `mask &= mask - 1` step to the next slot without any scalar loop,
+// and `__builtin_ctz*(mask) >> Shift` recover the slot index in O(1).
+// ----------------------------------------------------------------------------
+template <typename T, int Shift>
+struct BitMaskImpl {
+    T mask;
 
-    explicit BitMask(uint32_t m) : mask(m) {}
+    explicit BitMaskImpl(T m) : mask(m) {}
 
     explicit operator bool() const { return mask != 0; }
 
-    // Returns the index of the lowest set bit.
+    // Returns the slot index of the lowest set bit.
     uint32_t lowest_bit_set() const {
-        return __builtin_ctz(mask);
+        if constexpr (sizeof(T) <= 4) {
+            return static_cast<uint32_t>(__builtin_ctz(static_cast<uint32_t>(mask))) >> Shift;
+        } else {
+            return static_cast<uint32_t>(__builtin_ctzll(static_cast<uint64_t>(mask))) >> Shift;
+        }
     }
 
-    // Removes the lowest set bit and returns its index.
+    // Removes the lowest set bit and returns its slot index.
     uint32_t next() {
         uint32_t idx = lowest_bit_set();
         mask &= mask - 1;
@@ -54,6 +70,12 @@ struct BitMask {
 
     bool has_next() const { return mask != 0; }
 };
+
+#if defined(FORL0_NEON)
+using BitMask = BitMaskImpl<uint64_t, 2>;
+#else
+using BitMask = BitMaskImpl<uint32_t, 0>;
+#endif
 
 // ============================================================================
 //  SSE2 Group implementation (x86-64)
@@ -107,6 +129,21 @@ struct Group {
 
 // ============================================================================
 //  NEON Group implementation (AArch64 / Kunpeng)
+//
+//  Design aligned with abseil's GroupAArch64Impl:
+//   - vceqq_u8 / vcltq_s8 produces a vector where each matched byte is 0xFF
+//     and each non-match byte is 0x00.
+//   - vshrn_n_u16(cmp, 4) packs the 128-bit byte-mask into 64 bits, with each
+//     slot taking 4 bits: slot i's nibble is located at bit position i*4, and
+//     the nibble is 0xF on match / 0x0 on miss.
+//   - Masking the result with 0x1111...11 leaves exactly one set bit per
+//     matched slot, at bit (i << 2). The generic BitMaskImpl<uint64_t, Shift=2>
+//     then iterates with `ctzll >> 2` and `mask &= mask - 1` — no scalar loop.
+//
+//  This is the critical fix for AArch64 (Kunpeng) performance: the previous
+//  implementation recompressed the nibble-mask into a 16-bit bitmask via a
+//  16-iteration scalar loop on every match(), completely erasing the SIMD
+//  advantage in SwissTable probes.
 // ============================================================================
 #elif defined(FORL0_NEON)
 
@@ -117,20 +154,27 @@ struct Group {
         ctrl = vld1q_u8(reinterpret_cast<const uint8_t*>(pos));
     }
 
+    // Compress a per-byte compare result (each byte 0x00 or 0xFF) into the
+    // sparse 64-bit "one bit per slot, at bit slot*4" form consumed by
+    // BitMaskImpl<uint64_t, 2>.
+    static inline uint64_t nibble_mask_sparse(uint8x16_t cmp) {
+        uint8x8_t narrowed = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
+        uint64_t bits = vget_lane_u64(vreinterpret_u64_u8(narrowed), 0);
+        return bits & 0x1111111111111111ULL;
+    }
+
+    // Dense nibble mask: each slot occupies 4 bits, full 0xF on match / 0x0 on miss.
+    // Used by count_leading_empty_or_deleted where we need to find the first
+    // non-matching slot in positional order.
+    static inline uint64_t nibble_mask_dense(uint8x16_t cmp) {
+        uint8x8_t narrowed = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
+        return vget_lane_u64(vreinterpret_u64_u8(narrowed), 0);
+    }
+
     BitMask match(int8_t h2) const {
         uint8x16_t dup = vdupq_n_u8(static_cast<uint8_t>(h2));
         uint8x16_t cmp = vceqq_u8(ctrl, dup);
-        // Compress 16 bytes to 16 bits: take the high bit of each byte.
-        // NEON doesn't have movemask; use shift+narrow approach.
-        uint8x8_t narrowed = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
-        uint64_t bits;
-        vst1_u8(reinterpret_cast<uint8_t*>(&bits), narrowed);
-        // Each nibble is 0xF (match) or 0x0. Convert to one-bit-per-slot.
-        uint32_t mask = 0;
-        for (int i = 0; i < 16; ++i) {
-            if ((bits >> (i * 4)) & 0xF) mask |= (1u << i);
-        }
-        return BitMask(mask);
+        return BitMask(nibble_mask_sparse(cmp));
     }
 
     BitMask match_empty() const {
@@ -138,27 +182,22 @@ struct Group {
     }
 
     BitMask match_empty_or_deleted() const {
-        // Empty and deleted both have the high bit set (0x80, 0xFE).
-        // Test: ctrl & 0x80 != 0 AND ctrl != kSentinel(0xFF).
-        // Simplification: ctrl byte < kSentinel in unsigned? No — 0x80 > 0xFF unsigned false.
-        // Use signed comparison: all special bytes are negative; kSentinel = -1 is the largest negative.
-        // We want bytes strictly less than kSentinel in signed comparison.
+        // Empty (0x80) and Deleted (0xFE) are strictly less than kSentinel (0xFF)
+        // in signed byte comparison; FULL (0x00..0x7F) is non-negative, i.e. > -1.
         int8x16_t sentinel = vdupq_n_s8(kSentinel);
         uint8x16_t cmp = vcltq_s8(vreinterpretq_s8_u8(ctrl), sentinel);
-        // Convert to bitmask
-        uint8x8_t narrowed = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
-        uint64_t bits;
-        vst1_u8(reinterpret_cast<uint8_t*>(&bits), narrowed);
-        uint32_t mask = 0;
-        for (int i = 0; i < 16; ++i) {
-            if ((bits >> (i * 4)) & 0xF) mask |= (1u << i);
-        }
-        return BitMask(mask);
+        return BitMask(nibble_mask_sparse(cmp));
     }
 
     uint32_t count_leading_empty_or_deleted() const {
-        auto m = match_empty_or_deleted();
-        return (m.mask == 0xFFFF) ? kGroupWidth : __builtin_ctz(~m.mask);
+        int8x16_t sentinel = vdupq_n_s8(kSentinel);
+        uint8x16_t cmp = vcltq_s8(vreinterpretq_s8_u8(ctrl), sentinel);
+        uint64_t dense = nibble_mask_dense(cmp);
+        // Leading empty/deleted count = number of leading 0xF nibbles in `dense`.
+        // Equivalent: index (in nibbles) of the first 0x0 nibble. If all 16 slots
+        // are empty/deleted, dense is all-ones.
+        if (dense == 0xFFFFFFFFFFFFFFFFULL) return kGroupWidth;
+        return static_cast<uint32_t>(__builtin_ctzll(~dense)) >> 2;
     }
 };
 
