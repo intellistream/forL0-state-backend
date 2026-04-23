@@ -1,0 +1,766 @@
+% !TEX program = xelatex
+\documentclass[a4paper,11pt]{article}
+
+% ===================== Packages =====================
+\usepackage{fontspec}
+\usepackage[a4paper,top=2.8cm,bottom=2.8cm,left=2.6cm,right=2.6cm,headheight=15pt,headsep=10pt,footskip=22pt]{geometry}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{titletoc}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{fancyhdr}
+\usepackage[font=small,labelfont=bf,labelsep=quad,skip=6pt]{caption}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,backgrounds}
+
+% ===================== Fonts =====================
+\setmainfont{Noto Serif CJK SC}
+\setsansfont{Noto Sans CJK SC}
+\setmonofont{Noto Sans Mono CJK SC}
+
+\XeTeXlinebreaklocale "zh"
+\XeTeXlinebreakskip = 0pt plus 1pt
+
+% ===================== Hyperref =====================
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=black,
+  citecolor=black,
+  pdftitle={ForL0 State Backend 编译构建指导书 v2.0},
+  pdfauthor={ForL0 Project}
+}
+
+% ===================== Localization =====================
+\renewcommand{\contentsname}{目\quad 录}
+\renewcommand{\tablename}{表}
+\renewcommand{\figurename}{图}
+
+% ===================== Spacing =====================
+\setstretch{1.28}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.35em}
+\setlength{\emergencystretch}{3em}
+\sloppy
+\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.35em,parsep=0pt}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em,parsep=0pt}
+
+% ===================== Headings =====================
+\definecolor{accent}{RGB}{30,64,110}
+\definecolor{rulegray}{RGB}{60,60,60}
+\definecolor{softgray}{RGB}{245,246,248}
+\definecolor{midgray}{RGB}{220,223,228}
+\definecolor{linegray}{RGB}{120,124,132}
+\definecolor{codebg}{RGB}{248,249,251}
+\definecolor{codeborder}{RGB}{220,223,228}
+\definecolor{codekw}{RGB}{30,64,110}
+\definecolor{codecomment}{RGB}{90,100,110}
+\definecolor{codestring}{RGB}{102,70,20}
+
+\titleformat{\section}[hang]
+  {\normalfont\large\bfseries\color{accent}}
+  {\thesection}{0.8em}{}
+  [\vspace{2pt}{\color{accent!60}\titlerule[0.6pt]}]
+\titlespacing*{\section}{0pt}{1.6em}{0.9em}
+
+\titleformat{\subsection}[hang]
+  {\normalfont\normalsize\bfseries\color{accent!85!black}}
+  {\thesubsection}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.55em}
+
+\titleformat{\subsubsection}[hang]
+  {\normalfont\normalsize\bfseries}
+  {\thesubsubsection}{0.55em}{}
+\titlespacing*{\subsubsection}{0pt}{0.9em}{0.4em}
+
+% ===================== TOC styling =====================
+\titlecontents{section}
+  [0em]{\addvspace{0.55em}\bfseries}
+  {\contentslabel{1.6em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{subsection}
+  [2.2em]{\addvspace{0.15em}}
+  {\contentslabel{2.4em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{subsubsection}
+  [4.6em]{\addvspace{0.05em}\small}
+  {\contentslabel{3.0em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+
+% ===================== Header / Footer =====================
+\newcommand{\project}{ForL0 State Backend}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\small\sffamily\color{accent}\project{} 编译构建指导书}
+\fancyhead[R]{\small\sffamily\color{accent}v2.0}
+\fancyfoot[C]{\small\thepage}
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \renewcommand{\headrulewidth}{0pt}%
+  \fancyfoot[C]{\small\thepage}%
+}
+
+% ===================== Listings =====================
+\lstdefinestyle{shellstyle}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeborder},
+  framesep=4pt,
+  xleftmargin=6pt,
+  xrightmargin=4pt,
+  aboveskip=0.6em,
+  belowskip=0.6em,
+  breaklines=true,
+  breakatwhitespace=false,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=2,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  keywordstyle=\color{codekw}\bfseries,
+  extendedchars=false,
+  inputencoding=utf8,
+  literate={\$}{{\$}}1 {\&}{{\&}}1 {\_}{{\_}}1
+}
+\lstdefinelanguage{shellcmd}{
+  morekeywords={cd,ls,mkdir,cp,mv,rm,export,cmake,make,mvn,yum,sudo,wget,tar,ln,grep,nm,file,ldd,source,ln,tee,curl,echo,python3,pip3,bash,nproc,dlopen},
+  morecomment=[l]{\#},
+  morestring=[b]",
+}
+\lstdefinelanguage{yamlcmd}{
+  morekeywords={state,backend,type,forl0,checkpoints,dir,env,java,opts,all,l0-cache,enabled,size,max-per-alloc,async-snapshots,execution,checkpointing,interval,mode},
+  morecomment=[l]{\#},
+  morestring=[b]",
+}
+\lstset{style=shellstyle,language=shellcmd}
+
+% ===================== Table column types =====================
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+% ===================== Figure palette =====================
+\definecolor{fgfill}{RGB}{248,249,251}
+\definecolor{fgaccent}{RGB}{30,64,110}
+\definecolor{fgaccentlight}{RGB}{223,231,242}
+\definecolor{fgbox}{RGB}{255,255,255}
+\definecolor{fgborder}{RGB}{90,95,105}
+\definecolor{fgsubtle}{RGB}{235,237,240}
+\definecolor{fgline}{RGB}{70,74,82}
+
+\tikzset{
+  figfont/.style={font=\footnotesize\sffamily},
+  figsmall/.style={font=\scriptsize\sffamily,text=black!70},
+  figtitle/.style={font=\footnotesize\sffamily\bfseries,text=fgaccent},
+  box/.style={draw=fgborder, line width=0.5pt, rounded corners=2pt, fill=fgbox,
+              minimum height=0.82cm, inner xsep=6pt, inner ysep=4pt, align=center, figfont},
+  accentbox/.style={draw=fgaccent, line width=0.6pt, rounded corners=2pt, fill=fgaccentlight,
+              minimum height=0.82cm, inner xsep=6pt, inner ysep=4pt, align=center, figfont},
+  subtlebox/.style={draw=fgborder, line width=0.5pt, rounded corners=2pt, fill=fgsubtle,
+              minimum height=0.82cm, inner xsep=6pt, inner ysep=4pt, align=center, figfont},
+  lane/.style={draw=fgborder!55, line width=0.4pt, rounded corners=3pt, fill=fgfill},
+  line/.style={-{Latex[length=2mm,width=1.6mm]}, draw=fgline, line width=0.55pt},
+  thinline/.style={draw=fgline!80, line width=0.4pt}
+}
+
+% ===================== Title page macro =====================
+\newcommand{\coverrule}{{\color{accent}\rule{\linewidth}{0.9pt}}}
+\newcommand{\coverrulethin}{{\color{accent!55}\rule{\linewidth}{0.3pt}}}
+
+\begin{document}
+
+% =================================================
+%                 COVER
+% =================================================
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{5.5cm}
+
+\coverrule
+\vspace{2pt}
+\coverrulethin
+
+\vspace{1.6cm}
+{\sffamily\huge\bfseries\color{accent} \project\par}
+\vspace{0.8cm}
+{\sffamily\LARGE\bfseries 编译构建指导书\par}
+
+\vspace{1.6cm}
+\coverrulethin
+\vspace{2pt}
+\coverrule
+
+\vfill
+
+{\sffamily\large\color{accent!85} 2026 年 4 月\par}
+
+\vspace{1.2cm}
+\end{titlepage}
+
+% =================================================
+%                 TOC
+% =================================================
+\pagenumbering{roman}
+\pagestyle{plain}
+\tableofcontents
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\pagestyle{fancy}
+
+% =================================================
+%                 CONTENT
+% =================================================
+\section{文档概述}
+
+本文档给出 \project{} 从基础环境准备、原生引擎编译、Java 主工程打包到基线 Benchmark 构建的完整流程，仅覆盖编译构建相关内容。集群部署、作业配置、运行期验证等使用层面内容由《使用说明书》单独说明；架构与数据结构设计由《设计说明书》给出。
+
+\subsection{目标平台}
+
+文中提到的所有路径、依赖包和命令均假定在如下环境下执行：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{3.2cm} X}
+\toprule
+\textbf{项目} & \textbf{要求} \\
+\midrule
+处理器 & 鲲鹏系列处理器 \\
+操作系统 & openEuler \\
+架构 & aarch64（ARM64） \\
+内核特性 & 支持鲲鹏 L0 Cache 的内核驱动及 \texttt{/dev/hisi\_l0} 设备节点（若计划启用 L0 模式） \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+L0 Cache 相关的硬件与驱动并非编译期依赖。若目标机器缺少 L0 硬件或内存池库，原生引擎会在运行时自动退回至堆内存分配，不影响功能完整性。
+
+\subsection{构建产物}
+
+按照本文档的构建流程，最终会得到下列产物：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{5.8cm} X}
+\toprule
+\textbf{产物} & \textbf{说明} \\
+\midrule
+\texttt{libforl0\_engine.so} & 原生状态引擎共享库（aarch64 版本） \\
+\texttt{flink-statebackend-forL0-1.0-SNAPSHOT.jar} & Java 控制层与 JNI 桥接打包的状态后端 JAR \\
+\texttt{wordcount-benchmark-*.jar} & WordCount 基线性能测试 JAR \\
+\texttt{nexmark-datastream-*.jar} & NexMark 基线性能测试 JAR（DataStream 实现） \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{基础环境准备}
+
+基础环境准备包括系统构建工具、JDK、Maven、CMake、Flink 运行环境，以及 L0 Cache 相关的可选依赖。若构建机与部署机分离，基础构建工具可只安装在构建机上；JDK、Flink 与 L0 库一般需要部署到运行机。
+
+\subsection{系统构建工具}
+
+C++ 原生引擎采用 CMake + Make 构建，对 GCC 版本有一定要求。在 openEuler 上可通过包管理器直接安装：
+
+\begin{lstlisting}[language=shellcmd]
+sudo yum install -y gcc gcc-c++ cmake3 make
+
+# 若默认仅有 cmake3 可执行文件，建议创建 cmake 软链接
+sudo ln -sf /usr/bin/cmake3 /usr/bin/cmake
+
+gcc --version   # 要求 >= 7.0，支持 C++17
+\end{lstlisting}
+
+部分发行版自带的 CMake 版本低于 3.14，无法满足原生引擎构建。此时可使用官方 aarch64 预编译包：
+
+\begin{lstlisting}[language=shellcmd]
+wget https://github.com/Kitware/CMake/releases/download/v3.28.0/cmake-3.28.0-linux-aarch64.tar.gz
+tar xzf cmake-3.28.0-linux-aarch64.tar.gz -C /opt/
+export PATH=/opt/cmake-3.28.0-linux-aarch64/bin:$PATH
+cmake --version
+\end{lstlisting}
+
+\subsection{JDK 与 Maven}
+
+Java 主工程使用 JDK 1.8 与 Maven 3.6 及以上版本。在鲲鹏平台建议使用华为毕昇 JDK，也可直接使用 OpenJDK 提供的 aarch64 包：
+
+\begin{lstlisting}[language=shellcmd]
+# OpenJDK（系统源）
+sudo yum install -y java-1.8.0-openjdk-devel
+
+# 或使用 BiSheng JDK（鲲鹏优化，从华为镜像站下载 aarch64 版本后解压至 /opt）
+export JAVA_HOME=/opt/bisheng-jdk1.8.0
+export PATH=$JAVA_HOME/bin:$PATH
+
+java -version
+javac -version
+\end{lstlisting}
+
+Maven 使用官方二进制包安装：
+
+\begin{lstlisting}[language=shellcmd]
+wget https://archive.apache.org/dist/maven/maven-3/3.8.8/binaries/apache-maven-3.8.8-bin.tar.gz
+tar xzf apache-maven-3.8.8-bin.tar.gz -C /opt/
+export MAVEN_HOME=/opt/apache-maven-3.8.8
+export PATH=$MAVEN_HOME/bin:$PATH
+mvn --version
+\end{lstlisting}
+
+\subsection{Apache Flink 运行环境}
+
+部署机需要具备 Apache Flink 1.20.3 二进制发行版。Flink 自身为 Scala 2.12 构建，无架构差异，可直接从官方下载：
+
+\begin{lstlisting}[language=shellcmd]
+wget https://archive.apache.org/dist/flink/flink-1.20.3/flink-1.20.3-bin-scala_2.12.tgz
+tar xzf flink-1.20.3-bin-scala_2.12.tgz -C /opt/
+export FLINK_HOME=/opt/flink-1.20.3
+$FLINK_HOME/bin/flink --version
+\end{lstlisting}
+
+\subsection{L0 Cache 依赖检测}
+
+鲲鹏 L0 Cache 加速依赖两项条件：L0 设备节点 \texttt{/dev/hisi\_l0} 和 L0 内存池共享库 \texttt{libl0mempool.so}。二者均为运行期依赖，构建期无需参与链接，但在部署前应提前检查，避免运行阶段再回查环境。
+
+\begin{lstlisting}[language=shellcmd]
+# L0 设备节点
+ls -la /dev/hisi_l0 2>/dev/null \
+  && echo "[OK] L0 设备可用" \
+  || echo "[WARN] L0 设备不存在，将回退至模拟模式"
+
+# L0 内存池共享库
+ls -la /usr/lib64/libl0mempool.so 2>/dev/null \
+  && echo "[OK] L0 库可用" \
+  || echo "[WARN] L0 库未安装，将回退至模拟模式"
+
+# 确认 L0 库所在目录已在 LD_LIBRARY_PATH 中
+echo $LD_LIBRARY_PATH | grep -q "/usr/lib64" \
+  && echo "[OK] LD_LIBRARY_PATH 已包含 /usr/lib64" \
+  || echo "[WARN] 建议将 /usr/lib64 加入 LD_LIBRARY_PATH"
+\end{lstlisting}
+
+若两项条件均满足，原生引擎将在初始化阶段激活 L0 模式；若任何一项缺失，则以透明方式退回至堆内存分配。构建期无需任何 L0 依赖参与。
+
+\subsection{环境变量汇总}
+
+为便于后续命令复用，建议将关键变量固化到 \texttt{\~{}/.bashrc}：
+
+\begin{lstlisting}[language=shellcmd]
+export JAVA_HOME=/opt/bisheng-jdk1.8.0
+export MAVEN_HOME=/opt/apache-maven-3.8.8
+export FLINK_HOME=/opt/flink-1.20.3
+export PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$FLINK_HOME/bin:$PATH
+\end{lstlisting}
+
+\section{原生引擎构建}
+
+原生引擎是 \project{} 的核心组件，包含 SwissTable 哈希存储、状态引擎、Copy-On-Write 快照实现以及 JNI 桥接层。原生引擎须先于 Java 主工程构建，Java 侧的测试与运行均依赖其产物。
+
+\subsection{构建步骤}
+
+原生引擎位于 \texttt{src/main/native} 下，使用 CMake 组织。推荐的构建流程如下：
+
+\begin{lstlisting}[language=shellcmd]
+cd src/main/native
+
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+make install
+\end{lstlisting}
+
+\texttt{make install} 会将生成的 \texttt{libforl0\_engine.so} 复制到 \texttt{src/main/resources/native/} 下，随后 Java 测试和打包流程即可直接引用该产物。
+
+\subsection{鲲鹏平台默认启用的编译选项}
+
+在 aarch64 上，CMake 脚本会根据平台自动启用下列优化，不需要在命令行显式指定：
+
+\begin{itemize}
+  \item \texttt{-O3 -DNDEBUG -march=native}：以鲲鹏 CPU 为目标的最高级别优化。
+  \item \texttt{-DFORL0\_NEON=1}：启用 NEON 路径的 SWAR 并行匹配实现，用于 SwissTable 的控制字节比较。
+  \item \texttt{\$\{CMAKE\_DL\_LIBS\}} 链接：仅链接 \texttt{libdl}，以便运行时通过 \texttt{dlopen} 动态加载 L0 内存池库。
+\end{itemize}
+
+构建产物应为 aarch64 架构的 ELF 共享库，可通过如下命令核对：
+
+\begin{lstlisting}[language=shellcmd]
+file src/main/resources/native/libforl0_engine.so
+# 预期: ELF 64-bit LSB shared object, ARM aarch64, ...
+nm -D src/main/resources/native/libforl0_engine.so | grep Java_org_apache | head
+\end{lstlisting}
+
+\subsection{可选的 C++ 单元测试}
+
+当需要验证原生引擎自身的行为时，可在 CMake 阶段启用 \texttt{FORL0\_BUILD\_TESTS} 选项：
+
+\begin{lstlisting}[language=shellcmd]
+cd src/main/native
+rm -rf build && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DFORL0_BUILD_TESTS=ON
+make -j$(nproc)
+./forl0_tests
+\end{lstlisting}
+
+\subsection{CMake 选项汇总}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{4.2cm} L{2.4cm} X}
+\toprule
+\textbf{选项} & \textbf{默认值} & \textbf{说明} \\
+\midrule
+\texttt{CMAKE\_BUILD\_TYPE} & \texttt{Release} & 取 \texttt{Release} 或 \texttt{Debug}。生产交付必须使用 \texttt{Release}。 \\
+\texttt{FORL0\_BUILD\_TESTS} & \texttt{OFF} & 置为 \texttt{ON} 时编译 C++ 单元测试，生成 \texttt{forl0\_tests} 可执行文件。 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ---------- 图 1: 构建流水线 ----------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[lane, minimum width=14.6cm, minimum height=3.6cm] at (7.3,1.8) {};
+
+  \node[box, minimum width=2.4cm] (env)    at (1.9,1.8) {环境准备\\JDK / Maven\\CMake / GCC};
+  \node[accentbox, minimum width=2.4cm] (cmake)  at (5.2,1.8) {CMake 配置\\Release + NEON};
+  \node[accentbox, minimum width=2.4cm] (make)   at (8.5,1.8) {make -j\\\texttt{libforl0\_engine.so}};
+  \node[box, minimum width=2.4cm] (mvn)    at (11.8,1.8) {Maven 打包\\ForL0 JAR};
+
+  \draw[line] (env.east)    -- (cmake.west);
+  \draw[line] (cmake.east)  -- (make.west);
+  \draw[line] (make.east)   -- (mvn.west);
+\end{tikzpicture}
+\caption{\project{} 构建流水线}
+\label{fig:build-pipeline}
+\end{figure}
+
+\section{Java 主工程构建}
+
+原生引擎产物就绪后即可构建 Java 主工程。主工程负责 Flink 侧后端适配、JNI 调用入口以及测试用例打包。
+
+\subsection{编译与单元测试}
+
+基础编译与测试命令如下：
+
+\begin{lstlisting}[language=shellcmd]
+# 回到项目根目录
+cd $PROJECT_ROOT
+
+# 仅编译源码
+mvn clean compile
+
+# 编译 + 运行单元测试
+mvn test
+\end{lstlisting}
+
+Maven Surefire 已预置 \texttt{-Djava.library.path=src/main/resources/native}，测试阶段会自动加载原生库，无需额外配置。
+
+\subsection{打包 JAR}
+
+构建最终交付 JAR：
+
+\begin{lstlisting}[language=shellcmd]
+mvn package -DskipTests
+ls target/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+\end{lstlisting}
+
+生产交付建议使用带测试的完整构建：
+
+\begin{lstlisting}[language=shellcmd]
+mvn clean package
+\end{lstlisting}
+
+若构建机无法访问公共 Maven 仓库，需在 \texttt{\textasciitilde/.m2/settings.xml} 中配置内网镜像，或先行准备离线仓库。
+
+\section{Benchmark 构建}
+
+\project{} 交付物中包含两套基线性能测试：WordCount 基线和 NexMark 基线。它们与主工程解耦，可独立构建，也可在部署后单独提交至 Flink 集群。
+
+\subsection{WordCount Benchmark}
+
+\begin{lstlisting}[language=shellcmd]
+cd benchmark/wordcount
+mvn clean package -DskipTests
+ls target/wordcount-benchmark-*.jar
+\end{lstlisting}
+
+\subsection{NexMark Benchmark}
+
+\begin{lstlisting}[language=shellcmd]
+cd benchmark/nexmark-src
+mvn clean package -DskipTests
+ls nexmark-flink/nexmark-datastream/target/nexmark-datastream-*.jar
+\end{lstlisting}
+
+\subsection{（可选）JMH Benchmark}
+
+Flink 官方的 JMH Benchmark 用于回归对比，可按需构建：
+
+\begin{lstlisting}[language=shellcmd]
+cd benchmark/flink-benchmarks
+./mvnw clean package -DskipTests
+\end{lstlisting}
+
+\subsection{Benchmark 脚本依赖}
+
+Benchmark 运行脚本使用 Python 编写。运行环境需安装 Python 3.8 及以上版本：
+
+\begin{lstlisting}[language=shellcmd]
+sudo yum install -y python3 python3-pip
+cd benchmark/
+pip3 install -r requirements.txt
+
+# 封闭网络环境下使用随源码交付的离线安装包
+pip3 install --no-index --find-links=offline-packages/ -r requirements.txt
+\end{lstlisting}
+
+\section{一键构建脚本}
+
+在验证通过的基础上，建议将构建步骤封装为脚本。项目交付目录下提供如下参考脚本，供在鲲鹏服务器上直接使用：
+
+\begin{lstlisting}[language=shellcmd]
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT=$(pwd)
+NATIVE_DIR=$PROJECT_ROOT/src/main/native
+RES_DIR=$PROJECT_ROOT/src/main/resources/native
+
+echo "[1/4] 构建原生引擎"
+cd "$NATIVE_DIR"
+rm -rf build && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j"$(nproc)"
+make install
+ls "$RES_DIR/libforl0_engine.so"
+
+echo "[2/4] 构建 ForL0 主 JAR"
+cd "$PROJECT_ROOT"
+mvn clean package -DskipTests
+ls target/flink-statebackend-forL0-*.jar
+
+echo "[3/4] 构建 WordCount Benchmark"
+cd "$PROJECT_ROOT/benchmark/wordcount"
+mvn clean package -DskipTests
+ls target/wordcount-benchmark-*.jar
+
+echo "[4/4] 构建 NexMark Benchmark"
+cd "$PROJECT_ROOT/benchmark/nexmark-src"
+mvn clean package -DskipTests
+ls nexmark-flink/nexmark-datastream/target/nexmark-datastream-*.jar
+
+echo "构建完成"
+\end{lstlisting}
+
+\section{常见问题与排查}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{5.4cm} L{3.6cm} X}
+\toprule
+\textbf{现象} & \textbf{可能原因} & \textbf{处理方式} \\
+\midrule
+\texttt{CMake Error: Could not find JNI} & \texttt{JAVA\_HOME} 未正确设置 & \texttt{export JAVA\_HOME=/opt/bisheng-jdk1.8.0} 后重新配置 \\
+\texttt{unrecognized option `-march=native'} & GCC 版本低于 7.0 & 升级 GCC（\texttt{sudo yum install devtoolset-8}）或使用 BiSheng 编译器 \\
+\texttt{jni.h: No such file or directory} & 缺少 JDK 开发包 & 安装 \texttt{java-1.8.0-openjdk-devel} 或确认 BiSheng JDK 路径完整 \\
+\texttt{cannot find -lstdc++fs} & libstdc++ 版本过低 & 安装 \texttt{libstdc++-devel} 或切换至新版 GCC \\
+\texttt{mvn test} 抛出 \texttt{UnsatisfiedLinkError} & 未先构建原生库 & 先执行 \S3 节构建并 \texttt{make install} \\
+ NexMark 编译卡在依赖下载 & 仓库不可达 & 配置内网 Maven 镜像或使用离线仓库 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% --- REMOVED: Flink 集群部署 / L0 模式验证 / 运行期排查（属于使用说明书范围）---
+\iffalse
+\section{Flink 集群部署}
+
+构建产物就绪后，可按以下步骤将 \project{} 部署至鲲鹏服务器上的 Flink 集群。以下步骤以 Standalone 集群为例，YARN 与 Kubernetes 部署模型下主要差别在于 JAR 与原生库的同步方式。
+
+\subsection{JAR 与原生库的放置}
+
+\begin{lstlisting}[language=shellcmd]
+# 1. 复制状态后端 JAR
+cp target/flink-statebackend-forL0-1.0-SNAPSHOT.jar $FLINK_HOME/lib/
+
+# 2. 复制原生引擎共享库到 Flink 侧固定目录
+mkdir -p $FLINK_HOME/native
+cp src/main/resources/native/libforl0_engine.so $FLINK_HOME/native/
+
+# 3. 多节点集群下，逐一同步到所有 TaskManager 节点
+# scp $FLINK_HOME/lib/flink-statebackend-forL0-*.jar  user@tm-node:$FLINK_HOME/lib/
+# scp $FLINK_HOME/native/libforl0_engine.so          user@tm-node:$FLINK_HOME/native/
+\end{lstlisting}
+
+\subsection{Flink 配置}
+
+在 \texttt{\$FLINK\_HOME/conf/config.yaml} 中追加状态后端配置与原生库路径：
+
+\begin{lstlisting}[language=yamlcmd]
+state:
+  backend:
+    type: forl0
+
+env:
+  java:
+    opts:
+      all: -Djava.library.path=/opt/flink-1.20.3/native
+
+# Checkpoint 存储（按集群实际情况配置）
+state:
+  checkpoints:
+    dir: file:///data/flink/checkpoints
+  checkpoint-storage: filesystem
+\end{lstlisting}
+
+作业级别的状态接口、并发度和 Checkpoint 间隔配置不在本文档范围内，由《使用说明书》单独说明。
+
+\subsection{启动集群并验证加载}
+
+\begin{lstlisting}[language=shellcmd]
+$FLINK_HOME/bin/start-cluster.sh
+
+# 核对状态后端加载
+grep "\[ForL0\]" $FLINK_HOME/log/flink-*-taskexecutor-*.log
+
+# 核对 REST 接口
+curl -s http://localhost:8081/overview
+\end{lstlisting}
+
+\section{L0 模式验证}
+
+\project{} 的 L0 加速在运行期通过自检机制确定。部署完成后建议运行一个轻量作业（例如 WordCount Benchmark）触发状态路径，以确认当前模式。
+
+\subsection{自检流程}
+
+原生引擎在首次访问状态前执行以下步骤：
+
+\begin{enumerate}
+  \item \texttt{dlopen("libl0mempool.so")} 加载 L0 内存池库。
+  \item 通过 \texttt{dlsym} 解析 \texttt{cache\_tuner\_init}、\texttt{cache\_tuner\_destroy}、\texttt{l0\_mem\_alloc}、\texttt{l0\_mem\_free} 四个符号。
+  \item 调用 \texttt{cache\_tuner\_init} 初始化 L0 Cache Tuner。该调用内部会检查 \texttt{/dev/hisi\_l0} 设备是否可用。
+\end{enumerate}
+
+任一环节失败，原生引擎自动转入以堆内存为后端的模拟模式，不会阻断作业运行。
+
+\subsection{日志特征}
+
+启用 L0 模式时，TaskManager 日志中可观察到类似如下条目：
+
+\begin{lstlisting}[language=shellcmd]
+[ForL0] Native engine loaded via java.library.path
+[ForL0] Running in L0 mode (Kunpeng L0 Cache enabled)
+[ForL0-L0Allocator] L0 memory initialized: capacity=256MB, max_per_alloc=64KB
+\end{lstlisting}
+
+当 L0 库或设备不满足条件时，日志会提示回退到模拟模式：
+
+\begin{lstlisting}[language=shellcmd]
+[ForL0] Native engine loaded via java.library.path
+[ForL0-L0Allocator] L0 library not available, all allocations will use heap memory
+\end{lstlisting}
+
+\subsection{L0 容量与分配策略}
+
+L0 相关参数通过 Flink 配置暴露，可按状态规模调整：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{5.8cm} L{2.8cm} X}
+\toprule
+\textbf{配置项} & \textbf{默认值} & \textbf{说明} \\
+\midrule
+\texttt{state.backend.forl0.l0-cache.enabled} & \texttt{false} & 是否启用 L0 Cache 加速。需同时满足设备与库存在。 \\
+\texttt{state.backend.forl0.l0-cache.size} & 256 MB & L0 内存池总容量。 \\
+\texttt{state.backend.forl0.l0-cache.max-per-alloc} & 64 KB & 单次最大 L0 分配，超出该阈值则回退至堆内存。 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+L0 Allocator 采用 Small-Table-First 策略：当 SwissTable 当前所需内存不超过 \texttt{max-per-alloc}、且 L0 池仍有余量时分配到 L0，否则回落堆内存。在典型作业（128 个 KeyGroup、3 个 State、每表初始约 3\,KB）下，L0 池消耗通常在 1--2\,MB 量级，完全可被默认容量覆盖。
+
+\subsection{L0 运行统计}
+
+作业结束时，原生引擎会在进程 stderr 中输出一条统计记录：
+
+\begin{lstlisting}[language=shellcmd]
+[ForL0-L0Allocator] Shutdown: l0_active=1, l0_total_allocs=384,
+  heap_allocs=0, l0_current=10, l0_used=4800KB/256MB
+\end{lstlisting}
+
+其中 \texttt{l0\_active=1} 表示本次运行处于 L0 模式；\texttt{heap\_allocs} 较大则说明 L0 池容量或单次上限偏低，可调大 \texttt{l0-cache.size} 或 \texttt{l0-cache.max-per-alloc}。
+
+\fi
+\iffalse
+\subsection{运行与 L0 模式}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{5.4cm} L{3.6cm} X}
+\toprule
+\textbf{现象} & \textbf{可能原因} & \textbf{处理方式} \\
+\midrule
+\texttt{L0 library not available} & \texttt{libl0mempool.so} 不在系统库路径 & 确认存在于 \texttt{/usr/lib64} 或将其路径加入 \texttt{LD\_LIBRARY\_PATH} \\
+\texttt{dlopen failed} & L0 库依赖缺失 & 以 \texttt{ldd} 检查依赖完整性 \\
+\texttt{cache\_tuner\_init failed} & \texttt{/dev/hisi\_l0} 设备不可用 & 核实内核驱动与 CPU 型号；若环境不具备 L0，可接受模拟模式 \\
+配置了 \texttt{l0-cache.enabled: true} 但仍为模拟模式 & 硬件条件不满足 & L0 需同时满足：设备存在、库可加载、配置启用 \\
+\texttt{l0\_used} 已贴近 \texttt{l0\_capacity} & 池容量不足 & 增大 \texttt{l0-cache.size} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\fi
+
+\section{附录}
+
+\subsection{项目目录结构}
+
+以下目录结构摘录了本文档涉及的构建相关路径，其他内容参见项目源码：
+
+\begin{lstlisting}[language=shellcmd]
+forL0-state-backend/
+|-- pom.xml                          # Java 主工程 POM
+|-- src/
+|   |-- main/
+|   |   |-- java/                    # Java 源码（Flink 适配与 JNI 入口）
+|   |   |   `-- org/apache/flink/state/forl0/
+|   |   |-- native/                  # 原生引擎源码
+|   |   |   |-- CMakeLists.txt
+|   |   |   |-- cpp/                 # 核心实现
+|   |   |   |-- engine/              # 引擎头文件
+|   |   |   |   |-- swiss_table.h    # Swiss Tables 哈希表
+|   |   |   |   |-- allocator.h      # 分配器抽象
+|   |   |   |   |-- l0_allocator.h   # L0 分配器（运行时 dlopen）
+|   |   |   |   `-- state_engine.h
+|   |   |   |-- jni/                 # JNI 桥接
+|   |   |   |-- checkpoint/          # 快照序列化
+|   |   |   `-- test/                # C++ 单元测试
+|   |   `-- resources/native/        # make install 产出的 .so
+|   `-- test/java/                   # Java 测试代码
+|-- benchmark/
+|   |-- wordcount/                   # WordCount Benchmark
+|   |-- nexmark-src/                 # NexMark Benchmark
+|   |-- flink-benchmarks/            # JMH Benchmark
+|   `-- scripts/                     # Python 运行脚本
+`-- target/                          # Maven 产物
+\end{lstlisting}
+
+\end{document}

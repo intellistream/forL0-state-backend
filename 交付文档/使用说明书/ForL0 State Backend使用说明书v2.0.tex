@@ -1,0 +1,762 @@
+% !TEX program = xelatex
+\documentclass[a4paper,11pt]{article}
+
+% ===================== Packages =====================
+\usepackage{fontspec}
+\usepackage[a4paper,top=2.8cm,bottom=2.8cm,left=2.6cm,right=2.6cm,headheight=15pt,headsep=10pt,footskip=22pt]{geometry}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{titletoc}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{fancyhdr}
+\usepackage[font=small,labelfont=bf,labelsep=quad,skip=6pt]{caption}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,backgrounds}
+
+% ===================== Fonts =====================
+\setmainfont{Noto Serif CJK SC}
+\setsansfont{Noto Sans CJK SC}
+\setmonofont{Noto Sans Mono CJK SC}
+
+\XeTeXlinebreaklocale "zh"
+\XeTeXlinebreakskip = 0pt plus 1pt
+
+% ===================== Hyperref =====================
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=black,
+  citecolor=black,
+  pdftitle={ForL0 State Backend 使用说明书 v2.0},
+  pdfauthor={ForL0 Project}
+}
+
+% ===================== Localization =====================
+\renewcommand{\contentsname}{目\quad 录}
+\renewcommand{\tablename}{表}
+\renewcommand{\figurename}{图}
+
+% ===================== Spacing =====================
+\setstretch{1.28}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.35em}
+\setlength{\emergencystretch}{3em}
+\sloppy
+\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.35em,parsep=0pt}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em,parsep=0pt}
+
+% ===================== Headings =====================
+\definecolor{accent}{RGB}{30,64,110}
+\definecolor{rulegray}{RGB}{60,60,60}
+\definecolor{softgray}{RGB}{245,246,248}
+\definecolor{midgray}{RGB}{220,223,228}
+\definecolor{linegray}{RGB}{120,124,132}
+\definecolor{codebg}{RGB}{248,249,251}
+\definecolor{codeborder}{RGB}{220,223,228}
+\definecolor{codekw}{RGB}{30,64,110}
+\definecolor{codecomment}{RGB}{90,100,110}
+\definecolor{codestring}{RGB}{102,70,20}
+
+\titleformat{\section}[hang]
+  {\normalfont\large\bfseries\color{accent}}
+  {\thesection}{0.8em}{}
+  [\vspace{2pt}{\color{accent!60}\titlerule[0.6pt]}]
+\titlespacing*{\section}{0pt}{1.6em}{0.9em}
+
+\titleformat{\subsection}[hang]
+  {\normalfont\normalsize\bfseries\color{accent!85!black}}
+  {\thesubsection}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.55em}
+
+\titleformat{\subsubsection}[hang]
+  {\normalfont\normalsize\bfseries}
+  {\thesubsubsection}{0.55em}{}
+\titlespacing*{\subsubsection}{0pt}{0.9em}{0.4em}
+
+% ===================== TOC styling =====================
+\titlecontents{section}
+  [0em]{\addvspace{0.55em}\bfseries}
+  {\contentslabel{1.6em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{subsection}
+  [2.2em]{\addvspace{0.15em}}
+  {\contentslabel{2.4em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{subsubsection}
+  [4.6em]{\addvspace{0.05em}\small}
+  {\contentslabel{3.0em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+
+% ===================== Header / Footer =====================
+\newcommand{\project}{ForL0 State Backend}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\small\sffamily\color{accent}\project{} 使用说明书}
+\fancyhead[R]{\small\sffamily\color{accent}v2.0}
+\fancyfoot[C]{\small\thepage}
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \renewcommand{\headrulewidth}{0pt}%
+  \fancyfoot[C]{\small\thepage}%
+}
+
+% ===================== Listings =====================
+\lstdefinestyle{codestyle}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeborder},
+  framesep=4pt,
+  xleftmargin=6pt,
+  xrightmargin=4pt,
+  aboveskip=0.6em,
+  belowskip=0.6em,
+  breaklines=true,
+  breakatwhitespace=false,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=2,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  keywordstyle=\color{codekw}\bfseries,
+  extendedchars=false,
+  inputencoding=utf8,
+  literate={\$}{{\$}}1 {\&}{{\&}}1 {\_}{{\_}}1
+}
+\lstdefinelanguage{shellcmd}{
+  morekeywords={cd,ls,mkdir,cp,mv,rm,export,cmake,make,mvn,yum,sudo,wget,tar,ln,grep,nm,file,ldd,source,ln,tee,curl,echo,python3,pip3,bash,nproc},
+  morecomment=[l]{\#},
+  morestring=[b]",
+}
+\lstdefinelanguage{yamlcmd}{
+  morekeywords={state,backend,type,forl0,checkpoints,dir,env,java,opts,all,l0-cache,enabled,size,max-per-alloc,async-snapshots,execution,checkpointing,interval,mode,savepoints,checkpoint-storage,externalized-checkpoint-retention},
+  morecomment=[l]{\#},
+  morestring=[b]",
+}
+\lstdefinelanguage{javalang}{
+  morekeywords={public,private,protected,class,void,new,return,this,if,else,for,while,final,static,import,package,extends,implements,throws,try,catch,throw,null,true,false,long,int,boolean,String,Override},
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}
+\lstset{style=codestyle,language=shellcmd}
+
+% ===================== Table column types =====================
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+% ===================== Figure palette =====================
+\definecolor{fgfill}{RGB}{248,249,251}
+\definecolor{fgaccent}{RGB}{30,64,110}
+\definecolor{fgaccentlight}{RGB}{223,231,242}
+\definecolor{fgbox}{RGB}{255,255,255}
+\definecolor{fgborder}{RGB}{90,95,105}
+\definecolor{fgsubtle}{RGB}{235,237,240}
+\definecolor{fgline}{RGB}{70,74,82}
+
+\tikzset{
+  figfont/.style={font=\footnotesize\sffamily},
+  figsmall/.style={font=\scriptsize\sffamily,text=black!70},
+  figtitle/.style={font=\footnotesize\sffamily\bfseries,text=fgaccent},
+  box/.style={draw=fgborder, line width=0.5pt, rounded corners=2pt, fill=fgbox,
+              minimum height=0.95cm, inner xsep=10pt, inner ysep=5pt, align=center, figfont},
+  accentbox/.style={draw=fgaccent, line width=0.6pt, rounded corners=2pt, fill=fgaccentlight,
+              minimum height=0.95cm, inner xsep=10pt, inner ysep=5pt, align=center, figfont},
+  subtlebox/.style={draw=fgborder, line width=0.5pt, rounded corners=2pt, fill=fgsubtle,
+              minimum height=0.95cm, inner xsep=10pt, inner ysep=5pt, align=center, figfont},
+  lane/.style={draw=fgborder!55, line width=0.4pt, rounded corners=3pt, fill=fgfill},
+  line/.style={-{Latex[length=2mm,width=1.6mm]}, draw=fgline, line width=0.55pt},
+  thinline/.style={draw=fgline!80, line width=0.4pt}
+}
+
+% ===================== Title page macro =====================
+\newcommand{\coverrule}{{\color{accent}\rule{\linewidth}{0.9pt}}}
+\newcommand{\coverrulethin}{{\color{accent!55}\rule{\linewidth}{0.3pt}}}
+
+\begin{document}
+
+% =================================================
+%                 COVER
+% =================================================
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{5.5cm}
+
+\coverrule
+\vspace{2pt}
+\coverrulethin
+
+\vspace{1.6cm}
+{\sffamily\huge\bfseries\color{accent} \project\par}
+\vspace{0.8cm}
+{\sffamily\LARGE\bfseries 使用说明书\par}
+
+\vspace{1.6cm}
+\coverrulethin
+\vspace{2pt}
+\coverrule
+
+\vfill
+
+{\sffamily\large\color{accent!85} 2026 年 4 月\par}
+
+\vspace{1.2cm}
+\end{titlepage}
+
+% =================================================
+%                 TOC
+% =================================================
+\pagenumbering{roman}
+\pagestyle{plain}
+\tableofcontents
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\pagestyle{fancy}
+
+% =================================================
+%                 CONTENT
+% =================================================
+\section{产品概述}
+
+\project{} 是面向 Apache Flink 的高性能 Keyed State 后端，针对鲲鹏服务器的体系结构特性进行了定向优化。系统以 C++ 原生引擎承担状态的权威存储与访问，以 Java 控制层与 JNI 桥接层承担 Flink 接口适配与状态注册，在保持与 Flink 原生状态接口完全兼容的前提下，通过 SwissTable 哈希结构、SWAR 并行匹配以及可选的 L0 Cache 加速，缩短热点状态访问路径的延迟。
+
+本文档内容限定在状态后端的配置、作业集成、运行监控与调优。底层架构细节由《设计说明书》给出，编译与部署由《编译构建指导书》给出。
+
+\subsection{关键特性}
+
+\begin{itemize}
+  \item 完全兼容 Flink Keyed State 接口与语义，现有作业代码无需改动。
+  \item 原生 SwissTable 哈希结构 + NEON SWAR 并行匹配，针对鲲鹏 ARM64 做指令级优化。
+  \item 可选启用鲲鹏 L0 Cache 作为热键访问的上层快路径，硬件条件不满足时自动保持关闭，底层 SwissTable 直接接管状态访问。
+  \item 支持 Flink 原生 Checkpoint 与 Savepoint 机制，覆盖增量快照与恢复。
+  \item 原生 Copy-On-Write 快照，异步快照不阻塞前台状态访问。
+\end{itemize}
+
+\subsection{适用范围}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{3.2cm} X}
+\toprule
+\textbf{项目} & \textbf{要求} \\
+\midrule
+处理器 & 鲲鹏系列处理器 \\
+操作系统 & openEuler \\
+JDK & JDK 1.8 及以上（aarch64），建议使用华为毕昇 JDK \\
+Flink & Apache Flink 1.20.3 \\
+运行模式 & L0 模式（需 \texttt{/dev/hisi\_l0} 与 \texttt{libl0mempool.so}）/ 模拟模式（自动回退） \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{支持的状态类型}
+
+\project{} 对 Flink 所有 Keyed State 接口提供原生支持，具体映射关系如下：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{3.4cm} X L{4.4cm}}
+\toprule
+\textbf{状态类型} & \textbf{用途} & \textbf{实现类} \\
+\midrule
+ValueState & 单值键控状态 & \texttt{ForL0ValueState} \\
+ListState & 列表键控状态 & \texttt{ForL0ListState} \\
+MapState & 键控内部映射状态 & \texttt{ForL0MapState} \\
+ReducingState & 归约键控状态 & \texttt{ForL0ReducingState} \\
+AggregatingState & 聚合键控状态 & \texttt{ForL0AggregatingState} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ---------- 图：作业与后端的集成关系 ----------
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \node[lane, minimum width=14.8cm, minimum height=4.8cm] at (8.4,2.3) {};
+
+  \node[figtitle, anchor=east] at (1.4,4.1) {用户作业};
+  \node[figtitle, anchor=east] at (1.4,2.3) {状态后端};
+  \node[figtitle, anchor=east] at (1.4,0.7) {原生数据面};
+
+  \node[accentbox, text width=11.6cm] (job) at (8.4,4.1) {DataStream / SQL 作业（ValueState, ListState, MapState, \ldots）};
+
+  \node[box, text width=3.2cm] (backend) at (3.3,2.3) {ForL0StateBackend};
+  \node[box, text width=3.2cm] (keyed)   at (8.4,2.3) {Keyed State Backend};
+  \node[box, text width=3.2cm] (ckpt)    at (13.5,2.3) {Checkpoint\,/\,Savepoint};
+
+  \node[accentbox, text width=11.6cm] (native) at (8.4,0.7) {NativeEngine + StateTable + SwissTable + L0 Allocator};
+
+  \draw[line] (job.south)     -- (keyed.north);
+  \draw[line] (backend.east)  -- (keyed.west);
+  \draw[line] (keyed.east)    -- (ckpt.west);
+  \draw[line] (keyed.south)   -- (native.north);
+\end{tikzpicture}%
+}
+\caption{用户作业与 \project{} 的运行时集成关系}
+\label{fig:usage-overview}
+\end{figure}
+
+\section{启用与部署}
+
+本节假设 \project{} 的 JAR 与原生库已按《编译构建指导书》完成构建。启用流程主要包括将产物放置到 Flink 对应目录、追加配置并重启集群。
+
+\subsection{产物部署}
+
+\begin{lstlisting}[language=shellcmd]
+# 1. 状态后端 JAR
+cp flink-statebackend-forL0-1.0-SNAPSHOT.jar $FLINK_HOME/lib/
+
+# 2. 原生引擎共享库
+mkdir -p $FLINK_HOME/native
+cp libforl0_engine.so $FLINK_HOME/native/
+
+# 3. 多节点集群下，将上述两份文件同步到所有 TaskManager 节点
+\end{lstlisting}
+
+\subsection{集群配置}
+
+在 \texttt{\$FLINK\_HOME/conf/config.yaml} 中追加如下配置项：
+
+\begin{lstlisting}[language=yamlcmd]
+# 启用 ForL0 作为默认状态后端（使用 StateBackendFactory 的全限定类名）
+state:
+  backend:
+    type: org.apache.flink.state.forl0.ForL0StateBackendFactory
+  checkpoints:
+    dir: file:///data/flink/checkpoints
+  checkpoint-storage: filesystem
+
+# 指定原生库路径（针对 TaskManager 进程）
+env:
+  java:
+    opts:
+      all: -Djava.library.path=/opt/flink-1.20.3/native
+\end{lstlisting}
+
+配置完成后重启集群：
+
+\begin{lstlisting}[language=shellcmd]
+$FLINK_HOME/bin/stop-cluster.sh
+$FLINK_HOME/bin/start-cluster.sh
+\end{lstlisting}
+
+\subsection{加载校验}
+
+集群启动后，可通过 TaskManager 日志确认状态后端与原生引擎是否正确加载：
+
+\begin{lstlisting}[language=shellcmd]
+grep "\[ForL0\]" $FLINK_HOME/log/flink-*-taskexecutor-*.log
+\end{lstlisting}
+
+输出中至少应包含原生库加载成功一条记录；如已启用 \texttt{l0-cache.enabled=true}，还会在 KeyedStateBackend 创建时输出一条包含 \texttt{l0Enabled=true/false} 的引擎创建记录：
+
+\begin{lstlisting}[language=shellcmd]
+[ForL0] Native engine loaded via java.library.path
+[ForL0] C++ engine created: handle=..., keyGroups=[0, 8), total=128, l0Enabled=true
+\end{lstlisting}
+
+若日志中的 \texttt{l0Enabled=false}，则表示运行环境不满足 L0 硬件门禁或配置未启用，HotCache 快路径未激活，状态访问仍由 SwissTable 正常服务。
+
+\section{配置参考}
+
+\project{} 的配置分为两类：Flink 标准状态后端配置和 \project{} 自身引入的 \texttt{state.backend.forl0.*} 专用配置。两类配置都可在集群配置文件中声明，也可在作业提交时通过 \texttt{-D} 参数覆盖。
+
+\subsection{启用后端}
+
+\subsubsection{配置文件方式（推荐）}
+
+在集群配置文件中声明默认状态后端后，全集群作业自动生效。\textbf{\texttt{state.backend.type} 必须填写 \texttt{StateBackendFactory} 的全限定类名}：
+
+\begin{lstlisting}[language=yamlcmd]
+state:
+  backend:
+    type: org.apache.flink.state.forl0.ForL0StateBackendFactory
+\end{lstlisting}
+
+\subsubsection{代码方式}
+
+在作业中显式设置，仅对当前作业生效：
+
+\begin{lstlisting}[language=javalang]
+StreamExecutionEnvironment env =
+    StreamExecutionEnvironment.getExecutionEnvironment();
+env.setStateBackend(new ForL0StateBackend());
+\end{lstlisting}
+
+若需通过 Factory 由配置驱动创建，可使用：
+
+\begin{lstlisting}[language=javalang]
+env.setStateBackend(
+    new ForL0StateBackendFactory().createFromConfig(
+        new Configuration(),
+        Thread.currentThread().getContextClassLoader()));
+\end{lstlisting}
+
+\subsection{配置项列表}
+
+\begin{table}[H]
+\centering
+\footnotesize
+\begin{tabularx}{\textwidth}{L{7.0cm} L{1.8cm} L{1.4cm} X}
+\toprule
+\textbf{配置项} & \textbf{类型} & \textbf{默认值} & \textbf{说明} \\
+\midrule
+\texttt{state.backend.type} & String & -- & 填写 \texttt{StateBackendFactory} 的全限定类名以启用本后端，具体值见 \S 3.1。 \\
+\texttt{state.backend.forl0.async-snapshots} & boolean & \texttt{true} & 使用原生 Copy-On-Write 异步快照。 \\
+\texttt{state.backend.forl0.l0-cache.enabled} & boolean & \texttt{false} & 是否启用 L0 Cache 加速，需鲲鹏硬件支持。 \\
+\texttt{state.backend.forl0.l0-cache.size} & MemorySize & 256\,mb & L0 内存池总容量，支持 \texttt{256mb}、\texttt{1gb} 等写法。 \\
+\texttt{state.backend.forl0.initial-table-capacity} & int & 64 & 单张 SwissTable 的初始 slot 数，必须为 2 的幂且 $\ge 8$。 \\
+\texttt{state.backend.forl0.max-table-capacity} & int & 1024 & 单张 SwissTable 的容量上限，达到后触发分裂。 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{L0 模式启用条件}
+
+当 \texttt{l0-cache.enabled} 配置为 \texttt{true} 时，原生引擎在运行期继续检查以下三项：
+
+\begin{enumerate}
+  \item 共享库 \texttt{libl0mempool.so} 可通过 \texttt{dlopen} 加载（依次检查 \texttt{libl0mempool.so}、\texttt{/usr/lib}、\texttt{/usr/lib64}、\texttt{/lib}、\texttt{/lib64}）。
+  \item L0 设备节点 \texttt{/dev/hisi\_l0} 存在且可访问。
+  \item 首次探测性 \texttt{l0\_mem\_alloc} 调用成功。
+\end{enumerate}
+
+任一项不满足时，HotCache 快路径默默保持未激活；状态访问由底层 SwissTable 直接服务，作业可正常启动与运行。运行时可以通过 Flink 指标系统的 \texttt{forl0.hotcache.active} gauge 确认是否真正激活（见 \S7.3）。
+
+\subsection{SwissTable 容量参数}
+
+以下参数决定单张 SwissTable 的隐含容量范围，默认值适合绝大多数作业，仅在超大规模或调优时才需要修改：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{6.0cm} L{2.0cm} X}
+\toprule
+\textbf{配置项} & \textbf{默认值} & \textbf{说明} \\
+\midrule
+\texttt{state.backend.forl0.initial-table-capacity} & 64 & 初始 slot 数，必须为 2 的幂且 $\ge 8$。 \\
+\texttt{state.backend.forl0.max-table-capacity}     & 1024 & 单表容量上限，达到后触发分裂而非继续扩容。 \\
+\multicolumn{2}{l}{负载因子} & 内部常量 87.5\%，触发 rehash / grow 的负载阈值。 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{作业中的状态使用}
+
+\project{} 与 Flink 状态接口保持严格兼容。用户作业中状态的声明、读写、清理方式与使用 HashMapStateBackend 时完全一致。
+
+\subsection{DataStream API}
+
+以下示例在 \texttt{KeyedProcessFunction} 中维护单值状态。切换到 \project{} 不需要对代码作任何修改：
+
+\begin{lstlisting}[language=javalang]
+StreamExecutionEnvironment env =
+    StreamExecutionEnvironment.getExecutionEnvironment();
+
+// 方式一：集群配置已将 state.backend.type 设为 org.apache.flink.state.forl0.ForL0StateBackendFactory，无需代码改动
+// 方式二：在作业中显式设置
+env.setStateBackend(new ForL0StateBackend());
+
+input
+    .keyBy(t -> t.f0)
+    .process(new KeyedProcessFunction<String, Tuple2<String, Long>, String>() {
+        private ValueState<Long> countState;
+
+        @Override
+        public void open(Configuration parameters) {
+            countState = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("count", Long.class));
+        }
+
+        @Override
+        public void processElement(Tuple2<String, Long> value,
+                                   Context ctx,
+                                   Collector<String> out) throws Exception {
+            Long current = countState.value();
+            current = (current == null) ? 1L : current + 1;
+            countState.update(current);
+            out.collect(value.f0 + ": " + current);
+        }
+    });
+\end{lstlisting}
+
+\subsection{Flink SQL 与 Table API}
+
+SQL 作业通过集群配置启用 \project{} 即可，运行方式与使用其他状态后端时没有差别。例如下列窗口聚合自动落在 \project{} 的时间窗口路径上：
+
+\begin{lstlisting}[language=yamlcmd]
+CREATE TABLE orders (
+  order_id BIGINT,
+  user_id  BIGINT,
+  amount   DOUBLE,
+  order_time TIMESTAMP(3),
+  WATERMARK FOR order_time AS order_time - INTERVAL '5' SECOND
+) WITH (...);
+
+SELECT
+  user_id,
+  TUMBLE_START(order_time, INTERVAL '1' MINUTE) AS window_start,
+  SUM(amount) AS total_amount
+FROM orders
+GROUP BY user_id, TUMBLE(order_time, INTERVAL '1' MINUTE);
+\end{lstlisting}
+
+对于 SQL 场景中常见的 Deduplication、Join、Aggregate 和窗口算子，\project{} 会自动识别 \texttt{VoidNamespace}、\texttt{TimeWindow} 等类型，并选择对应的快路径，无需额外配置。
+
+\subsection{命名空间行为}
+
+\project{} 的状态组织区分命名空间类型，对不同场景给出不同的访问路径：
+
+\begin{itemize}
+  \item \textbf{VoidNamespace 直通路径}：在非窗口算子中（例如 \texttt{KeyedProcessFunction} 中的 \texttt{ValueState}），命名空间恒为 \texttt{VoidNamespace}。\project{} 检测到这种情形后直接访问当前 KeyGroup 对应的 SwissTable，跳过命名空间容器，避免额外的容器查找开销。
+  \item \textbf{TimeWindow 命名空间路径}：在窗口算子中，以 \texttt{TimeWindow} 作为命名空间的状态由每个命名空间独立的 SwissTable 承载。命名空间之间隔离，避免 key 冲突。
+  \item \textbf{空命名空间回收}：当某个命名空间下的 SwissTable 因清理操作变为空时，\project{} 会将该命名空间条目从容器中移除，避免无效命名空间持续占用内存。
+\end{itemize}
+
+% ---------- 图：命名空间组织 ----------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % VoidNamespace 路径
+  \node[figtitle, anchor=west] at (0,4.2) {VoidNamespace 路径};
+  \node[box, minimum width=2.6cm] (kg1) at (2.2,3.3) {KeyGroup[i]};
+  \node[accentbox, minimum width=3.2cm] (tab1) at (6.1,3.3) {SwissTable\,<\,K, S\,>};
+  \draw[line] (kg1.east) -- (tab1.west);
+
+  % TimeWindow 路径
+  \node[figtitle, anchor=west] at (0,2.0) {TimeWindow 命名空间路径};
+  \node[box, minimum width=2.6cm] (kg2) at (2.2,1.1) {KeyGroup[i]};
+  \node[box, minimum width=3.2cm] (nsmap) at (6.2,1.1) {Map<TimeWindow,\\SwissTable<K,S>>};
+  \node[accentbox, minimum width=3.2cm] (tab2a) at (11.2,1.75) {SwissTable \#1};
+  \node[accentbox, minimum width=3.2cm] (tab2b) at (11.2,0.45) {SwissTable \#2};
+  \draw[line] (kg2.east) -- (nsmap.west);
+  \draw[line] (nsmap.east) -- (tab2a.west);
+  \draw[line] (nsmap.east) -- (tab2b.west);
+\end{tikzpicture}
+\caption{\project{} 的命名空间访问路径}
+\label{fig:namespace}
+\end{figure}
+
+\section{Checkpoint 与 Savepoint}
+
+\project{} 使用原生 Copy-On-Write 机制实现异步快照，与 Flink 的 Checkpoint 框架完全衔接。用户侧的配置方式和操作方式保持不变。
+
+\subsection{Checkpoint 配置}
+
+\begin{lstlisting}[language=yamlcmd]
+execution:
+  checkpointing:
+    interval: 60000           # 60 秒触发一次
+    mode: EXACTLY_ONCE
+    externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+
+state:
+  checkpoints:
+    dir: file:///data/flink/checkpoints
+  savepoints:
+    dir: file:///data/flink/savepoints
+\end{lstlisting}
+
+\subsection{Savepoint 触发与恢复}
+
+可通过 Flink CLI 触发 Savepoint 与恢复：
+
+\begin{lstlisting}[language=shellcmd]
+# 为运行中的作业触发 Savepoint
+$FLINK_HOME/bin/flink savepoint <jobId> file:///data/flink/savepoints
+
+# 从指定 Savepoint 启动作业
+$FLINK_HOME/bin/flink run \
+  -s file:///data/flink/savepoints/savepoint-xxx \
+  -d your-job.jar
+\end{lstlisting}
+
+\subsection{兼容性约定}
+
+\begin{itemize}
+  \item 从 \project{} 产出的 Checkpoint 或 Savepoint，可在同一版本的 \project{} 之间互相恢复。
+  \item 从其他状态后端（如 HashMapStateBackend）迁移到 \project{} 时，建议从新的 Savepoint 开始运行。canonical Savepoint 在大多数情形下可互通，但由于底层存储结构差异，不建议直接基于老作业的增量 Checkpoint 启动。
+  \item 进行跨后端迁移前，建议在同等输入的测试环境下对账一次状态清单，以降低升级风险。
+\end{itemize}
+
+\section{作业提交}
+
+\subsection{Flink CLI}
+
+\begin{lstlisting}[language=shellcmd]
+$FLINK_HOME/bin/flink run -d \
+  -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory \
+  -Dstate.backend.forl0.l0-cache.enabled=true \
+  -p 8 \
+  your-application.jar
+\end{lstlisting}
+
+如已在集群配置中将 \texttt{state.backend.type} 设为 \texttt{org.apache.flink.state.forl0.ForL0StateBackendFactory}，命令行的 \texttt{-Dstate.backend.type} 可省略。
+
+\subsection{REST API}
+
+\begin{lstlisting}[language=shellcmd]
+# 上传 JAR
+curl -X POST -H "Expect:" \
+  -F "jarfile=@your-application.jar" \
+  http://<jobmanager>:8081/jars/upload
+
+# 提交作业并覆盖状态后端配置
+curl -X POST http://<jobmanager>:8081/jars/<jar-id>/run \
+  -d '{
+        "programArgs": "--parallelism 8",
+        "flinkConfiguration": {
+          "state.backend.type": "org.apache.flink.state.forl0.ForL0StateBackendFactory"
+        }
+      }'
+\end{lstlisting}
+
+\section{运行监控}
+
+\subsection{日志约定}
+
+\project{} 相关的运行期日志一律以 \texttt{[ForL0]} 前缀输出。常见条目见下表：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{7.4cm} X}
+\toprule
+\textbf{日志} & \textbf{含义} \\
+\midrule
+\texttt{[ForL0] Native engine loaded via java.library.path} & 通过 \texttt{java.library.path} 加载成功 \\
+\texttt{[ForL0] Native engine loaded from bundled resource: \ldots} & 从 JAR 内置资源解压并加载成功 \\
+\texttt{[ForL0] Creating ForL0StateBackend from configuration.} & 通过 Factory 从配置创建后端 \\
+\texttt{[ForL0] Building ForL0KeyedStateBackend with C++ engine\ldots} & KeyedStateBackend 构造开始 \\
+\texttt{[ForL0] C++ engine created: handle=\ldots, l0Enabled=\ldots} & C++ 引擎创建完成，l0Enabled 反映 HotCache 是否激活 \\
+\texttt{[ForL0] ForL0KeyedStateBackend built successfully.} & KeyedStateBackend 构造完成 \\
+\texttt{[ForL0] Failed to load native engine: \ldots} & 原生库加载失败，后端不会启动 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{运行期加载检查 API}
+
+在用户代码或自检脚本中判断原生引擎是否已加载：
+
+\begin{lstlisting}[language=javalang]
+import org.apache.flink.state.forl0.NativeEngine;
+
+boolean loaded = NativeEngine.isLoaded();
+NativeEngine.ensureLoaded();  // 未加载时抛出 RuntimeException
+\end{lstlisting}
+
+原生引擎本身在所在类被容器加载时完成一次性的 \texttt{System.loadLibrary("forl0\_engine")}，不提供重新初始化接口。
+
+\subsection{HotCache 指标}
+
+启用 L0 Hot-Key Cache 时，后端在作业的 \texttt{MetricGroup} 下自动注册以下 gauge，指标名为 \texttt{<operator>.forl0.hotcache.<field>}，可直接在 Flink Web UI 或对接的指标后端（Prometheus / InfluxDB 等）中观察：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{3.2cm} X}
+\toprule
+\textbf{字段} & \textbf{含义} \\
+\midrule
+\texttt{active}         & HotCacheManager 是否真正激活（1 表示硬件门禁通过；0 表示未激活） \\
+\texttt{bytesCapacity} & L0 分区从 \texttt{l0\_mem\_alloc} 实际取得的总容量，单位为字节 \\
+\texttt{bytesUsed}     & 当前 HotSet 已用字节数 \\
+\texttt{totalSets}     & 全局 HotSet 总数 \\
+\texttt{freeSets}      & 当前可用的 HotSet 数 \\
+\texttt{lookups}       & HotCache 查询总次数 \\
+\texttt{hits}          & HotCache 命中总次数（命中率由 \texttt{hits / lookups} 给出） \\
+\texttt{invalidations} & HotCache 失效总次数（erase / 覆写触发） \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+当设置 \texttt{l0-cache.enabled=true} 但 \texttt{active} 始终为 0 时，说明硬件门禁未通过（见 \S3.3），作业已自动回退到纯 SwissTable 路径；此时 \texttt{bytesCapacity=0}、\texttt{hits=0}、\texttt{lookups=0}。
+
+\section{调优建议}
+
+\subsection{并行度与 KeyGroup}
+
+\project{} 依照 Flink 标准的 KeyGroup 路由模型组织状态。建议并行度设置与实际可用 slot 数对齐，避免因并行度过高导致的 KeyGroup 过细、快照开销相对增大的问题。鲲鹏服务器常见的推荐公式为：
+
+\[
+\text{parallelism} = \text{TaskManager 数量} \times \text{每 TM 的 slot 数}
+\]
+
+\subsection{L0 Cache 容量}
+
+开启 L0 Cache 的作业可参考以下容量范围。实际分配成功的字节数由 \texttt{forl0.hotcache.bytesCapacity} 反映：
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{3.6cm} L{3.2cm} X}
+\toprule
+\textbf{状态规模} & \texttt{l0-cache.size} & \textbf{说明} \\
+\midrule
+小（\textless\,100\,MB 状态） & 64\,mb & 轻量作业，大部分热键能被 HotSet 覆盖。 \\
+中（100\,MB -- 1\,GB）   & 256\,mb（默认） & 典型业务作业，推荐从默认值开始。 \\
+大（\textgreater\,1\,GB） & 512\,mb 及以上 & 与单 NUMA 可用 L0 资源匹配，目前单 NUMA 约 20\,MB 上限。 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{TaskManager 内存}
+
+\project{} 的状态数据位于原生内存，不占用 JVM 堆空间，也不依赖 Flink Managed Memory。据此可作如下调整：
+
+\begin{itemize}
+  \item 适当增加 \texttt{taskmanager.memory.process.size} 的上限，以容纳原生状态数据。
+  \item 相应降低 \texttt{taskmanager.memory.managed.size}，为原生数据面让出空间。
+  \item 若开启 L0 Cache，确保 \texttt{l0-cache.size} 与节点实际可用的 L0 资源相匹配。
+\end{itemize}
+\subsection{Checkpoint 间隔}
+
+\project{} 的异步快照不阻塞前台访问，对吞吐的影响主要来自序列化与写出阶段。建议：
+
+\begin{itemize}
+  \item 保持 \texttt{state.backend.forl0.async-snapshots: true}。
+  \item 根据容灾目标设置 \texttt{execution.checkpointing.interval}，无特殊需求时使用 30--60 秒量级。
+  \item 生产环境将 Checkpoint 目录指向稳定的共享存储（HDFS、NAS 等）。
+\end{itemize}
+
+\section{常见问题}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{4.8cm} L{3.8cm} X}
+\toprule
+\textbf{现象} & \textbf{可能原因} & \textbf{处理方式} \\
+\midrule
+\texttt{UnsatisfiedLinkError} & 原生库路径未配置 & 检查 \texttt{java.library.path} 是否包含 \texttt{libforl0\_engine.so} 所在目录 \\
+\texttt{ClassNotFoundException: ForL0StateBackendFactory} & JAR 未部署 & 确认 \texttt{\$FLINK\_HOME/lib/} 下存在 \texttt{flink-statebackend-forL0-*.jar} \\
+日志中 \texttt{l0Enabled=false} & L0 硬件/库不可用或未启用 & 核查 \texttt{/dev/hisi\_l0}、\texttt{libl0mempool.so} 以及 \texttt{l0-cache.enabled} \\
+Checkpoint 失败 & Checkpoint 目录权限不足 & 确认 \texttt{state.checkpoints.dir} 路径对 Flink 进程可写 \\
+\texttt{forl0.hotcache.active=0} 但配置已开启 & 硬件门禁未通过 & 检查 \texttt{/dev/hisi\_l0} 是否存在，\texttt{libl0mempool.so} 是否在搜索路径上 \\
+作业 OOM & 状态规模超出进程内存预算 & 增加 \texttt{taskmanager.memory.process.size}，或设置状态 TTL \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\end{document}

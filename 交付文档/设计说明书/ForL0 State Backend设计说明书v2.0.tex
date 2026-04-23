@@ -1,24 +1,45 @@
 % !TEX program = xelatex
-\documentclass[a4paper,12pt]{article}
+\documentclass[a4paper,11pt]{article}
 
+% ===================== Packages =====================
 \usepackage{fontspec}
-\usepackage[a4paper,margin=2.6cm]{geometry}
+\usepackage[a4paper,top=2.8cm,bottom=2.8cm,left=2.6cm,right=2.6cm,headheight=15pt,headsep=10pt,footskip=22pt]{geometry}
 \usepackage{array}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{enumitem}
-\usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{setspace}
 \usepackage{titlesec}
+\usepackage{titletoc}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{float}
+
+% Relax float placement so algorithms can stack tightly and large float pages are allowed
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.6}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{4}
+% Top-align floats on float-only pages (avoid vertical centering blank)
+\makeatletter
+\setlength{\@fptop}{5pt}
+\setlength{\@fpsep}{12pt}
+\setlength{\@fpbot}{5pt plus 1fil}
+\makeatother
 \usepackage{tikz}
+\usepackage{fancyhdr}
+\usepackage[font=small,labelfont=bf,labelsep=quad,skip=6pt]{caption}
+\usepackage{hyperref}
 
-\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,shapes.multipart}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,shapes.multipart,backgrounds}
 
+% ===================== Fonts =====================
 \setmainfont{Noto Serif CJK SC}
 \setsansfont{Noto Sans CJK SC}
 \setmonofont{DejaVu Sans Mono}
@@ -26,90 +47,188 @@
 \XeTeXlinebreaklocale "zh"
 \XeTeXlinebreakskip = 0pt plus 1pt
 
+% ===================== Hyperref =====================
 \hypersetup{
   colorlinks=true,
   linkcolor=black,
   urlcolor=black,
-  pdftitle={ForL0 State Backend 设计说明书 v2.0}
+  citecolor=black,
+  pdftitle={ForL0 State Backend 设计说明书 v2.0},
+  pdfauthor={ForL0 Project}
 }
 
+% ===================== Localization =====================
 \renewcommand{\contentsname}{目\quad 录}
 \renewcommand{\tablename}{表}
 \renewcommand{\figurename}{图}
 \floatname{algorithm}{算法}
-
 \algrenewcommand\algorithmicrequire{\textbf{输入：}}
 \algrenewcommand\algorithmicensure{\textbf{输出：}}
 
-\setstretch{1.25}
+% 算法显示样式：紧凑、编号小号、规则线包围
+\floatstyle{ruled}
+\restylefloat{algorithm}
+\renewcommand{\algorithmicindent}{1.2em}
+\algrenewcommand\alglinenumber[1]{\scriptsize\color{black!55}#1}
+% 在算法与段落之间留出更均匀的间距
+\setlength{\intextsep}{0.8em}
+\setlength{\textfloatsep}{0.9em}
+\setlength{\floatsep}{0.8em}
+
+% ===================== Spacing =====================
+\setstretch{1.28}
 \setlength{\parindent}{2em}
-\setlength{\parskip}{0.3em}
+\setlength{\parskip}{0.35em}
 \setlength{\emergencystretch}{3em}
 \sloppy
+\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.35em,parsep=0pt}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em,parsep=0pt}
 
-\setlist[itemize]{leftmargin=2em,itemsep=0.2em,topsep=0.3em}
-\setlist[enumerate]{leftmargin=2.2em,itemsep=0.2em,topsep=0.3em}
+% ===================== Headings =====================
+\definecolor{accent}{RGB}{30,64,110}     % 深蓝，用于装饰细节
+\definecolor{rulegray}{RGB}{60,60,60}
+\definecolor{softgray}{RGB}{245,246,248}
+\definecolor{midgray}{RGB}{220,223,228}
+\definecolor{linegray}{RGB}{120,124,132}
 
-\titleformat{\section}{\large\bfseries}{\thesection.}{0.6em}{}
-\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
-\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.6em}{}
+\titleformat{\section}[hang]
+  {\normalfont\large\bfseries\color{accent}}
+  {\thesection}{0.8em}{}
+  [\vspace{2pt}{\color{accent!60}\titlerule[0.6pt]}]
+\titlespacing*{\section}{0pt}{1.6em}{0.9em}
 
+\titleformat{\subsection}[hang]
+  {\normalfont\normalsize\bfseries\color{accent!85!black}}
+  {\thesubsection}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.55em}
+
+\titleformat{\subsubsection}[hang]
+  {\normalfont\normalsize\bfseries}
+  {\thesubsubsection}{0.55em}{}
+\titlespacing*{\subsubsection}{0pt}{0.9em}{0.4em}
+
+% ===================== TOC styling =====================
+\titlecontents{section}
+  [0em]{\addvspace{0.55em}\bfseries}
+  {\contentslabel{1.6em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{subsection}
+  [2.2em]{\addvspace{0.15em}}
+  {\contentslabel{2.4em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{subsubsection}
+  [4.6em]{\addvspace{0.05em}\small}
+  {\contentslabel{3.0em}}{}
+  {\titlerule*[0.6pc]{.}\contentspage}
+
+% ===================== Header / Footer =====================
 \newcommand{\project}{ForL0 State Backend}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\small\sffamily\color{accent}\project{} 设计说明书}
+\fancyhead[R]{\small\sffamily\color{accent}v2.0}
+\fancyfoot[C]{\small\thepage}
 
-\definecolor{figblue}{RGB}{236,242,255}
-\definecolor{figgreen}{RGB}{235,247,238}
-\definecolor{figorange}{RGB}{250,241,231}
-\definecolor{figgray}{RGB}{248,249,251}
-\definecolor{figline}{RGB}{85,85,85}
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \renewcommand{\headrulewidth}{0pt}%
+  \fancyfoot[C]{\small\thepage}%
+}
+
+% ===================== Figure palette =====================
+\definecolor{fgfill}{RGB}{248,249,251}      % 图形面板背景
+\definecolor{fgaccent}{RGB}{30,64,110}      % 强调色（深蓝）
+\definecolor{fgaccentlight}{RGB}{223,231,242}% 强调色浅底
+\definecolor{fgbox}{RGB}{255,255,255}       % 普通框体
+\definecolor{fgborder}{RGB}{90,95,105}      % 框体边线
+\definecolor{fgsubtle}{RGB}{235,237,240}    % 辅助浅灰
+\definecolor{fgline}{RGB}{70,74,82}         % 线与箭头
 
 \tikzset{
-  controlbox/.style={draw=black!55, rounded corners=4pt, line width=0.6pt, fill=figblue, minimum height=0.95cm, inner xsep=7pt, inner ysep=5pt, align=center, font=\footnotesize\sffamily},
-  bridgebox/.style={draw=black!55, rounded corners=4pt, line width=0.6pt, fill=figorange, minimum height=0.95cm, inner xsep=7pt, inner ysep=5pt, align=center, font=\footnotesize\sffamily},
-  databox/.style={draw=black!55, rounded corners=4pt, line width=0.6pt, fill=figgreen, minimum height=0.95cm, inner xsep=7pt, inner ysep=5pt, align=center, font=\footnotesize\sffamily},
-  neutralbox/.style={draw=black!55, rounded corners=4pt, line width=0.6pt, fill=white, minimum height=0.95cm, inner xsep=7pt, inner ysep=5pt, align=center, font=\footnotesize\sffamily},
-  panel/.style={draw=black!30, rounded corners=7pt, line width=0.55pt, fill=figgray},
-  ctrlcell/.style={draw=black!55, line width=0.45pt, fill=figblue, minimum width=0.38cm, minimum height=0.38cm, inner sep=0pt},
-  keycell/.style={draw=black!55, line width=0.45pt, fill=figorange, minimum width=0.40cm, minimum height=0.46cm, inner sep=0pt},
-  valuecell/.style={draw=black!55, line width=0.45pt, fill=figgreen, minimum width=0.40cm, minimum height=0.46cm, inner sep=0pt},
-  hashcell/.style={draw=black!55, line width=0.45pt, fill=yellow!20, minimum width=0.40cm, minimum height=0.46cm, inner sep=0pt},
-  barseg/.style={draw=black!55, line width=0.45pt, minimum height=0.78cm, inner sep=0pt, align=center, font=\footnotesize\sffamily},
-  line/.style={-{Latex[length=1.9mm]}, draw=figline, line width=0.65pt},
-  figtitle/.style={font=\small\sffamily\bfseries, text=black!82},
-  figlabel/.style={font=\footnotesize\sffamily, text=black!78}
+  figfont/.style={font=\footnotesize\sffamily},
+  figsmall/.style={font=\scriptsize\sffamily,text=black!70},
+  figtitle/.style={font=\footnotesize\sffamily\bfseries,text=fgaccent},
+  % 基础框体：白底 + 细边
+  box/.style={draw=fgborder, line width=0.5pt, rounded corners=2pt, fill=fgbox,
+              minimum height=0.82cm, inner xsep=6pt, inner ysep=4pt, align=center, figfont},
+  % 强调框体：浅蓝底 + 深蓝边
+  accentbox/.style={draw=fgaccent, line width=0.6pt, rounded corners=2pt, fill=fgaccentlight,
+              minimum height=0.82cm, inner xsep=6pt, inner ysep=4pt, align=center, figfont},
+  % 次要框体：浅灰
+  subtlebox/.style={draw=fgborder, line width=0.5pt, rounded corners=2pt, fill=fgsubtle,
+              minimum height=0.82cm, inner xsep=6pt, inner ysep=4pt, align=center, figfont},
+  % 小方格
+  cell/.style={draw=fgborder, line width=0.4pt, fill=fgbox,
+               minimum width=0.40cm, minimum height=0.40cm, inner sep=0pt},
+  cellaccent/.style={draw=fgaccent, line width=0.4pt, fill=fgaccentlight,
+               minimum width=0.40cm, minimum height=0.40cm, inner sep=0pt},
+  cellgray/.style={draw=fgborder, line width=0.4pt, fill=fgsubtle,
+               minimum width=0.40cm, minimum height=0.40cm, inner sep=0pt},
+  % 泳道面板
+  lane/.style={draw=fgborder!55, line width=0.4pt, rounded corners=3pt, fill=fgfill},
+  % 轻量分组面板
+  groupbox/.style={draw=fgborder!50, line width=0.4pt, dashed, rounded corners=3pt, fill=none},
+  % 线条
+  line/.style={-{Latex[length=2mm,width=1.6mm]}, draw=fgline, line width=0.55pt},
+  thinline/.style={draw=fgline!80, line width=0.4pt}
 }
+
+% ===================== Title page macro =====================
+\newcommand{\coverrule}{{\color{accent}\rule{\linewidth}{0.9pt}}}
+\newcommand{\coverrulethin}{{\color{accent!55}\rule{\linewidth}{0.3pt}}}
 
 \begin{document}
 
+% =================================================
+%                 COVER
+% =================================================
 \begin{titlepage}
+\thispagestyle{empty}
 \centering
-\vspace*{3cm}
+\vspace*{5.5cm}
 
-{\LARGE\bfseries \project 设计说明书\par}
-\vspace{1.2cm}
-{\Large v2.0\par}
+\coverrule
+\vspace{2pt}
+\coverrulethin
 
-\vspace{3.5cm}
+\vspace{1.6cm}
+{\sffamily\huge\bfseries\color{accent} \project\par}
+\vspace{0.8cm}
+{\sffamily\LARGE\bfseries 设计说明书\par}
 
-\begin{tabular}{rl}
-文档类型： & 项目交付文档 \\
-文档属性： & 设计说明书 \\
-适用对象： & 项目评审、研发交接、交付验收 \\
-版本日期： & 2026年4月 \\
-\end{tabular}
+\vspace{1.6cm}
+\coverrulethin
+\vspace{2pt}
+\coverrule
 
 \vfill
 
-{\large 项目名称：\project\par}
+{\sffamily\large\color{accent!85} 2026 年 4 月\par}
+
+\vspace{1.2cm}
 \end{titlepage}
 
+% =================================================
+%                 TOC
+% =================================================
+\pagenumbering{roman}
+\pagestyle{plain}
 \tableofcontents
-\newpage
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\pagestyle{fancy}
 
+% =================================================
+%                 CONTENT
+% =================================================
 \section{整体架构设计}
 
 \project{} 面向 Apache Flink 的 Keyed State 场景设计，目标是在保持 Flink 状态接口、命名空间语义和 Checkpoint 机制兼容的前提下，将状态访问的主要数据路径收敛到一套原生状态引擎中，通过类型特化、缓存友好的哈希组织和低复制快照机制，降低状态访问延迟并提升整体处理效率。
 
-与早期版本相比，当前实现已经从“Java 侧分层 StateStore 主导”的结构演进为“Java 控制层 + JNI 桥接层 + C++ 原生状态引擎”的三层架构。Java 层承担接口适配、状态注册和用户函数执行，native 层承担状态组织、命名空间隔离、哈希存储以及快照恢复。本文档仅说明系统设计本身，不再展开构建、部署和配置细节；相关内容由《编译构建指导书》和《使用说明书》单独说明。
+系统采用“Java 控制层 + JNI 桥接层 + C++ 原生状态引擎”的三层架构。Java 层承担接口适配、状态注册和用户函数执行，native 层承担状态组织、命名空间隔离、哈希存储以及快照恢复。本文档仅说明系统设计本身，不再展开构建、部署和配置细节；相关内容由《编译构建指导书》和《使用说明书》单独说明。
 
 \subsection{总体架构}
 
@@ -134,9 +253,10 @@
   \item \texttt{NativeEngine} 按高频类型组合暴露窄接口，例如 long key、int key、TimeWindow namespace、typed inner map 等专用路径。
   \item RowData key 通过 \texttt{RowDataKeyAccessor} 识别为单字段 primitive、固定长度多字段或 generic bytes 三类编码方式。
   \item 对部分 BinaryRowData 或 bytes value，native 层支持零拷贝读取，减少中间 \texttt{byte[]} 和对象重建成本。
+  \item 在 JNI 热路径的最外层，系统默认启用基于鲲鹏 L0 Cache 用户态分区的\textbf{L0 Hot-Key Cache}，对高频热键提供 4--10 cycle 级别的读写穿透缓存；缓存 miss 以及不符合类型条件的访问直接回落到 \texttt{SwissTable}，不改变数据一致性。
 \end{itemize}
 
-因此，系统的性能优化重点并不是改变 Flink 状态语义，而是在保持语义不变的前提下，尽量让热点访问路径走最短 JNI 路由、最窄类型表示和最少数据复制。
+因此，系统的性能优化重点并不是改变 Flink 状态语义，而是在保持语义不变的前提下，尽量让热点访问路径走最短 JNI 路由、最窄类型表示、最少数据复制，并使能够落在 L0 上的热键数据不再为每次访问支付 DRAM 延迟。
 
 \subsection{原生状态表组织}
 
@@ -153,44 +273,69 @@
 
 这种组织方式同时满足了状态隔离、快照遍历稳定性和恢复写入粒度的要求，是整个后端一致性与可恢复性的基础。
 
+% ---------- Figure 1: 整体架构图 ----------
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[x=1cm,y=1cm]
-  \node[panel, minimum width=11.6cm, minimum height=1.2cm] (lane0) at (8.75,7.05) {};
-  \node[panel, minimum width=11.6cm, minimum height=1.45cm] (lane1) at (8.75,5.25) {};
-  \node[panel, minimum width=11.6cm, minimum height=1.15cm] (lane2) at (8.75,3.45) {};
-  \node[panel, minimum width=11.6cm, minimum height=2.15cm] (lane3) at (8.75,1.05) {};
+  % 左侧层名称
+  \foreach \y/\name in {7.55/{Flink 运行时}, 5.90/{Java 控制层}, 4.25/{JNI 桥接层}, 1.70/{原生数据层}} {
+    \node[figtitle, anchor=east, align=right] at (1.9,\y) {\name};
+  }
 
-  \node[figtitle, anchor=west, font=\footnotesize\sffamily\bfseries, fill=white, inner xsep=2pt, inner ysep=1pt, text width=2.2cm, align=left] at (0.25,7.05) {Flink 运行时};
-  \node[figtitle, anchor=west, font=\footnotesize\sffamily\bfseries, fill=white, inner xsep=2pt, inner ysep=1pt, text width=2.2cm, align=left] at (0.25,5.25) {Java 控制层};
-  \node[figtitle, anchor=west, font=\footnotesize\sffamily\bfseries, fill=white, inner xsep=2pt, inner ysep=1pt, text width=2.2cm, align=left] at (0.25,3.45) {JNI 桥接层};
-  \node[figtitle, anchor=west, font=\footnotesize\sffamily\bfseries, fill=white, inner xsep=2pt, inner ysep=1pt, text width=2.2cm, align=left] at (0.25,1.05) {原生数据层};
+  % 泳道背景（统一宽度，相互对齐）
+  \node[lane, minimum width=12.0cm, minimum height=1.2cm] at (8.3,7.55) {};
+  \node[lane, minimum width=12.0cm, minimum height=1.4cm] at (8.3,5.90) {};
+  \node[lane, minimum width=12.0cm, minimum height=1.2cm] at (8.3,4.25) {};
+  \node[lane, minimum width=12.0cm, minimum height=3.4cm] at (8.3,1.70) {};
 
-  \node[controlbox, minimum width=5.5cm] (flink) at (8.75,7.05) {Runtime / State API / Checkpoint};
+  % Flink runtime
+  \node[accentbox, minimum width=5.6cm] (flink) at (8.3,7.55) {Runtime \;/\; State API \;/\; Checkpoint};
 
-  \node[controlbox, minimum width=2.55cm] (factory) at (5.15,5.25) {StateBackend\\Factory};
-  \node[controlbox, minimum width=2.65cm] (backend) at (8.75,5.25) {Keyed\\Backend};
-  \node[controlbox, minimum width=2.75cm] (typeacc) at (12.2,5.25) {Type Analyzer\\RowData Path};
+  % Java control
+  \node[box,       minimum width=2.7cm] (factory) at (4.3,5.90) {StateBackend\\Factory};
+  \node[accentbox, minimum width=2.7cm] (backend) at (8.3,5.90) {Keyed Backend};
+  \node[box,       minimum width=2.7cm] (typeacc) at (12.3,5.90) {Type Analyzer\\RowData Path};
 
-  \node[bridgebox, minimum width=3.0cm] (jni) at (8.75,3.45) {NativeEngine\\Typed JNI};
+  % JNI
+  \node[accentbox, minimum width=3.4cm, fill=fgaccent!10] (jni) at (8.3,4.25) {NativeEngine \;/\; Typed JNI};
 
-  \node[databox, minimum width=1.95cm] (engine) at (4.2,1.05) {StateEngine};
-  \node[databox, minimum width=2.0cm] (table) at (6.45,1.05) {StateTable};
-  \node[databox, minimum width=2.2cm] (route) at (8.75,1.05) {KeyGroup /\\Namespace};
-  \node[databox, minimum width=1.95cm] (swiss) at (11.15,1.05) {SwissTable};
-  \node[neutralbox, minimum width=2.05cm] (snapshot) at (13.35,1.05) {Snapshot /\\Restore / COW};
+  % Native layer (两行)：StateEngine 居中于 JNI 正下方；
+  % 第二行三个子结构；底部 Snapshot 通栏展宽
+  \node[accentbox, minimum width=2.4cm] (engine) at (8.30,2.75) {StateEngine};
 
-  \draw[line] (flink.south) -- (backend.north);
-  \draw[line] (factory.east) -- (backend.west);
-  \draw[line] (typeacc.west) -- (backend.east);
+  \node[box, minimum width=2.2cm] (table) at (4.50,1.45) {StateTable};
+  \node[box, minimum width=2.8cm] (route) at (8.30,1.45) {KeyGroup \,/\\Namespace};
+  \node[box, minimum width=2.2cm] (swiss) at (12.10,1.45) {SwissTable};
+
+  \node[subtlebox, minimum width=10.0cm, minimum height=0.75cm] (snap) at (8.30,0.40)
+        {Snapshot \;/\; Restore \;/\; Copy-On-Write};
+
+  % 连线
+  \draw[line] (flink.south)   -- (backend.north);
+  \draw[line] (factory.east)  -- (backend.west);
+  \draw[line] (typeacc.west)  -- (backend.east);
   \draw[line] (backend.south) -- (jni.north);
-  \draw[line] (jni.south) -- (route.north);
-  \draw[line] (engine.east) -- (table.west);
+  \draw[line] (jni.south)     -- (engine.north);
+
+  % StateEngine 向三个子结构分叉（直角母线，无斜线）
+  \coordinate (busA) at (8.30,2.10);
+  \draw[thinline] (engine.south) -- (busA);
+  \draw[thinline] (4.50,2.10) -- (12.10,2.10);
+  \draw[line] (4.50,2.10) -- (table.north);
+  \draw[line] (8.30,2.10) -- (route.north);
+  \draw[line] (12.10,2.10) -- (swiss.north);
+
+  % 链路延续
   \draw[line] (table.east) -- (route.west);
   \draw[line] (route.east) -- (swiss.west);
-  \draw[line] (swiss.east) -- (snapshot.west);
+
+  % 三列汇入 Snapshot 条（三条垂直线，首尾分别落在 Snapshot 条顶部）
+  \draw[line] (table.south) -- (table.south |- snap.north);
+  \draw[line] (route.south) -- (route.south |- snap.north);
+  \draw[line] (swiss.south) -- (swiss.south |- snap.north);
 \end{tikzpicture}
-\caption{整体架构图}
+\caption{\project{} 整体架构与层级关系}
+\label{fig:overall}
 \end{figure}
 
 \subsection{组件解耦与集成}
@@ -206,44 +351,66 @@
   \item \texttt{NativeEngine}：负责定义 JNI 接口并承担共享库加载。
   \item \texttt{TypeAnalyzer} 与 \texttt{RowDataKeyAccessor}：负责类型识别、布局描述生成和 RowData 快路径支持。
   \item \texttt{StateEngine}、\texttt{StateTable} 与 \texttt{SwissTable}：共同构成 native 数据面，承担状态组织、访问、快照和恢复。
+  \item \texttt{HotCacheManager} 与 \texttt{HotKeyCache}：在 L0 Cache 分区上构造热点键值对的 set-associative 读写穿透缓存，默认随后端启用；硬件或共享库不可用时自动降级为关闭，不做 heap 回补。
 \end{itemize}
 
+% ---------- Figure 2: 组件图 ----------
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[x=1cm,y=1cm]
-  \node[panel, minimum width=11.8cm, minimum height=3.1cm] (javaPanel) at (8.75,3.72) {};
-  \node[panel, minimum width=6.3cm, minimum height=1.55cm] (nativePanel) at (8.75,0.35) {};
+  % 面板：上=Java 控制面（两行），中=JNI 桥（单独一行，不在任一面板内），下=原生数据面
+  \node[lane, minimum width=13.4cm, minimum height=3.8cm] at (8.0,5.00) {};
+  \node[lane, minimum width=7.6cm,  minimum height=1.9cm] at (8.0,0.60) {};
+  \node[figtitle, anchor=east] at (1.1,6.30) {Java 控制面};
+  \node[figtitle, anchor=east] at (1.1,2.55) {JNI 桥接};
+  \node[figtitle, anchor=east] at (1.1,0.60) {原生数据面};
 
-  \node[figtitle, anchor=west, font=\footnotesize\sffamily\bfseries, fill=white, inner xsep=2pt, inner ysep=1pt, text width=2.2cm, align=left] at (0.45,5.05) {Java 控制面};
-  \node[figtitle, anchor=west, font=\footnotesize\sffamily\bfseries, fill=white, inner xsep=2pt, inner ysep=1pt, text width=2.2cm, align=left] at (0.45,0.35) {原生数据面};
+  % Java 上排：Builder → Backend ← Type Analyzer
+  \node[box,       minimum width=2.4cm] (builder)  at (3.9,6.30)  {Backend\\Builder};
+  \node[accentbox, minimum width=2.8cm] (backend2) at (8.0,6.30)  {Keyed Backend};
+  \node[box,       minimum width=2.8cm] (type2)    at (12.1,6.30) {Type Analyzer\\RowData Path};
 
-  \node[controlbox, minimum width=2.15cm] (builder) at (5.0,4.1) {Backend\\Builder};
-  \node[controlbox, minimum width=2.35cm] (backend2) at (8.75,4.1) {Keyed\\Backend};
-  \node[controlbox, minimum width=2.55cm] (type2) at (12.3,4.1) {Type Analyzer\\RowData Path};
+  % Java 下排：三个协作组件
+  \node[box, minimum width=2.3cm] (stateobj2) at (4.5,4.15)  {State Objects};
+  \node[box, minimum width=2.3cm] (pq2)       at (8.0,4.15)  {Priority Queue};
+  \node[box, minimum width=2.3cm] (snap2)     at (11.5,4.15) {Snapshot\\Strategy};
 
-  \node[controlbox, minimum width=2.0cm] (stateobj2) at (4.95,2.72) {State\\Objects};
-  \node[controlbox, minimum width=1.9cm] (pq2) at (7.15,2.72) {Priority\\Queue};
-  \node[controlbox, minimum width=2.1cm] (snapshot2) at (11.05,2.72) {Snapshot\\Strategy};
+  % 桥接：独立一行，居中于两个面板之间，避免与面板边界重叠
+  \node[accentbox, minimum width=2.8cm, fill=fgaccent!10] (native2) at (8.0,2.55) {NativeEngine};
 
-  \node[bridgebox, minimum width=2.2cm] (native2) at (8.75,1.42) {Native\\Engine};
-  \node[databox, minimum width=2.0cm] (engine4) at (7.4,0.35) {StateEngine};
-  \node[databox, minimum width=2.35cm] (table4) at (10.3,0.35) {StateTable /\\SwissTable};
+  % Native 数据面
+  \node[box, minimum width=2.4cm] (engine4) at (6.10,0.60) {StateEngine};
+  \node[box, minimum width=2.8cm] (table4)  at (9.80,0.60) {StateTable \,/\\SwissTable};
 
-  \coordinate (hub2) at (8.75,3.35);
-
+  % 上排横向连线
   \draw[line] (builder.east) -- (backend2.west);
-  \draw[line] (type2.west) -- (backend2.east);
-  \draw[line] (backend2.south) -- (hub2);
-  \draw[line] (hub2) -| (stateobj2.north);
-  \draw[line] (hub2) -| (pq2.north);
-  \draw[line] (hub2) -| (snapshot2.north);
-  \draw[line] (hub2) -- (native2.north);
-  \draw[line] (pq2.south) |- (native2.west);
-  \draw[line] (snapshot2.south) |- (native2.east);
-  \draw[line] (native2.south) -- ++(0,-0.22) -| (engine4.north);
-  \draw[line] (engine4.east) -- (table4.west);
+  \draw[line] (type2.west)   -- (backend2.east);
+
+  % Backend → 三个协作组件：直角分叉（无交叉）
+  \coordinate (bus1) at (8.0,5.30);
+  \draw[thinline] (backend2.south) -- (bus1);
+  \draw[thinline] (stateobj2.north |- bus1) -- (snap2.north |- bus1);
+  \draw[line] (bus1 -| stateobj2.north) -- (stateobj2.north);
+  \draw[line] (bus1 -| pq2.north)       -- (pq2.north);
+  \draw[line] (bus1 -| snap2.north)     -- (snap2.north);
+
+  % 三个协作组件 → NativeEngine：各自直达北边（无交叉）
+  \coordinate (bus2) at (8.0,3.30);
+  \draw[thinline] (stateobj2.south |- bus2) -- (snap2.south |- bus2);
+  \draw[line] (stateobj2.south) -- (stateobj2.south |- bus2);
+  \draw[line] (pq2.south)       -- (pq2.south       |- bus2);
+  \draw[line] (snap2.south)     -- (snap2.south     |- bus2);
+  \draw[line] (bus2) -- (native2.north);
+
+  % NativeEngine → StateEngine / StateTable
+  \coordinate (bus3) at (8.0,1.60);
+  \draw[thinline] (native2.south) -- (bus3);
+  \draw[thinline] (engine4.north |- bus3) -- (table4.north |- bus3);
+  \draw[line] (engine4.north |- bus3) -- (engine4.north);
+  \draw[line] (table4.north  |- bus3) -- (table4.north);
 \end{tikzpicture}
-\caption{ForL0StateBackend 组件图}
+\caption{\project{} 主要组件及其协作关系}
+\label{fig:component}
 \end{figure}
 
 \section{架构设计细节}
@@ -304,38 +471,44 @@
 
 这种组织方式使得 checkpoint 导出、restore 重建和 namespace merge 都可以围绕统一的数据结构完成。
 
+% ---------- Figure 3: 原生状态组织结构图 ----------
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[x=1cm,y=1cm]
-  \node[databox, minimum width=2.0cm] (engine3) at (1.9,2.0) {StateEngine};
-  \node[databox, minimum width=2.0cm] (statea) at (4.45,2.0) {StateTable};
+  % 左侧根结点
+  \node[box, minimum width=2.0cm] (engine3) at (1.55,2.35) {StateEngine};
+  \node[box, minimum width=2.0cm] (statea)  at (4.05,2.35) {StateTable};
 
-  \node[figtitle, anchor=west] at (7.45,3.65) {VoidNamespace};
-  \node[panel, minimum width=5.15cm, minimum height=1.0cm] (voidPanel) at (10.35,3.0) {};
-  \node[neutralbox, minimum width=1.55cm] (kg0) at (8.55,3.0) {$KG_i$};
-  \node[neutralbox, minimum width=2.0cm] (voidns) at (11.2,3.0) {SwissTable};
+  % 上支路：VoidNamespace
+  \node[figtitle, anchor=south west] at (6.4,3.85) {路径 A：VoidNamespace};
+  \node[groupbox, minimum width=5.9cm, minimum height=1.1cm] at (9.4,3.35) {};
+  \node[subtlebox, minimum width=1.4cm] (kg0)    at (7.15,3.35) {$KG_i$};
+  \node[box,       minimum width=2.2cm] (voidns) at (10.0,3.35) {SwissTable$\langle K,V\rangle$};
 
-  \node[figtitle, anchor=west] at (7.45,1.75) {General namespace};
-  \node[panel, minimum width=7.0cm, minimum height=1.85cm] (genPanel) at (11.1,0.75) {};
-  \node[neutralbox, minimum width=1.55cm] (kg1) at (8.45,0.75) {$KG_i$};
-  \node[neutralbox, minimum width=1.9cm] (nsmap) at (10.8,0.75) {Namespace\\Map};
-  \node[neutralbox, minimum width=1.35cm] (ns1) at (12.85,1.15) {$NS_1$};
-  \node[neutralbox, minimum width=1.35cm] (ns2) at (12.85,0.35) {$NS_2$};
-  \node[neutralbox, minimum width=1.8cm] (nsTable1) at (14.8,1.15) {SwissTable};
-  \node[neutralbox, minimum width=1.8cm] (nsTable2) at (14.8,0.35) {SwissTable};
+  % 下支路：General namespace
+  \node[figtitle, anchor=south west] at (6.4,1.95) {路径 B：General namespace};
+  \node[groupbox, minimum width=8.4cm, minimum height=1.9cm] at (10.6,0.7) {};
+  \node[subtlebox, minimum width=1.4cm] (kg1)     at (7.15,0.7) {$KG_i$};
+  \node[box,       minimum width=1.7cm] (nsmap)   at (9.35,0.7) {Namespace\\Map};
+  \node[box,       minimum width=1.1cm] (ns1)     at (11.25,1.15) {$NS_1$};
+  \node[box,       minimum width=1.1cm] (ns2)     at (11.25,0.25) {$NS_2$};
+  \node[box,       minimum width=2.0cm] (nsTable1)at (13.55,1.15) {SwissTable};
+  \node[box,       minimum width=2.0cm] (nsTable2)at (13.55,0.25) {SwissTable};
 
-  \draw[line] (engine3) -- (statea);
-  \draw[line] (statea.east) -- ++(0.65,0) coordinate (branch);
-  \draw[line] (branch) |- (kg0.west);
-  \draw[line] (branch) |- (kg1.west);
-  \draw[line] (kg0) -- (voidns);
-  \draw[line] (kg1) -- (nsmap);
-  \draw[line] (nsmap) -- (ns1);
-  \draw[line] (nsmap) -- (ns2);
-  \draw[line] (ns1) -- (nsTable1);
-  \draw[line] (ns2) -- (nsTable2);
+  % 连线
+  \draw[line] (engine3.east) -- (statea.west);
+  \draw[line] (statea.east)  -- ++(0.6,0) coordinate (branch);
+  \draw[thinline] (branch) |- (kg0.west);
+  \draw[thinline] (branch) |- (kg1.west);
+  \draw[line] (kg0.east)   -- (voidns.west);
+  \draw[line] (kg1.east)   -- (nsmap.west);
+  \draw[line] (nsmap.east) -- (ns1.west);
+  \draw[line] (nsmap.east) -- (ns2.west);
+  \draw[line] (ns1.east)   -- (nsTable1.west);
+  \draw[line] (ns2.east)   -- (nsTable2.west);
 \end{tikzpicture}
-\caption{原生状态组织结构图}
+\caption{原生状态组织：VoidNamespace 路径与一般命名空间路径}
+\label{fig:layout}
 \end{figure}
 
 \subsubsection{SwissTable}
@@ -352,60 +525,319 @@
 
 这意味着 \texttt{SwissTable} 不仅是索引结构，也是实际 value 的承载结构，从而减少二次寻址和额外缓存失配。
 
+% ---------- Figure 4: SwissTable 索引结构 ----------
 \begin{figure}[htbp]
 \centering
-\begin{tikzpicture}[x=1cm,y=1cm]
-  \node[figtitle, anchor=west] at (0.6,4.0) {SwissTable 索引结构};
-  \node[panel, minimum width=10.8cm, minimum height=3.05cm] (indexPanel) at (6.65,2.3) {};
-  \node[figlabel, anchor=west] at (1.0,3.1) {ctrl 区};
-  \foreach \i in {0,...,7} {
-    \node[ctrlcell] at (2.25+0.42*\i,2.55) {};
-  }
-  \draw[line] (5.45,2.55) -- (6.75,2.55);
-  \node[figlabel, anchor=north] at (6.1,2.28) {$H_2$ 过滤};
+\begin{tikzpicture}[x=1cm,y=1cm,font=\footnotesize\sffamily]
 
-  \node[figlabel, anchor=west] at (7.55,3.15) {候选槽位};
-  \node[figlabel, anchor=east] at (7.35,2.85) {键};
-  \node[figlabel, anchor=east] at (7.35,2.25) {值};
-  \node[figlabel, anchor=east] at (7.35,1.65) {哈希};
-  \foreach \i in {0,...,5} {
-    \node[keycell] at (7.9+0.44*\i,2.85) {};
-    \node[valuecell] at (7.9+0.44*\i,2.25) {};
-    \node[hashcell] at (7.9+0.44*\i,1.65) {};
+  % ================= 行 A：32 位 hash 位分配（左） + 公式（右） =================
+  \node[figtitle, anchor=west] at (0.0,7.55) {(a) 32 位 hash 位分配};
+
+  \draw[fill=fgaccentlight, draw=fgaccent, line width=0.5pt]
+    (0.0,6.75) rectangle (8.0,7.30);
+  \node[anchor=center] at (4.0,7.02) {$H_1$（高 25 位，用作探测起点）};
+
+  \draw[fill=fgaccent!35, draw=fgaccent, line width=0.5pt]
+    (8.0,6.75) rectangle (10.0,7.30);
+  \node[anchor=center] at (9.0,7.02) {$H_2$（低 7 位）};
+
+  \node[figsmall, anchor=north] at (0.0,6.70)  {bit 31};
+  \node[figsmall, anchor=north] at (8.0,6.70)  {bit 7};
+  \node[figsmall, anchor=north] at (10.0,6.70) {bit 0};
+
+  % 右侧公式说明（与 hash 条同一行，不与下方重叠）
+  \node[subtlebox, minimum width=4.2cm, minimum height=1.0cm, align=left,
+        inner xsep=5pt, inner ysep=3pt] (formula) at (12.55,7.02)
+    {$group_0 \gets H_1 \bmod cap$ \\[1pt]
+     三角探测：$\Delta_i = i{+}1$};
+
+  % ================= 行 B：H2 → Group 的 SIMD 并行匹配说明 =================
+  \draw[line, shorten >=2pt] (9.0,6.70) -- (9.0,5.95);
+  \node[figsmall, text=fgaccent, anchor=west] at (0.0,5.90)
+    {\textbf{H$_2$} 作为 Group 内 16 字节 SIMD 并行匹配的模式};
+
+  % ================= 行 C：ctrl 数组 =================
+  \node[figtitle, anchor=west] at (0.0,5.30)
+    {(b) ctrl 数组（长度 $= cap + kGroupWidth$，尾部为 ``cloned head''）};
+
+  \def\ctrlY{4.30}
+  \foreach \i/\t/\clr in {%
+    0/F/fgaccent!35, 1/F/fgaccent!35, 2/E/white, 3/F/fgaccent!35,
+    4/F/fgaccent!35, 5/D/fgsubtle,    6/F/fgaccent!35, 7/F/fgaccent!35,
+    8/F/fgaccent!35, 9/F/fgaccent!35, 10/F/fgaccent!35, 11/F/fgaccent!35,
+    12/E/white, 13/F/fgaccent!35, 14/F/fgaccent!35, 15/F/fgaccent!35} {
+    \pgfmathsetmacro\xa{0.0 + 0.62*\i}
+    \pgfmathsetmacro\xb{\xa + 0.62}
+    \pgfmathsetmacro\xc{\xa + 0.31}
+    \draw[fill=\clr, draw=fgborder, line width=0.4pt]
+      (\xa,\ctrlY) rectangle (\xb,\ctrlY+0.58);
+    \node[figsmall, anchor=center] at (\xc,\ctrlY+0.29) {\t};
   }
-  \node[figlabel, align=center] at (6.65,0.8) {候选槽位命中后直接读取 value，避免额外 value store};
+
+  % 主体 / cloned 分隔线与刻度
+  \draw[fgaccent, densely dashed, line width=0.45pt]
+    (9.92,\ctrlY-0.12) -- (9.92,\ctrlY+0.74);
+  \node[figsmall, anchor=north] at (0.31,\ctrlY)  {0};
+  \node[figsmall, anchor=north] at (9.61,\ctrlY)  {$cap{-}1$};
+
+  % Group 窗口
+  \draw[fgaccent, line width=0.55pt, rounded corners=1.5pt]
+    (-0.08,\ctrlY-0.16) rectangle (9.98,\ctrlY+0.74);
+
+  % cloned head 注释放在 ctrl 行下方，避免与 (b) 标题重叠
+  \node[figsmall, anchor=north west, text=fgaccent] at (10.02,\ctrlY-0.02)
+    {\;cloned head};
+
+  % ================= 行 D：图例 =================
+  \node[figsmall, anchor=west] at (0.0,3.30) {图例：};
+  \draw[fill=fgaccent!35, draw=fgborder, line width=0.4pt] (1.10,3.17) rectangle (1.46,3.43);
+  \node[figsmall, anchor=west] at (1.50,3.30) {\;FULL ($H_2$)};
+  \draw[fill=white, draw=fgborder, line width=0.4pt] (4.10,3.17) rectangle (4.46,3.43);
+  \node[figsmall, anchor=west] at (4.50,3.30) {\;EMPTY (\texttt{0x80})};
+  \draw[fill=fgsubtle, draw=fgborder, line width=0.4pt] (7.50,3.17) rectangle (7.86,3.43);
+  \node[figsmall, anchor=west] at (7.90,3.30) {\;DELETED (\texttt{0xFE})};
+
+  % ================= 行 E：slot 数组 =================
+  \node[figtitle, anchor=west] at (0.0,2.55)
+    {(c) slot 数组：与 ctrl 一一对齐，inline 存储 $\langle K,V\rangle$};
+
+  \def\slotY{1.55}
+  \foreach \i in {0,...,15} {
+    \pgfmathsetmacro\xa{0.0 + 0.62*\i}
+    \pgfmathsetmacro\xb{\xa + 0.62}
+    \pgfmathsetmacro\xc{\xa + 0.31}
+    \draw[fill=white, draw=fgborder, line width=0.4pt]
+      (\xa,\slotY) rectangle (\xb,\slotY+0.58);
+    \node[figsmall, anchor=center] at (\xc,\slotY+0.29) {$\langle k,v\rangle$};
+    \draw[fgline!35, line width=0.3pt, dotted]
+      (\xc,\ctrlY) -- (\xc,\slotY+0.58);
+  }
+  \node[figsmall, anchor=west] at (0.0,0.95)
+    {命中槽位后直接在 slot 中读取 value，无需 value store 间接层};
+
 \end{tikzpicture}
-\caption{SwissTable 索引结构图}
+\caption{SwissTable 索引结构：$H_1/H_2$ 位分配、ctrl 数组（含克隆尾部）与 slot 数组的对齐关系}
+\label{fig:swiss-index}
 \end{figure}
 
+% ---------- Figure 5: 控制区与分组扫描 ----------
 \begin{figure}[htbp]
 \centering
-\begin{tikzpicture}[x=0.16cm,y=1cm]
-  \node[figtitle, anchor=west] at (0,1.95) {控制区与分组扫描};
-  \draw[black!55, line width=0.45pt] (8,1.1) -- (72,1.1);
-  \draw[fill=figblue, draw=black!55, line width=0.45pt] (8,0.75) rectangle (16,1.45);
-  \draw[fill=figblue, draw=black!55, line width=0.45pt] (16,0.75) rectangle (24,1.45);
-  \draw[fill=figblue, draw=black!55, line width=0.45pt] (24,0.75) rectangle (32,1.45);
-  \draw[fill=figblue, draw=black!55, line width=0.45pt] (32,0.75) rectangle (40,1.45);
-  \draw[fill=figorange, draw=black!55, line width=0.45pt] (40,0.75) rectangle (56,1.45);
-  \draw[fill=figgreen, draw=black!55, line width=0.45pt] (56,0.75) rectangle (72,1.45);
-  \node at (12,1.1) {$ctrl_0$};
-  \node at (20,1.1) {$ctrl_1$};
-  \node at (28,1.1) {$ctrl_2$};
-  \node at (36,1.1) {$ctrl_3$};
-  \node at (48,1.1) {候选 slot 组};
-  \node at (64,1.1) {cloned ctrl};
-  \draw[black!45, line width=0.35pt] (8,0.62) -- (8,0.5);
-  \draw[black!45, line width=0.35pt] (40,0.62) -- (40,0.5);
-  \draw[black!45, line width=0.35pt] (56,0.62) -- (56,0.5);
-  \draw[black!45, line width=0.35pt] (72,0.62) -- (72,0.5);
-  \node[figlabel] at (8,0.25) {0};
-  \node[figlabel] at (40,0.25) {32};
-  \node[figlabel] at (56,0.25) {48};
-  \node[figlabel] at (72,0.25) {64};
-  \node[figlabel, align=center] at (40,-0.25) {镜像 ctrl 支撑跨边界连续读取与探测推进};
+\begin{tikzpicture}[x=0.18cm,y=1cm]
+  % 面板
+  \begin{scope}[on background layer]
+    \fill[fgfill, rounded corners=3pt, draw=fgborder!55, line width=0.4pt]
+      (2,-0.4) rectangle (78,2.2);
+  \end{scope}
+
+  % 轴
+  \draw[thinline] (8,1.1) -- (72,1.1);
+
+  % 分段（4 个 ctrl word，每段宽 8 单位）
+  \foreach \i/\lbl in {0/{$ctrl_0$},1/{$ctrl_1$},2/{$ctrl_2$},3/{$ctrl_3$}} {
+    \pgfmathsetmacro\xa{8+\i*8}
+    \pgfmathsetmacro\xb{\xa+8}
+    \draw[fill=fgaccentlight, draw=fgborder, line width=0.4pt]
+      (\xa,0.75) rectangle (\xb,1.45);
+    \pgfmathsetmacro\xc{\xa+4}
+    \node[figfont] at (\xc,1.1) {\lbl};
+  }
+
+  % 候选 slot 组
+  \draw[fill=fgsubtle, draw=fgborder, line width=0.4pt]
+    (40,0.75) rectangle (56,1.45);
+  \node[figfont] at (48,1.1) {候选 slot 组};
+
+  % cloned ctrl
+  \draw[fill=white, draw=fgborder, line width=0.4pt, densely dashed]
+    (56,0.75) rectangle (72,1.45);
+  \node[figfont] at (64,1.1) {cloned ctrl};
+
+  % 刻度
+  \foreach \x/\lbl in {8/0,40/32,56/48,72/64} {
+    \draw[thinline] (\x,0.6) -- (\x,0.5);
+    \node[figsmall] at (\x,0.25) {\lbl};
+  }
+
+  % 说明
+  \node[figsmall, align=center] at (40,-0.15) {镜像 ctrl 支撑跨边界连续读取与探测推进};
 \end{tikzpicture}
-\caption{SwissTable 控制区与分组扫描示意图}
+\caption{SwissTable 控制区布局与分组扫描示意}
+\label{fig:swiss-ctrl}
+\end{figure}
+
+\subsubsection{L0 Hot-Key Cache}
+
+L0 Hot-Key Cache 是系统默认启用的外层快路径，其核心是一块位于鲲鹏 L0 Cache 用户态分区的紧凑哈希索引，下面给出其数据结构与访问算法。
+
+\paragraph{数据结构}
+缓存整体为一个 set-associative 哈希索引，共 $N$ 个 set，每个 set 由固定的 8 个 way 组成，紧凑占用 $3 \times 64 = 192$\,B，且严格按 64\,B 对齐：
+\begin{itemize}
+  \item \textbf{tags 行}（64\,B）：存放 8 个 tag 字节以及用于轮转替换的指针 \texttt{rr}，其余字节填充；空 way 以 \texttt{EMPTY = 0x80} 标记，正常 tag 落在 $[0, 0x7F]$，与 \texttt{EMPTY} 不会冲突。
+  \item \textbf{keys 行}（64\,B）：存放 8 个 8\,B 定长 key 槽位。
+  \item \textbf{vals 行}（64\,B）：存放 8 个 8\,B 定长 value 槽位。
+\end{itemize}
+所有 64 位 key 先经 Wyhash 风格的 64 位混合函数得到一个散列值 $h$，再沿用 SwissTable 的 $H_1/H_2$ 位分配方式从 $h$ 中切分：低 7 位 $H_2 = h \,\&\, \mathtt{0x7F}$ 用作 tag，高位 $H_1 = h \gg 7$ 用作 set 定位。set 索引由 $set = H_1 \,\&\, (N-1)$ 给出（$N$ 为 2 的幂）。8 个 way 之间以 NEON \texttt{vceq\_u8} 对 tags 行进行单周期 8-way 并行比较，在不支持 NEON 的平台上退回标量实现。
+
+\paragraph{查找算法}
+给定 \texttt{(kg, ns, key)}，首先将 key 归一化为 64 位整数，再计算混合散列 $h$ 以及 $H_1$、$H_2$，定位到唯一的 set：
+\begin{enumerate}
+  \item 一次 64\,B 载入读入 tags 行，使用 \texttt{vceq\_u8}($tags$, $H_2$) 得到 8 字节匹配掩码，每匹配一个 way 对应一个非零字节。
+  \item 对掩码中每个候选 way 读取 \texttt{keys[way]}，与 $key$ 逐一比较；相等则读取 \texttt{vals[way]} 返回。
+  \item 若无匹配或匹配 way 的 key 不等，则记为 miss，并回落到 SwissTable 权威存储。
+\end{enumerate}
+在典型命中路径下，整次访问仅触及 tags 行和命中 way 所在的 key、val 两个 8\,B 字段，共约 $64+8+8=80$\,B，全部位于 L0 内存。
+
+\paragraph{插入与写穿透}
+写操作在 SwissTable 成功更新之后，再同步写入 cache：
+\begin{enumerate}
+  \item 按查找算法定位 set；若存在 tag 与 key 同时命中的 way，直接覆盖该 way 的 key / val。
+  \item 否则寻找 \texttt{EMPTY} way 作为插入点。
+  \item 若 8 个 way 均被占用，则按 set 内轮转指针 \texttt{rr} 选择一个 way 进行替换，并推进 \texttt{rr}。
+\end{enumerate}
+\texttt{rr} 复用 tags 行尾部的 1 字节元数据空间，仅占用低 3 位，不增加额外 cache line。
+
+\paragraph{失效算法}
+删除或 key-group 迁移时，按查找算法定位 set 并匹配 way，将命中 way 的 tag 置为 \texttt{EMPTY}，keys / vals 不做清零。set 作为整体在 rescale 时归还 \texttt{HotCacheManager} 全局池，由该管理器统一承担 L0 内存的分配与回收。
+
+% ---------- Figure 6: L0 Hot-Key Cache 结构与快路径 ----------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm,font=\footnotesize\sffamily]
+  % ================= 顶部：HotSet 数据结构 =================
+  % 背景面板
+  \begin{scope}[on background layer]
+    \fill[fgfill, rounded corners=3pt, draw=fgborder!55, line width=0.4pt]
+      (0.20,5.65) rectangle (14.80,9.25);
+  \end{scope}
+
+  % 标题
+  \node[figtitle, anchor=west] at (0.45,9.00)
+    {L0 HotSet（单 set，8-way，$3 \times 64$\,B $= 192$\,B）};
+
+  % 单 set 内容区域（3 行 × 8 列）
+  \def\cellW{0.70}
+  \def\colX{3.30}   % 第一格左边界
+  % 行基准 y 值（单元格底部）
+  \def\yT{7.85}     % tags 行底
+  \def\yK{6.95}
+  \def\yV{6.05}
+
+  % 行标签（左侧）
+  \node[figsmall, anchor=east, text=black!75] at (\colX-0.05,\yT+0.30) {tags\,:};
+  \node[figsmall, anchor=east, text=black!75] at (\colX-0.05,\yK+0.30) {keys\,:};
+  \node[figsmall, anchor=east, text=black!75] at (\colX-0.05,\yV+0.30) {vals\,:};
+
+  % 列索引（顶部）
+  \foreach \i in {0,...,7} {
+    \pgfmathsetmacro\xc{\colX + \cellW*\i + \cellW/2}
+    \node[figsmall, anchor=south, text=black!55] at (\xc,\yT+0.65) {\i};
+  }
+
+  % tags 行
+  \foreach \i/\v/\clr in {0/{$h_2^{(0)}$}/fgaccent!28, 1/{$h_2^{(1)}$}/fgaccent!28,
+                          2/{\texttt{\scriptsize 0x80}}/white,             3/{$h_2^{(3)}$}/fgaccent!28,
+                          4/{$h_2^{(4)}$}/fgaccent!28, 5/{$\mathbf{h_2}$}/fgaccent!55,
+                          6/{$h_2^{(6)}$}/fgaccent!28, 7/{$h_2^{(7)}$}/fgaccent!28} {
+    \pgfmathsetmacro\xa{\colX + \cellW*\i}
+    \pgfmathsetmacro\xb{\xa + \cellW}
+    \pgfmathsetmacro\xc{\xa + \cellW/2}
+    \draw[fill=\clr, draw=fgborder, line width=0.4pt, rounded corners=1pt]
+      (\xa,\yT) rectangle (\xb,\yT+0.60);
+    \node[figsmall, anchor=center] at (\xc,\yT+0.30) {\v};
+  }
+
+  % keys 行
+  \foreach \i/\v/\clr in {0/{$k_0$}/white,1/{$k_1$}/white,2/{--}/fgsubtle,3/{$k_3$}/white,
+                          4/{$k_4$}/white,5/{$\mathbf{k_5}$}/fgaccent!20,
+                          6/{$k_6$}/white,7/{$k_7$}/white} {
+    \pgfmathsetmacro\xa{\colX + \cellW*\i}
+    \pgfmathsetmacro\xb{\xa + \cellW}
+    \pgfmathsetmacro\xc{\xa + \cellW/2}
+    \draw[fill=\clr, draw=fgborder, line width=0.4pt, rounded corners=1pt]
+      (\xa,\yK) rectangle (\xb,\yK+0.60);
+    \node[figsmall, anchor=center] at (\xc,\yK+0.30) {\v};
+  }
+
+  % vals 行
+  \foreach \i/\v/\clr in {0/{$v_0$}/white,1/{$v_1$}/white,2/{--}/fgsubtle,3/{$v_3$}/white,
+                          4/{$v_4$}/white,5/{$\mathbf{v_5}$}/fgaccent!20,
+                          6/{$v_6$}/white,7/{$v_7$}/white} {
+    \pgfmathsetmacro\xa{\colX + \cellW*\i}
+    \pgfmathsetmacro\xb{\xa + \cellW}
+    \pgfmathsetmacro\xc{\xa + \cellW/2}
+    \draw[fill=\clr, draw=fgborder, line width=0.4pt, rounded corners=1pt]
+      (\xa,\yV) rectangle (\xb,\yV+0.60);
+    \node[figsmall, anchor=center] at (\xc,\yV+0.30) {\v};
+  }
+
+  % rr 元数据（tags 行尾右侧）
+  \pgfmathsetmacro\rrx{\colX + \cellW*8 + 0.15}
+  \draw[draw=fgborder!60, dashed, line width=0.4pt, rounded corners=1pt]
+    (\rrx,\yT) rectangle (\rrx+0.80,\yT+0.60);
+  \node[figsmall, anchor=center, text=black!65] at (\rrx+0.40,\yT+0.30) {\texttt{rr}};
+
+  % cache line 注记（最右侧）
+  \node[figsmall, anchor=west, text=black!60] at (\rrx+1.05,\yT+0.30) {line 0};
+  \node[figsmall, anchor=west, text=black!60] at (\rrx+1.05,\yK+0.30) {line 1};
+  \node[figsmall, anchor=west, text=black!60] at (\rrx+1.05,\yV+0.30) {line 2};
+
+  % 命中列高亮（column i=5，整体跨三行）
+  \pgfmathsetmacro\hxa{\colX + \cellW*5 - 0.04}
+  \pgfmathsetmacro\hxb{\colX + \cellW*6 + 0.04}
+  \draw[fgaccent, line width=0.8pt, rounded corners=2pt, dashed]
+    (\hxa,\yV-0.05) rectangle (\hxb,\yT+0.65);
+
+  % 底部小字
+  \node[figsmall, anchor=center, text=black!70] at (7.50,5.82)
+    {命中列仅触及 tags 行 + key + val $\approx 80$\,B，全部位于 L0 内存};
+
+  % ================= 底部：JNI 热路径 与 SwissTable =================
+  % 左：JNI 热路径
+  \begin{scope}[on background layer]
+    \fill[fgfill, rounded corners=3pt, draw=fgborder!55, line width=0.4pt]
+      (0.20,0.40) rectangle (6.80,4.90);
+  \end{scope}
+  \node[figtitle, anchor=west] at (0.45,4.60) {JNI 访问热路径};
+
+  \node[accentbox, minimum width=5.6cm, minimum height=0.55cm, anchor=center]
+    at (3.50,3.90) {\small \textcircled{\scriptsize 1}\;计算 $h$，切出 $H_1, H_2$};
+  \node[accentbox, minimum width=5.6cm, minimum height=0.55cm, anchor=center]
+    at (3.50,3.10) {\small \textcircled{\scriptsize 2}\;$set \leftarrow H_1 \,\&\, (N-1)$};
+  \node[accentbox, minimum width=5.6cm, minimum height=0.55cm, anchor=center]
+    at (3.50,2.30) {\small \textcircled{\scriptsize 3}\;\texttt{vceq\_u8}\,:\,$tags$ 对 $H_2$ 并行比对};
+  \node[accentbox, minimum width=5.6cm, minimum height=0.55cm, fill=fgaccentlight, anchor=center]
+    at (3.50,1.50) {\small \textcircled{\scriptsize 4}\;命中 $\rightarrow$ 返回 \quad / \quad miss $\rightarrow$ 回落};
+
+  % 右：SwissTable
+  \begin{scope}[on background layer]
+    \fill[fgfill, rounded corners=3pt, draw=fgborder!55, line width=0.4pt]
+      (8.20,0.40) rectangle (14.80,4.90);
+  \end{scope}
+  \node[figtitle, anchor=west] at (8.45,4.60) {SwissTable};
+
+  \node[box, minimum width=5.6cm, minimum height=0.65cm, anchor=center]
+    at (11.50,3.80) {ctrl + slot + COW shadow};
+  \node[box, minimum width=5.6cm, minimum height=0.65cm, anchor=center]
+    at (11.50,2.90) {NEON SIMD 并行探测};
+  \node[subtlebox, minimum width=5.6cm, minimum height=0.65cm, anchor=center]
+    at (11.50,2.00) {Checkpoint 快照仅读此表};
+  \node[figsmall, anchor=center, text=black!65] at (11.50,1.15)
+    {HotCache miss 时回退到此路径};
+
+  % ================= 跨层箭头（走面板间空隙 y=4.90..5.65） =================
+  % lookup：JNI (上沿 y=4.90) → HotSet 底部 (y=5.65)；位于左侧 x=2.0
+  \draw[line] (2.00,4.90) -- node[figsmall, right=1pt, pos=0.5, text=fgaccent] {lookup} (2.00,5.65);
+  % hit 返回：HotSet 底部 → JNI 上沿；位于 x=5.00
+  \draw[line] (5.00,5.65) -- node[figsmall, right=1pt, pos=0.5, text=fgaccent] {hit} (5.00,4.90);
+  % miss：HotSet 底部 → SwissTable 上沿；位于 x=9.80
+  \draw[line] (9.80,5.65) -- node[figsmall, right=1pt, pos=0.5, text=fgaccent] {miss} (9.80,4.90);
+  % 回填：SwissTable 上沿 → HotSet 底部（虚线，write-through）；位于 x=13.00
+  \draw[line, dashed] (13.00,4.90) -- node[figsmall, right=1pt, pos=0.5, text=fgaccent] {回填} (13.00,5.65);
+
+\end{tikzpicture}
+\caption{L0 Hot-Key Cache 快路径与 HotSet 布局：JNI 入口在 L0 内完成 8-way tag 并行比对，命中直接返回；miss 时回落 SwissTable 并写穿透回填 HotSet}
+\label{fig:hotcache}
 \end{figure}
 
 \subsubsection{状态访问策略与 JNI 快路径}
@@ -464,15 +896,21 @@
 
 \paragraph{查询（Get）}
 
-查询流程总是先定位目标状态表，再根据 key-group 和 namespace 找到对应的 \texttt{SwissTable}。在表内查找时，系统先扫描 ctrl 区中的 \(H_2\) 指纹以筛选候选槽位，再对少量候选槽位执行键比较；若当前探测组内已经出现 EMPTY 槽位，则说明本次查询未命中，可以直接返回空结果。
+查询流程总是先在 L0 Hot-Key Cache 上尝试快路径：若 state 类型被纳入 cache 白名单且命中，则直接返回；否则定位目标状态表，再根据 key-group 和 namespace 找到对应的 \texttt{SwissTable}。在表内查找时，系统先扫描 ctrl 区中的 \(H_2\) 指纹以筛选候选槽位，再对少量候选槽位执行键比较；若当前探测组内已经出现 EMPTY 槽位，则说明本次查询未命中，可以直接返回空结果。SwissTable 命中后结果同步回填 cache，从而让后续同 key 访问继续走热路径。
 
-\begin{algorithm}[htbp]
-\caption{状态查询算法}
-\small
+\begin{algorithm}[!htbp]
+\caption{状态查询算法（含 L0 Hot-Key Cache 快路径）}
+\footnotesize
 \begin{algorithmic}[1]
 \Require 状态句柄 \textit{stateId}，key-group \textit{kg}，namespace \textit{ns}，用户键 \textit{key}
 \Ensure 若命中则返回对应值，否则返回 \texttt{NOT\_FOUND}
 \State $table \gets StateEngine.lookup(stateId)$
+\If{$table.cache \neq \emptyset$}  \Comment{L0 Hot-Key Cache 快路径}
+  \State $hit, val \gets table.cache.get(kg, ns, key)$
+  \If{$hit$}
+    \State \Return $val$
+  \EndIf
+\EndIf
 \If{$table$ 为 VoidNamespace 模式}
   \State $swiss \gets table.directTable(kg)$
 \Else
@@ -488,7 +926,11 @@
   \State $matches \gets matchH2(swiss.ctrl[group], h2)$
   \ForAll{$slot \in matches$}
     \If{$swiss.key(slot) = key$}
-      \State \Return $swiss.value(slot)$
+      \State $value \gets swiss.value(slot)$
+      \If{$table.cache \neq \emptyset$}
+        \State $table.cache.put(kg, ns, key, value)$ \Comment{miss 回填}
+      \EndIf
+      \State \Return $value$
     \EndIf
   \EndFor
   \If{$containsEmpty(swiss.ctrl[group])$}
@@ -501,11 +943,11 @@
 
 \paragraph{插入（Put）}
 
-插入流程首先定位目标 \texttt{StateTable} 和具体 namespace 对应的 \texttt{SwissTable}。若目标 namespace 尚未建立，则系统先创建对应表结构。随后根据哈希结果执行槽位选择；若表内存在可复用槽位，则直接写入新值；若表因 tombstone 过多或增长预算耗尽而无法继续插入，则先触发 rehash 或 grow，再重试插入。
+插入流程首先定位目标 \texttt{StateTable} 和具体 namespace 对应的 \texttt{SwissTable}。若目标 namespace 尚未建立，则系统先创建对应表结构。随后根据哈希结果执行槽位选择；若表内存在可复用槽位，则直接写入新值；若表因 tombstone 过多或增长预算耗尽而无法继续插入，则先触发 rehash 或 grow，再重试插入。SwissTable 写入成功后再向 L0 Hot-Key Cache 写穿透，保证 SwissTable 是唯一权威来源。
 
-\begin{algorithm}[htbp]
-\caption{状态插入算法}
-\small
+\begin{algorithm}[!htbp]
+\caption{状态插入算法（SwissTable 优先，L0 cache 写穿透）}
+\footnotesize
 \begin{algorithmic}[1]
 \Require 状态句柄 \textit{stateId}，key-group \textit{kg}，namespace \textit{ns}，用户键 \textit{key}，用户值 \textit{value}
 \Ensure 将 \textit{key} 对应条目写入目标状态表
@@ -527,6 +969,9 @@
 \If{$table.snapshotActive(kg)$}
   \State $table.recordCowMutation(kg, ns, key)$
 \EndIf
+\If{$table.cache \neq \emptyset$}  \Comment{写穿透到 L0 cache}
+  \State $table.cache.put(kg, ns, key, value)$
+\EndIf
 \end{algorithmic}
 \end{algorithm}
 
@@ -534,9 +979,9 @@
 
 更新流程与插入流程共用同一条索引定位路径。区别在于，更新场景要求条目已经存在：系统在定位到已有 slot 后，直接覆盖旧值；若当前 key 尚不存在，则更新流程退化为插入流程。对于快照窗口内的更新，系统还需要先记录旧值，再执行写回，从而保证异步快照可恢复出快照发起时刻的一致性状态。
 
-\begin{algorithm}[htbp]
-\caption{状态更新算法}
-\small
+\begin{algorithm}[!htbp]
+\caption{状态更新算法（L0 cache 写穿透）}
+\footnotesize
 \begin{algorithmic}[1]
 \Require 状态句柄 \textit{stateId}，key-group \textit{kg}，namespace \textit{ns}，用户键 \textit{key}，新值 \textit{value}
 \Ensure 若条目存在则原位更新，否则按插入路径写入
@@ -551,28 +996,37 @@
   \State $table.recordOldValueIfNeeded(kg, ns, key)$
 \EndIf
 \State $swiss.value(slot) \gets value$
+\If{$table.cache \neq \emptyset$}
+  \State $table.cache.put(kg, ns, key, value)$ \Comment{写穿透}
+\EndIf
 \end{algorithmic}
 \end{algorithm}
 
 \paragraph{删除（Remove）}
 
-删除流程同样以目标 \texttt{SwissTable} 为基础执行。若目标 key 存在，则将对应槽位标记为 tombstone；在一般 namespace 模式下，如果某个 namespace 对应表在删除后已经为空，则进一步移除该 namespace 表本身，从而避免长期持有空容器。
+删除流程同样以目标 \texttt{SwissTable} 为基础执行。若目标 key 存在，则将对应槽位标记为 tombstone；在一般 namespace 模式下，如果某个 namespace 对应表在删除后已经为空，则进一步移除该 namespace 表本身，从而避免长期持有空容器。与此同步，L0 Hot-Key Cache 中的对应 slot 被直接失效（invalidate），以免后续读路径读到已删除的旧值。
 
-\begin{algorithm}[htbp]
-\caption{状态删除与空命名空间清理算法}
-\small
+\begin{algorithm}[!htbp]
+\caption{状态删除、L0 cache 失效与空命名空间清理算法}
+\footnotesize
 \begin{algorithmic}[1]
 \Require 状态句柄 \textit{stateId}，key-group \textit{kg}，namespace \textit{ns}，用户键 \textit{key}
-\Ensure 删除目标条目，并在需要时清理空 namespace 表
+\Ensure 删除目标条目，同步失效 cache，并在需要时清理空 namespace 表
 \State $table \gets StateEngine.lookup(stateId)$
 \State $swiss \gets table.findTable(kg, ns)$
 \If{$swiss = \emptyset$}
+  \If{$table.cache \neq \emptyset$}
+    \State $table.cache.invalidate(kg, ns, key)$
+  \EndIf
   \State \Return
 \EndIf
 \If{$table.snapshotActive(kg)$}
   \State $table.cowBeforeErase(kg, ns, key)$
 \EndIf
 \State $swiss.erase(key)$
+\If{$table.cache \neq \emptyset$}
+  \State $table.cache.invalidate(kg, ns, key)$ \Comment{同步失效}
+\EndIf
 \If{$table$ 非 VoidNamespace 模式 \textbf{and} $swiss.isEmpty()$}
   \State $table.removeNamespace(kg, ns)$
 \EndIf
@@ -583,9 +1037,9 @@
 
 扩容与重哈希属于索引结构的内部整理过程。当前表如果只是 tombstone 累积过多，则可以在保持容量不变的情况下重新布局；如果有效条目数量已经逼近容量上限，则通过容量翻倍完成 grow。无论哪种情况，核心过程都是重新分配新表，并把旧表中的有效条目按新的布局重新插入。
 
-\begin{algorithm}[htbp]
+\begin{algorithm}[!htbp]
 \caption{SwissTable 扩容与重哈希算法}
-\small
+\footnotesize
 \begin{algorithmic}[1]
 \Require 目标哈希表 \textit{swiss}
 \Ensure 将有效条目迁移到新的布局中，并清理 tombstone
@@ -611,9 +1065,9 @@
 
 快照遍历阶段并不直接输出当前表内容，而是输出“checkpoint 发起时刻”的一致性视图。对于快照开始后新增的条目，遍历时直接跳过；对于快照窗口内被覆盖或删除的条目，则通过旧值记录和删除记录补写回快照输出流。这样可以在不停顿前台写入的前提下，仍然得到稳定一致的快照结果。
 
-\begin{algorithm}[htbp]
+\begin{algorithm}[!htbp]
 \caption{快照一致性视图遍历算法}
-\small
+\footnotesize
 \begin{algorithmic}[1]
 \Require 状态表 \textit{table}，key-group \textit{kg}
 \Ensure 输出 checkpoint 发起时刻的一致性条目序列
@@ -689,6 +1143,83 @@ native KV block 的内部组织以 state 为单位记录 stateId、entryCount �
 
 异步遍历阶段并不是简单遍历当前表，而是在当前表内容之上叠加覆盖记录、删除记录和新增标记，从而还原出“快照发起时刻”的一致性视图。对于一般 namespace 状态，上述过程按 namespace 分别进行。
 
+% ---------- Figure: Copy-On-Write 示意 ----------
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm,font=\footnotesize\sffamily]
+  % ============== 三栏面板 ==============
+  % 左：前台 SwissTable
+  \node[lane, minimum width=4.8cm, minimum height=4.0cm] (fg) at (2.50,2.70) {};
+  \node[figtitle, anchor=north] at (fg.north) {\;前台 SwissTable（task 线程）};
+
+  % 中：CoW overlay
+  \node[lane, minimum width=4.4cm, minimum height=4.0cm] (ov) at (8.10,2.70) {};
+  \node[figtitle, anchor=north] at (ov.north) {\;CoW overlay（按 key-group）};
+
+  % 右：异步快照输出
+  \node[lane, minimum width=3.6cm, minimum height=4.0cm] (out) at (13.10,2.70) {};
+  \node[figtitle, anchor=north] at (out.north) {\;异步快照输出};
+
+  % ============== 左栏：4 个 slot 行 ==============
+  \foreach \i/\lab in {%
+      0/{$k_1\to v_1'$（更新）},
+      1/{$k_2\to v_2$},
+      2/{$k_3\to v_3$},
+      3/{$k_4\to v_4$（新增）}} {
+    \pgfmathsetmacro\yy{3.85-0.48*\i}
+    \draw[fill=white, draw=fgborder, line width=0.4pt, rounded corners=1pt]
+      (0.25,\yy-0.20) rectangle (4.75,\yy+0.20);
+    \node[anchor=west] at (0.40,\yy) {\lab};
+  }
+  % 左栏底部 k5 删除事件标注（不在 slot 内，作为事件条目）
+  \node[figsmall, text=fgaccent, anchor=west] at (0.40,1.50)
+    {事件：$k_5\to v_5$ 被删除（先保存旧值）};
+
+  % ============== 中栏：3 个 overlay 记录，垂直对齐 ==============
+  \node[accentbox, minimum width=3.8cm, minimum height=0.60cm] (ov1) at (8.10,3.85)
+    {oldValues：$\{k_1 \mapsto v_1\}$};
+  \node[accentbox, minimum width=3.8cm, minimum height=0.60cm, fill=fgaccent!10] (ov2) at (8.10,2.41)
+    {newKeys：$\{k_4\}$};
+  \node[accentbox, minimum width=3.8cm, minimum height=0.60cm, fill=fgsubtle, draw=fgborder] (ov3) at (8.10,1.50)
+    {deleted：$\{k_5 \mapsto v_5\}$};
+
+  % ============== 左 → 中：三条平行横向箭头，无交叉 ==============
+  % k1 行 (y=3.85) → oldValues (y=3.85)
+  \draw[line] (4.90,3.85) -- (ov1.west);
+  % k4 行 (y=2.41) → newKeys (y=2.41)
+  \draw[line] (4.90,2.41) -- (ov2.west);
+  % k5 删除事件 (y=1.50) → deleted (y=1.50)
+  \draw[line] (4.90,1.50) -- (ov3.west);
+
+  % 箭头标签
+  \node[figsmall, text=fgaccent, anchor=south] at (5.50,3.88) {写前保存};
+  \node[figsmall, text=fgaccent, anchor=south] at (5.50,2.44) {新增标记};
+  \node[figsmall, text=fgaccent, anchor=south] at (5.50,1.53) {写前保存};
+
+  % ============== 右栏：$t_0$ 视图（快照输出顺序） ==============
+  \node[box, minimum width=3.0cm] (w1) at (13.10,3.85) {$k_1 \mapsto v_1$};
+  \node[box, minimum width=3.0cm] (w2) at (13.10,3.25) {$k_2 \mapsto v_2$};
+  \node[box, minimum width=3.0cm] (w3) at (13.10,2.65) {$k_3 \mapsto v_3$};
+  \node[box, minimum width=3.0cm, fill=fgsubtle] (w4) at (13.10,2.05) {$k_5 \mapsto v_5$};
+  \node[figsmall, anchor=center] at (13.10,1.45) {$k_4$ 被跳过（快照后新增）};
+
+  % ============== 中 → 右：合并箭头 ==============
+  \draw[line] (ov.east) -- node[figsmall, above, text=fgaccent]
+    {current\,$\oplus$\,overlay} (out.west);
+
+  % ============== 底部时间线 ==============
+  \draw[thinline] (0.10,0.30) -- (14.90,0.30);
+  \foreach \xx in {2.50,8.10,13.10} {
+    \draw[thinline] (\xx,0.22) -- (\xx,0.38);
+  }
+  \node[figsmall, anchor=north] at (2.50,0.25)  {$t_0$：snapshot 开始 \,/\, 打开 CoW};
+  \node[figsmall, anchor=north] at (8.10,0.25)  {$t$：前台写入触发 overlay 记录};
+  \node[figsmall, anchor=north] at (13.10,0.25) {$t_1$：异步遍历 $=$ current $\oplus$ overlay};
+\end{tikzpicture}
+\caption{Copy-On-Write 快照一致性模型：前台表 $\oplus$ 按 key-group 的 overlay 还原 $t_0$ 视图}
+\label{fig:cow}
+\end{figure}
+
 \subsection{Savepoint 与状态恢复}
 
 \project{} 同时支持普通 checkpoint 恢复与 canonical savepoint 恢复。恢复流程由 \texttt{ForL0KeyedStateBackendBuilder} 统一驱动，主要包括以下步骤：
@@ -743,10 +1274,10 @@ native 共享库的加载采用两级策略：优先从系统库路径加载；�
 
 \section{总结}
 
-\project{} 当前已经形成一套清晰的三层架构：Java 控制层负责接口适配、状态注册和用户函数执行；JNI 桥接层负责共享库加载和类型专用访问入口；C++ 原生状态引擎负责权威状态存储、命名空间组织、SwissTable 哈希结构以及快照恢复。
+\project{} 采用三层架构：Java 控制层负责状态接口适配、状态注册以及与 Flink 运行时的生命周期对接；JNI 桥接层负责原生库加载、句柄管理和按状态类型分发的访问入口；C++ 原生状态引擎承担权威状态存储、命名空间组织、SwissTable 哈希结构以及 Copy-On-Write 快照。整个状态主数据面完全收敛在 native 侧。
 
-从设计角度看，当前版本相对早期方案的最大变化，在于状态主数据面已经完全收敛到 native 侧。围绕这一调整，系统进一步形成了 typed \texttt{StateTable}、RowData 快路径、typed inner map、TimeWindow 专用路径以及 native Copy-On-Write 快照机制。这些设计共同支撑了在保持 Flink 语义兼容的前提下，对热点状态访问路径进行更彻底、更工程化的优化。
+在这一分层之上，系统围绕热点访问路径组织了若干结构：typed \texttt{StateTable} 与 SwissTable 提供 SWAR 并行探测的哈希索引，RowData 快路径、typed inner map、TimeWindow 专用路径针对常见键与值形态减少复制与装箱，L0 Hot-Key Cache 作为 8-way set-associative 读写穿透缓存承接高频访问，CoW 快照与 Flink 的 Checkpoint、Savepoint 语义保持一致。
 
-对于项目交付而言，本文档的核心结论是：\project{} 并不是对现有 Flink 状态存储的局部修补，而是围绕统一 native 数据面完成的一次结构性重构。该架构既保持了与 Flink 状态接口和容错机制的兼容，也为后续在高性能哈希组织、原生内存利用和硬件友好访问路径上的持续优化保留了清晰扩展空间。
+\project{} 与 Flink 状态接口和容错机制保持兼容，用户侧无需修改即可使用；同时在哈希组织、原生内存利用以及与硬件缓存亲和的访问路径等方向上保留了进一步演进的空间。
 
 \end{document}
