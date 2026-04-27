@@ -155,7 +155,7 @@ fi
 echo ""
 echo "[4/5] 安装 ForL0 JAR..."
 FLINK_DIR="${FLINK_HOME:-/home/user/flink}"
-JAR_NAME="flink-statebackend-forl0-1.0-SNAPSHOT.jar"
+JAR_NAME="flink-statebackend-forL0-1.0-SNAPSHOT.jar"
 DEPLOY_JAR="${REPO_ROOT}/docker/deploy/${JAR_NAME}"
 TARGET_JAR="${REPO_ROOT}/target/${JAR_NAME}"
 
@@ -166,6 +166,10 @@ if [[ ! -d "$FLINK_DIR" ]]; then
 fi
 
 # 优先使用 deploy/ 下的预编译 JAR，其次使用 target/ 下的
+# 清理历史大小写不一致的旧包，避免 Flink lib/ 中同时存在多份 backend 实现。
+rm -f "${FLINK_DIR}/lib/flink-statebackend-forl0-"*.jar
+rm -f "${FLINK_DIR}/lib/flink-statebackend-forL0-"*.jar
+
 if [[ -f "$DEPLOY_JAR" ]]; then
     cp "$DEPLOY_JAR" "${FLINK_DIR}/lib/"
     echo "      ✓ JAR (deploy/) 已复制到 ${FLINK_DIR}/lib/"

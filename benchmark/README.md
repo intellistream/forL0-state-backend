@@ -439,7 +439,7 @@ python scripts/generate_report.py
 mvn clean package -DskipTests
 
 # 复制到 Flink lib 目录
-cp target/flink-statebackend-forl0-*.jar $FLINK_HOME/lib/
+cp target/flink-statebackend-forL0-*.jar $FLINK_HOME/lib/
 ```
 
 ### Q: 延迟显示为 N/A？

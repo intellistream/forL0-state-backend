@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ################################################################################
-#  用纯 docker run 启动 ForL0 Flink 集群（不依赖 docker-compose）
+#  用纯 docker run 启动 BriskState Flink 集群（不依赖 docker-compose）
 #
 #  启动: ./docker_run.sh start
 #  停止: ./docker_run.sh stop
@@ -64,13 +64,13 @@ usage() {
 }
 
 do_start() {
-    echo "=== 启动 ForL0 Flink Docker 集群 ==="
+    echo "=== 启动 BriskState Flink Docker 集群 ==="
     echo "  FLINK_HOME: ${FLINK_DIR}"
     echo "  NATIVE:     ${NATIVE_DIR}"
     if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
         echo "  libnuma:    ${NUMA_HOST_PATH} -> ${NUMA_CONTAINER_PATH}"
     else
-        echo "  libnuma:    未检测到；L0 可能因缺少 libnuma.so.1 而不可用"
+        echo "  libnuma:    未检测到；可选原生依赖可能不可用"
     fi
     echo ""
 
@@ -85,7 +85,7 @@ do_start() {
         exit 1
     fi
     if [[ -z "$NUMA_HOST_PATH" ]]; then
-        echo "⚠ 未找到 libnuma.so.1，继续启动，但容器内 L0 lib 可能无法 dlopen"
+        echo "⚠ 未找到 libnuma.so.1，继续启动，但部分可选原生依赖可能无法加载"
         echo "  如主机路径非常规，请设置: export NUMA_LIB_HOST_PATH=/path/to/libnuma.so.1"
         echo "                        export NUMA_LIB_CONTAINER_PATH=/lib/aarch64-linux-gnu/libnuma.so.1"
     fi
@@ -169,7 +169,7 @@ do_start() {
             echo "=== 集群启动成功! ==="
             echo "  Web UI: http://localhost:8081"
             echo ""
-            echo "  查看 L0 日志: $0 logs tm1 | grep -i L0"
+            echo "  查看 TaskManager 日志: $0 logs tm1"
             echo "  提交作业:     ${FLINK_DIR}/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
             return 0
         fi
@@ -182,7 +182,7 @@ do_start() {
 }
 
 do_stop() {
-    echo "=== 停止 ForL0 Flink Docker 集群 ==="
+    echo "=== 停止 BriskState Flink Docker 集群 ==="
     docker rm -f "$TM2" "$TM1" "$JM" 2>/dev/null || true
     docker network rm "$NETWORK" 2>/dev/null || true
     echo "已停止"

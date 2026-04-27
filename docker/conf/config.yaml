@@ -1,5 +1,5 @@
 ################################################################################
-#  ForL0 State Backend - Docker 测试环境 Flink 配置
+#  BriskState - Docker 测试环境 Flink 配置
 #  规格: 1 JM (2核8G) + 2 TM (4核20G, 4 slots each)
 #  总并行度: 2 × 4 = 8
 ################################################################################
@@ -40,7 +40,7 @@ state:
     type: org.apache.flink.state.forl0.ForL0StateBackendFactory
     forl0:
       l0-cache:
-        enabled: true
+        enabled: false
         size: 24mb
         max-per-alloc: 128kb
   checkpoints:
