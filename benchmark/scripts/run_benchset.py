@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """
-Run ForL0 Benchmark Set v4 - High state pressure realistic business scenarios.
-
-This script runs a comprehensive benchmark set designed to demonstrate
-ForL0 StateBackend's advantages with Long keys (SwissTableLong specialization).
+Run the seven-application paper benchset aligned with Zhang et al. 2017.
 
 Available benchmarks:
-  - fraud:     Fraud Detection - 7 states, 23 ops/record (ValueState + MapState)
-  - recommend: Realtime Recommendation - 6 states, 18 ops/record (MapState dominant)
-  - metric:    Multi-Metric Aggregation - 10 states, 20 ops/record (Pure ValueState)
-  - session:   Session Sequence - 5 states, 15 ops/record (Ring Buffer pattern)
-  - join:      Multi-Stream Join - 8 states, 25 ops/record (Scan-based matching)
+    - wc: Stateful Word Count
+    - fd: Fraud Detection
+    - sd: Spike Detection
+    - tm: Traffic Monitoring
+    - lg: Log Processing
+    - vs: Spam Detection in VoIP
+    - lr: Linear Road
 
 Usage:
-    python run_benchset.py --backend all                        # Run all benchmarks
-    python run_benchset.py --backend forl0 --benchmark fraud    # Single benchmark
-    python run_benchset.py --backend all --profile cpu          # With flame graphs
+        python run_benchset.py --backend all
+        python run_benchset.py --backend forl0 --benchmark wc
+        python run_benchset.py --backend all --profile cpu
 """
 
 import argparse
@@ -36,10 +35,12 @@ from utils.config import (
     get_timestamp, save_result
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
+from generate_report import generate_benchset_paper_artifacts
+from run_wordcount import run_wordcount, get_forl0_config_args
 
 
-# Benchmark configurations (v4)
-BENCHMARKS = ['fraud', 'recommend', 'metric', 'session', 'join']
+# Benchmark configurations from the paper
+BENCHMARKS = ['wc', 'fd', 'sd', 'tm', 'lg', 'vs', 'lr']
 
 
 def get_benchset_jar() -> Optional[str]:
@@ -87,11 +88,19 @@ def submit_job_and_wait(cmd: list, rest_url: str, num_records: int, timeout: int
         )
         
         output = result.stdout + result.stderr
+
+        if result.returncode != 0:
+            print("  ERROR: Job submission failed before JobID was returned")
+            if output.strip():
+                print(output.strip())
+            return None
         
         # Parse job ID
-        match = re.search(r'JobID\s+([a-f0-9]+)', output)
+        match = re.search(r'JobID\s*[:=]?\s*([A-Fa-f0-9]+)', output)
         if not match:
             print(f"  ERROR: Could not parse job ID from output")
+            if output.strip():
+                print(output.strip())
             return None
         
         job_id = match.group(1)
@@ -169,12 +178,15 @@ def run_single_benchmark(
     Args:
         config: Benchmark configuration
         backend: State backend ('hashmap' or 'forl0')
-        benchmark_name: Benchmark name ('fraud', 'profile', 'attrib', 'join', 'inventory')
+        benchmark_name: Benchmark name ('wc', 'fd', 'sd', 'tm', 'lg', 'vs', 'lr')
         profile_mode: Profiling mode ('cpu', 'cache', None)
         
     Returns:
         Result dict or None if failed
     """
+    if benchmark_name == 'wc':
+        return run_wordcount_via_original_benchmark(config, backend, profile_mode)
+
     runtime_config = config.get('runtime', {})
     benchset_config = config.get('benchset', {})
     benchmark_config = benchset_config.get(benchmark_name, {})
@@ -209,6 +221,7 @@ def run_single_benchmark(
     # Add state backend configuration
     if backend_class:
         cmd.append(f'-Dstate.backend.type={backend_class}')
+    cmd.extend(get_forl0_config_args(config, backend))
     
     # Get benchmark-specific parameters
     num_keys = benchmark_config.get('num_keys', 1000000)
@@ -232,8 +245,7 @@ def run_single_benchmark(
     print(f"\n=== Running {benchmark_name.upper()} Benchmark ({backend}) ===")
     print(f"  numKeys: {num_keys:,}")
     print(f"  numRecords: {num_records:,}")
-    if benchmark_name in ['fraud', 'inventory']:
-        print(f"  batchSize/warehouses: {batch_size}")
+    print(f"  batchSize: {batch_size}")
     print(f"  Command: {' '.join(cmd[:6])} ... {benchmark_name}\n")
     
     # Initialize profiler if enabled
@@ -282,6 +294,23 @@ def run_single_benchmark(
         if profiler and tm_pids:
             profiler.stop(tm_pids[0])
         return None
+
+
+def run_wordcount_via_original_benchmark(
+    config: dict,
+    backend: str,
+    profile_mode: Optional[str] = None,
+) -> Optional[dict]:
+    """Run the benchset WC entry via the original WordCount benchmark."""
+    print("\n=== Running WC Benchmark via original WordCount benchmark ===")
+    result = run_wordcount(config, backend, profile_mode)
+    if not result:
+        return None
+
+    result['benchmark'] = 'wc'
+    if 'total_time_seconds' in result and 'time_seconds' not in result:
+        result['time_seconds'] = result['total_time_seconds']
+    return result
 
 
 def run_benchset(
@@ -426,7 +455,7 @@ Examples:
         benchmarks = BENCHMARKS
     
     print("=" * 60)
-    print("ForL0 Benchmark Set - Realistic Business Scenarios")
+    print("ForL0 Benchmark Set - Seven Paper Workloads")
     print("=" * 60)
     print(f"Backends: {', '.join(backends)}")
     print(f"Benchmarks: {', '.join(benchmarks)}")
@@ -445,6 +474,12 @@ Examples:
     
     # Print summary
     print_benchset_summary(results, backends)
+
+    print("\nGenerating benchset paper figures...")
+    artifacts = generate_benchset_paper_artifacts()
+    if artifacts:
+        print("Figures saved to: benchmark/results/figures/")
+        print("Summary saved to: benchmark/results/reports/benchset_summary.md")
     
     print("\nResults saved to: benchmark/results/raw/")
 

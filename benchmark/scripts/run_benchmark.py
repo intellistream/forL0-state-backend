@@ -23,6 +23,7 @@ from run_nexmark import NexmarkRunner
 from run_unittest import run_unittest
 from run_client_usecase import run_client_usecase
 from run_benchset import run_benchset, print_benchset_summary, BENCHMARKS as BENCHSET_BENCHMARKS
+from generate_report import generate_benchset_paper_artifacts
 from utils.config import load_config
 
 
@@ -380,10 +381,10 @@ Examples:
                 results['client_usecase'][backend] = result
                 save_result(result, 'client_usecase', backend)
     
-    # Run Benchset (realistic business scenarios)
+    # Run Benchset (seven paper workloads)
     if args.test in ['benchset', 'all']:
         print("\n" + "=" * 60)
-        print("Running Benchset (Realistic Business Scenarios)")
+        print("Running Benchset (Seven Paper Workloads)")
         print("=" * 60)
         try:
             benchset_results = run_benchset(
@@ -395,6 +396,10 @@ Examples:
             results['benchset'] = benchset_results
             # Print benchset-specific summary
             print_benchset_summary(benchset_results, backends)
+            print("\nGenerating benchset paper figures...")
+            artifacts = generate_benchset_paper_artifacts()
+            if artifacts:
+                print("Benchset figures generated in: benchmark/results/figures/")
         except FileNotFoundError as e:
             print(f"\n[Warning] Benchset not available: {e}")
             print("To run Benchset, first compile it:")

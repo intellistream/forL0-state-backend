@@ -4,9 +4,15 @@
 \renewcommand\footnotetextcopyrightpermission[1]{}
 
 \usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{dblfloatfix}
 \usepackage{tikz}
 \usepackage{xspace}
 \usetikzlibrary{arrows.meta,positioning,fit,shapes.geometric}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 
 \newcommand{\briskstate}{BriskState\xspace}
 
@@ -22,7 +28,7 @@
 \begin{document}
 
 \begin{abstract}
-Stateful stream processing often becomes memory-bound before it becomes compute-bound. Frequent state lookups, window maintenance, and timer firing amplify cache misses, long object-indirection chains, and heap-management overhead, yet these effects are hard to observe in a live system. This paper presents a demonstration of \briskstate, an Apache Flink state backend together with its native execution engine and the existing WordCount and NexMark benchmark artifacts in the repository. The goal is to expose the backend design itself: compact state organization, locality-aware access paths, and their impact on throughput, latency, checkpoint behavior, and state-access hot spots during live runs and trace replay. A lightweight interface is used only to make these behaviors observable and to support side-by-side comparison against heap-based baselines. The paper focuses on how the \briskstate design appears in execution traces and how locality-aware storage changes runtime symptoms in state-intensive stream-processing workloads.
+State-intensive stream processing often becomes memory-bound before it becomes compute-bound. Frequent state lookups, window maintenance, and timer firing amplify cache misses, long object-indirection chains, and heap-management overhead, making state-backend efficiency a first-order performance concern. We present \briskstate, an Apache Flink state backend that combines a thin Java control layer, a JNI bridge, and a native execution engine to reorganize keyed state around compact, locality-aware structures. This demo shows how these design choices improve over heap-based state backends on the official Flink state-backend JMH suite and on a seven-workload benchmark set. The demo supports side-by-side execution and compact runtime summaries so that throughput, tail-latency, and hot-state differences can be tied back to backend organization under identical workloads.
 \end{abstract}
 
 \keywords{stream processing, state backend, \briskstate, cache-aware data layout, Apache Flink}
@@ -32,244 +38,237 @@ Stateful stream processing often becomes memory-bound before it becomes compute-
 \section{Introduction}
 Large-state stream-processing pipelines rely on the state backend on nearly every record. In Apache Flink, this path is exercised by point updates, window aggregation, joins, and timer callbacks, so backend behavior can dominate end-to-end performance even when user logic is lightweight \cite{carbone2015flink}. In practice, the bottleneck is frequently the memory hierarchy rather than arithmetic throughput: state accesses trigger pointer chasing, touch multiple cache lines, and create runtime jitter through heap-management activity.
 
-Conventional benchmark plots show final throughput or completion time, yet they do not show why one backend stalls, which namespaces become hot, or how checkpoint traffic and key-group locality change over time. The missing link is the execution evidence needed to connect backend structure with observed runtime behavior.
+This is directly relevant to parallel processing because modern streaming jobs scale out compute across many task slots while repeatedly converging on shared bottlenecks in the memory hierarchy. When each parallel task maintains large keyed state, poor locality amplifies cache and TLB pressure, introduces tail-latency spikes, and makes additional cores less effective than their nominal count suggests. A backend that preserves locality on the state path therefore improves not just raw throughput, but also how well a multicore deployment sustains parallel speedups under skewed and state-heavy workloads.
 
-\briskstate addresses this gap with a cache-aware backend integrated with the delivered benchmark harness. The backend follows the implemented Java-control-layer, JNI-bridge, and native-engine split described in the project documentation, while a lightweight interface exposes the resulting behavior through a control panel, topology and state inspector, and time-series views for throughput, latency, and checkpoint activity. The workflow covers both pure state-stress workloads and realistic streaming jobs within a single experimental path.
+We present \briskstate, a cache-aware Flink state backend designed to improve state-access locality in state-intensive workloads.
 
-\briskstate is positioned against three nearby lines of work. Stateful dataflow systems such as MillWheel, Flink, Naiad, Structured Streaming, and the Dataflow model define high-level execution semantics, but the physical organization of state remains largely hidden behind operator APIs and runtime services \cite{akidau2013millwheel,carbone2015flink,murray2013naiad,armbrust2018structured,akidau2015dataflow}. In Flink deployments, backend choices usually reduce to in-memory heap structures or embedded persistent stores such as RocksDB, while work on consistent state management and migration, including Flink state management and Megaphone, emphasizes correctness and continuity rather than layout-aware observability \cite{carbone2015flink,rocksdb,carbone2017statemanagement,hoffman2019megaphone}. High-performance key-value engines and compact hash-table designs, including FASTER and Swiss-table-style indexing, show that memory layout and probing discipline materially change access cost, and benchmark suites such as NexMark capture the resulting end-to-end outcomes without exposing the runtime state structure behind them \cite{chandramouli2018faster,abseil2018swisstable,tucker2008nexmark}. \briskstate targets that gap by making a Flink-compatible state backend observable as a running systems component rather than evaluating it only through final aggregate scores.
+\briskstate keeps Flink integration in a thin Java control layer and moves keyed-state lookup, routing, and storage into a native engine reached through JNI. The demo compares BriskState against heap-based backends on identical workloads and highlights how compact state layout and locality-aware access paths affect throughput, tail latency, and hot-state behavior. Rather than presenting only final summary numbers, we focus on the mechanism behind those numbers: how the backend partitions state by key-group and namespace, how typed JNI calls enter the native path, and how a compact table layout changes the cost profile of frequent updates and lookups.
 
-The paper makes three contributions:
+\briskstate is positioned against three nearby lines of work. Stateful dataflow systems such as MillWheel, Flink, Naiad, Structured Streaming, and the Dataflow model define high-level execution semantics, but the physical organization of state remains largely hidden behind operator APIs and runtime services \cite{akidau2013millwheel,carbone2015flink,murray2013naiad,armbrust2018structured,akidau2015dataflow}. In Flink deployments, backend choices usually reduce to in-memory heap structures or embedded persistent stores such as RocksDB, while work on consistent state management and migration, including Flink state management and Megaphone, emphasizes correctness and continuity rather than layout-aware backend optimization \cite{carbone2015flink,rocksdb,carbone2017statemanagement,hoffman2019megaphone}. High-performance key-value engines and compact hash-table designs, including FASTER and Swiss-table-style indexing, show that memory layout and probing discipline materially change access cost, while application mixes such as the seven topologies revisited by Zhang et al. expose how operator structure interacts with modern multicore hardware \cite{chandramouli2018faster,abseil2018swisstable,zhang2017revisiting}. \briskstate targets this gap by implementing a Flink-compatible state backend whose layout-driven optimizations deliver measurable gains over heap-based alternatives on both microbenchmark and application workloads.
+
+This paper makes three contributions:
 \begin{itemize}
-  \item It presents \briskstate together with a runnable workflow for comparing it against standard heap-based baselines under the same Flink workloads.
-  \item It exposes otherwise hidden structures, including key-group routing, namespace occupancy, and checkpoint phases, so locality effects become understandable during execution.
-  \item It packages the current \briskstate prototype, benchmark harness, and observation workflow into a reproducible demonstration based on standard Linux deployment.
+  \item It presents \briskstate as a Flink-compatible cache-aware state backend built from a Java control layer, a JNI bridge, and a native execution engine.
+  \item It demonstrates, using the official Flink state-backend microbenchmark and a seven-workload benchset, that \briskstate improves throughput and tail latency over standard heap-based baselines.
+  \item It provides a compact demonstration methodology that links observed gains to key-group routing, namespace partitioning, and compact native storage.
 \end{itemize}
 
 \section{\briskstate}
 \subsection{Overview}
-Figure~\ref{fig:architecture} summarizes the demonstration architecture. The control plane accepts workload and backend selections from the web interface, launches the requested Flink job, and subscribes to runtime metrics emitted by the benchmark harness, Flink runtime, and lightweight collectors. The data plane runs the target job with either a heap-based baseline or \briskstate, then streams summarized metrics and structural summaries back to the interface.
+Figure~\ref{fig:architecture} summarizes the implemented \briskstate architecture together with the companion demo UI used in the live presentation. The left side shows the execution stack from Flink runtime to the state engine; the right side shows the demo interface used for benchmark submission, cluster configuration, and live throughput and latency display.
 
 \begin{figure}[t]
   \centering
-  \resizebox{\columnwidth}{!}{%
-  \begin{tikzpicture}[
-      x=1cm,
-      y=1cm,
-      font=\footnotesize\sffamily,
-      lane/.style={draw, rounded corners=4pt, line width=0.5pt, fill=gray!5},
-      figtitle/.style={font=\footnotesize\bfseries, align=right},
-      box/.style={draw, rounded corners=3pt, line width=0.55pt, align=center, fill=white, minimum height=0.82cm},
-      accentbox/.style={draw, rounded corners=3pt, line width=0.65pt, align=center, fill=blue!10, minimum height=0.84cm},
-      subtlebox/.style={draw, rounded corners=3pt, line width=0.5pt, align=center, fill=green!8, minimum height=0.8cm},
-      line/.style={-{Latex[length=1.9mm]}, line width=0.75pt},
-      thinline/.style={line width=0.45pt}
-    ]
-    \node[figtitle, anchor=east] at (1.45,5.95) {Observation\\layer};
-    \node[figtitle, anchor=east] at (1.45,4.25) {Demo\\control plane};
-    \node[figtitle, anchor=east] at (1.45,2.45) {Execution\\plane};
-    \node[figtitle, anchor=east] at (1.45,0.75) {Backend\\data path};
-
-    \node[lane, minimum width=10.8cm, minimum height=1.12cm] at (7.2,5.95) {};
-    \node[lane, minimum width=10.8cm, minimum height=1.15cm] at (7.2,4.25) {};
-    \node[lane, minimum width=10.8cm, minimum height=1.35cm] at (7.2,2.45) {};
-    \node[lane, minimum width=10.8cm, minimum height=1.35cm] at (7.2,0.75) {};
-
-    \node[accentbox, minimum width=4.0cm] (ui) at (6.0,5.95) {\briskstate dashboard\\control + visualization};
-    \node[box, minimum width=2.9cm] (replay) at (10.05,5.95) {Trace replay\\saved runs};
-
-    \node[box, minimum width=3.1cm] (launcher) at (4.55,4.25) {Job launcher\\scenario selection};
-    \node[accentbox, minimum width=3.2cm] (controller) at (9.35,4.25) {Telemetry collector\\state summaries};
-
-    \node[box, minimum width=2.55cm] (workload) at (3.45,2.45) {Workloads\\WordCount / NexMark\\benchset};
-    \node[accentbox, minimum width=3.0cm] (runtime) at (7.2,2.45) {Flink runtime\\Java + JNI + native};
-    \node[box, minimum width=2.85cm] (backend) at (10.95,2.45) {Backend switch\\Heap / HashMap / \briskstate};
-
-    \node[accentbox, minimum width=3.3cm] (state) at (5.15,0.75) {Keyed backend\\key-group routing};
-    \node[subtlebox, minimum width=3.35cm] (table) at (9.35,0.75) {Compact state path\\namespace + sub-tables};
-
-    \draw[line] (ui.south) -- (launcher.north);
-    \draw[line] (replay.south) -- (controller.north);
-    \draw[line] (launcher.east) -- (controller.west);
-
-    \coordinate (busA) at (7.2,3.42);
-    \draw[thinline] (launcher.south |- busA) -- (backend.south |- busA);
-    \draw[line] (launcher.south) -- (launcher.south |- busA);
-    \draw[line] (controller.south) -- (controller.south |- busA);
-    \draw[line] (busA) -- (runtime.north);
-    \draw[line] (workload.east) -- (runtime.west);
-    \draw[line] (backend.west) -- (runtime.east);
-
-    \coordinate (busB) at (7.2,1.58);
-    \draw[line] (runtime.south) -- (busB);
-    \draw[thinline] (state.north |- busB) -- (table.north |- busB);
-    \draw[line] (state.north |- busB) -- (state.north);
-    \draw[line] (table.north |- busB) -- (table.north);
-    \draw[line] (state.east) -- (table.west);
-    \draw[line] (table.north east) |- (controller.south east);
-    \draw[line] (controller.north) -- (ui.south east);
-  \end{tikzpicture}%
-  }
-  \caption{Architecture of the demonstration. A web interface is layered on top of the backend and benchmark artifacts, then receives performance telemetry and state summaries from the running job.}
-  \Description{A block diagram showing the demo UI, a controller, workloads, the Flink runtime, backend selection, the state path, and a metrics stream feeding back into the UI.}
+  \includegraphics[width=\columnwidth]{../fig1.png}
+  \caption{BriskState architecture and the companion demo UI.}
+  \Description{A layered architecture image showing Flink runtime, Java control layer, JNI bridge, and state engine on the left, with a companion Demo UI panel on the right for benchmark submission, cluster configuration, throughput, and latency display.}
   \label{fig:architecture}
 \end{figure}
 
-The emphasis is on the backend itself rather than the surrounding interface. Instead of treating the backend as a black box, the interface exposes how state is physically organized and how that organization changes runtime symptoms. In particular, the workflow highlights three views: a job-level comparison panel for backend selection, a state-structure view centered on key-groups and namespaces, and a timeline view that correlates throughput changes with latency spikes and checkpoint phases. The underlying storage path follows compact, cache-conscious hash-table ideas inspired by modern Swiss-table designs \cite{abseil2018swisstable}, while the discussion remains at the systems level.
+The figure distinguishes the execution stack from the presentation layer. Flink integration and serializer analysis stay in Java, while keyed-state storage, namespace partitioning, and snapshot consistency move into the state engine. The demo UI is shown separately because it is used to configure the cluster, submit benchmark runs, and display live throughput and latency during the presentation. The underlying storage path follows compact, cache-conscious hash-table ideas inspired by modern Swiss-table designs \cite{abseil2018swisstable}, and those choices are precisely what drive BriskState's gains over heap-based baselines.
 
 That systems view maps cleanly to the implemented storage hierarchy. At the backend level, state is partitioned first by key-group and then by namespace before it reaches a compact sub-table. When the namespace is the common void namespace used by many keyed operators, the extra namespace map can be skipped and the backend addresses one table per key-group directly; otherwise each key-group owns a namespace-to-table map, and empty namespaces are removed eagerly after clears. This design reduces routing overhead on the hot path while keeping state isolation explicit enough to visualize per-namespace skew during the demonstration.
 
-The current implementation already provides three workload families that the demonstration can reuse directly. The first is a WordCount-style stress test that isolates high-frequency state updates. The second uses NexMark queries to exercise window-heavy and join-heavy streaming behavior \cite{tucker2008nexmark}. The third uses mixed-state application kernels from the existing benchmark set to show realistic combinations of ValueState and MapState pressure. Together, they connect backend mechanisms with end-to-end workload behavior without changing tools or leaving the same interface.
+BriskState is evaluated with three workload families. The first is a WordCount-style stress test that isolates high-frequency state updates. The second is the official Flink \texttt{flink-state-benchmark} JMH suite for state backends, which isolates per-operation ValueState, ListState, and MapState costs under controlled loops. The third is our own \emph{benchset}: a seven-application benchmark set, adapted from the task mix in Zhang et al. \cite{zhang2017revisiting}, that combines fan-out, fan-in, and branch-merge topologies to stress state routing under more application-like pipelines. Together, they show where BriskState's backend design pays off, from isolated state operations to end-to-end streaming jobs.
 
-\subsection{Prototype Status}
-The \briskstate prototype is already integrated with Flink-compatible state management and benchmark tooling. The delivered artifacts include the Java control layer and JNI bridge, the native engine shared library, and standalone benchmark jobs for WordCount and NexMark. The workflow therefore builds on real workloads and recorded measurements rather than on a synthetic front end alone.
+\subsection{Evaluation Setup}
+\briskstate is evaluated with Flink-compatible state management, the official Flink state-backend JMH suite, and the WordCount and benchset jobs used for end-to-end comparison. The evaluation therefore builds on real workloads and measured results rather than on a synthetic front end alone.
 
-\begin{figure*}[t]
+Table~\ref{tab:setup} summarizes the experimental platform used for both the microbenchmark and the end-to-end Flink runs.
+
+\begin{table*}[t]
+  \caption{Experimental setup.}
+  \label{tab:setup}
   \centering
-  \includegraphics[width=0.98\textwidth]{nexmark_comparison.png}
-  \caption{Overall performance preview based on repository results. The figure summarizes end-to-end behavior across representative NexMark queries on Kunpeng and Intel platforms, showing where \briskstate avoids the large slowdowns and stuck configurations observed with the heap baseline.}
-  \Description{A two-panel bar chart comparing execution times for several NexMark queries across heap-based and \briskstate configurations on Kunpeng and Intel platforms.}
-  \label{fig:preview}
-\end{figure*}
+  \footnotesize
+  \begin{tabularx}{\textwidth}{L{0.2\textwidth}Y}
+    \toprule
+    Item & Configuration \\
+    \midrule
+    Hardware platform & Intel Xeon Platinum 8368Q x86\_64 server, 38 physical cores / 76 hardware threads, 251~GiB memory \\
+    Software stack & Linux, Apache Flink, and the implemented \briskstate backend \\
+    Flink deployment & One JobManager and two TaskManagers for controlled side-by-side backend comparison \\
+    TaskManager config & Four slots per TaskManager with 16~GiB process memory per TaskManager \\
+    Default parallelism & 8 \\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
 
-Figure~\ref{fig:preview} anchors the paper with an end-to-end comparison. On both platforms, state-intensive NexMark queries show large execution-time gaps once the heap backend encounters GC pressure or memory-sensitive configurations, and the same traces can be replayed to analyze why particular queries stall or recover under a different backend.
+\briskstate also remains faster at the operator level. Across the 13 retained \texttt{flink-state-benchmark} operations, the largest gains appear on list iteration (+132\%), map insertion (+110\%), map lookup (+91\%), value insertion (+87\%), and map removal (+74\%). These measurements come from the official Flink state-backend JMH benchmark rather than a separate operator-level application benchmark, so they isolate the state-access path directly.
 
-\briskstate also remains faster at operator level. Across the 13 retained Intel \texttt{flink-state-benchmark} operations, the largest gains appear on list iteration (+132\%), map insertion (+110\%), map lookup (+91\%), value insertion (+87\%), and map removal (+74\%). Together with Figure~\ref{fig:preview}, these results connect a cheaper state path with faster full queries.
+For the live demonstration, those measurements serve two purposes. First, they give the audience a stable microbenchmark reference before moving to larger job graphs. Second, they connect end-to-end pipeline behavior back to concrete state operations such as point update, map access, and list traversal.
 
-The workflow is organized in four stages:
+The demo is organized in four stages:
 \begin{enumerate}
   \item select a workload and switch between heap-based and cache-aware backends;
-  \item observe time-series changes in throughput, tail latency, and checkpoint cost;
-  \item inspect which key-groups and namespaces become hot and how occupancy evolves;
-  \item replay a previously collected run to compare different execution traces.
+  \item compare time-series changes in throughput, tail latency, and backend-specific counters;
+  \item examine which key-groups and namespaces become hot and how occupancy evolves;
+  \item compare metrics and state summaries across repeated runs.
 \end{enumerate}
 
-The workflow focuses on the causal path from data layout to locality, runtime symptoms, and externally visible metrics.
+The demo focuses on how BriskState's layout decisions translate into externally visible gains over heap-based backends.
 
 \begin{figure*}[t]
   \centering
   \includegraphics[width=0.9\textwidth]{flink_state_benchmark_intel.pdf}
-  \caption{Operator-level Intel \texttt{flink-state-benchmark} results. \briskstate outperforms the heap backend across retained ValueState, ListState, and MapState operations.}
-  \Description{A three-panel grouped bar chart showing Intel microbenchmark throughput for ValueState, ListState, and MapState operations, with \briskstate above the heap baseline and speedup labels for each operation.}
+  \caption{Results from the official Flink \texttt{flink-state-benchmark} JMH suite on our local experiment setup. \briskstate outperforms the heap backend across retained ValueState, ListState, and MapState operations.}
+  \Description{A three-panel grouped bar chart showing local-host microbenchmark throughput for ValueState, ListState, and MapState operations, with \briskstate above the heap baseline and speedup labels for each operation.}
   \label{fig:microbench}
 \end{figure*}
 
-\subsection{Implementation}
-The interface layer is designed to expose backend behavior without becoming a measurement artifact itself. Metrics are sampled at coarse intervals from the benchmark harness and Flink runtime, while the state view focuses on summaries such as namespace occupancy, key-group heat, and checkpoint-phase transitions.
-
-The backend implementation also exposes details that matter for interpretation. Within each sub-table, control metadata and payload arrays are organized to support compact probing and linear snapshot traversal, and the implementation includes specialized primitive-key paths that avoid boxing for common integer and long keys. Checkpointing follows Flink's synchronous/asynchronous split: the synchronous phase captures table views using copy-on-write snapshot markers, while the asynchronous phase serializes those captured views in batches. This separation explains why checkpoint-related slowdowns sometimes appear as brief first-write penalties after a snapshot and sometimes as longer serialization tails, even when the user workload itself is unchanged.
-
-\begin{table}[t]
-  \caption{Main UI panels and the telemetry each panel explains.}
-  \label{tab:panels}
-  \small
-  \begin{tabular}{p{0.2\columnwidth}p{0.26\columnwidth}p{0.41\columnwidth}}
-    \toprule
-    Panel & Data source & Purpose \\
-    \midrule
-    Control view & Job launcher + saved traces & How to switch workload, backend, and execution mode without leaving the same interface. \\
-    Timeline & Flink runtime and checkpoint events & When throughput drops align with latency spikes or checkpoint phases instead of operator logic. \\
-    State inspector & Demo collector summaries & Which key-groups and namespaces are hot, sparse, or imbalanced during the run. \\
-    Comparison cards & Benchmark result summaries & Which backend is faster or more stable for the chosen scenario and why the difference is visible. \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-The workflow supports both live execution and trace replay. Long-running queries and hardware-counter collection can be sensitive to machine load and deployment conditions, so the same interface can switch from streaming telemetry to recorded traces gathered from prior runs. This preserves comparability across runs while keeping the observed metrics and structural summaries in the same format.
-
-\briskstate supports both systems analysis and operational diagnosis. It exposes state-layout design, memory locality, and execution stability at a systems level, while also making it easier to distinguish operator logic, checkpoint cadence, backend choice, and state-structure imbalance in state-intensive Flink jobs.
-
-\section{Demonstration Scenario}
-The workflow begins with a side-by-side comparison mode. One workload is executed with two different backends, and the synchronized dashboard reports throughput, latency percentiles, checkpoint cadence, and backend-specific counters. This mode establishes that backend choice changes not only final job time but also runtime stability and responsiveness.
-
-The second stage exposes state layout directly. The interface renders a hierarchical view from operator to key-group to namespace, then overlays heat and occupancy information to show where accesses concentrate. This view shows how a smaller and more stable working set appears when namespaces are separated into compact sub-tables, and how that change affects the shape of the time-series plots.
-
-\begin{table}[t]
-  \caption{Scenarios covered in the demonstration.}
-  \label{tab:scenarios}
-  \small
-  \begin{tabular}{p{0.18\columnwidth}p{0.23\columnwidth}p{0.46\columnwidth}}
-    \toprule
-    Scenario & Workload & Focus \\
-    \midrule
-    Pure state stress & WordCount-style updates & Observe how backend choice changes update stability, throughput, and checkpoint cadence when the state path dominates execution. \\
-    Window-heavy streaming & NexMark queries & Compare how latency spikes, hot namespaces, and run-to-run variability evolve under realistic stateful pipelines. \\
-    Mixed state kernels & Existing benchset jobs & Inspect interactions among ValueState, MapState, and routing structure in more application-like operators. \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
 \begin{figure}[t]
   \centering
-  \resizebox{\columnwidth}{!}{%
-  \begin{tikzpicture}[
-      font=\scriptsize,
-      panel/.style={draw, rounded corners=2pt, line width=0.5pt, fill=gray!4},
-      title/.style={font=\scriptsize\bfseries},
-      chip/.style={draw, rounded corners=1.5pt, line width=0.4pt, fill=white, inner sep=2pt},
-      card/.style={draw, rounded corners=1.5pt, line width=0.4pt, fill=white}
-    ]
-    \draw[rounded corners=3pt, line width=0.7pt] (0,0) rectangle (7.8,4.85);
-    \fill[gray!10, rounded corners=3pt] (0.12,4.28) rectangle (7.68,4.73);
-    \node[anchor=west, title] at (0.28,4.5) {\briskstate dashboard};
-    \node[chip] at (3.15,4.5) {WordCount};
-    \node[chip] at (4.25,4.5) {NexMark};
-    \node[chip] at (5.2,4.5) {Benchset};
-    \node[chip, fill=green!10] at (6.45,4.5) {\briskstate};
-
-    \draw[panel] (0.2,3.15) rectangle (2.25,4.05);
-    \node[anchor=west, title] at (0.35,3.8) {Controls};
-    \node[chip, anchor=west] at (0.38,3.48) {Heap};
-    \node[chip, anchor=west] at (1.02,3.48) {HashMap};
-    \node[chip, anchor=west, fill=green!10] at (1.88,3.48) {\briskstate};
-
-    \draw[panel] (2.45,3.15) rectangle (7.55,4.05);
-    \node[anchor=west, title] at (2.65,3.8) {Timeline};
-    \draw[blue!75, line width=0.9pt] (2.8,3.42) -- (3.55,3.58) -- (4.2,3.31) -- (4.95,3.67) -- (5.75,3.45) -- (6.55,3.78) -- (7.2,3.52);
-    \draw[red!75!black, dashed, line width=0.8pt] (2.8,3.33) -- (3.35,3.2) -- (4.15,3.55) -- (4.9,3.24) -- (5.82,3.72) -- (6.55,3.3) -- (7.2,3.62);
-    \foreach \x in {3.25,4.7,6.15} {\draw[gray!45, dashed] (\x,3.18) -- (\x,4.0);}
-
-    \draw[panel] (0.2,1.35) rectangle (3.8,2.92);
-    \node[anchor=west, title] at (0.35,2.65) {State layout};
-    \node[anchor=west] at (0.35,2.32) {key-groups and namespaces};
-    \foreach \x/\y/\c in {1.15/2.1/orange!25,1.7/2.1/orange!55,2.25/2.1/orange!75,1.15/1.62/orange!15,1.7/1.62/orange!40,2.25/1.62/orange!65,2.8/1.62/orange!85} {
-      \fill[\c] (\x,\y) rectangle +(0.38,0.28);
-    }
-    \node[anchor=west] at (3.0,2.18) {hot};
-    \node[anchor=west] at (3.0,1.7) {cold};
-
-    \draw[panel] (4.0,1.35) rectangle (7.55,2.92);
-    \node[anchor=west, title] at (4.15,2.65) {Run summary};
-    \draw[card] (4.15,2.02) rectangle (5.55,2.45);
-    \draw[card] (5.85,2.02) rectangle (7.25,2.45);
-    \draw[card] (4.15,1.48) rectangle (5.55,1.9);
-    \draw[card] (5.85,1.48) rectangle (7.25,1.9);
-    \node at (4.85,2.23) {Throughput};
-    \node at (6.55,2.23) {p99 latency};
-    \node at (4.85,1.69) {Checkpoint};
-    \node at (6.55,1.69) {Memory};
-    \fill[green!20] (4.28,2.08) rectangle (5.42,2.14);
-    \fill[green!20] (5.98,2.08) rectangle (6.98,2.14);
-    \fill[blue!20] (4.28,1.55) rectangle (5.25,1.61);
-    \fill[blue!20] (5.98,1.55) rectangle (6.82,1.61);
-
-    \draw[panel] (0.2,0.22) rectangle (7.55,1.0);
-    \node[anchor=west, title] at (0.35,0.78) {Trace and replay};
-    \node[chip, anchor=west] at (1.7,0.77) {recorded trace};
-    \node[chip, anchor=west] at (3.2,0.77) {replay};
-    \node[anchor=west] at (0.35,0.45) {q19 selected | checkpoint complete | heatmap updated};
-  \end{tikzpicture}%
-  }
-  \caption{Interface sketch used in the paper. The layout combines workload selection, timeline comparison, state-layout inspection, run summaries, and trace replay in a single dashboard.}
-  \Description{A compact dashboard schematic with a header, control chips, a timeline panel, a state-layout heatmap, four run-summary cards, and a bottom trace-and-replay strip.}
-  \label{fig:ui}
+  \includegraphics[width=\columnwidth]{benchset_throughput_paper.pdf}
+  \caption{Throughput per core on our benchset. \briskstate improves six of the seven application pipelines and matches the heap baseline on the VoIP spam-detection workload.}
+  \Description{A compact grouped bar chart comparing HashMapStateBackend and BriskState throughput per core for the seven benchset workloads WC, FD, SD, TM, LG, VS, and LR.}
+  \label{fig:benchset}
 \end{figure}
 
-Figure~\ref{fig:ui} shows the interface layout. The control panel starts or replays workloads, while the timeline aligns throughput, latency, and checkpoint events. A state inspector highlights key-group and namespace occupancy, and comparison cards summarize the current run pair. The same layout also supports recorded traces collected from prior runs, so live and replayed executions remain directly comparable.
+Our own benchset complements the state-backend microbenchmark with seven application kernels: Stateful Word Count (WC), Fraud Detection (FD), Spike Detection (SD), Traffic Monitoring (TM), Log Processing (LG), Spam Detection in VoIP (VS), and Linear Road (LR). Adapted from the topology mix in Zhang et al. \cite{zhang2017revisiting}, it instantiates those jobs so their stateful operators exercise \briskstate under the same Flink deployment. Figure~\ref{fig:benchset} shows 1.11$\times$--1.50$\times$ higher throughput per core on six workloads, with parity on VS.
+
+\subsection{Runtime Support}
+The comparison interface is intentionally lightweight. Metrics are sampled at coarse intervals from the workload drivers and Flink runtime, while the state view focuses on summaries such as namespace occupancy and key-group heat.
+
+The backend implementation also contains details that matter for interpretation. Within each sub-table, control metadata and payload arrays are organized to support compact probing and linear snapshot traversal, and the implementation includes specialized primitive-key paths that avoid boxing for common integer and long keys. These choices help explain why BriskState reduces routing overhead and stabilizes state-access cost relative to heap-based baselines.
+
+The comparison supports live execution together with repeated runs. Long-running queries and hardware-counter collection can be sensitive to machine load and deployment conditions, so the evaluation keeps the reported metrics and structural summaries in a common format across runs. This preserves comparability while keeping the emphasis on BriskState's relative gains. It also makes the demo practical in a conference setting: the operator can restart a workload, switch the backend, and immediately present the same set of counters, plots, and state summaries without changing the surrounding workflow.
+
+\briskstate is designed to make backend choices and their performance consequences concrete. It ties state-layout design and memory locality to measured throughput and latency gains in state-intensive Flink jobs, while still separating backend effects from operator logic.
+
+\begin{figure*}[t]
+  \centering
+  \resizebox{0.97\textwidth}{!}{%
+  \begin{tikzpicture}[
+      font=\scriptsize,
+      topo/.style={draw, rounded corners=2pt, line width=0.5pt, fill=white, align=center, minimum height=0.46cm, inner sep=2pt},
+      flow/.style={-{Latex[length=1.4mm]}, line width=0.45pt},
+      label/.style={font=\scriptsize},
+      title/.style={font=\scriptsize\bfseries},
+      chip/.style={draw, rounded corners=1.5pt, line width=0.4pt, fill=white, inner sep=2pt}
+    ]
+    \node[topo, minimum width=1.2cm] (wcsrc) at (0.8,4.8) {Data Source};
+    \node[topo, minimum width=0.8cm] (wcsplit) at (2.15,4.8) {Split};
+    \node[topo, minimum width=0.8cm] (wccount) at (3.25,4.8) {Count};
+    \node[topo, minimum width=0.8cm] (wcsink) at (4.35,4.8) {Sink};
+    \draw[flow] (wcsrc) -- (wcsplit);
+    \draw[flow] (wcsplit) -- (wccount);
+    \draw[flow] (wccount) -- (wcsink);
+    \node[label] at (2.55,4.15) {(a) Stateful Word Count (WC)};
+
+    \node[topo, minimum width=1.2cm] (fdsrc) at (6.1,4.8) {Data Source};
+    \node[topo, minimum width=0.95cm] (fdpred) at (7.75,4.8) {Predict};
+    \node[topo, minimum width=0.8cm] (fdsink) at (9.05,4.8) {Sink};
+    \draw[flow] (fdsrc) -- (fdpred);
+    \draw[flow] (fdpred) -- (fdsink);
+    \node[label] at (7.55,4.15) {(b) Fraud Detection (FD)};
+
+    \node[topo, minimum width=1.2cm] (sdsrc) at (10.9,4.8) {Data Source};
+    \node[topo, minimum width=1.15cm] (sdma) at (12.65,4.8) {Moving\\Average};
+    \node[topo, minimum width=1.1cm] (sdspike) at (14.5,4.8) {Spike\\Detection};
+    \node[topo, minimum width=0.8cm] (sdsink) at (15.95,4.8) {Sink};
+    \draw[flow] (sdsrc) -- (sdma);
+    \draw[flow] (sdma) -- (sdspike);
+    \draw[flow] (sdspike) -- (sdsink);
+    \node[label] at (13.4,4.15) {(c) Spike Detection (SD)};
+
+    \node[topo, minimum width=1.2cm] (tmsrc) at (18.0,4.8) {Data Source};
+    \node[topo, minimum width=1.0cm] (tmmap) at (19.7,4.8) {Map\\Match};
+    \node[topo, minimum width=1.0cm] (tmspeed) at (21.45,4.8) {Speed\\Calculate};
+    \node[topo, minimum width=0.8cm] (tmsink) at (23.0,4.8) {Sink};
+    \draw[flow] (tmsrc) -- (tmmap);
+    \draw[flow] (tmmap) -- (tmspeed);
+    \draw[flow] (tmspeed) -- (tmsink);
+    \node[label] at (20.55,4.15) {(d) Traffic Monitoring (TM)};
+
+    \node[topo, minimum width=1.2cm] (lgsrc) at (1.0,2.15) {Data Source};
+    \node[topo, minimum width=0.95cm] (lggeo) at (2.75,2.65) {Geo\\Finder};
+    \node[topo, minimum width=0.95cm] (lgstatus) at (2.75,2.15) {Status\\Counter};
+    \node[topo, minimum width=0.95cm] (lgvolume) at (2.75,1.65) {Volume\\Counter};
+    \node[topo, minimum width=0.95cm] (lggeost) at (4.35,2.65) {Geo\\Status};
+    \node[topo, minimum width=0.95cm] (lgsinka) at (5.95,2.65) {Geo\\Sink};
+    \node[topo, minimum width=0.95cm] (lgsinkb) at (5.95,2.15) {Status\\Sink};
+    \node[topo, minimum width=0.95cm] (lgsinkc) at (5.95,1.65) {Count\\Sink};
+    \draw[flow] (lgsrc) -- (lggeo);
+    \draw[flow] (lgsrc) -- (lgstatus);
+    \draw[flow] (lgsrc) -- (lgvolume);
+    \draw[flow] (lggeo) -- (lggeost);
+    \draw[flow] (lggeost) -- (lgsinka);
+    \draw[flow] (lgstatus) -- (lgsinkb);
+    \draw[flow] (lgvolume) -- (lgsinkc);
+    \node[label] at (3.45,0.95) {(e) Log Processing (LG)};
+
+    \node[topo, minimum width=1.2cm] (vssrc) at (10.0,3.0) {Data Source};
+    \node[topo, minimum width=1.2cm] (vsdisp) at (10.0,2.05) {Voice\\Dispatcher};
+    \node[topo, minimum width=0.95cm] (vsrcrf) at (12.2,3.1) {RCRF};
+    \node[topo, minimum width=0.95cm] (vsecrf) at (12.2,2.5) {ECRF};
+    \node[topo, minimum width=0.95cm] (vsencr) at (12.2,1.9) {ENCR};
+    \node[topo, minimum width=0.95cm] (vsct24) at (12.2,1.3) {CT24};
+    \node[topo, minimum width=0.95cm] (vsecr24) at (12.2,0.7) {ECR24};
+    \node[topo, minimum width=0.95cm] (vsgacd) at (12.2,0.1) {Global\\ACD};
+    \node[topo, minimum width=0.95cm] (vsfofir) at (14.35,3.1) {FoFIR};
+    \node[topo, minimum width=0.95cm] (vsurl) at (14.35,2.2) {URL};
+    \node[topo, minimum width=0.95cm] (vsacd) at (14.35,1.15) {ACD};
+    \node[topo, minimum width=0.95cm] (vsscore) at (16.35,2.0) {Score};
+    \node[topo, minimum width=0.8cm] (vssink) at (17.75,2.0) {Sink};
+    \draw[flow] (vssrc) -- (vsdisp);
+    \foreach \target in {vsrcrf,vsecrf,vsencr,vsct24,vsecr24,vsgacd} {\draw[flow] (vsdisp.east) -- (\target.west);}
+    \draw[flow] (vsrcrf) -- (vsfofir);
+    \draw[flow] (vsecrf) -- (vsurl);
+    \draw[flow] (vsencr.east) -- ++(0.55,0) |- (vsurl.south);
+    \draw[flow] (vsct24) -- (vsacd);
+    \draw[flow] (vsecr24.east) -- ++(0.5,0) |- (vsacd.south);
+    \draw[flow] (vsgacd.east) -- ++(0.5,0) |- (vsacd.south);
+    \draw[flow] (vsfofir.east) -- ++(0.55,0) |- (vsscore.north);
+    \draw[flow] (vsurl.east) -- (vsscore.west);
+    \draw[flow] (vsacd.east) -- ++(0.55,0) |- (vsscore.south);
+    \draw[flow] (vsscore) -- (vssink);
+    \node[label] at (13.8,-0.45) {(f) Spam Detection in VoIP (VS)};
+
+    \node[topo, minimum width=1.2cm] (lrsrc) at (20.0,3.0) {Data Source};
+    \node[topo, minimum width=1.0cm] (lrdisp) at (20.0,2.1) {Dispatcher};
+    \node[topo, minimum width=1.0cm] (lravg) at (22.25,2.8) {Average\\Speed};
+    \node[topo, minimum width=1.0cm] (lrlast) at (24.15,2.8) {Last Average\\Speed};
+    \node[topo, minimum width=1.0cm] (lracc) at (22.25,2.15) {Accident\\Detection};
+    \node[topo, minimum width=1.0cm] (lrcount) at (22.25,1.5) {Count\\Vehicles};
+    \node[topo, minimum width=1.0cm] (lrdaily) at (22.25,0.7) {Daily\\Expenses};
+    \node[topo, minimum width=1.05cm] (lrnotify) at (24.25,1.4) {Accident\\Notification};
+    \node[topo, minimum width=1.0cm] (lrtoll) at (26.05,1.4) {Toll\\Notification};
+    \node[topo, minimum width=1.0cm] (lracct) at (26.05,0.45) {Account\\Balance};
+    \node[topo, minimum width=0.8cm] (lrsink) at (27.85,1.1) {Sink};
+    \draw[flow] (lrsrc) -- (lrdisp);
+    \foreach \target in {lravg,lracc,lrcount,lrdaily} {\draw[flow] (lrdisp.east) -- (\target.west);}
+    \draw[flow] (lravg) -- (lrlast);
+    \draw[flow] (lracc.east) -- ++(0.55,0) |- (lrnotify.north);
+    \draw[flow] (lrcount.east) -- (lrnotify.west);
+    \draw[flow] (lrlast.east) -- ++(0.55,0) |- (lrtoll.north);
+    \draw[flow] (lrnotify) -- (lrtoll);
+    \draw[flow] (lrdaily.east) -- ++(0.55,0) |- (lrtoll.south);
+    \draw[flow] (lrtoll) -- (lrsink);
+    \draw[flow] (lrtoll) -- (lracct);
+    \draw[flow] (lracct.east) -- ++(0.55,0) |- (lrsink.south);
+    \node[label] at (23.9,-0.45) {(g) Linear Road (LR)};
+  \end{tikzpicture}%
+  }
+  \caption{Benchset topologies adapted from Zhang et al. \cite{zhang2017revisiting}. The set spans seven stateful pipelines with different branch, merge, and routing structure.}
+  \Description{Seven compact pipeline diagrams showing the benchset workloads: Stateful Word Count, Fraud Detection, Spike Detection, Traffic Monitoring, Log Processing, Spam Detection in VoIP, and Linear Road.}
+  \label{fig:benchset-topology}
+\end{figure*}
+
+\section{Demonstration Scenario}
+The demonstration begins with a side-by-side comparison mode. One workload is executed with two different backends, and the synchronized dashboard reports throughput, latency percentiles, and backend-specific counters. This mode establishes that BriskState improves not only final job time but also runtime stability and responsiveness. During the live session, the presenter will start from WordCount because it gives visible throughput changes within a short time window and makes it easy for the audience to see how backend choice alone alters the steady-state execution profile.
+
+The second stage connects the optimization back to state layout directly. The interface renders a hierarchical view from operator to key-group to namespace, then overlays heat and occupancy information to show where accesses concentrate. This view shows how a smaller and more stable working set appears when namespaces are separated into compact sub-tables, and how that change corresponds to the throughput and latency gains seen in comparison runs. At this point, audience members can request a workload switch or ask to inspect a specific hot key-group, allowing the demo to move from aggregate metrics to a structural explanation of where the saved work comes from.
+
+The third stage steps through three workload families under the same dashboard: WordCount for pure update stress, \texttt{flink-state-benchmark} for per-operation state costs, and benchset for application pipelines with richer branching and merging structure. The presenter will use this sequence to answer three increasingly demanding questions: whether the backend accelerates a simple state-update loop, whether the gain persists on isolated Flink state operations, and whether the same trend survives in multi-operator pipelines with branch and merge structure.
+
+Figure~\ref{fig:benchset-topology} explains why benchset is more informative than a single monolithic query: some pipelines are short and update-dense, some branch into multiple keyed paths, and others merge several stateful summaries before the sink.
+
+The audience interaction is intentionally lightweight but concrete. Attendees can choose which workload family to launch next, ask for a rerun under the heap baseline, and compare the resulting throughput-per-core and latency summaries against the previous run. Because the same scripts and deployment layout are reused throughout the session, the interaction remains focused on backend behavior rather than on one-off tuning. The demo therefore communicates not only that BriskState is faster on these Intel-hosted experiments, but also why the improvement is reproducible across operator-level and application-level views.
 
 \section{Discussion and Conclusion}
-State backends are central to modern stream processing, but they remain difficult to reason about because their most important properties are physical rather than logical. \briskstate combines backend structure, access locality, and runtime symptoms in a form that makes these designs easier to evaluate and reproduce. This combination of a systems prototype and a compact observation layer complements static plots by exposing parallel and memory-system behavior directly.
+State backends are central to modern stream processing, but their most important properties are physical rather than logical. \briskstate turns those physical choices into measurable gains by combining compact native storage, locality-aware access paths, and a Flink-compatible integration layer. The resulting demonstration makes it possible to connect backend design directly to throughput and latency improvements over heap-based backends.
 
-This paper presents \briskstate together with a lightweight observation layer. By combining the delivered native state backend, existing benchmark artifacts, workload control, synchronized metrics, and trace replay, \briskstate makes backend behavior directly observable. The result is a compact demonstration of how state layout affects stream-processing performance, stability, and debuggability.
+The demonstration combines the native state backend, the evaluation workloads, workload control, and synchronized metrics to compare \briskstate directly against heap-based baselines under the same workloads. It shows that state layout materially affects stream-processing performance and stability.
 
 \balance
 \bibliographystyle{ACM-Reference-Format}

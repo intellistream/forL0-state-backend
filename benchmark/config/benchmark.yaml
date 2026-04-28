@@ -59,60 +59,43 @@ client_usecase:
   num_records: 5000         # Desired total input records across both sources for the whole job
   timeout_seconds: 7200      # Client usecase is heavy; allow up to 2h before treating as timeout
 
-# Benchmark Set v4 - High state pressure realistic business scenarios
-# All benchmarks use Long keys to trigger SwissTableLong specialization
-# Design principles:
-#   - 5-10 states per operator (vs 1 in WordCount)
-#   - 15-25 state ops per record (vs 2 in WordCount)
-#   - Ring buffer pattern (MapState) to avoid ListState serialization noise
-#   - Primitive types, no temporary object allocation in hot path
-#   - Throughput = numRecords / time (blackhole sink)
+
 benchset:
-  # Fraud Detection Engine - Real-time transaction risk assessment
-  # States: 7 (5 ValueState + 2 MapState)
-  # Ops/record: 23 (7 read + 6 write + 10 map ops)
-  # Advantage: valueUpdate (+60%), mapGet/Put (+90%)
-  fraud:
-    num_keys: 5000000           # Number of users (high cardinality)
-    num_records: 800000000      # 3亿 transactions
-    skew_factor: 0              # 0 = uniform distribution
-  
-  # Realtime Recommendation Engine - User interest profile tracking
-  # States: 6 (3 ValueState + 3 MapState)
-  # Ops/record: 18 (3 read + 3 write + 12 map ops)
-  # Advantage: MapState-dominant workload (+90-110%)
-  recommend:
-    num_keys: 5000000           # Number of users
-    num_records: 800000000      # 3亿 events
-    skew_factor: 0              # 0 = uniform distribution
-  
-  # Multi-Metric Aggregation - Pure ValueState stress test
-  # States: 10 (all ValueState)
-  # Ops/record: 20 (10 read + 10 write)
-  # Advantage: Pure valueUpdate (+60-87%), isolates ValueState performance
-  metric:
-    num_keys: 1000000           # Number of service instances
-    num_records: 800000000      # 3亿 metrics
-    skew_factor: 0              # 0 = uniform distribution
-  
-  # Session Sequence Analysis - Ring buffer pattern
-  # States: 5 (3 ValueState + 2 MapState with ring buffer)
-  # Ops/record: 15 (8 read + 7 write)
-  # Advantage: Ring buffer via MapState (+74-110%)
-  session:
-    num_keys: 5000000           # Number of sessions
-    num_records: 800000000      # 8亿 events
-    skew_factor: 0              # 0 = uniform distribution
-    batch_size: 100             # Ring buffer size
-  
-  # Multi-Stream Join - Order/Payment/Shipment correlation
-  # States: 8 (3 ValueState + 5 MapState)
-  # Ops/record: 25 (15 read + 10 write)
-  # Advantage: Scan-based matching, highest state density (+90-131%)
-  join:
-    num_keys: 1000000           # Number of users (not orderId!)
-    num_records: 500000000      # 8亿 events (40% order, 40% payment, 20% shipment)
-    skew_factor: 0              # 0 = uniform distribution
+  fd:
+    num_keys: 1800000
+    num_records: 240000000
+    skew_factor: 0.22        # wider customer working set while preserving enough temporal reuse for hot inner-map updates
+    batch_size: 24           # slightly longer bursts to amortize job overhead and amplify state reuse
+
+  sd:
+    num_keys: 2000000
+    num_records: 200000000
+    skew_factor: 0.18        # enough burst reuse for stable hot-map alert windows without collapsing to tiny hot loops
+    batch_size: 24           # retain bursts while increasing repeated slot updates in sensor/alert stages
+
+  tm:
+    num_keys: 1800000
+    num_records: 100000000
+    skew_factor: 0.16        # revisit segment-local indexes often enough for map fast path to matter
+    batch_size: 16           # retain burstiness without collapsing to a tiny hot set
+
+  lg:
+    num_keys: 1400000
+    num_records: 120000000
+    skew_factor: 0.24        # larger actor set so backend cost dominates more than tiny-heap hot loops
+    batch_size: 28           # slightly longer bursts to repeatedly touch existing map entries per outer key
+
+  vs:
+    num_keys: 1400000
+    num_records: 12000000
+    skew_factor: 0.28        # wider caller/callee working set while keeping branch-local maps warm
+    batch_size: 24           # longer bursts keep branch-local map slots populated and repeatedly updated
+
+  lr:
+    num_keys: 2200000
+    num_records: 30000000
+    skew_factor: 0.18        # repeated segment/account updates make reduce + map pressure visible
+    batch_size: 16           # avoid over-reusing a tiny local road segment set
 
 # State backends to compare
 backends:
@@ -123,11 +106,6 @@ backends:
   - name: forl0
     class: org.apache.flink.state.forl0.ForL0StateBackendFactory
     description: "ForL0 StateBackend with SwissTable architecture"
-
-# Metrics collection settings
-metrics:
-  # Reserved for future metrics options
-  enabled: true
 
 # Output settings
 output:

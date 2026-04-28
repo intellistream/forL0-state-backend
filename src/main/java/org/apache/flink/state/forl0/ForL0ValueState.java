@@ -127,7 +127,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
         }
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public V value() {
         K key = keyContext.currentKey;
@@ -272,11 +271,17 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
             if (!NativeEngine.valueGetLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, primitiveBuf)) {
                 return getDefaultValue();
             }
+            if (isRowDataValue) {
+                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+            }
             return (V) Long.valueOf(primitiveBuf[0]);
         }
         if (valueTypeId == TypeAnalyzer.TYPE_INT32) {
             if (!NativeEngine.valueGetLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, primitiveBuf)) {
                 return getDefaultValue();
+            }
+            if (isRowDataValue) {
+                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
             }
             return (V) Integer.valueOf((int) primitiveBuf[0]);
         }
@@ -284,7 +289,13 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
             if (!NativeEngine.valueGetLongDoubleWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, primitiveBuf)) {
                 return getDefaultValue();
             }
+            if (isRowDataValue) {
+                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+            }
             return (V) Double.valueOf(Double.longBitsToDouble(primitiveBuf[0]));
+        }
+        if (isRowDataValue) {
+            return zeroCopyGetLongWithTimeWindow(k, keyGroup, nsStart, nsEnd);
         }
         byte[] valueBytes = NativeEngine.valueGetLongStringWithTW(stateHandle, k, keyGroup, nsStart, nsEnd);
         if (valueBytes == null) {
@@ -497,7 +508,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
     // ========== Zero-copy read helpers (BinaryRowData → native pointer) ==========
 
     /** Zero-copy read via Long key: returns value or defaultValue. */
-    @SuppressWarnings("unchecked")
     private V zeroCopyGetLong(long k, int keyGroup) {
         if (NativeEngine.valueGetLongStringPtr(stateHandle, k, keyGroup, nativePtrBuf)) {
             return wrapNativePtr();
@@ -505,8 +515,15 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
         return getDefaultValue();
     }
 
+    /** Zero-copy read via Long key + TimeWindow namespace: returns value or defaultValue. */
+    private V zeroCopyGetLongWithTimeWindow(long k, int keyGroup, long nsStart, long nsEnd) {
+        if (NativeEngine.valueGetLongStringPtrWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, nativePtrBuf)) {
+            return wrapNativePtr();
+        }
+        return getDefaultValue();
+    }
+
     /** Zero-copy read via Generic key: returns value or defaultValue. */
-    @SuppressWarnings("unchecked")
     private V zeroCopyGetGeneric(byte[] keyBytes, int keyGroup) {
         if (NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, keyGroup, nativePtrBuf)) {
             return wrapNativePtr();
@@ -537,7 +554,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
 
     // ========== Serialization helpers (generic path) ==========
 
-    @SuppressWarnings("unchecked")
     private byte[] serializeKey(K key) throws IOException {
         keyOut.clear();
         if (!voidNamespace) {

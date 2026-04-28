@@ -1,12 +1,19 @@
 package org.apache.flink.state.forl0;
 
 import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.functions.ReduceFunction;
+import org.apache.flink.api.common.state.AggregatingState;
+import org.apache.flink.api.common.state.AggregatingStateDescriptor;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ReducingState;
+import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.core.fs.CloseableRegistry;
@@ -18,8 +25,17 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.heap.HeapPriorityQueueSetFactory;
 import org.apache.flink.runtime.state.metrics.LatencyTrackingStateConfig;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.binary.BinaryRowData;
+import org.apache.flink.table.types.logical.BigIntType;
+import org.apache.flink.table.types.logical.IntType;
+import org.apache.flink.table.types.logical.LogicalType;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -276,6 +292,100 @@ public class ForL0StateSemanticsTest {
         }
     }
 
+    @Test
+    void timeWindowValueStateReadsFixedRowDataWithoutSerializerFallback() throws Exception {
+        ForL0KeyedStateBackend<Long> backend = buildBackend();
+        try {
+            backend.setCurrentKey(3L);
+            TypeSerializer<RowData> rowSerializer = createFixedRowDataSerializer();
+            ValueState<RowData> state = backend.getPartitionedState(
+                    new TimeWindow(10L, 20L),
+                    new TimeWindow.Serializer(),
+                    new ValueStateDescriptor<>("tw_row_value", rowSerializer));
+
+            BinaryRowData expected = createFixedRowData(rowSerializer, 11L, 7);
+            state.update(expected);
+
+            RowData actual = state.value();
+            assertTrue(actual instanceof BinaryRowData);
+            assertEquals(11L, actual.getLong(0));
+            assertEquals(7, actual.getInt(1));
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
+    void timeWindowReducingStateReadsFixedRowDataWithoutSerializerFallback() throws Exception {
+        ForL0KeyedStateBackend<Long> backend = buildBackend();
+        try {
+            backend.setCurrentKey(4L);
+            TypeSerializer<RowData> rowSerializer = createFixedRowDataSerializer();
+            ReducingState<RowData> state = backend.getPartitionedState(
+                    new TimeWindow(30L, 40L),
+                    new TimeWindow.Serializer(),
+                    new ReducingStateDescriptor<>("tw_row_reduce", (left, right) -> right, rowSerializer));
+
+            BinaryRowData expected = createFixedRowData(rowSerializer, 21L, 9);
+            state.add(expected);
+
+            RowData actual = state.get();
+            assertTrue(actual instanceof BinaryRowData);
+            assertEquals(21L, actual.getLong(0));
+            assertEquals(9, actual.getInt(1));
+        } finally {
+            backend.dispose();
+        }
+    }
+
+        @Test
+        void reducingStateDetectsBuiltinLongReducersConservatively() {
+            ReduceFunction<Long> longSum = Long::sum;
+            ReduceFunction<Long> longMin = Long::min;
+            ReduceFunction<Long> longMax = Math::max;
+        ReduceFunction<Long> syntheticSum = (left, right) -> left + right;
+            ReduceFunction<Integer> intSum = Integer::sum;
+
+        assertEquals(
+            ForL0ReducingState.BUILTIN_AGG_SUM,
+                ForL0ReducingState.resolveBuiltinAggType(longSum, TypeAnalyzer.TYPE_INT64));
+        assertEquals(
+            ForL0ReducingState.BUILTIN_AGG_MIN,
+                ForL0ReducingState.resolveBuiltinAggType(longMin, TypeAnalyzer.TYPE_INT64));
+        assertEquals(
+            ForL0ReducingState.BUILTIN_AGG_MAX,
+                ForL0ReducingState.resolveBuiltinAggType(longMax, TypeAnalyzer.TYPE_INT64));
+        assertEquals(
+            ForL0ReducingState.BUILTIN_AGG_USER_DEFINED,
+            ForL0ReducingState.resolveBuiltinAggType(syntheticSum, TypeAnalyzer.TYPE_INT64));
+        assertEquals(
+            ForL0ReducingState.BUILTIN_AGG_USER_DEFINED,
+                ForL0ReducingState.resolveBuiltinAggType(intSum, TypeAnalyzer.TYPE_INT32));
+        }
+
+        @Test
+        void aggregatingStateAddDoesNotCallMergeDuringHotPathUpdates() throws Exception {
+        ForL0KeyedStateBackend<Long> backend = buildBackend();
+        try {
+            backend.setCurrentKey(9L);
+            AggregatingState<Long, Long> state = backend.getPartitionedState(
+                VoidNamespace.INSTANCE,
+                VoidNamespaceSerializer.INSTANCE,
+                new AggregatingStateDescriptor<>(
+                    "agg_no_merge",
+                    new NoMergeLongSumAggregateFunction(),
+                    LongSerializer.INSTANCE));
+
+            state.add(1L);
+            state.add(2L);
+            state.add(3L);
+
+            assertEquals(Long.valueOf(6L), state.get());
+        } finally {
+            backend.dispose();
+        }
+        }
+
     // -----------------------------------------------------------------------
     //  Key-set iteration
     // -----------------------------------------------------------------------
@@ -372,5 +482,43 @@ public class ForL0StateSemanticsTest {
         } finally {
             backend.dispose();
         }
+    }
+
+    private static final class NoMergeLongSumAggregateFunction
+            implements AggregateFunction<Long, Long, Long> {
+
+        @Override
+        public Long createAccumulator() {
+            return 0L;
+        }
+
+        @Override
+        public Long add(Long value, Long accumulator) {
+            return accumulator + value;
+        }
+
+        @Override
+        public Long getResult(Long accumulator) {
+            return accumulator;
+        }
+
+        @Override
+        public Long merge(Long a, Long b) {
+            throw new AssertionError("merge() must not be used during incremental add() updates");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static TypeSerializer<RowData> createFixedRowDataSerializer() throws Exception {
+        Class<?> rowDataSerializerClass = Class.forName("org.apache.flink.table.runtime.typeutils.RowDataSerializer");
+        Constructor<?> ctor = rowDataSerializerClass.getConstructor(LogicalType[].class);
+        LogicalType[] fieldTypes = new LogicalType[] {new BigIntType(), new IntType()};
+        return (TypeSerializer<RowData>) ctor.newInstance(new Object[] {fieldTypes});
+    }
+
+    private static BinaryRowData createFixedRowData(TypeSerializer<RowData> serializer, long left, int right)
+            throws Exception {
+        Method toBinaryRow = serializer.getClass().getMethod("toBinaryRow", RowData.class);
+        return (BinaryRowData) toBinaryRow.invoke(serializer, GenericRowData.of(left, right));
     }
 }

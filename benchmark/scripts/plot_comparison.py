@@ -141,9 +141,9 @@ def plot_chart(results, output_file):
     x = range(len(benchmarks))
     width = 0.35
     
-    # Create bars with error bars - FORL0 (orange) on left, HEAP (blue) on right
+    # Create bars with error bars - BriskState (orange) on left, HEAP (blue) on right
     bars1 = ax.bar([i - width/2 for i in x], forl0_scores, width, 
-                    label='ForL0', color='#F89E4F', edgecolor='none',
+                    label='BriskState', color='#F89E4F', edgecolor='none',
                     yerr=forl0_errors, capsize=3, error_kw={'elinewidth': 1, 'capthick': 1})
     bars2 = ax.bar([i + width/2 for i in x], heap_scores, width, 
                     label='Heap', color='#5B8DBE', edgecolor='none',
