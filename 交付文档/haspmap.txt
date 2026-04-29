@@ -1,0 +1,120 @@
+architecture kunpeng920b
+collect pid 2360795
+
+perf start: 2026-04-29 11:10:23.948
+====================== TopDown Metric ======================
+---------------------- frontend bound ----------------------
+frontend_bound:                           1.47%
+frontend_latency_bound:                    |--  0.46%
+idle_by_itlb_miss:                               |--  0.31%
+idle_by_icache_miss:                             |--  5.02%
+bp_misp_flush:                                   |--  0.46%
+ooo_flush:                                       |--  0.09%
+sp_flush:                                        |--  0.22%
+frontend_bandwidth_bound:                  |--  1.01%
+------------------------- bad spec -------------------------
+bad_spec:                                 0.98%
+mispred:                                   |--  0.88%
+indirect_branch:                                 |--  1.48%
+push_branch:                                     |--  0.32%
+pop_branch:                                      |--  1.42%
+other_branch:                                    |-- 98.26%
+mclear:                                    |--  0.09%
+nuke_flush:                                      |-- 89.23%
+other_flush:                                     |-- 10.77%
+------------------------- retiring -------------------------
+retiring:                                22.52%
+----------------------- backendbound -----------------------
+backend_bound:                           75.02%
+resource_bound:                            |-- 16.95%
+rob_stall:                                       |-- 21.10%
+ptag_stall:                                      |-- 54.38%
+mapq_stall:                                      |-- 24.45%
+pcbuf_stall:                                     |--  0.07%
+other_stall:                                     |-- -0.00%
+core_bound:                                |-- 40.44%
+core_fdiv_bound:                                 |--  0.00%
+core_div_bound:                                  |--  0.12%
+core_fsu_bound:                                  |--  0.00%
+core_other_bound:                                |-- 40.32%
+0_ports_serialize:                                     |--  0.30%
+0_ports_non_serialize:                                 |-- 19.12%
+1_ports:                                               |-- 10.38%
+2_ports:                                               |-- 13.19%
+3_ports:                                               |-- 13.55%
+4_ports:                                               |-- 11.49%
+5_ports:                                               |--  8.15%
+6p_ports:                                              |--  7.65%
+mem_bound:                                 |-- 17.63%
+mem_l1_bound:                                    |--  2.20%
+dtlb:                                                  |--  2.73%
+misalign:                                              |--  0.10%
+resource_full:                                         |--  0.00%
+instruction_type:                                      |--  0.22%
+forward_hazard:                                        |--  0.75%
+structure_hazard:                                      |--  1.70%
+pipeline:                                              |--  0.12%
+mem_l2_bound:                                    |--  0.56%
+buffer_pending:                                        |--  0.00%
+snoop_pending:                                         |--  0.24%
+arb_idle:                                              |--  0.48%
+pipeline:                                              |-- -0.16%
+mem_l3_dram_bound:                               |-- 14.87%
+mem_mem_bound:                                   |--  0.00%
+local_dram:                                            |--  0.00%
+remote_dram:                                           |--  0.00%
+remote_cache:                                          |--  0.00%
+mem_store_bound:                                 |--  0.00%
+sca:                                                   |--  6.33%
+head:                                                  |-- 23.53%
+order:                                                 |-- 52.17%
+other                                                  |--  1.75%
+perf start: 2026-04-29 11:10:33.169
+============ Cache Performance Metrics ===========
+-------------------- missrate --------------------
+l1i_missrate                                1.39 %
+l1d_missrate                                1.09 %
+l2i_missrate                               16.30 %
+l2d_missrate                               31.98 %
+ll_missrate                                42.87 %
+branch_missrate                             0.36 %
+---------------------- mpki ----------------------
+l1i_mpki                                      1.35
+l1d_mpki                                      3.67
+l2i_mpki                                      0.25
+l2d_mpki                                      4.14
+ll_mpki                                       1.70
+-------------------- bandwidth -------------------
+l1d_bandwidth                       155086.38 MB/s
+l2d_bandwidth                        11960.01 MB/s
+perf start: 2026-04-29 11:10:42.276
+=========== TLB Performance Metrics ===========
+------------------ missrate -------------------
+l1i_tlb_missrate:                        0.14 %
+l1d_tlb_missrate:                        6.48 %
+l2i_tlb_missrate:                        3.06 %
+l2d_tlb_missrate:                        0.16 %
+------------------ walk rate ------------------
+itlb_walk_rate:                          0.01 %
+dtlb_walk_rate:                          0.01 %
+-------------------- mpki ---------------------
+l1i_tlb_mpki:                              0.13
+l1d_tlb_mpki:                             23.98
+l2i_tlb_mpki:                              0.00
+l2d_tlb_mpki:                              0.02
+itlb_walk_mpki:                            0.00
+dtlb_walk_mpki:                            0.02
+perf start: 2026-04-29 11:10:51.396
+============== Instruction Mix ===============
+ld_mix:                                 24.83%
+st_mix:                                  9.27%
+dp_mix:                                 49.17%
+ase_mix:                                 0.00%
+vfp_mix:                                 0.00%
+br_imm_mix:                             15.86%
+br_ret_mix:                              0.85%
+br_ind_mix:                              0.94%
+strex_fail_mix:                          0.00%
+crypto_mix:                              0.00%
+svc_mix:                                 0.00%
+sve_mix:                                 0.00%
