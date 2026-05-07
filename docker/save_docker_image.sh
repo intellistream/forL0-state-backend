@@ -38,7 +38,7 @@ echo "      ✓ 镜像已保存 (${SIZE})"
 
 # ---- 2. ForL0 JAR ----
 echo ""
-JAR_FILE="${REPO_ROOT}/target/flink-statebackend-forl0-1.0-SNAPSHOT.jar"
+JAR_FILE="${REPO_ROOT}/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
 if [[ -f "$JAR_FILE" ]]; then
     mkdir -p "$DEPLOY_DIR"
     cp "$JAR_FILE" "$DEPLOY_DIR/"

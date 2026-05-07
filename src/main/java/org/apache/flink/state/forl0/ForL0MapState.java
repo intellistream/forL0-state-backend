@@ -484,38 +484,76 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
                     Map<UK, UV> map = new HashMap<>(arr.length / 2 * 4 / 3 + 1);
                     for (int i = 0; i < arr.length; i += 2)
                         map.put(wrapLongAsUK(arr[i]), wrapLongAsUV(arr[i + 1]));
-                    return map.entrySet().iterator();
+                    return new RemovableIterator(map.entrySet().iterator());
                 }
                 case LONG_BYTES_VOID: {
                     byte[] data = NativeEngine.mapEntriesLongBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex);
-                    return data != null ? deserializeEntriesLongBytes(data).entrySet().iterator() : Collections.emptyIterator();
+                    return data != null ? new RemovableIterator(deserializeEntriesLongBytes(data).entrySet().iterator()) : Collections.emptyIterator();
                 }
                 case BYTES_LONG_VOID: {
                     byte[] data = NativeEngine.mapEntriesBytesLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex);
-                    return data != null ? deserializeEntriesBytesLong(data).entrySet().iterator() : Collections.emptyIterator();
+                    return data != null ? new RemovableIterator(deserializeEntriesBytesLong(data).entrySet().iterator()) : Collections.emptyIterator();
                 }
                 case LONG_MAP_VOID: {
                     long iterH = NativeEngine.mapIteratorCreate(stateHandle,
                             resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-                    return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                    return iterH != 0 ? new RemovableIterator(new NativeMapEntryIterator(iterH)) : Collections.emptyIterator();
                 }
                 case LONG_MAP_TW: {
                     TimeWindow tw = (TimeWindow) currentNamespace;
                     long iterH = NativeEngine.mapIteratorCreateWithTW(stateHandle,
                             resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
                             tw.getStart(), tw.getEnd());
-                    return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                    return iterH != 0 ? new RemovableIterator(new NativeMapEntryIterator(iterH)) : Collections.emptyIterator();
                 }
                 default: {
                     long iterH = NativeEngine.mapIteratorCreateGeneric(stateHandle,
                             serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-                    return iterH != 0 ? new NativeMapEntryIterator(iterH) : Collections.emptyIterator();
+                    return iterH != 0 ? new RemovableIterator(new NativeMapEntryIterator(iterH)) : Collections.emptyIterator();
                 }
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to iterate MapState", e);
+        }
+    }
+
+    /**
+     * Iterator wrapper that implements {@link Iterator#remove()} by calling
+     * {@link ForL0MapState#remove(Object)} on the last-returned user key.
+     * Required for Flink's MapState contract — user code (e.g. event-time
+     * cleanup) commonly calls {@code iterator.remove()} to delete entries.
+     */
+    private class RemovableIterator implements Iterator<Map.Entry<UK, UV>> {
+        private final Iterator<Map.Entry<UK, UV>> delegate;
+        private UK lastKey;
+        private boolean canRemove;
+
+        RemovableIterator(Iterator<Map.Entry<UK, UV>> delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return delegate.hasNext();
+        }
+
+        @Override
+        public Map.Entry<UK, UV> next() {
+            Map.Entry<UK, UV> entry = delegate.next();
+            lastKey = entry.getKey();
+            canRemove = true;
+            return entry;
+        }
+
+        @Override
+        public void remove() {
+            if (!canRemove) {
+                throw new IllegalStateException("next() has not been called, or remove() has already been called after the last call to next()");
+            }
+            ForL0MapState.this.remove(lastKey);
+            canRemove = false;
         }
     }
 

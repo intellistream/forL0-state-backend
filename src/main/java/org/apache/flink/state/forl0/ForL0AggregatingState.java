@@ -42,7 +42,6 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
     private N currentNamespace;
 
     private final int keyTypeId;
-    private final int valueTypeId;
     private final boolean voidNamespace;
     private final boolean isTimeWindowNs;
     private final boolean isRowDataKey;
@@ -72,7 +71,6 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
         this.namespaceSerializer = namespaceSerializer;
         this.valueSerializer = valueSerializer;
         this.keyTypeId = TypeAnalyzer.getTypeId(keySerializer);
-        this.valueTypeId = TypeAnalyzer.getTypeId(valueSerializer);
         this.voidNamespace = namespaceSerializer instanceof VoidNamespaceSerializer;
         this.isTimeWindowNs = TypeAnalyzer.isTimeWindowSerializer(namespaceSerializer);
         this.isRowDataKey = TypeAnalyzer.isRowDataSerializer(keySerializer);
@@ -168,13 +166,11 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
                         }
                         NativeEngine.valuePutLongString(stateHandle, k, kg, serializeAcc(accumulator));
                     } else {
-                        ACC freshAcc = aggregateFunction.add(value, aggregateFunction.createAccumulator());
-                        byte[] newBytes = serializeAcc(freshAcc);
-                        byte[] oldBytes = NativeEngine.valueGetAndPutLongBytes(stateHandle, k, kg, newBytes);
-                        if (oldBytes != null) {
-                            ACC merged = aggregateFunction.merge(deserializeAcc(oldBytes), freshAcc);
-                            NativeEngine.valuePutLongString(stateHandle, k, kg, serializeAcc(merged));
-                        }
+                        byte[] oldBytes = NativeEngine.valueGetLongString(stateHandle, k, kg);
+                        ACC accumulator = oldBytes == null
+                                ? aggregateFunction.add(value, aggregateFunction.createAccumulator())
+                                : aggregateFunction.add(value, deserializeAcc(oldBytes));
+                        NativeEngine.valuePutLongString(stateHandle, k, kg, serializeAcc(accumulator));
                     }
                     return;
                 }
@@ -193,13 +189,11 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
                         }
                         NativeEngine.valuePutLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd, serializeAcc(accumulator));
                     } else {
-                        ACC freshAcc = aggregateFunction.add(value, aggregateFunction.createAccumulator());
-                        byte[] newBytes = serializeAcc(freshAcc);
-                        byte[] oldBytes = NativeEngine.valueGetAndPutLongBytesWithTW(stateHandle, k, kg, nsStart, nsEnd, newBytes);
-                        if (oldBytes != null) {
-                            ACC merged = aggregateFunction.merge(deserializeAcc(oldBytes), freshAcc);
-                            NativeEngine.valuePutLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd, serializeAcc(merged));
-                        }
+                        byte[] oldBytes = NativeEngine.valueGetLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd);
+                        ACC accumulator = oldBytes == null
+                                ? aggregateFunction.add(value, aggregateFunction.createAccumulator())
+                                : aggregateFunction.add(value, deserializeAcc(oldBytes));
+                        NativeEngine.valuePutLongStringWithTW(stateHandle, k, kg, nsStart, nsEnd, serializeAcc(accumulator));
                     }
                     return;
                 }
@@ -215,13 +209,11 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
                         }
                         NativeEngine.aggAddGeneric(stateHandle, keyBytes, kg, serializeAcc(accumulator));
                     } else {
-                        ACC freshAcc = aggregateFunction.add(value, aggregateFunction.createAccumulator());
-                        byte[] newBytes = serializeAcc(freshAcc);
-                        byte[] oldBytes = NativeEngine.valueGetAndPutGenericBytes(stateHandle, keyBytes, kg, newBytes);
-                        if (oldBytes != null) {
-                            ACC merged = aggregateFunction.merge(deserializeAcc(oldBytes), freshAcc);
-                            NativeEngine.aggAddGeneric(stateHandle, keyBytes, kg, serializeAcc(merged));
-                        }
+                        byte[] oldBytes = NativeEngine.aggGetGeneric(stateHandle, keyBytes, kg);
+                        ACC accumulator = oldBytes == null
+                                ? aggregateFunction.add(value, aggregateFunction.createAccumulator())
+                                : aggregateFunction.add(value, deserializeAcc(oldBytes));
+                        NativeEngine.aggAddGeneric(stateHandle, keyBytes, kg, serializeAcc(accumulator));
                     }
                 }
             }
@@ -409,7 +401,6 @@ public class ForL0AggregatingState<K, N, IN, ACC, OUT> implements InternalAggreg
 
     // ========== Serialization helpers ==========
 
-    @SuppressWarnings("unchecked")
     private byte[] serializeKey(K key) throws IOException {
         keyOut.clear();
         if (!voidNamespace) {

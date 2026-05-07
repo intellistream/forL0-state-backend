@@ -1,5 +1,5 @@
 ---
-description: 'ForL0 State Backend Development Agent - Expert assistant for Apache Flink high-performance state backend with Swiss Tables architecture (hash-smith aligned), SWAR parallel matching, and Kunpeng L0 Cache optimization.'
+description: 'ForL0 State Backend Development Agent - Expert assistant for the current ForL0 implementation: Java keyed state backend shell, JNI bridge, C++ state engine, checkpoint/restore path, and hot-cache integration.'
 tools: ['vscode', 'execute', 'read', 'edit', 'search', 'web', 'agent', 'github.vscode-pull-request-github/copilotCodingAgent', 'github.vscode-pull-request-github/issue_fetch', 'github.vscode-pull-request-github/suggest-fix', 'github.vscode-pull-request-github/searchSyntax', 'github.vscode-pull-request-github/doSearch', 'github.vscode-pull-request-github/renderIssues', 'github.vscode-pull-request-github/activePullRequest', 'github.vscode-pull-request-github/openPullRequest', 'todo']
 ---
 
@@ -7,201 +7,268 @@ tools: ['vscode', 'execute', 'read', 'edit', 'search', 'web', 'agent', 'github.v
 
 ## Project Overview
 
-ForL0 State Backend is a high-performance state backend implementation for Apache Flink, featuring Swiss Tables architecture with SWAR parallel matching for efficient state access.
+ForL0 State Backend is a Flink keyed-state backend whose current implementation is split across:
+
+- a Java `ForL0StateBackend` / `ForL0KeyedStateBackend` integration layer
+- a JNI bridge in `NativeEngine`
+- a C++ native engine that owns keyed-state storage, checkpoint serialization, and hot-cache behavior
+
+The important implementation shift is that the Java side is now mostly a thin control layer. The primary storage behavior no longer lives in a Java `ForL0StateStore` or Java `SwissTable` class.
 
 ## When to Use This Agent
 
-- Developing or modifying ForL0StateBackend Java code
-- Writing or debugging JNI native code (C language)
-- Working with Swiss Tables architecture and SWAR algorithms
-- Implementing expansion operations (grow, rehash)
-- Running and analyzing Benchmark performance tests
-- Debugging Native library loading issues
-- Optimizing for Kunpeng CPU L0 Cache
+Use this agent when working on:
+
+- `org.apache.flink.state.forl0.*` keyed-state backend code
+- JNI bridge changes under `src/main/native/jni/`
+- C++ engine behavior under `src/main/native/engine/`
+- checkpoint / restore compatibility and key-group serialization
+- hot-cache metrics, rebalance, and cache invalidation behavior
+- Flink keyed state semantics for `ValueState`, `ListState`, `MapState`, `ReducingState`, and `AggregatingState`
+- native library loading or packaging issues
+- benchmark runs and regression analysis for the ForL0 backend
 
 ## Tech Stack
 
-| Category | Technology |
-|----------|------------|
-| Languages | Java 8+, C (JNI native code) |
-| Framework | Apache Flink 1.20.0 |
-| Build Tool | Maven 3.6+ |
+| Category | Current Implementation |
+|----------|------------------------|
+| Languages | Java 8+, C++17, JNI |
+| Framework | Apache Flink 1.20.3 |
+| Build Tool | Maven 3.x + native `make` build |
 | Test Framework | JUnit 5 |
-| Platforms | macOS (simulation mode), Linux with Kunpeng CPU (L0 mode) |
+| Runtime Model | Java keyed backend shell + native off-heap engine |
+| Platforms | Linux primary; macOS library loading path also exists |
 
-## Core Architecture
+## Current Architecture
 
-### Lightweight StateStore Architecture
+### High-Level Control Path
 
-```
-ForL0StateStore<K, N, S> (StateSnapshotRestore interface)
-├── VoidNamespace mode: SwissTable<K,S>[] tables    // Direct access, zero HashMap overhead
-└── General Namespace mode: Map<N, SwissTable<K,S>>[] namespaceMaps
-    └── SwissTable<K, S>                            // Per-namespace table
-        ├── ctrl[]          // Control bytes (EMPTY=0x80, DELETED=0xFE, FULL=h2)
-        ├── entries[]       // AoS interleaved layout [k0,v0,k1,v1,...] (slot i → entries[2i], entries[2i+1])
-        └── hashes[]        // 32-bit hash storage (for rehash/grow)
-```
-
-### Hash Bit Allocation (hash-smith SwissMap Aligned)
-
-```
-32-bit hash (smear function from Guava):
-├── H1 = hash >>> 7     // Upper 25 bits, for probe start group
-└── H2 = hash & 0x7F    // Lower 7 bits, stored in ctrl byte
-
-Hash computation:
-int h = key.hashCode();
-int hash = (int)(0x1b873593 * Integer.rotateLeft(h * 0xcc9e2d51, 15));
+```text
+Flink runtime
+  -> ForL0StateBackendFactory
+  -> ForL0StateBackend
+  -> ForL0KeyedStateBackendBuilder
+       -> NativeEngine.ensureLoaded()
+       -> NativeEngine.createEngine(...)
+       -> restoreFromHandles(...)
+       -> ForL0SnapshotStrategy
+  -> ForL0KeyedStateBackend
+       -> state-specific wrappers
+       -> NativeEngine JNI calls
+       -> C++ StateEngine / SwissTable / HotCache
 ```
 
-### Key Components
+### Snapshot And Restore Path
 
-| Component | Responsibility | Location |
-|-----------|----------------|----------|
-| `ForL0StateBackend` | StateBackend entry point | `state/forl0/` |
-| `ForL0KeyedStateBackend` | KeyedStateBackend implementation | `state/forl0/` |
-| `ForL0StateStore` | State storage (KeyGroup → Namespace → SwissTable) | `state/forl0/` |
-| `SwissTable` | SWAR parallel matching hash table storage | `state/forl0/` |
-| `NativeL0Memory` | JNI bridge class (L0 Cache) | `state/forl0/space/` |
-| `forl0_native.c` | C implementation (L0/simulation mode) | `src/main/native/` |
+```text
+Checkpoint:
+  ForL0SnapshotStrategy.syncPrepareResources(...)
+    -> NativeEngine.prepareSnapshot(engineHandle)
+  ForL0SnapshotStrategy.asyncSnapshot(...)
+    -> write Flink serialization metadata
+    -> write PQ state blocks via Flink wrappers
+    -> NativeEngine.writeKeyGroupData(engineHandle, keyGroupId)
+    -> NativeEngine.releaseSnapshot(engineHandle)
 
-### SwissTable Core Algorithms
-
-```java
-// SWAR parallel matching (8 slots simultaneous comparison)
-static long matchH2(long ctrlWord, long pattern) {
-    long x = ctrlWord ^ pattern;
-    return (x - LSB) & ~x & MSB;
-}
-
-// put return value encoding
-static final int NEW_FLAG = 1 << 16;   // New insertion flag
-static final int SLOT_MASK = 0xFFFF;   // Slot mask
-static final int NEED_REHASH = -1;     // Needs rehash
-static final int NEED_GROW = -2;       // Needs grow
-
-// Usage example (AoS layout direct access)
-int result = table.put(hash, key);
-if (result == SwissTable.NEED_REHASH) {
-    table.rehash();
-    continue;
-}
-if (result == SwissTable.NEED_GROW) {
-    table.grow();
-    continue;
-}
-int slot = result & SwissTable.SLOT_MASK;
-table.entries[(slot << 1) + 1] = value;  // Direct access, no method call
+Restore:
+  ForL0KeyedStateBackendBuilder.build()
+    -> restoreFromHandles(...)
+    -> rebuild KV metadata and PQ state wrappers
+    -> feed key-group payloads back into native engine
 ```
 
-### Namespace Organization
+### Native Engine Layout
 
-- **VoidNamespace specialization**: Auto-detect VoidNamespaceSerializer, skip HashMap layer
-- **Namespace cleanup**: Check SwissTable.isEmpty() after remove, auto-remove empty namespace from HashMap
-- **Memory isolation**: Each namespace has independent SwissTable, avoid key conflicts
+```text
+src/main/native/
+├── engine/
+│   ├── state_engine.h
+│   ├── swiss_table.h
+│   ├── hot_cache.*
+│   ├── allocator.h
+│   ├── arena_allocator.h
+│   └── type_layout.h
+├── jni/
+│   ├── forl0_jni.cpp
+│   ├── jni_value_state.cpp
+│   ├── jni_list_state.cpp
+│   ├── jni_map_state.cpp
+│   ├── jni_tw_state.cpp
+│   └── jni_checkpoint.cpp
+└── checkpoint/
+```
 
-## Code Conventions
+## Key Java Components
 
-### Java Code
+| Component | Responsibility |
+|-----------|----------------|
+| `ForL0StateBackend` | Flink `StateBackend` entry point; creates keyed backend and delegates operator state to Flink default backend |
+| `ForL0StateBackendFactory` | SPI factory for `state.backend: forl0` |
+| `ForL0KeyedStateBackendBuilder` | Loads native library, creates engine, restores from handles, wires snapshot strategy |
+| `ForL0KeyedStateBackend` | Main keyed backend shell; owns native engine handle, state registry, and state creation/update routing |
+| `NativeEngine` | JNI bridge and native library loader |
+| `ForL0SnapshotStrategy` | Coordinates checkpoint preparation and key-group snapshot writing |
+| `ForL0SnapshotResources` | Collects KV meta info and priority queue snapshots for checkpoint output |
+| `ForL0ValueState` / `ForL0ListState` / `ForL0MapState` / `ForL0ReducingState` / `ForL0AggregatingState` | Flink state wrappers over native handles |
+| `ForL0KeyValueStateIterator` | Iteration support used by snapshot/savepoint flow |
+| `TypeAnalyzer` | Maps serializers to native type ids and generates type descriptors |
+| `ForL0KeyContext` | Hot-path key context used by the keyed backend |
 
-1. **Package structure**: `org.apache.flink.state.forl0.*`
-2. **Naming conventions**:
-   - Class names: `ForL0` prefix for project components
-   - Constants: UPPER_SNAKE_CASE
-   - AoS access: `entries[(slot << 1)]` (key), `entries[(slot << 1) + 1]` (value)
-3. **Logging**: Use SLF4J (`LoggerFactory.getLogger`), prefix `[ForL0]`
-4. **Comments**: 
-   - Javadoc for public APIs
-   - Inline comments for complex logic
-   - Mark performance critical paths with `// Hot path`
+## Implementation Notes That Matter
 
-### Native Code (C)
+### State Ownership
 
-1. **File location**: `src/main/native/`
-2. **Conditional compilation**: 
-   - `L0_NOT_SUPPORTED`: Defined on macOS, skips L0-specific code
-   - `#ifndef L0_NOT_SUPPORTED ... #endif` wraps L0-specific code
-3. **JNI naming**: `Java_org_apache_flink_state_forl0_space_NativeL0Memory_*`
-4. **Memory alignment**: Use `posix_memalign` for 64-byte alignment
+- Actual keyed-state data lives in the native engine, not in Java heap tables.
+- Java tracks native handles by state name and lazily registers native states on first use.
+- Operator state is not custom; `ForL0StateBackend` delegates it to Flink's default operator-state backend.
+- Priority queue state uses Flink's heap priority queue machinery and participates in snapshots alongside native KV state.
 
-## Memory Layout (AoS - Array of Structures)
+### Supported State Types
 
-- SwissTable ctrl[]: 1 byte control byte per slot
-- SwissTable entries[]: AoS interleaved layout (slot i → entries[2*i] key, entries[2*i+1] value)
-- SwissTable hashes[]: slot i → 32-bit hash (for rehash/grow)
-- Table capacity: INITIAL=64, load factor 87.5%
+The current backend explicitly wires factories for:
+
+- `VALUE`
+- `LIST`
+- `MAP`
+- `REDUCING`
+- `AGGREGATING`
+
+If you are changing supported state types, start in `ForL0KeyedStateBackend` and `NativeEngine.registerState(...)`.
+
+### Native Bridge Behavior
+
+- The native library is loaded through `System.loadLibrary("forl0_engine")` first.
+- If that fails, `NativeEngine` falls back to extracting `/native/libforl0_engine.so` or `.dylib` from resources.
+- Engine and state objects are referenced as `long` native handles on the Java side.
+- Several operations have specialized JNI fast paths for primitive keys / values, plus generic byte-array fallbacks.
+
+### Checkpoint Model
+
+- The backend writes full keyed snapshots.
+- `ForL0SnapshotStrategy` freezes the native engine with `prepareSnapshot`, writes key-group payloads, then releases snapshot state.
+- Restore currently happens in `ForL0KeyedStateBackendBuilder.restoreFromHandles(...)`.
+- Canonical savepoints and ForL0 custom checkpoint payloads are handled separately in the builder.
+
+### Hot Cache
+
+The native engine exposes hot-cache manager and per-state metrics through JNI:
+
+- `getHotCacheManagerStats(...)`
+- `getHotCacheStats(...)`
+- `rebalanceHotCache(...)`
+
+If a bug smells like stale reads, invalidation, or uneven hit-rate behavior, inspect both the state wrapper and the native cache code.
+
+## Configuration Surface
+
+The main backend options are in `ForL0Options`:
+
+- `state.backend.forl0.async-snapshots`
+- `state.backend.forl0.l0-cache.enabled`
+- `state.backend.forl0.l0-cache.size`
+
+There are also table-capacity constants/options in `ForL0Options`, but the current implementation focus is the native engine and snapshot path rather than Java-managed table objects.
 
 ## Common Commands
 
-### Build Project
+### Build Java Code
+
 ```bash
 mvn clean compile
-mvn test                    # Run tests
-mvn package -DskipTests     # Package JAR
+mvn test
+mvn package -DskipTests
 ```
 
-### Build Native Library
+### Build And Install Native Library
+
 ```bash
 cd src/main/native
-make clean && make          # macOS: .dylib, Linux: .so
-make install                # Copy to resources/native/
+make clean
+make
+make install
 ```
 
-### Run Benchmarks
+`make install` copies `libforl0_engine.so` into `src/main/resources/native/` so Maven tests and packaged runs can load it.
+
+### Run Focused Tests
+
 ```bash
-cd benchmark/scripts
-python run_wordcount.py --backend all
-python run_wordcount.py --backend all --profile  # Collect flame graphs
-python generate_report.py
+mvn -Dtest=ForL0StateSemanticsTest test
+mvn -Dtest=HotCacheIntegrationTest test
 ```
 
-## Debugging Guide
+### Run Benchmark Scripts
 
-### Native Library Loading Issues
-- Check `java.library.path` setting
-- Verify `.dylib/.so` file exists
-- Look for `[ForL0]` prefix in logs
-
-### L0 Mode Detection
-```java
-NativeL0Memory.isL0Mode()           // Is L0 mode
-NativeL0Memory.getModeDescription() // Mode description
+```bash
+cd benchmark
+python scripts/run_wordcount.py --backend all
+python scripts/run_wordcount.py --backend all --profile
+python scripts/generate_report.py
 ```
 
-### IDEA Test Configuration
-- VM options: `-Djava.library.path=$ProjectFileDir$/src/main/resources/native`
+## Practical Debugging Guide
 
-## Important Documents
+### Native Library Loading
 
-| Path | Description |
-|------|-------------|
-| `ForL0-State-Backend设计说明书.md` | Detailed design document |
-| `dev_notes/` | Development notes and design decisions |
-| `reference/` | Reference implementation (Flink HeapStateBackend) |
-| `reference/l0_docs/` | L0 memory library API docs |
-| `benchmark/docs/` | Benchmark design documents |
+Check these first:
+
+- `src/main/resources/native/libforl0_engine.so` exists after `make install`
+- the process can see `java.library.path`, or the resource is packaged correctly
+- logs around `NativeEngine` show whether loadLibrary or resource extraction was used
+
+### Restore / Snapshot Problems
+
+Start from:
+
+- `ForL0KeyedStateBackendBuilder.restoreFromHandles(...)`
+- `ForL0SnapshotStrategy.syncPrepareResources(...)`
+- `NativeEngine.prepareSnapshot(...)`
+- `NativeEngine.writeKeyGroupData(...)`
+- `NativeEngine.releaseSnapshot(...)`
+
+### State Semantics Regressions
+
+Useful tests include:
+
+- `ForL0StateSemanticsTest`
+- `HotCacheIntegrationTest`
+- tests under `src/test/java/org/apache/flink/state/forl0/minicluster/`
+
+### Key Questions To Ask While Debugging
+
+- Is the bug in Java state semantics, JNI marshalling, or native storage?
+- Does it affect only specialized fast paths, or also generic byte-array fallback paths?
+- Does checkpoint restore reproduce the same behavior after restart?
+- Is priority queue state involved, or only KV state?
+- Is the cache returning stale data after a clear / update / restore path?
 
 ## Important Conventions
 
-### Thread Safety
-- Flink state access is **single-threaded**
-- Allocator implementations don't need concurrency support
-- Avoid synchronization primitives on hot paths
+### Threading Model
 
-### Error Handling
-- Native library load failure → throw exception, L0 Cache unavailable
-- Memory allocation failure → throw `L0MemoryAllocationException`
-- No fallback to heap memory option
+- Flink keyed-state access is expected to be task-thread confined.
+- The native engine is designed around that model; do not add synchronization to hot paths without necessity.
 
-### Compatibility
-- Maintain full compatibility with Flink StateBackend API
-- User code works without modification
-- Support Flink Checkpoint/Savepoint mechanism
+### Compatibility Expectations
+
+- Keep compatibility with Flink `StateBackend` and keyed-state semantics.
+- Serializer compatibility checks are enforced during restore.
+- Changes to binary snapshot layout require extreme care and matching restore updates.
+
+### Change Strategy
+
+When modifying behavior, prefer these anchors:
+
+1. State semantics bug: start in the corresponding `ForL0*State` wrapper and its `NativeEngine` call.
+2. Restore or savepoint bug: start in `ForL0KeyedStateBackendBuilder` and `ForL0SnapshotStrategy`.
+3. Native correctness or performance bug: start in `src/main/native/engine/` and the matching JNI file.
+4. Configuration or backend bootstrap bug: start in `ForL0StateBackend`, `ForL0StateBackendFactory`, or the builder.
 
 ## Boundaries
 
-This agent does NOT handle:
-- General Java development unrelated to Flink state backend
-- Hardware optimization for non-Kunpeng platforms
-- Modifications to Flink core framework (only implements StateBackend API)
+This agent is for the current ForL0 backend implementation. It is not the right fit for:
+
+- unrelated general Java development
+- changes to Flink core internals outside the backend integration points
+- UI or frontend work
+- non-Flink native systems unrelated to the ForL0 engine

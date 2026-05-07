@@ -37,14 +37,25 @@ message(STATUS "ForL0 engine: arch=${FORL0_ARCH}, system=${CMAKE_SYSTEM_NAME}")
 # --------------------------------------------------------------------------
 # Compiler flags
 # --------------------------------------------------------------------------
+# Sanitizers are opt-in: enabling them makes the dylib unloadable by the JVM on
+# macOS (Sanitizer load violates platform policy). Use
+#   cmake -DFORL0_ENABLE_SANITIZERS=ON ..
+# when you specifically want ASan/UBSan for running the C++ test binary.
+option(FORL0_ENABLE_SANITIZERS "Enable AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "")
-    add_compile_options(-O0 -g -fsanitize=address,undefined)
-    add_link_options(-fsanitize=address,undefined)
+    add_compile_options(-O0 -g)
 else()
     add_compile_options(-O3 -DNDEBUG)
     if(NOT APPLE)
         add_compile_options(-march=native)
     endif()
+endif()
+
+if(FORL0_ENABLE_SANITIZERS)
+    message(STATUS "ForL0 engine: sanitizers ENABLED (asan,undefined)")
+    add_compile_options(-fsanitize=address,undefined)
+    add_link_options(-fsanitize=address,undefined)
 endif()
 
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
@@ -53,6 +64,7 @@ add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 # Source files
 # --------------------------------------------------------------------------
 set(FORL0_SOURCES
+    engine/hot_cache.cpp
     jni/forl0_jni.cpp
     jni/jni_value_state.cpp
     jni/jni_list_state.cpp
@@ -102,12 +114,16 @@ option(FORL0_BUILD_TESTS "Build C++ unit tests" ON)
 
 if(FORL0_BUILD_TESTS)
     set(FORL0_TEST_SOURCES
+        engine/hot_cache.cpp
         test/swiss_table_test.cpp
         test/state_table_cow_test.cpp
         test/checkpoint_round_trip_test.cpp
         test/type_layout_parser_test.cpp
         test/time_window_namespace_test.cpp
         test/typed_inner_map_test.cpp
+        test/hot_cache_test.cpp
+        test/hot_cache_manager_test.cpp
+        test/hot_cache_phase_b_test.cpp
         test/test_main.cpp
     )
 
@@ -122,8 +138,18 @@ if(FORL0_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/test
     )
 
-    # Try system GTest first, fall back to mini_gtest
-    find_package(GTest QUIET)
+    # Try system GTest first, fall back to mini_gtest.
+    # On macOS Homebrew's gtest can lack BUILD_RPATH info, breaking
+    # gtest_discover_tests — force the fallback there unless users override.
+    option(FORL0_FORCE_MINI_GTEST "Force mini_gtest fallback even if system GTest exists" OFF)
+    if(APPLE)
+        set(FORL0_FORCE_MINI_GTEST ON)
+    endif()
+    if(FORL0_FORCE_MINI_GTEST)
+        set(GTest_FOUND FALSE)
+    else()
+        find_package(GTest QUIET)
+    endif()
     if(GTest_FOUND)
         message(STATUS "Using system Google Test")
         target_link_libraries(forl0_tests PRIVATE GTest::gtest)

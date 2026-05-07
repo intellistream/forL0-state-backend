@@ -1,15 +1,24 @@
 // Memory allocator interface for SwissTable and StateEngine.
-// Default implementation uses aligned malloc. L0 Cache allocator can be
-// substituted via the Allocator interface.
+// The default implementation uses aligned malloc. L0 memory is NOT used here;
+// it is instead managed by HotCacheManager (see engine/hot_cache.h) as an
+// explicit hot-key cache above StateTable.
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <new>
 
 namespace forl0 {
+
+// Result of a split allocation — ctrl and slots may reside in different memory regions.
+struct SplitResult {
+    void* ctrl_ptr;    // ctrl array memory (may be L0 or heap)
+    void* slots_ptr;   // slots array memory (always heap for large tables)
+    bool is_split;     // true = ctrl and slots are separate allocations
+};
 
 // Abstract allocator interface — allows substitution of L0 Cache allocator.
 class Allocator {
@@ -21,6 +30,33 @@ public:
 
     // Deallocate a previously allocated block.
     virtual void deallocate(void* ptr, size_t size) = 0;
+
+    // Split allocation: allocate ctrl and slots separately. Default is a single
+    // contiguous allocation (ctrl followed by slots). The previous L0Allocator
+    // override has been removed — L0 is now a hot-key cache above StateTable,
+    // not a memory backend for SwissTable internals.
+    virtual SplitResult allocate_split(size_t ctrl_size, size_t ctrl_align,
+                                       size_t slots_size, size_t slots_align) {
+        // Default: pack into one allocation (original behavior).
+        size_t ctrl_padded = (ctrl_size + slots_align - 1) & ~(slots_align - 1);
+        size_t total = ctrl_padded + slots_size;
+        size_t align = std::max(ctrl_align, slots_align);
+        void* p = allocate(total, align);
+        return SplitResult{p, static_cast<char*>(p) + ctrl_padded, false};
+    }
+
+    // Deallocate a split allocation.
+    virtual void deallocate_split(const SplitResult& sr,
+                                  size_t ctrl_size, size_t slots_size) {
+        if (sr.is_split) {
+            // Should not happen with default allocator — defensive fallback.
+            deallocate(sr.ctrl_ptr, ctrl_size);
+            deallocate(sr.slots_ptr, slots_size);
+        } else {
+            // Single allocation: ctrl_ptr is the base.
+            deallocate(sr.ctrl_ptr, ctrl_size + slots_size);
+        }
+    }
 };
 
 // Default allocator using posix_memalign / aligned_alloc.

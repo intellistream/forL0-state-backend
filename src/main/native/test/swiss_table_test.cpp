@@ -348,3 +348,369 @@ TEST(SwissTableTest, StressMixedOps) {
 
     ASSERT_TRUE(table.empty());
 }
+
+// ============================================================================
+//  Split Allocation Tests
+// ============================================================================
+
+// A test allocator that forces split allocation for tables whose total size
+// exceeds a configurable threshold. Tracks all allocations to verify no leaks.
+class ForceSplitAllocator : public Allocator {
+public:
+    // split_threshold: total allocation size above which split is forced.
+    explicit ForceSplitAllocator(size_t split_threshold = 1024)
+        : split_threshold_(split_threshold),
+          alloc_count_(0), dealloc_count_(0),
+          split_alloc_count_(0), split_dealloc_count_(0),
+          total_allocated_(0) {}
+
+    ~ForceSplitAllocator() override = default;
+
+    void* allocate(size_t size, size_t alignment) override {
+        void* ptr = nullptr;
+        if (posix_memalign(&ptr, alignment, size) != 0) {
+            throw std::bad_alloc();
+        }
+        alloc_count_++;
+        total_allocated_ += size;
+        return ptr;
+    }
+
+    void deallocate(void* ptr, size_t size) override {
+        free(ptr);
+        dealloc_count_++;
+        total_allocated_ -= size;
+    }
+
+    SplitResult allocate_split(size_t ctrl_size, size_t ctrl_align,
+                               size_t slots_size, size_t slots_align) override {
+        size_t sa = std::max(ctrl_align, slots_align);
+        size_t ctrl_padded = (ctrl_size + sa - 1) & ~(sa - 1);
+        size_t total = ctrl_padded + slots_size;
+
+        if (total > split_threshold_) {
+            // Force split: allocate ctrl and slots separately
+            void* ctrl_ptr = nullptr;
+            if (posix_memalign(&ctrl_ptr, ctrl_align, ctrl_size) != 0) {
+                throw std::bad_alloc();
+            }
+            void* slots_ptr = nullptr;
+            if (posix_memalign(&slots_ptr, slots_align, slots_size) != 0) {
+                free(ctrl_ptr);
+                throw std::bad_alloc();
+            }
+            std::memset(slots_ptr, 0, slots_size);
+            alloc_count_ += 2;
+            total_allocated_ += ctrl_size + slots_size;
+            split_alloc_count_++;
+            return SplitResult{ctrl_ptr, slots_ptr, true};
+        }
+
+        // Small table: unified allocation
+        void* p = nullptr;
+        if (posix_memalign(&p, sa, total) != 0) {
+            throw std::bad_alloc();
+        }
+        alloc_count_++;
+        total_allocated_ += total;
+        return SplitResult{p, static_cast<char*>(p) + ctrl_padded, false};
+    }
+
+    void deallocate_split(const SplitResult& sr,
+                          size_t ctrl_size, size_t slots_size) override {
+        if (sr.is_split) {
+            free(sr.ctrl_ptr);
+            free(sr.slots_ptr);
+            dealloc_count_ += 2;
+            total_allocated_ -= (ctrl_size + slots_size);
+            split_dealloc_count_++;
+        } else {
+            free(sr.ctrl_ptr);
+            dealloc_count_++;
+            total_allocated_ -= (ctrl_size + slots_size);
+        }
+    }
+
+    size_t alloc_count() const { return alloc_count_; }
+    size_t dealloc_count() const { return dealloc_count_; }
+    size_t split_alloc_count() const { return split_alloc_count_; }
+    size_t split_dealloc_count() const { return split_dealloc_count_; }
+    size_t outstanding() const { return alloc_count_ - dealloc_count_; }
+    int64_t total_allocated() const { return total_allocated_; }
+
+private:
+    size_t split_threshold_;
+    size_t alloc_count_;
+    size_t dealloc_count_;
+    size_t split_alloc_count_;
+    size_t split_dealloc_count_;
+    int64_t total_allocated_;
+};
+
+TEST(SwissTableSplitTest, BasicInsertFindWithSplit) {
+    // Threshold 512B — even the initial 16-slot table (~288B ctrl+slots) may
+    // not trigger split, but growth to 32+ slots will.
+    ForceSplitAllocator alloc(512);
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+
+    // Insert enough to trigger growth past the split threshold
+    for (int i = 0; i < 100; ++i) {
+        table.insert_or_assign(i, static_cast<int64_t>(i) * 10);
+    }
+
+    // Verify all values accessible
+    for (int i = 0; i < 100; ++i) {
+        int64_t* v = table.find(i);
+        ASSERT_NE(v, nullptr);
+        ASSERT_EQ(*v, static_cast<int64_t>(i) * 10);
+    }
+
+    // At least one split allocation should have occurred during growth
+    ASSERT_GT(alloc.split_alloc_count(), 0u);
+}
+
+TEST(SwissTableSplitTest, EraseWithSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+
+    for (int i = 0; i < 50; ++i) {
+        table.insert_or_assign(i, i * 100);
+    }
+
+    // Erase half
+    for (int i = 0; i < 25; ++i) {
+        ASSERT_TRUE(table.erase(i));
+    }
+    ASSERT_EQ(table.size(), 25u);
+
+    // Remaining entries intact
+    for (int i = 25; i < 50; ++i) {
+        ASSERT_NE(table.find(i), nullptr);
+        ASSERT_EQ(*table.find(i), i * 100);
+    }
+    // Erased entries not found
+    for (int i = 0; i < 25; ++i) {
+        ASSERT_EQ(table.find(i), nullptr);
+    }
+}
+
+TEST(SwissTableSplitTest, ClearWithSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+
+    for (int i = 0; i < 100; ++i) {
+        table.insert_or_assign(i, i);
+    }
+    ASSERT_GT(alloc.split_alloc_count(), 0u);
+
+    table.clear();
+    ASSERT_EQ(table.size(), 0u);
+
+    // Re-insert after clear
+    for (int i = 0; i < 50; ++i) {
+        table.insert_or_assign(i, i * 2);
+    }
+    for (int i = 0; i < 50; ++i) {
+        ASSERT_EQ(*table.find(i), i * 2);
+    }
+}
+
+TEST(SwissTableSplitTest, GrowthTransitionUnifiedToSplit) {
+    // Start with a high threshold so initial table is unified,
+    // then lower-equivalent: use threshold that the initial 16-slot table fits
+    // but 256+ slot table does not.
+    ForceSplitAllocator alloc(2048);  // 16-slot: ~288B unified; 256-slot: ~4.3KB split
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+
+    ASSERT_EQ(alloc.split_alloc_count(), 0u);  // Initial table should be unified
+
+    // Insert enough to grow past 128 slots (threshold ~2KB)
+    for (int i = 0; i < 200; ++i) {
+        table.insert_or_assign(i, i);
+    }
+
+    // Should have transitioned to split during growth
+    ASSERT_GT(alloc.split_alloc_count(), 0u);
+
+    // All data intact after transition
+    for (int i = 0; i < 200; ++i) {
+        ASSERT_EQ(*table.find(i), i);
+    }
+}
+
+TEST(SwissTableSplitTest, RehashWithTombstonesInSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+
+    // Fill, delete, refill to create tombstones and trigger rehash
+    for (int round = 0; round < 5; ++round) {
+        for (int i = 0; i < 30; ++i) {
+            table.insert_or_assign(i, round * 100 + i);
+        }
+        for (int i = 0; i < 30; ++i) {
+            table.erase(i);
+        }
+    }
+
+    ASSERT_TRUE(table.empty());
+
+    // Insert again — should work after tombstone reclamation
+    for (int i = 0; i < 30; ++i) {
+        table.insert_or_assign(i, i * 10);
+    }
+    for (int i = 0; i < 30; ++i) {
+        ASSERT_EQ(*table.find(i), i * 10);
+    }
+}
+
+TEST(SwissTableSplitTest, MoveConstructionWithSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, int64_t> table1(16, &alloc);
+
+    for (int i = 0; i < 100; ++i) {
+        table1.insert_or_assign(i, i * 10);
+    }
+    ASSERT_GT(alloc.split_alloc_count(), 0u);
+
+    size_t allocs_before = alloc.alloc_count();
+    SwissTable<int64_t, int64_t> table2(std::move(table1));
+
+    // No new allocations from move
+    ASSERT_EQ(alloc.alloc_count(), allocs_before);
+
+    // table1 is empty
+    ASSERT_EQ(table1.size(), 0u);
+    ASSERT_EQ(table1.capacity(), 0u);
+
+    // table2 has all data
+    ASSERT_EQ(table2.size(), 100u);
+    for (int i = 0; i < 100; ++i) {
+        ASSERT_EQ(*table2.find(i), i * 10);
+    }
+}
+
+TEST(SwissTableSplitTest, MoveAssignmentWithSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, int64_t> table1(16, &alloc);
+    SwissTable<int64_t, int64_t> table2(16, &alloc);
+
+    for (int i = 0; i < 100; ++i) {
+        table1.insert_or_assign(i, i);
+    }
+    table2.insert_or_assign(999, 999);
+
+    table2 = std::move(table1);
+
+    ASSERT_EQ(table2.size(), 100u);
+    ASSERT_EQ(*table2.find(0), 0);
+    ASSERT_EQ(*table2.find(99), 99);
+    ASSERT_EQ(table2.find(999), nullptr);
+}
+
+TEST(SwissTableSplitTest, StringValuesWithSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, std::string> table(16, &alloc);
+
+    for (int i = 0; i < 50; ++i) {
+        table.insert_or_assign(static_cast<int64_t>(i),
+            std::string("value_") + std::to_string(i));
+    }
+
+    for (int i = 0; i < 50; ++i) {
+        auto* v = table.find(static_cast<int64_t>(i));
+        ASSERT_NE(v, nullptr);
+        ASSERT_EQ(*v, std::string("value_") + std::to_string(i));
+    }
+
+    // Erase and verify cleanup
+    for (int i = 0; i < 25; ++i) {
+        table.erase(static_cast<int64_t>(i));
+    }
+    ASSERT_EQ(table.size(), 25u);
+}
+
+TEST(SwissTableSplitTest, IterationWithSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+
+    for (int i = 0; i < 100; ++i) {
+        table.insert_or_assign(i, i * 10);
+    }
+
+    std::set<int64_t> keys;
+    table.for_each([&keys](const int64_t& k, int64_t& v) {
+        keys.insert(k);
+        ASSERT_EQ(v, k * 10);
+    });
+    ASSERT_EQ(keys.size(), 100u);
+}
+
+TEST(SwissTableSplitTest, NoMemoryLeaks) {
+    ForceSplitAllocator alloc(256);
+    {
+        SwissTable<int64_t, int64_t> table(16, &alloc);
+        for (int i = 0; i < 500; ++i) {
+            table.insert_or_assign(i, i);
+        }
+        // Multiple growth cycles with split allocations
+        ASSERT_GT(alloc.split_alloc_count(), 0u);
+    }
+    // After destruction, all allocations should be freed
+    ASSERT_EQ(alloc.outstanding(), 0u);
+    ASSERT_EQ(alloc.total_allocated(), 0);
+    ASSERT_EQ(alloc.split_alloc_count(), alloc.split_dealloc_count());
+}
+
+TEST(SwissTableSplitTest, StressSplitManyEntries) {
+    ForceSplitAllocator alloc(512);
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+    const int N = 10000;
+
+    for (int i = 0; i < N; ++i) {
+        table.insert_or_assign(i, static_cast<int64_t>(i) * 1000);
+    }
+    ASSERT_EQ(table.size(), static_cast<size_t>(N));
+
+    // Verify all entries
+    for (int i = 0; i < N; ++i) {
+        int64_t* v = table.find(i);
+        ASSERT_NE(v, nullptr);
+        ASSERT_EQ(*v, static_cast<int64_t>(i) * 1000);
+    }
+
+    // Delete half, then re-insert
+    for (int i = 0; i < N / 2; ++i) {
+        table.erase(i);
+    }
+    ASSERT_EQ(table.size(), static_cast<size_t>(N / 2));
+
+    for (int i = 0; i < N / 2; ++i) {
+        table.insert_or_assign(i, static_cast<int64_t>(i) * 2000);
+    }
+    ASSERT_EQ(table.size(), static_cast<size_t>(N));
+
+    for (int i = 0; i < N / 2; ++i) {
+        ASSERT_EQ(*table.find(i), static_cast<int64_t>(i) * 2000);
+    }
+    for (int i = N / 2; i < N; ++i) {
+        ASSERT_EQ(*table.find(i), static_cast<int64_t>(i) * 1000);
+    }
+}
+
+TEST(SwissTableSplitTest, EmplaceWithSplit) {
+    ForceSplitAllocator alloc(256);
+    SwissTable<int64_t, int64_t> table(16, &alloc);
+
+    for (int i = 0; i < 100; ++i) {
+        auto [ptr, ins] = table.emplace(i, i * 10);
+        ASSERT_TRUE(ins);
+        ASSERT_EQ(*ptr, i * 10);
+    }
+
+    // Emplace existing keys — should not overwrite
+    for (int i = 0; i < 100; ++i) {
+        auto [ptr, ins] = table.emplace(i, 999);
+        ASSERT_FALSE(ins);
+        ASSERT_EQ(*ptr, i * 10);
+    }
+}

@@ -83,6 +83,11 @@ def get_wordcount_jar():
     shaded = find_jar("wordcount-benchmark-*-SNAPSHOT.jar", wordcount_dir)
     if shaded and "original" not in shaded:
         return shaded
+    # Fallback: look in docker/deploy/ (pre-built JAR for air-gapped servers)
+    deploy_dir = get_benchmark_root() / "docker" / "deploy"
+    jar = find_jar("wordcount-benchmark-*.jar", deploy_dir)
+    if jar and "original" not in jar:
+        return jar
     return None
 
 

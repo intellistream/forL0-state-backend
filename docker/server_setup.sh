@@ -65,6 +65,23 @@ else
     L0_AVAILABLE=false
 fi
 
+NUMA_OK=false
+for numa_candidate in \
+    /lib/aarch64-linux-gnu/libnuma.so.1 \
+    /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
+    /lib64/libnuma.so.1 \
+    /usr/lib64/libnuma.so.1; do
+    if [[ -f "$numa_candidate" ]]; then
+        echo "      ✓ libnuma.so.1 存在 (${numa_candidate})"
+        NUMA_OK=true
+        break
+    fi
+done
+if [[ "$NUMA_OK" == "false" ]]; then
+    echo "      ✗ libnuma.so.1 不存在 (libl0mempool.so 的依赖将导致 dlopen 失败)"
+    L0_AVAILABLE=false
+fi
+
 if [[ -e /dev/hisi_l0 ]]; then
     echo "      ✓ /dev/hisi_l0 设备存在"
 else
@@ -138,7 +155,7 @@ fi
 echo ""
 echo "[4/5] 安装 ForL0 JAR..."
 FLINK_DIR="${FLINK_HOME:-/home/user/flink}"
-JAR_NAME="flink-statebackend-forl0-1.0-SNAPSHOT.jar"
+JAR_NAME="flink-statebackend-forL0-1.0-SNAPSHOT.jar"
 DEPLOY_JAR="${REPO_ROOT}/docker/deploy/${JAR_NAME}"
 TARGET_JAR="${REPO_ROOT}/target/${JAR_NAME}"
 
@@ -149,6 +166,10 @@ if [[ ! -d "$FLINK_DIR" ]]; then
 fi
 
 # 优先使用 deploy/ 下的预编译 JAR，其次使用 target/ 下的
+# 清理历史大小写不一致的旧包，避免 Flink lib/ 中同时存在多份 backend 实现。
+rm -f "${FLINK_DIR}/lib/flink-statebackend-forl0-"*.jar
+rm -f "${FLINK_DIR}/lib/flink-statebackend-forL0-"*.jar
+
 if [[ -f "$DEPLOY_JAR" ]]; then
     cp "$DEPLOY_JAR" "${FLINK_DIR}/lib/"
     echo "      ✓ JAR (deploy/) 已复制到 ${FLINK_DIR}/lib/"

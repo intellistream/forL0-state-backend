@@ -35,7 +35,6 @@ public class ListAppendDebugTest {
                 true,
                 false,  // l0CacheEnabled
                 0L,     // l0CacheSize
-                0L,     // l0CacheMaxPerAlloc
                 new org.apache.flink.core.fs.CloseableRegistry());
         
         ForL0KeyedStateBackend<Long> backend = builder.build();

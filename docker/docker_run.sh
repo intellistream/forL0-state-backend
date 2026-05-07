@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ################################################################################
-#  用纯 docker run 启动 ForL0 Flink 集群（不依赖 docker-compose）
+#  用纯 docker run 启动 BriskState Flink 集群（不依赖 docker-compose）
 #
 #  启动: ./docker_run.sh start
 #  停止: ./docker_run.sh stop
@@ -20,11 +20,32 @@ IMAGE="eclipse-temurin:8-jre"
 
 # L0 挂载参数 (仅当硬件存在时)
 L0_OPTS=()
+NUMA_HOST_PATH="${NUMA_LIB_HOST_PATH:-}"
+NUMA_CONTAINER_PATH="${NUMA_LIB_CONTAINER_PATH:-}"
+
+if [[ -z "$NUMA_HOST_PATH" ]]; then
+    for candidate in \
+        /lib/aarch64-linux-gnu/libnuma.so.1 \
+        /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
+        /lib64/libnuma.so.1 \
+        /usr/lib64/libnuma.so.1; do
+        if [[ -f "$candidate" ]]; then
+            NUMA_HOST_PATH="$candidate"
+            NUMA_CONTAINER_PATH="$candidate"
+            break
+        fi
+    done
+fi
+
 if [[ -e /dev/hisi_l0 ]]; then
     L0_OPTS+=(--device /dev/hisi_l0:/dev/hisi_l0)
 fi
 if [[ -f /usr/lib64/libl0mempool.so ]]; then
+    L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib/libl0mempool.so:ro)
     L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro)
+fi
+if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
+    L0_OPTS+=(-v "${NUMA_HOST_PATH}:${NUMA_CONTAINER_PATH}:ro")
 fi
 
 # 容器名
@@ -43,9 +64,14 @@ usage() {
 }
 
 do_start() {
-    echo "=== 启动 ForL0 Flink Docker 集群 ==="
+    echo "=== 启动 BriskState Flink Docker 集群 ==="
     echo "  FLINK_HOME: ${FLINK_DIR}"
     echo "  NATIVE:     ${NATIVE_DIR}"
+    if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
+        echo "  libnuma:    ${NUMA_HOST_PATH} -> ${NUMA_CONTAINER_PATH}"
+    else
+        echo "  libnuma:    未检测到；可选原生依赖可能不可用"
+    fi
     echo ""
 
     # 检查
@@ -57,6 +83,11 @@ do_start() {
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         echo "✗ Docker 镜像 ${IMAGE} 不存在，请先: docker load -i images/eclipse-temurin-8-jre.tar"
         exit 1
+    fi
+    if [[ -z "$NUMA_HOST_PATH" ]]; then
+        echo "⚠ 未找到 libnuma.so.1，继续启动，但部分可选原生依赖可能无法加载"
+        echo "  如主机路径非常规，请设置: export NUMA_LIB_HOST_PATH=/path/to/libnuma.so.1"
+        echo "                        export NUMA_LIB_CONTAINER_PATH=/lib/aarch64-linux-gnu/libnuma.so.1"
     fi
 
     # 创建网络
@@ -100,8 +131,8 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        --cpus 4 \
-        --memory 16g \
+        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
+        --memory 32g \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
 
@@ -121,8 +152,8 @@ do_start() {
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
-        --cpus 4 \
-        --memory 16g \
+        -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
+        --memory 32g \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
 
@@ -136,7 +167,7 @@ do_start() {
             echo "=== 集群启动成功! ==="
             echo "  Web UI: http://localhost:8081"
             echo ""
-            echo "  查看 L0 日志: $0 logs tm1 | grep -i L0"
+            echo "  查看 TaskManager 日志: $0 logs tm1"
             echo "  提交作业:     ${FLINK_DIR}/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
             return 0
         fi
@@ -149,7 +180,7 @@ do_start() {
 }
 
 do_stop() {
-    echo "=== 停止 ForL0 Flink Docker 集群 ==="
+    echo "=== 停止 BriskState Flink Docker 集群 ==="
     docker rm -f "$TM2" "$TM1" "$JM" 2>/dev/null || true
     docker network rm "$NETWORK" 2>/dev/null || true
     echo "已停止"

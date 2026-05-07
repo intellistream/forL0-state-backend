@@ -1,7 +1,11 @@
 // SwissTable implementation aligned with abseil-cpp's raw_hash_set.
 //
-// Memory layout (single contiguous allocation):
-//   [ctrl bytes (capacity) | sentinel (1) | cloned ctrl (kGroupWidth-1) | padding | slots (capacity)]
+// Memory layout:
+//   Unified mode (small tables):
+//     [ctrl bytes (capacity+kGroupWidth) | padding | slots (capacity)]  — single allocation
+//   Split mode (large tables with L0 allocator):
+//     ctrl: [ctrl bytes (capacity+kGroupWidth)]  — in L0 memory
+//     slots: [slots (capacity)]                  — on heap
 //
 // Key design decisions matching abseil:
 //   - Triangular probing: probe(i) offset = i*(i+1)/2
@@ -77,7 +81,7 @@ public:
     explicit SwissTable(size_t initial_capacity = 16,
                         Allocator* alloc = &DefaultAllocator::instance())
         : alloc_(alloc), size_(0), capacity_(0), growth_left_(0),
-          ctrl_(nullptr), slots_(nullptr), alloc_ptr_(nullptr) {
+          ctrl_(nullptr), slots_(nullptr), split_{nullptr, nullptr, false} {
         // Ensure power of 2 and >= kGroupWidth
         size_t cap = kGroupWidth;
         while (cap < initial_capacity) cap <<= 1;
@@ -93,13 +97,13 @@ public:
     SwissTable(SwissTable&& other) noexcept
         : alloc_(other.alloc_), size_(other.size_), capacity_(other.capacity_),
           growth_left_(other.growth_left_), ctrl_(other.ctrl_),
-          slots_(other.slots_), alloc_ptr_(other.alloc_ptr_) {
+          slots_(other.slots_), split_(other.split_) {
         other.size_ = 0;
         other.capacity_ = 0;
         other.growth_left_ = 0;
         other.ctrl_ = nullptr;
         other.slots_ = nullptr;
-        other.alloc_ptr_ = nullptr;
+        other.split_ = {nullptr, nullptr, false};
     }
 
     SwissTable& operator=(SwissTable&& other) noexcept {
@@ -112,12 +116,12 @@ public:
             growth_left_ = other.growth_left_;
             ctrl_ = other.ctrl_;
             slots_ = other.slots_;
-            alloc_ptr_ = other.alloc_ptr_;
+            split_ = other.split_;
             other.size_ = 0;
             other.capacity_ = 0;
             other.ctrl_ = nullptr;
             other.slots_ = nullptr;
-            other.alloc_ptr_ = nullptr;
+            other.split_ = {nullptr, nullptr, false};
         }
         return *this;
     }
@@ -371,7 +375,7 @@ private:
     void rehash(size_t new_capacity) {
         int8_t* old_ctrl = ctrl_;
         slot_type* old_slots = slots_;
-        void* old_alloc = alloc_ptr_;
+        SplitResult old_split = split_;
         size_t old_capacity = capacity_;
 
         allocate_and_init(new_capacity);
@@ -395,8 +399,9 @@ private:
         }
 
         // Free old allocation
-        if (old_alloc) {
-            alloc_->deallocate(old_alloc, alloc_size<slot_type>(old_capacity));
+        if (old_split.ctrl_ptr) {
+            alloc_->deallocate_split(old_split,
+                ctrl_bytes(old_capacity), old_capacity * sizeof(slot_type));
         }
     }
 
@@ -404,18 +409,24 @@ private:
         capacity_ = cap;
         growth_left_ = growth_budget(cap);
 
-        size_t total = alloc_size<slot_type>(cap);
-        size_t alignment = slot_align<slot_type>();
-        if (alignment < 64) alignment = 64;  // Cache-line aligned
+        size_t cb = ctrl_bytes(cap);
+        size_t sa = slot_align<slot_type>();
+        if (sa < 64) sa = 64;  // Cache-line aligned
+        size_t slots_bytes = cap * sizeof(slot_type);
 
-        alloc_ptr_ = alloc_->allocate(total, alignment);
-        std::memset(alloc_ptr_, 0, total);
+        split_ = alloc_->allocate_split(cb, 64, slots_bytes, sa);
 
-        ctrl_ = reinterpret_cast<int8_t*>(alloc_ptr_);
+        ctrl_ = reinterpret_cast<int8_t*>(split_.ctrl_ptr);
+        std::memset(ctrl_, 0, cb);
         init_ctrl(ctrl_, cap);
 
-        slots_ = reinterpret_cast<slot_type*>(
-            static_cast<char*>(alloc_ptr_) + slot_offset<slot_type>(cap));
+        slots_ = reinterpret_cast<slot_type*>(split_.slots_ptr);
+        if (!split_.is_split) {
+            // Unified allocation — slots memory is already zeroed by the gap
+            // between ctrl and slots (padding), but zero the slots portion.
+            std::memset(slots_, 0, slots_bytes);
+        }
+        // Split allocation: slots already zeroed in allocate_split.
     }
 
     void destroy_all_slots() {
@@ -430,9 +441,10 @@ private:
     }
 
     void free_backing() {
-        if (alloc_ptr_) {
-            alloc_->deallocate(alloc_ptr_, alloc_size<slot_type>(capacity_));
-            alloc_ptr_ = nullptr;
+        if (split_.ctrl_ptr) {
+            alloc_->deallocate_split(split_,
+                ctrl_bytes(capacity_), capacity_ * sizeof(slot_type));
+            split_ = {nullptr, nullptr, false};
             ctrl_ = nullptr;
             slots_ = nullptr;
         }
@@ -445,7 +457,7 @@ private:
     size_t growth_left_;
     int8_t* ctrl_;
     slot_type* slots_;
-    void* alloc_ptr_;   // raw allocation pointer (for deallocation)
+    SplitResult split_;   // tracks allocation for deallocation
     Hash hash_;
     KeyEqual eq_;
 };

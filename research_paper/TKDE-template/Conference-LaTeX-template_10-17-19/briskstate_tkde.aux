@@ -1,0 +1,97 @@
+\relax 
+\citation{carbone2015flink,carbone2017statemanagement}
+\citation{rocksdb}
+\citation{akidau2013millwheel,murray2013naiad,carbone2015flink,akidau2015dataflow,armbrust2018structured}
+\citation{carbone2017statemanagement,hoffman2019megaphone}
+\citation{chandramouli2018faster,abseil2018swisstable}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {II}Background and Motivation}{1}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces High-level organization of BriskState\xspace  . The backend is integrated with Flink keyed state APIs, while the internal path is organized around compact state storage, CoW snapshotting, and optional native acceleration.}}{2}{}\protected@file@percent }
+\newlabel{fig:overview}{{1}{2}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}System Overview}{2}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Major BriskState\xspace  components and responsibilities.}}{2}{}\protected@file@percent }
+\newlabel{tab:components}{{I}{2}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}State Organization and Access Path}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Key-Group and Namespace Partitioning}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Swiss-Table-Inspired Layout}{3}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Logical-to-physical organization of one BriskState\xspace  sub-table. Routing first narrows the access to a key-group and namespace-specific table; probing then operates over compact control bytes before the key/value payload is touched.}}{3}{}\protected@file@percent }
+\newlabel{fig:layout}{{2}{3}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Specialized Primitive-Key Tables}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}State API Implementations}{3}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces State abstractions and representative fast paths in BriskState\xspace  .}}{4}{}\protected@file@percent }
+\newlabel{tab:statefast}{{II}{4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-E}}State-Specific Fast Paths}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Snapshotting and Recovery}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}CoW Snapshot Capture}{4}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Checkpoint path in BriskState\xspace  . Synchronous capture creates immutable CoW views with minimal blocking, while asynchronous serialization drains those views in batches. The first post-checkpoint mutation may trigger a lazy clone.}}{4}{}\protected@file@percent }
+\newlabel{fig:snapshot}{{3}{4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Asynchronous Serialization}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}Restore Path and Compatibility}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Implementation Details}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Backend Construction and Key Context}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Native Execution Path}{5}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Operational constraints that influence BriskState\xspace  deployment.}}{5}{}\protected@file@percent }
+\newlabel{tab:ops}{{III}{5}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-C}}Operational Characteristics}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-D}}Compatibility and Deployment Constraints}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Experimental Methodology}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-A}}Platforms and Baselines}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-B}}Workloads}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-C}}Metrics}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VIII}Experimental Results}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-A}}Correctness and Compatibility}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-B}}WordCount Grid Sweep}{6}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Experimental setup summary from repository documentation and delivery artifacts.}}{7}{}\protected@file@percent }
+\newlabel{tab:setup}{{IV}{7}}
+\@writefile{lot}{\contentsline {table}{\numberline {V}{\ignorespaces Top-level correctness evidence from repository test artifacts.}}{7}{}\protected@file@percent }
+\newlabel{tab:tests}{{V}{7}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-C}}Operator-Level State Benchmark}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-D}}End-to-End NexMark Results}{7}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {VI}{\ignorespaces Representative semantic and compatibility checks covered by repository tests.}}{8}{}\protected@file@percent }
+\newlabel{tab:semantics}{{VI}{8}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Intel WordCount grid-sweep speedup of BriskState\xspace  over the heap backend across key-cardinality and skew configurations. All 36 scanned points favor BriskState\xspace  , with a 1.270$\times $ average and 1.414$\times $ peak speedup.}}{9}{}\protected@file@percent }
+\newlabel{fig:wc-speedup}{{4}{9}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-E}}Microarchitectural Analysis}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-F}}Cross-Platform Synthesis}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IX}Discussion}{9}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces Representative Intel WordCount grid-sweep points from the 36-point scan. Throughput is reported in M records/s.}}{10}{}\protected@file@percent }
+\newlabel{tab:wordcount-points}{{VII}{10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Absolute Intel WordCount throughput surfaces. Left: heap baseline. Right: BriskState\xspace  . The gain is broadly distributed across the scanned key-cardinality/skew grid rather than concentrated in a small number of pathological points.}}{10}{}\protected@file@percent }
+\newlabel{fig:wc-absolute}{{5}{10}}
+\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces Expanded Intel WordCount sample from the grid sweep. Throughput is reported in M records/s.}}{11}{}\protected@file@percent }
+\newlabel{tab:wordcount-detail}{{VIII}{11}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Operator-level Intel Flink state benchmark. BriskState\xspace  improves the dominant update, lookup, iteration, and removal paths across retained ValueState, ListState, and MapState operations.}}{11}{}\protected@file@percent }
+\newlabel{fig:microbench-tkde}{{6}{11}}
+\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces Representative operator-level gains from the Intel state benchmark.}}{11}{}\protected@file@percent }
+\newlabel{tab:jmh-summary}{{IX}{11}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-A}}Checkpoint Format and Migration Implications}{11}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {X}{\ignorespaces Selected NexMark runtimes from the repository delivery report. ``Stuck'' indicates that the heap backend failed to complete in the tested Intel 16\nobreakspace  {}GB configuration.}}{12}{}\protected@file@percent }
+\newlabel{tab:nexmark}{{X}{12}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces End-to-end NexMark behavior across Kunpeng and Intel platforms. BriskState\xspace  provides the largest gains under memory-constrained, state-intensive configurations and avoids several stuck or severely GC-affected cases observed with the heap backend.}}{12}{}\protected@file@percent }
+\newlabel{fig:nexmark-tkde}{{7}{12}}
+\@writefile{lot}{\contentsline {table}{\numberline {XI}{\ignorespaces Selected VTune WordCount metrics before and after the optimized BriskState\xspace  path on Intel.}}{12}{}\protected@file@percent }
+\newlabel{tab:vtune}{{XI}{12}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-B}}Broader Applicability}{12}{}\protected@file@percent }
+\citation{akidau2013millwheel,murray2013naiad,carbone2015flink,armbrust2018structured,akidau2015dataflow}
+\citation{carbone2017statemanagement,hoffman2019megaphone}
+\citation{rocksdb}
+\citation{chandramouli2018faster,abseil2018swisstable}
+\citation{tucker2008nexmark}
+\@writefile{toc}{\contentsline {section}{\numberline {X}Threats to Validity}{13}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {XI}Related Work}{13}{}\protected@file@percent }
+\bibstyle{plain}
+\bibdata{briskstate_tkde}
+\bibcite{abseil2018swisstable}{1}
+\bibcite{akidau2013millwheel}{2}
+\bibcite{akidau2015dataflow}{3}
+\bibcite{tucker2008nexmark}{4}
+\bibcite{armbrust2018structured}{5}
+\bibcite{carbone2017statemanagement}{6}
+\bibcite{carbone2015flink}{7}
+\bibcite{chandramouli2018faster}{8}
+\bibcite{hoffman2019megaphone}{9}
+\bibcite{murray2013naiad}{10}
+\bibcite{rocksdb}{11}
+\@writefile{toc}{\contentsline {section}{\numberline {XII}Conclusion}{14}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{14}{}\protected@file@percent }
+\gdef \@abspage@last{14}

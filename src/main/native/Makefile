@@ -84,7 +84,8 @@ SOURCES := jni/forl0_jni.cpp \
            jni/jni_list_state.cpp \
            jni/jni_map_state.cpp \
            jni/jni_tw_state.cpp \
-           jni/jni_checkpoint.cpp
+           jni/jni_checkpoint.cpp \
+           engine/hot_cache.cpp
 
 OBJECTS := $(SOURCES:.cpp=.o)
 TARGET  := libforl0_engine.so

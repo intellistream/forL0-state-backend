@@ -40,7 +40,7 @@ cd /Users/jinyunyang/IdeaProjects/forL0-state-backend
 mkdir -p ~/forl0-deploy
 
 # 核心文件
-cp target/flink-statebackend-forl0-1.0-SNAPSHOT.jar ~/forl0-deploy/
+cp target/flink-statebackend-forL0-1.0-SNAPSHOT.jar ~/forl0-deploy/
 cp -r src/main/native ~/forl0-deploy/native-src
 cp benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar ~/forl0-deploy/
 cp -r benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink ~/forl0-deploy/
@@ -103,7 +103,7 @@ ls -la libforl0_native.so
 export FLINK_HOME=/path/to/flink  # 修改为实际路径
 
 # 安装 JAR 和 native 库
-cp ~/forl0-deploy/flink-statebackend-forl0-1.0-SNAPSHOT.jar $FLINK_HOME/lib/
+cp ~/forl0-deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar $FLINK_HOME/lib/
 cp ~/forl0-deploy/native-src/libforl0_native.so $FLINK_HOME/lib/
 ```
 

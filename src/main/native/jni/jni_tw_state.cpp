@@ -7,6 +7,7 @@
 #include "state_engine.h"
 #include "type_layout.h"
 #include "flink_binary_format.h"
+#include "hot_cache.h"
 
 using namespace forl0;
 
@@ -23,10 +24,20 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLongWithTW(
         jlong nsStart, jlong nsEnd, jlongArray out) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
+        int64_t k = static_cast<int64_t>(key);
+        int64_t folded = hotcache_fold_tw_key(k, nsStart, nsEnd);
+        if (handle->hot_cache_ll) {
+            int64_t cached;
+            if (handle->hot_cache_ll->get(folded, &cached)) {
+                env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&cached));
+                return JNI_TRUE;
+            }
+        }
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        int64_t* val = table->get(keyGroup, tw, static_cast<int64_t>(key));
+        int64_t* val = table->get(keyGroup, tw, k);
         if (!val) return JNI_FALSE;
+        if (handle->hot_cache_ll) handle->hot_cache_ll->put(folded, *val);
         jlong v = static_cast<jlong>(*val);
         env->SetLongArrayRegion(out, 0, 1, &v);
         return JNI_TRUE;
@@ -42,7 +53,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongLongWithTW(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        table->put(keyGroup, tw, static_cast<int64_t>(key), static_cast<int64_t>(value));
+        int64_t k = static_cast<int64_t>(key);
+        table->put(keyGroup, tw, k, static_cast<int64_t>(value));
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd),
+                                      static_cast<int64_t>(value));
+        }
     })
 }
 
@@ -90,6 +106,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearWithTW(
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
         auto vt = handle->value_type;
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->invalidate(hotcache_fold_tw_key(k, nsStart, nsEnd));
+        }
 
         if (vt == StateHandle::ValueType::FLOAT64) {
             handle->engine->get_state_table<int64_t, double>(handle->table_id)->remove(keyGroup, tw, k);
@@ -169,13 +188,23 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDoubleWithTW(
         jlong nsStart, jlong nsEnd, jlongArray out) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
+        int64_t k = static_cast<int64_t>(key);
+        int64_t folded = hotcache_fold_tw_key(k, nsStart, nsEnd);
+        if (handle->hot_cache_ll) {
+            int64_t cached;
+            if (handle->hot_cache_ll->get(folded, &cached)) {
+                env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&cached));
+                return JNI_TRUE;
+            }
+        }
         auto* table = handle->engine->get_state_table<int64_t, double>(handle->table_id);
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        double* val = table->get(keyGroup, tw, static_cast<int64_t>(key));
+        double* val = table->get(keyGroup, tw, k);
         if (!val) return JNI_FALSE;
         // Encode double as raw bits in long
         jlong bits;
         memcpy(&bits, val, sizeof(double));
+        if (handle->hot_cache_ll) handle->hot_cache_ll->put(folded, static_cast<int64_t>(bits));
         env->SetLongArrayRegion(out, 0, 1, &bits);
         return JNI_TRUE;
     })
@@ -190,7 +219,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongDoubleWithTW(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, double>(handle->table_id);
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        table->put(keyGroup, tw, static_cast<int64_t>(key), static_cast<double>(value));
+        int64_t k = static_cast<int64_t>(key);
+        table->put(keyGroup, tw, k, static_cast<double>(value));
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd),
+                                      hotcache_val_from_double(static_cast<double>(value)));
+        }
     })
 }
 

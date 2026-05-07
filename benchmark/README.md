@@ -4,6 +4,7 @@
 
 - ✅ WordCount 滑动窗口基准测试
 - ✅ NexMark 流处理标准基准测试
+- ✅ Client usecase (`XX_6000c_Demo`) 状态密集型对比测试
 - ✅ HashMapStateBackend vs ForL0StateBackend 自动对比
 - ✅ 论文级别的图表和 HTML 报告生成
 - ✅ 火焰图采集 (CPU、内存分配，需 Async Profiler)
@@ -104,10 +105,34 @@ python scripts/run_benchmark.py [OPTIONS]
 
 | 参数 | 可选值 | 默认值 | 说明 |
 |------|--------|--------|------|
-| `--test` | `wordcount`, `nexmark`, `all` | `all` | 测试类型 |
+| `--test` | `unittest`, `wordcount`, `nexmark`, `client_usecase`, `benchset`, `all` | `all` | 测试类型 |
 | `--backend` | `hashmap`, `forl0`, `all` | `all` | State Backend |
 | `--query` | `q4,q5,q8,...` | `all` | NexMark 查询 (仅 nexmark) |
 | `--profile` | 无参数 | 关闭 | 启用 Async Profiler 采集火焰图 |
+
+### Client usecase
+
+```bash
+# 运行 client usecase 基准
+python scripts/run_benchmark.py --test client_usecase --backend all
+
+# 单独运行 client usecase runner
+python scripts/run_client_usecase.py --backend forl0
+```
+
+在首次运行前需要先打包该 usecase：
+
+```bash
+cd client_usecase/XX_6000c_Demo
+mvn clean package -DskipTests
+```
+
+如果服务器不能打包，可将生成的
+`flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar`
+放入仓库的 `docker/deploy/`，脚本会像 `wordcount` 一样优先使用该预构建产物。
+
+`client_usecase` 只需要在 `benchmark.yaml` 里配置 `num_records`。
+并行度和 checkpoint 继续复用全局 `runtime.parallelism` 与 `runtime.checkpoint_interval`。
 
 **示例**：
 
@@ -414,7 +439,7 @@ python scripts/generate_report.py
 mvn clean package -DskipTests
 
 # 复制到 Flink lib 目录
-cp target/flink-statebackend-forl0-*.jar $FLINK_HOME/lib/
+cp target/flink-statebackend-forL0-*.jar $FLINK_HOME/lib/
 ```
 
 ### Q: 延迟显示为 N/A？

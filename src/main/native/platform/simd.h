@@ -1,6 +1,23 @@
 // SIMD abstraction for SwissTable group probing.
 // Aligned with abseil's GroupSse2Impl / GroupAArch64Impl / GroupPortableImpl.
 // Each Group operates on kWidth (16) control bytes simultaneously.
+//
+// Why ctrl bytes matter:
+//   SwissTable does not compare full keys during the first probe step.
+//   Instead, each slot stores a 1-byte "ctrl" tag derived from the hash:
+//     - FULL slot    : 0x00..0x7F   (H2 = low 7 bits of hash)
+//     - EMPTY slot   : 0x80
+//     - DELETED slot : 0xFE
+//     - SENTINEL     : 0xFF
+//
+// Lookup hot path:
+//   1. Load 16 ctrl bytes.
+//   2. Compare all 16 bytes against the target H2 in parallel.
+//   3. Convert the per-byte compare result into a compact bitmask.
+//   4. Only for the matching bits, check the real key in the slot array.
+//
+// The whole point of this file is step (2) and step (3): do the ctrl-byte scan
+// with platform SIMD so we avoid a scalar 16-iteration loop on every probe.
 
 #pragma once
 
@@ -30,22 +47,47 @@ static_assert(kEmpty < kSentinel && kDeleted < kSentinel,
 // A group width of 16 bytes — matches SSE2 register / NEON register width.
 static constexpr size_t kGroupWidth = 16;
 
-// BitMask wraps a bitmask where each set bit indicates a match.
-// For SSE2: bit i corresponds to byte i (from _mm_movemask_epi8).
-// For NEON / portable: similar semantic via different encoding.
-struct BitMask {
-    uint32_t mask;
+// ----------------------------------------------------------------------------
+// BitMask — abseil-aligned template.
+//
+// Each backend chooses its own (storage_type, shift) combination:
+//   - SSE2 / portable: uint32_t mask, Shift=0  (one bit per slot: bits 0..15)
+//   - NEON           : uint64_t mask, Shift=2  (one bit per slot at bit slot*4,
+//                      derived from the vshrn_n_u16 nibble-compression trick —
+//                      this is the same idea abseil's GroupAArch64Impl uses)
+//
+// The invariant every backend maintains: within the storage, each logical slot
+// is represented by exactly ONE set bit, located at bit index (slot << Shift).
+// That lets `mask &= mask - 1` step to the next slot without any scalar loop,
+// and `__builtin_ctz*(mask) >> Shift` recover the slot index in O(1).
+//
+// Example:
+//   Suppose slots 1 and 5 match.
+//   - SSE2 / portable mask is: 0b0010'0010
+//   - NEON sparse mask is: bits at positions 4 and 20
+//
+// In both cases:
+//   - ctz(mask) finds the lowest set bit
+//   - >> Shift maps that bit position back to the logical slot index
+// ----------------------------------------------------------------------------
+template <typename T, int Shift>
+struct BitMaskImpl {
+    T mask;
 
-    explicit BitMask(uint32_t m) : mask(m) {}
+    explicit BitMaskImpl(T m) : mask(m) {}
 
     explicit operator bool() const { return mask != 0; }
 
-    // Returns the index of the lowest set bit.
+    // Returns the slot index of the lowest set bit.
     uint32_t lowest_bit_set() const {
-        return __builtin_ctz(mask);
+        if constexpr (sizeof(T) <= 4) {
+            return static_cast<uint32_t>(__builtin_ctz(static_cast<uint32_t>(mask))) >> Shift;
+        } else {
+            return static_cast<uint32_t>(__builtin_ctzll(static_cast<uint64_t>(mask))) >> Shift;
+        }
     }
 
-    // Removes the lowest set bit and returns its index.
+    // Removes the lowest set bit and returns its slot index.
     uint32_t next() {
         uint32_t idx = lowest_bit_set();
         mask &= mask - 1;
@@ -54,6 +96,12 @@ struct BitMask {
 
     bool has_next() const { return mask != 0; }
 };
+
+#if defined(FORL0_NEON)
+using BitMask = BitMaskImpl<uint64_t, 2>;
+#else
+using BitMask = BitMaskImpl<uint32_t, 0>;
+#endif
 
 // ============================================================================
 //  SSE2 Group implementation (x86-64)
@@ -64,12 +112,38 @@ struct Group {
     __m128i ctrl;
 
     explicit Group(const int8_t* pos) {
+        // _mm_loadu_si128:
+        //   Load 16 bytes from an unaligned address into one 128-bit SSE register.
+        //   "u" means unaligned: ctrl bytes do not need 16-byte alignment here.
+        //
+        // Conceptually:
+        //   ctrl[0..15] -> xmm register lanes [byte0 .. byte15]
         ctrl = _mm_loadu_si128(reinterpret_cast<const __m128i*>(pos));
     }
 
     // Match slots whose ctrl byte equals h2.
     BitMask match(int8_t h2) const {
+        // _mm_set1_epi8:
+        //   Broadcast one int8 value into all 16 byte lanes.
+        //   After this, match_vec contains:
+        //     [h2 h2 h2 h2 h2 h2 h2 h2 h2 h2 h2 h2 h2 h2 h2 h2]
         auto match_vec = _mm_set1_epi8(h2);
+
+        // _mm_cmpeq_epi8:
+        //   Compare each ctrl byte with h2 lane-by-lane.
+        //   Result per lane is:
+        //     0xFF if equal
+        //     0x00 if not equal
+        //
+        // _mm_movemask_epi8:
+        //   Extract the top bit of each of the 16 result bytes and pack them into
+        //   a 16-bit integer.
+        //   Since compare produces either 0xFF or 0x00, the top bit is a perfect
+        //   one-bit-per-slot match bitmap.
+        //
+        // Example:
+        //   cmp lanes: [00 FF 00 00 FF ...]
+        //   movemask: 0b00010010...
         return BitMask(
             static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(ctrl, match_vec))));
     }
@@ -91,6 +165,18 @@ struct Group {
         // NO — abseil's approach: empty/deleted both have top bit set.
         // match_empty_or_deleted = mask of bytes where top bit is set.
         auto special = _mm_set1_epi8(static_cast<int8_t>(kSentinel));
+
+        // _mm_cmpgt_epi8:
+        //   Signed byte compare: special > ctrl ? 0xFF : 0x00 per lane.
+        //
+        // Here special = -1 (0xFF as signed int8_t).
+        // ctrl byte classes are:
+        //   FULL     : 0..127      -> NOT less than -1, so compare false
+        //   EMPTY    : -128        -> less than -1, so compare true
+        //   DELETED  : -2          -> less than -1, so compare true
+        //   SENTINEL : -1          -> equal to -1, so compare false
+        //
+        // That gives exactly the mask we want: empty or deleted, but not sentinel.
         return BitMask(
             static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpgt_epi8(special, ctrl))));
     }
@@ -100,13 +186,37 @@ struct Group {
         auto special = _mm_set1_epi8(static_cast<int8_t>(kSentinel));
         uint32_t m =
             static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpgt_epi8(special, ctrl)));
-        // invert: we want leading (from LSB); ctz of ~m gives trailing zeros of inverted = leading matches
+
+        // Layout note:
+        //   bit 0 in movemask corresponds to ctrl[0], bit 1 to ctrl[1], etc.
+        //   We want the length of the prefix starting at ctrl[0] that is marked
+        //   empty-or-deleted.
+        //
+        // If m = 0b0000'1111, the first four slots are special and slot 4 is not.
+        // ~m = ...1111'0000, so ctz(~m) == 4.
+        //
+        // Special case: if all 16 slots are empty/deleted, m == 0xFFFF.
         return (m == 0xFFFF) ? kGroupWidth : __builtin_ctz(~m);
     }
 };
 
 // ============================================================================
 //  NEON Group implementation (AArch64 / Kunpeng)
+//
+//  Design aligned with abseil's GroupAArch64Impl:
+//   - vceqq_u8 / vcltq_s8 produces a vector where each matched byte is 0xFF
+//     and each non-match byte is 0x00.
+//   - vshrn_n_u16(cmp, 4) packs the 128-bit byte-mask into 64 bits, with each
+//     slot taking 4 bits: slot i's nibble is located at bit position i*4, and
+//     the nibble is 0xF on match / 0x0 on miss.
+//   - Masking the result with 0x1111...11 leaves exactly one set bit per
+//     matched slot, at bit (i << 2). The generic BitMaskImpl<uint64_t, Shift=2>
+//     then iterates with `ctzll >> 2` and `mask &= mask - 1` — no scalar loop.
+//
+//  This is the critical fix for AArch64 (Kunpeng) performance: the previous
+//  implementation recompressed the nibble-mask into a 16-bit bitmask via a
+//  16-iteration scalar loop on every match(), completely erasing the SIMD
+//  advantage in SwissTable probes.
 // ============================================================================
 #elif defined(FORL0_NEON)
 
@@ -114,23 +224,66 @@ struct Group {
     uint8x16_t ctrl;
 
     explicit Group(const int8_t* pos) {
+        // vld1q_u8:
+        //   Load 16 bytes into one 128-bit NEON register.
+        //   NEON names usually read as:
+        //     vld1   = vector load 1 register
+        //     q      = 128-bit "quad" register
+        //     u8     = lanes interpreted as 16 unsigned bytes
         ctrl = vld1q_u8(reinterpret_cast<const uint8_t*>(pos));
     }
 
-    BitMask match(int8_t h2) const {
-        uint8x16_t dup = vdupq_n_u8(static_cast<uint8_t>(h2));
-        uint8x16_t cmp = vceqq_u8(ctrl, dup);
-        // Compress 16 bytes to 16 bits: take the high bit of each byte.
-        // NEON doesn't have movemask; use shift+narrow approach.
+    // Compress a per-byte compare result (each byte 0x00 or 0xFF) into the
+    // sparse 64-bit "one bit per slot, at bit slot*4" form consumed by
+    // BitMaskImpl<uint64_t, 2>.
+    static inline uint64_t nibble_mask_sparse(uint8x16_t cmp) {
+        // vshrn_n_u16:
+        //   Shift each 16-bit lane right by 4, then narrow the 8 x 16-bit result
+        //   into 8 x 8-bit lanes.
+        //
+        // Why reinterpret as u16 first?
+        //   cmp is 16 bytes of either 0x00 or 0xFF.
+        //   Reinterpreting as 8 x 16-bit lanes gives values 0x0000 or 0xFFFF.
+        //   Shifting right by 4 turns these into 0x0000 or 0x0FFF.
+        //   Narrowing keeps the low 8 bits, which become 0x00 or 0xFF in a packed
+        //   64-bit layout that is convenient for mask extraction.
+        //
+        // This is the NEON substitute for x86 movemask-style packing.
         uint8x8_t narrowed = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
-        uint64_t bits;
-        vst1_u8(reinterpret_cast<uint8_t*>(&bits), narrowed);
-        // Each nibble is 0xF (match) or 0x0. Convert to one-bit-per-slot.
-        uint32_t mask = 0;
-        for (int i = 0; i < 16; ++i) {
-            if ((bits >> (i * 4)) & 0xF) mask |= (1u << i);
-        }
-        return BitMask(mask);
+
+        // vget_lane_u64 + reinterpret:
+        //   Treat the 8 packed bytes as one 64-bit integer so we can do normal
+        //   scalar bit operations on the result.
+        uint64_t bits = vget_lane_u64(vreinterpret_u64_u8(narrowed), 0);
+
+        // Keep only one representative bit per 4-bit nibble.
+        // For a matching slot the nibble is 0xF, so masking with 0x1 per nibble
+        // leaves a sparse mask with one set bit at bit (slot * 4).
+        return bits & 0x1111111111111111ULL;
+    }
+
+    // Dense nibble mask: each slot occupies 4 bits, full 0xF on match / 0x0 on miss.
+    // Used by count_leading_empty_or_deleted where we need to find the first
+    // non-matching slot in positional order.
+    static inline uint64_t nibble_mask_dense(uint8x16_t cmp) {
+        // Same packing as above, but keep the full 0xF nibble per slot instead of
+        // sparsifying it. This is useful when we need to detect the first slot that
+        // is NOT in the matched class.
+        uint8x8_t narrowed = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
+        return vget_lane_u64(vreinterpret_u64_u8(narrowed), 0);
+    }
+
+    BitMask match(int8_t h2) const {
+        // vdupq_n_u8:
+        //   Broadcast one byte to all 16 lanes of a 128-bit NEON register.
+        uint8x16_t dup = vdupq_n_u8(static_cast<uint8_t>(h2));
+
+        // vceqq_u8:
+        //   Compare 16 unsigned-byte lanes for equality.
+        //   Result lane is 0xFF on match, 0x00 on mismatch, same logical shape as
+        //   _mm_cmpeq_epi8 on x86.
+        uint8x16_t cmp = vceqq_u8(ctrl, dup);
+        return BitMask(nibble_mask_sparse(cmp));
     }
 
     BitMask match_empty() const {
@@ -138,27 +291,38 @@ struct Group {
     }
 
     BitMask match_empty_or_deleted() const {
-        // Empty and deleted both have the high bit set (0x80, 0xFE).
-        // Test: ctrl & 0x80 != 0 AND ctrl != kSentinel(0xFF).
-        // Simplification: ctrl byte < kSentinel in unsigned? No — 0x80 > 0xFF unsigned false.
-        // Use signed comparison: all special bytes are negative; kSentinel = -1 is the largest negative.
-        // We want bytes strictly less than kSentinel in signed comparison.
+        // Empty (0x80) and Deleted (0xFE) are strictly less than kSentinel (0xFF)
+        // in signed byte comparison; FULL (0x00..0x7F) is non-negative, i.e. > -1.
         int8x16_t sentinel = vdupq_n_s8(kSentinel);
+
+        // vcltq_s8:
+        //   Signed byte compare: ctrl < sentinel ? 0xFF : 0x00 per lane.
+        //
+        // With sentinel = -1:
+        //   EMPTY   (-128) -> true
+        //   DELETED (-2)   -> true
+        //   FULL    (0..127) -> false
+        //   SENTINEL(-1)   -> false
+        //
+        // Same logical test as the SSE2 path, just expressed with NEON compare
+        // plus later mask compression.
         uint8x16_t cmp = vcltq_s8(vreinterpretq_s8_u8(ctrl), sentinel);
-        // Convert to bitmask
-        uint8x8_t narrowed = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
-        uint64_t bits;
-        vst1_u8(reinterpret_cast<uint8_t*>(&bits), narrowed);
-        uint32_t mask = 0;
-        for (int i = 0; i < 16; ++i) {
-            if ((bits >> (i * 4)) & 0xF) mask |= (1u << i);
-        }
-        return BitMask(mask);
+        return BitMask(nibble_mask_sparse(cmp));
     }
 
     uint32_t count_leading_empty_or_deleted() const {
-        auto m = match_empty_or_deleted();
-        return (m.mask == 0xFFFF) ? kGroupWidth : __builtin_ctz(~m.mask);
+        int8x16_t sentinel = vdupq_n_s8(kSentinel);
+        uint8x16_t cmp = vcltq_s8(vreinterpretq_s8_u8(ctrl), sentinel);
+        uint64_t dense = nibble_mask_dense(cmp);
+        // Leading empty/deleted count = number of leading 0xF nibbles in `dense`.
+        // Equivalent: index (in nibbles) of the first 0x0 nibble. If all 16 slots
+        // are empty/deleted, dense is all-ones.
+        // If every nibble is 0xF, all 16 slots are empty/deleted.
+        if (dense == 0xFFFFFFFFFFFFFFFFULL) return kGroupWidth;
+
+        // ~dense flips the first non-matching nibble's low bit to 1.
+        // Because each slot occupies 4 bits, divide the bit position by 4 via >> 2.
+        return static_cast<uint32_t>(__builtin_ctzll(~dense)) >> 2;
     }
 };
 
@@ -172,6 +336,9 @@ struct Group {
     uint64_t hi;  // next 8 ctrl bytes
 
     explicit Group(const int8_t* pos) {
+        // Portable fallback: load the 16 bytes into two machine words and use SWAR
+        // (SIMD Within A Register) tricks. This is slower than the dedicated SSE2
+        // and NEON paths but preserves the same external behavior.
         std::memcpy(&lo, pos, 8);
         std::memcpy(&hi, pos + 8, 8);
     }
@@ -261,6 +428,18 @@ struct ProbeSeq {
     size_t pos() const { return offset; }
 
     void next() {
+        // Triangular probing in group units.
+        //
+        // stride evolves as:
+        //   16, 32, 48, 64, ...   (one more group each step)
+        //
+        // offset accumulates these strides modulo capacity, so the visited groups are:
+        //   H1,
+        //   H1 + 16,
+        //   H1 + 16 + 32,
+        //   H1 + 16 + 32 + 48, ...
+        //
+        // This is the classic SwissTable / abseil triangular probe sequence.
         stride += kGroupWidth;
         offset = (offset + stride) & mask;
     }
@@ -277,6 +456,13 @@ struct ProbeSeq {
 inline size_t H1(size_t hash) { return hash >> 7; }
 
 // H2: stored in ctrl byte (low 7 bits, guaranteed 0x00..0x7F)
+//
+// Why split hash this way:
+//   - H1 chooses where probing starts.
+//   - H2 is the short fingerprint stored in ctrl bytes.
+//
+// During lookup, most slots are rejected by comparing only H2 in SIMD. Full key
+// equality is checked only for the few slots whose H2 matched.
 inline int8_t H2(size_t hash) { return static_cast<int8_t>(hash & 0x7F); }
 
 // ============================================================================
@@ -289,12 +475,19 @@ inline void set_ctrl(int8_t* ctrl, size_t capacity, size_t i, int8_t h) {
     // Bytes [capacity .. capacity + kGroupWidth - 1] mirror bytes [0 .. kGroupWidth - 2] + sentinel.
     constexpr size_t kClone = kGroupWidth - 1;
     if (i < kClone) {
+        // Clone the prefix at the end so a 16-byte load near the logical end of the
+        // table can still read contiguously without a wrap-around branch.
         ctrl[capacity + i] = h;
     }
 }
 
 // Initialize ctrl array: all kEmpty, with sentinel at ctrl[capacity].
 inline void init_ctrl(int8_t* ctrl, size_t capacity) {
+    // capacity + kGroupWidth bytes are allocated, not just capacity bytes:
+    //   [ logical ctrl bytes | sentinel | cloned prefix bytes ]
+    //
+    // This is what makes the SIMD group loads near the end of the table simple:
+    // no special-case branch is needed for wrap-around reads.
     std::memset(ctrl, kEmpty, capacity + kGroupWidth);
     ctrl[capacity] = kSentinel;
 }

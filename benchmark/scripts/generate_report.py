@@ -62,7 +62,17 @@ QUERY_COLORS = [
 
 BACKEND_LABELS = {
     'hashmap': 'HashMapStateBackend',
-    'forl0': 'ForL0StateBackend',
+    'forl0': 'BriskState',
+}
+
+BENCHSET_LABELS = {
+    'wc': 'WC',
+    'fd': 'FD',
+    'sd': 'SD',
+    'tm': 'TM',
+    'lg': 'LG',
+    'vs': 'VS',
+    'lr': 'LR',
 }
 
 
@@ -148,6 +158,165 @@ def load_results():
                 print(f"Warning: Could not load NexMark results: {e}")
     
     return results
+
+
+def load_benchset_results():
+    """Load latest benchset results from raw directory."""
+    results_dir = get_results_dir('raw')
+    benchset_results = {key: {} for key in BENCHSET_LABELS.keys()}
+
+    for filepath in results_dir.glob('benchset_*.json'):
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+
+            metadata = data.get('_metadata', {})
+            test_name = metadata.get('test_name', '')
+            backend = metadata.get('backend', data.get('backend', ''))
+            benchmark = data.get('benchmark', '')
+
+            if not benchmark and test_name.startswith('benchset_'):
+                benchmark = test_name[len('benchset_'):]
+
+            if benchmark not in benchset_results or backend not in BACKEND_LABELS:
+                continue
+
+            current = benchset_results[benchmark].get(backend)
+            current_ts = '' if current is None else current.get('_metadata', {}).get('timestamp', '')
+            new_ts = metadata.get('timestamp', '')
+
+            if current is None or new_ts >= current_ts:
+                benchset_results[benchmark][backend] = data
+        except Exception as e:
+            print(f"Warning: Could not load benchset result from {filepath}: {e}")
+
+    return benchset_results
+
+
+def plot_benchset_throughput_comparison(benchset_results, output_dir):
+    """Generate grouped throughput-per-core comparison for the benchset."""
+    workloads = [key for key, value in benchset_results.items() if value]
+    if not workloads:
+        print("Warning: No benchset results found for throughput plot")
+        return None
+
+    x = np.arange(len(workloads))
+    width = 0.35
+
+    hashmap_vals = []
+    forl0_vals = []
+    for workload in workloads:
+        hashmap = benchset_results[workload].get('hashmap', {})
+        forl0 = benchset_results[workload].get('forl0', {})
+        hashmap_vals.append(get_throughput(hashmap) / 1e6)
+        forl0_vals.append(get_throughput(forl0) / 1e6)
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    ax.bar(x - width / 2, hashmap_vals, width, label=BACKEND_LABELS['hashmap'], color=COLORS['hashmap'])
+    ax.bar(x + width / 2, forl0_vals, width, label=BACKEND_LABELS['forl0'], color=COLORS['forl0'])
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([BENCHSET_LABELS.get(item, item.upper()) for item in workloads])
+    ax.set_ylabel('Throughput per Core (M records/s)')
+    ax.set_xlabel('Benchset Workload')
+    ax.set_title('Benchset Throughput Comparison')
+    ax.legend(frameon=False)
+
+    filepath = output_dir / 'benchset_throughput_comparison.pdf'
+    plt.savefig(filepath)
+    plt.savefig(output_dir / 'benchset_throughput_comparison.png')
+    plt.close()
+    print(f"Saved: {filepath}")
+    return filepath
+
+
+def plot_benchset_speedup(benchset_results, output_dir):
+    """Generate BriskState speedup chart over HashMap for each benchset workload."""
+    workloads = []
+    speedups = []
+
+    for workload, backend_results in benchset_results.items():
+        hashmap = get_throughput(backend_results.get('hashmap', {}))
+        forl0 = get_throughput(backend_results.get('forl0', {}))
+        if hashmap > 0 and forl0 > 0:
+            workloads.append(workload)
+            speedups.append(forl0 / hashmap)
+
+    if not workloads:
+        print("Warning: No complete benchset pairs found for speedup plot")
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    bars = ax.bar(
+        [BENCHSET_LABELS.get(item, item.upper()) for item in workloads],
+        speedups,
+        color=COLORS['forl0'],
+        width=0.6,
+    )
+    ax.axhline(1.0, color='#666666', linewidth=1.0, linestyle='--')
+    ax.set_ylabel('Speedup (BriskState / HashMap)')
+    ax.set_xlabel('Benchset Workload')
+    ax.set_title('Benchset Relative Speedup')
+
+    for bar, speedup in zip(bars, speedups):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f'{speedup:.2f}x',
+            ha='center',
+            va='bottom',
+            fontsize=10,
+        )
+
+    filepath = output_dir / 'benchset_speedup_summary.pdf'
+    plt.savefig(filepath)
+    plt.savefig(output_dir / 'benchset_speedup_summary.png')
+    plt.close()
+    print(f"Saved: {filepath}")
+    return filepath
+
+
+def generate_benchset_markdown_summary(benchset_results, output_dir):
+    """Generate a concise markdown summary for benchset paper figures."""
+    lines = [
+        '# Benchset Summary',
+        '',
+        '| Workload | HashMap (M rec/s/core) | BriskState (M rec/s/core) | Speedup |',
+        '|---|---:|---:|---:|',
+    ]
+
+    for workload, backend_results in benchset_results.items():
+        hashmap = get_throughput(backend_results.get('hashmap', {})) / 1e6
+        forl0 = get_throughput(backend_results.get('forl0', {})) / 1e6
+        if hashmap > 0 and forl0 > 0:
+            speedup = forl0 / hashmap
+            lines.append(
+                f'| {BENCHSET_LABELS.get(workload, workload.upper())} | {hashmap:.3f} | {forl0:.3f} | {speedup:.2f}x |'
+            )
+
+    report_path = output_dir / 'benchset_summary.md'
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
+
+    print(f"Saved: {report_path}")
+    return report_path
+
+
+def generate_benchset_paper_artifacts(figures_dir=None, reports_dir=None):
+    """Generate benchset-specific paper figures and summary files."""
+    figures_dir = figures_dir or get_results_dir('figures')
+    reports_dir = reports_dir or get_results_dir('reports')
+    benchset_results = load_benchset_results()
+
+    if not any(benchset_results.values()):
+        print('No benchset results available for figure generation')
+        return {}
+
+    artifacts = {}
+    artifacts['throughput'] = plot_benchset_throughput_comparison(benchset_results, figures_dir)
+    artifacts['speedup'] = plot_benchset_speedup(benchset_results, figures_dir)
+    artifacts['summary'] = generate_benchset_markdown_summary(benchset_results, reports_dir)
+    return artifacts
 
 
 def plot_wordcount_comparison(results, output_dir):
@@ -464,7 +633,7 @@ def plot_improvement_summary(results, output_dir):
     
     ax.set_ylabel('Improvement (%)')
     ax.set_xlabel('Benchmark')
-    ax.set_title('ForL0 vs HashMapStateBackend: Throughput Improvement')
+    ax.set_title('BriskState vs HashMapStateBackend: Throughput Improvement')
     ax.legend()
     
     # Add value labels
@@ -885,7 +1054,7 @@ def plot_memory_usage_timeline(output_dir):
     
     ax.set_xlabel('Time (seconds)', fontsize=12)
     ax.set_ylabel('Memory Usage (MB)', fontsize=12)
-    ax.set_title('Memory Usage (RSS) Over Time\n(solid: ForL0, dashed: HashMap)', fontsize=14)
+    ax.set_title('Memory Usage (RSS) Over Time\n(solid: BriskState, dashed: HashMap)', fontsize=14)
     
     # Create legend with two columns
     ax.legend(loc='upper right', ncol=2, fontsize=9)
@@ -2045,6 +2214,8 @@ def main():
     plot_wordcount_comparison(results, figures_dir)
     plot_nexmark_comparison(results, figures_dir)
     plot_improvement_summary(results, figures_dir)
+    print("\nGenerating benchset figures (if available)...")
+    generate_benchset_paper_artifacts(figures_dir, reports_dir)
     
     # [BENCHMARK_TEST] Generate L0Table metrics figures if available
     print("\nGenerating L0Table metrics figures (if available)...")

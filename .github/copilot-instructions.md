@@ -2,89 +2,126 @@
 
 ## 项目概述
 
-ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，采用 Swiss Tables 架构（对齐 hash-smith SwissMap），通过 SWAR 并行匹配实现高效的状态访问。
+ForL0 State Backend 是一个面向 Apache Flink 的高性能 Keyed State Backend。当前实现不是旧版纯 Java `ForL0StateStore` 架构，而是以下分层：
+
+- Java 侧 `ForL0StateBackend` / `ForL0KeyedStateBackend` 作为 Flink 集成层
+- `NativeEngine` 作为 JNI 桥接层
+- `src/main/native/engine/` 下的 C++ 原生状态引擎负责真实 keyed state 存储、checkpoint 序列化和 hot-cache 逻辑
+
+分析或修改代码时，应以“Java thin shell + JNI + C++ native engine”的现状为准，不要把旧设计文档里的 `ForL0StateStore` / Java `SwissTable` 当作当前源码事实。
 
 ## 技术栈
 
-- **语言**: Java 8+, C (JNI native code)
-- **框架**: Apache Flink 1.20.0
-- **构建工具**: Maven 3.6+
+- **语言**: Java 8+, C++17, JNI
+- **框架**: Apache Flink 1.20.3
+- **构建工具**: Maven 3.x, GNU Make
 - **测试框架**: JUnit 5
-- **平台**: 
-  - 开发: macOS (模拟模式)
-  - 生产: Linux with 鲲鹏 CPU (L0 模式)
+- **运行模型**:
+  - Java keyed backend shell
+  - Native off-heap engine
+  - Flink heap priority queue wrappers for PQ state
+- **平台**:
+  - Linux 为主
+  - macOS 保留 native library 加载与构建路径
 
 ## 核心架构
 
-### Lightweight StateStore 架构
+### 当前控制路径
 
-```
-ForL0StateStore<K, N, S> (StateSnapshotRestore 接口)
-├── VoidNamespace 模式: SwissTable<K,S>[] tables    // 直接访问，零 HashMap 开销
-└── General Namespace 模式: Map<N, SwissTable<K,S>>[] namespaceMaps
-    └── SwissTable<K, S>                            // 每个 namespace 独立的表
-        ├── ctrl[]          // 控制字节 (EMPTY=0x80, DELETED=0xFE, FULL=h2)
-        ├── entries[]       // AoS 交织布局 [k0,v0,k1,v1,...] (slot i → entries[2i], entries[2i+1])
-        └── hashes[]        // 32位 hash 存储 (用于 rehash/grow)
-```
-
-### Hash 位分配 (对齐 hash-smith SwissMap)
-
-```
-32 位 hash (smear function from Guava):
-├── H1 = hash >>> 7     // 高 25 位，用于探测起始 group
-└── H2 = hash & 0x7F    // 低 7 位，存入 ctrl 字节
-
-Hash 计算:
-int h = key.hashCode();
-int hash = (int)(0x1b873593 * Integer.rotateLeft(h * 0xcc9e2d51, 15));
+```text
+state.backend: forl0
+  -> ForL0StateBackendFactory
+  -> ForL0StateBackend
+  -> ForL0KeyedStateBackendBuilder
+       -> NativeEngine.ensureLoaded()
+       -> NativeEngine.createEngine(...)
+       -> restoreFromHandles(...)
+       -> ForL0SnapshotStrategy
+  -> ForL0KeyedStateBackend
+       -> state-specific wrappers
+       -> NativeEngine JNI calls
+       -> C++ StateEngine / SwissTable / HotCache
 ```
 
-### 关键组件
+### Snapshot / Restore 路径
+
+```text
+Checkpoint:
+ForL0SnapshotStrategy.syncPrepareResources(...)
+  -> NativeEngine.prepareSnapshot(engineHandle)
+ForL0SnapshotStrategy.asyncSnapshot(...)
+  -> 写 Flink serialization metadata
+  -> 写 PQ state blocks
+  -> NativeEngine.writeKeyGroupData(engineHandle, keyGroupId)
+  -> NativeEngine.releaseSnapshot(engineHandle)
+
+Restore:
+ForL0KeyedStateBackendBuilder.build()
+  -> restoreFromHandles(...)
+  -> 重建 KV metadata / PQ wrappers
+  -> 将 key-group payload 回灌到 native engine
+```
+
+### Native 目录结构
+
+```text
+src/main/native/
+├── engine/
+│   ├── state_engine.h
+│   ├── swiss_table.h
+│   ├── hot_cache.*
+│   ├── allocator.h
+│   ├── arena_allocator.h
+│   └── type_layout.h
+├── jni/
+│   ├── forl0_jni.cpp
+│   ├── jni_value_state.cpp
+│   ├── jni_list_state.cpp
+│   ├── jni_map_state.cpp
+│   ├── jni_tw_state.cpp
+│   └── jni_checkpoint.cpp
+└── checkpoint/
+```
+
+## 关键组件
 
 | 组件 | 职责 | 位置 |
 |------|------|------|
-| `ForL0StateBackend` | StateBackend 入口 | `state/forl0/` |
-| `ForL0KeyedStateBackend` | KeyedStateBackend 实现 | `state/forl0/` |
-| `ForL0StateStore` | 状态存储 (KeyGroup → Namespace → SwissTable) | `state/forl0/` |
-| `SwissTable` | SWAR 并行匹配的哈希表存储 | `state/forl0/` |
-| `NativeL0Memory` | JNI 桥接类 (L0 Cache) | `state/forl0/space/` |
-| `forl0_native.c` | C 实现 (L0/模拟模式) | `src/main/native/` |
+| `ForL0StateBackend` | Flink `StateBackend` 入口；创建 keyed backend；operator state 委托给 Flink 默认实现 | `src/main/java/org/apache/flink/state/forl0/` |
+| `ForL0StateBackendFactory` | SPI 工厂，支持 `state.backend: forl0` | `src/main/java/org/apache/flink/state/forl0/` |
+| `ForL0KeyedStateBackendBuilder` | native library 加载、engine 创建、restore、snapshot strategy 装配 | `src/main/java/org/apache/flink/state/forl0/` |
+| `ForL0KeyedStateBackend` | keyed backend 主壳层；维护 native handle、state registry、serializer compatibility 和 state 创建逻辑 | `src/main/java/org/apache/flink/state/forl0/` |
+| `NativeEngine` | JNI 桥接与 native library 加载入口 | `src/main/java/org/apache/flink/state/forl0/` |
+| `ForL0SnapshotStrategy` | checkpoint 资源准备与 key-group snapshot 写出 | `src/main/java/org/apache/flink/state/forl0/` |
+| `ForL0SnapshotResources` | checkpoint 所需的 KV meta info 与 PQ snapshot 资源 | `src/main/java/org/apache/flink/state/forl0/` |
+| `ForL0ValueState` / `ListState` / `MapState` / `ReducingState` / `AggregatingState` | 具体 state wrapper，通过 native handle 执行读写 | `src/main/java/org/apache/flink/state/forl0/` |
+| `ForL0KeyValueStateIterator` | snapshot/savepoint 迭代支持 | `src/main/java/org/apache/flink/state/forl0/` |
+| `TypeAnalyzer` | serializer 到 native type id 的映射与 type descriptor 生成 | `src/main/java/org/apache/flink/state/forl0/` |
 
-### SwissTable 核心算法
+## 当前实现约束
 
-```java
-// SWAR 并行匹配 (8 slots 同时比较)
-static long matchH2(long ctrlWord, long pattern) {
-    long x = ctrlWord ^ pattern;
-    return (x - LSB) & ~x & MSB;
-}
+### 状态所有权
 
-// put 返回值编码
-static final int NEW_FLAG = 1 << 16;   // 新插入标志
-static final int SLOT_MASK = 0xFFFF;   // 槽位掩码
-static final int NEED_REHASH = -1;     // 需要 rehash
-static final int NEED_GROW = -2;       // 需要 grow
+- 真正的 keyed-state 数据存放在 native engine，不在 Java heap table 中。
+- Java 侧按 state name 懒注册 native state handle。
+- 当前支持的 keyed state 类型有 `VALUE`、`LIST`、`MAP`、`REDUCING`、`AGGREGATING`。
+- Priority queue state 仍使用 Flink heap priority queue wrapper，而非 native 实现。
+- Operator state 不是自研实现，直接委托给 Flink 默认 backend。
 
-// 使用示例 (AoS 布局直接访问)
-int result = table.put(hash, key);
-if (result == SwissTable.NEED_REHASH) {
-    table.rehash();
-    continue;
-}
-if (result == SwissTable.NEED_GROW) {
-    table.grow();
-    continue;
-}
-int slot = result & SwissTable.SLOT_MASK;
-table.entries[(slot << 1) + 1] = value;  // 直接访问，无方法调用
-```
+### Serializer 与恢复语义
 
-### Namespace 组织
+- restore 入口以 `ForL0KeyedStateBackendBuilder.restoreFromHandles(...)` 为准。
+- serializer compatibility 由 Flink 的 compatibility API 决定，不要自行假设“差不多兼容”。
+- canonical savepoint 与当前 ForL0 自定义 checkpoint payload 的恢复路径不同，修改时必须同时检查。
 
-- **VoidNamespace 特化**: 自动检测 VoidNamespaceSerializer，跳过 HashMap 层
-- **Namespace 清理**: 删除后检查 SwissTable.isEmpty()，自动从 HashMap 移除空 namespace
-- **内存隔离**: 每个 namespace 独立的 SwissTable，避免 key 冲突
+### Hot Cache / L0
+
+- Hot-cache 与 L0 相关能力通过 `NativeEngine` 暴露，而不是旧的 `NativeL0Memory`。
+- 当前可直接观察或调用的 JNI 入口包括：
+  - `getHotCacheManagerStats(...)`
+  - `getHotCacheStats(...)`
+  - `rebalanceHotCache(...)`
+- 如果出现 stale read、invalidations、命中率异常，优先同时检查 state wrapper 和 native cache 逻辑。
 
 ## 代码规范
 
@@ -92,33 +129,46 @@ table.entries[(slot << 1) + 1] = value;  // 直接访问，无方法调用
 
 1. **包结构**: `org.apache.flink.state.forl0.*`
 2. **命名约定**:
-   - 类名: `ForL0` 前缀表示本项目组件
-   - 常量: 全大写下划线分隔
-   - AoS 访问: `entries[(slot << 1)]` (key), `entries[(slot << 1) + 1]` (value)
-3. **日志**: 使用 SLF4J (`LoggerFactory.getLogger`)
-4. **注释**: 
-   - 公共 API 使用 Javadoc
-   - 复杂逻辑添加行内注释
-   - 性能关键路径标注 `// Hot path`
+   - 项目组件统一使用 `ForL0` 前缀
+   - 常量使用全大写下划线风格
+3. **热路径原则**:
+   - Java wrapper 尽量保持薄
+   - 数据读写和存储逻辑优先放在 `NativeEngine` / native engine
+4. **兼容性原则**:
+   - 使用 Flink serializer compatibility API
+   - 修改 snapshot / restore 时必须同步考虑写入与恢复两侧
+5. **日志**:
+   - 使用 SLF4J
+   - 延续 `[ForL0]` 前缀风格
 
-### Native 代码 (C)
+### Native 代码
 
-1. **文件位置**: `src/main/native/`
-2. **条件编译**: 
-   - `L0_NOT_SUPPORTED`: macOS 下定义,跳过 L0 相关代码
-   - `#ifndef L0_NOT_SUPPORTED ... #endif` 包裹 L0 专用代码
-3. **JNI 命名**: `Java_org_apache_flink_state_forl0_space_NativeL0Memory_*`
-4. **内存对齐**: 使用 `posix_memalign` 保证 64 字节对齐
+1. **语言现状**: 当前 native 主要是 C++，不是旧版 C 文件布局
+2. **目录约定**:
+   - `src/main/native/engine/`: 引擎内部实现
+   - `src/main/native/jni/`: JNI 暴露层
+   - `src/main/native/checkpoint/`: checkpoint 辅助代码
+3. **构建方式**:
+   - 使用 `src/main/native/Makefile`
+   - 产物为 `libforl0_engine.so`
+4. **平台差异**:
+   - Makefile 已按 `aarch64`、`x86_64`、portable fallback 做编译选项切换
 
 ### 测试
 
-1. **单元测试**: `src/test/java/` 下,使用 JUnit 5
-2. **命名**: `*Test.java` 或 `*ITCase.java`
-3. **Native 测试**: 需要 native 库可用,使用 `@EnabledIf("isNativeAvailable")`
+1. **单元测试位置**: `src/test/java/`
+2. **常用测试入口**:
+   - `ForL0StateSemanticsTest`
+   - `HotCacheIntegrationTest`
+   - `src/test/java/org/apache/flink/state/forl0/minicluster/` 下的 MiniCluster 测试
+3. **修改原则**:
+   - 语义问题优先补或改语义测试
+   - snapshot/restore 问题优先补恢复相关测试
 
 ### 文档
 
-1. 除非用户要求，否则禁止创建新的说明文档
+1. 除非用户明确要求，否则不要新增说明文档
+2. 如果更新架构类说明，应优先同步 `.github/copilot-instructions.md` 与 `.github/agents/flinkAgent.agent.md`
 
 ## 常见任务
 
@@ -126,103 +176,120 @@ table.entries[(slot << 1) + 1] = value;  // 直接访问，无方法调用
 
 ```bash
 mvn clean compile
-mvn test                    # 运行测试
-mvn package -DskipTests     # 打包 JAR
+mvn test
+mvn package -DskipTests
 ```
 
 ### 编译 Native 库
 
 ```bash
 cd src/main/native
-make clean && make          # macOS: .dylib, Linux: .so
-make install                # 复制到 resources/native/
+make clean
+make
+make install
+```
+
+`make install` 会把 `libforl0_engine.so` 复制到 `src/main/resources/native/`。
+
+### 运行聚焦测试
+
+```bash
+mvn -Dtest=ForL0StateSemanticsTest test
+mvn -Dtest=HotCacheIntegrationTest test
+```
+
+### 运行 Benchmark
+
+```bash
+cd benchmark
+python scripts/run_wordcount.py --backend all
+python scripts/run_wordcount.py --backend all --profile
+python scripts/generate_report.py
 ```
 
 ## 重要约定
 
-### 线程安全
+### 线程模型
 
-- Flink 状态访问是**单线程**的
-- Allocator 实现不需要并发支持
-- 避免在热路径使用同步原语
-
-### 内存布局 (AoS - Array of Structures)
-
-- SwissTable ctrl[]: 每 slot 1 字节控制字节
-- SwissTable entries[]: AoS 交织布局 (slot i → entries[2*i] key, entries[2*i+1] value)
-- SwissTable hashes[]: slot i → 32位 hash (用于 rehash/grow)
-- Table 容量: INITIAL=64, 负载因子 87.5%
+- Flink keyed state 访问默认是 task-thread confined
+- native engine 以这一前提设计
+- 不要在热路径随意引入同步原语
 
 ### 错误处理
 
-- Native 库加载失败 → 抛出异常,L0 Cache 不可用
-- 内存分配失败 → 抛出 `L0MemoryAllocationException`
-- 不提供降级到堆内存的选项
+- Native 库加载失败时，应从 `NativeEngine` 的加载流程和资源打包路径开始排查
+- snapshot/restore 失败时，先区分 serializer compatibility、JNI marshalling、native payload 三类问题
+- 不要默认提供“自动降级到 heap state”的修复思路，除非用户明确要求设计降级方案
 
 ### 兼容性
 
-- 保持与 Flink StateBackend API 完全兼容
-- 用户代码无需修改即可使用
-- 支持 Flink 的 Checkpoint/Savepoint 机制
+- 保持与 Flink `StateBackend` / keyed state 语义兼容
+- 用户代码应无需修改即可接入 `state.backend: forl0`
+- 修改二进制 checkpoint 布局时，必须同时维护 restore 路径
 
 ## 文件说明
 
 | 路径 | 说明 |
 |------|------|
-| `ForL0-State-Backend设计说明书.md` | 详细设计文档 |
-| `dev_notes/` | 开发笔记和设计决策 |
-| `reference/` | 参考实现 (Flink HeapStateBackend) |
-| `reference/l0_docs/` | L0 内存库 API 文档 |
-| `benchmark/` | 性能测试框架 |
-| `benchmark/docs/Advanced_Metrics_Design.md` | 高级指标采集方案设计 |
+| `src/main/java/org/apache/flink/state/forl0/` | Java backend 主实现 |
+| `src/main/native/engine/` | native engine、SwissTable、HotCache |
+| `src/main/native/jni/` | JNI 按状态类型拆分的桥接实现 |
+| `src/test/java/org/apache/flink/state/forl0/` | 语义测试、集成测试、MiniCluster 测试 |
+| `benchmark/` | benchmark 脚本、配置和报告 |
+| `dev_notes/CPP_StateBackend_Rewrite_Design.md` | 当前 native-engine 重写设计背景 |
+| `reference/` | Flink 参考实现与相关资料 |
 
 ## 调试提示
 
 1. **Native 库加载问题**:
-   - 检查 `java.library.path` 设置
-   - 确认 `.dylib/.so` 文件存在
-   - 查看日志中的 `[ForL0]` 前缀消息
+   - 检查 `src/main/resources/native/libforl0_engine.so` 是否存在
+   - 检查 `java.library.path` 与资源打包是否正确
+   - 查看 `NativeEngine` 日志，确认是 `System.loadLibrary` 成功，还是 fallback 到资源解压加载
 
-2. **L0 模式检测**:
-   ```java
-   NativeL0Memory.isL0Mode()          // 是否 L0 模式
-   NativeL0Memory.getModeDescription() // 模式描述
-   ```
+2. **Checkpoint / Restore 问题**:
+   - 从 `ForL0KeyedStateBackendBuilder.restoreFromHandles(...)` 入手看恢复
+   - 从 `ForL0SnapshotStrategy.syncPrepareResources(...)` / `asyncSnapshot(...)` 入手看写出
+   - 先验证 serializer compatibility，再怀疑 native 数据损坏
 
-3. **IDEA 测试配置**:
-   - VM options: `-Djava.library.path=$ProjectFileDir$/src/main/resources/native`
+3. **State 语义问题**:
+   - 从对应的 `ForL0*State` wrapper 和它调用的 `NativeEngine` 方法入手
+   - 用 `ForL0StateSemanticsTest` 先确认不是 cache stale read / clear 语义回归
+
+4. **测试运行配置**:
+   - Surefire 已预置 `-Djava.library.path=${project.basedir}/src/main/resources/native`
+   - 如在 IDE 单独运行测试，补同等 VM option
 
 ## Benchmark 测试
 
 ### 运行测试
 
 ```bash
-cd benchmark/scripts
+cd benchmark
 
 # 运行 WordCount 对比测试
-python run_wordcount.py --backend all
+python scripts/run_wordcount.py --backend all
 
 # 运行 WordCount 并采集火焰图
 export ASYNC_PROFILER_HOME=/path/to/async-profiler
-python run_wordcount.py --backend all --profile
+python scripts/run_wordcount.py --backend all --profile
 
 # 生成报告
-python generate_report.py
+python scripts/generate_report.py
 ```
 
-### 采集的指标
+### 采集指标
 
 | 指标 | 说明 | 平台支持 |
 |------|------|----------|
-| 吞吐量/延迟 | 性能基准指标 | macOS ✅ / Linux ✅ |
-| 火焰图 (CPU/Alloc) | Async Profiler | macOS ✅ / Linux ✅ |
-| CPU Cache 统计 | cache-misses 等 | macOS ❌ / Linux ✅ |
+| 吞吐量 / 延迟 | 基准性能指标 | macOS ✅ / Linux ✅ |
+| 火焰图 (CPU / Alloc) | Async Profiler | macOS ✅ / Linux ✅ |
+| CPU Cache 统计 | `cache-misses` 等 | macOS ❌ / Linux ✅ |
 
-> ⚠️ CPU Cache 统计 (cache-misses, L1-dcache-load-misses) 仅在 Linux 上可用，需要 perf_events 支持。
+> ⚠️ CPU Cache 统计仅在 Linux 可用，并依赖 perf_events 支持。
 
 ## 贡献指南
 
-1. 修改前先理解 Swiss Tables 架构和 SWAR 并行匹配
-2. Native 代码修改需要重新编译库
-3. 保持与 Flink 原生 API 的兼容性
-4. 测试代码使用 `[BENCHMARK_TEST]` 注释标注
+1. 修改前先确认当前源码是否走 `NativeEngine + C++ engine` 路径，而不是旧设计路径
+2. Native 代码修改后通常需要重新 `make` / `make install`
+3. 修改 checkpoint 布局或 serializer 行为时，必须同时考虑 restore 兼容性
+4. 性能问题先区分语义回归、JNI 开销、native 存储问题，再谈优化

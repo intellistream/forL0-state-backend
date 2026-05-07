@@ -6,6 +6,7 @@ Usage:
     python run_benchmark.py --test all --backend all          # Run everything
     python run_benchmark.py --test wordcount --backend forl0  # WordCount only
     python run_benchmark.py --test nexmark --query q5,q8      # NexMark specific queries
+    python run_benchmark.py --test client_usecase --backend all  # Client usecase benchmark
     python run_benchmark.py --test all --profile cpu          # With flame graphs
     python run_benchmark.py --test all --profile uarch        # With VTune uarch analysis
     python run_benchmark.py --test all --profile memory       # With VTune memory analysis
@@ -20,7 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from run_wordcount import run_wordcount, save_result
 from run_nexmark import NexmarkRunner
 from run_unittest import run_unittest
+from run_client_usecase import run_client_usecase
 from run_benchset import run_benchset, print_benchset_summary, BENCHMARKS as BENCHSET_BENCHMARKS
+from generate_report import generate_benchset_paper_artifacts
 from utils.config import load_config
 
 
@@ -95,6 +98,25 @@ def print_summary(results, backends):
                 print("Status: ✓ PASS (>= 60% improvement)")
             else:
                 print(f"Status: ✗ FAIL (< 60% improvement)")
+
+    # Client usecase summary
+    print("\n## Client Usecase Benchmark")
+    print("-" * 50)
+    client_results = results.get('client_usecase', {})
+
+    for backend in backends:
+        if backend in client_results:
+            result = client_results[backend]
+            tput = result.get('throughput_per_core', 'N/A')
+            if isinstance(tput, (int, float)):
+                print(f"{backend:20s}: {tput:>15,.0f} records/s/core")
+
+    if 'hashmap' in client_results and 'forl0' in client_results:
+        hashmap_tpc = client_results['hashmap'].get('throughput_per_core', 0)
+        forl0_tpc = client_results['forl0'].get('throughput_per_core', 0)
+        if hashmap_tpc > 0:
+            improvement = ((forl0_tpc - hashmap_tpc) / hashmap_tpc) * 100
+            print(f"{'Improvement':20s}: {improvement:>15.1f}%")
     
     # NexMark summary
     nexmark_results = results.get('nexmark', {})
@@ -223,6 +245,9 @@ Examples:
   
   # Run specific NexMark queries
   python run_benchmark.py --test nexmark --query q5,q8
+
+    # Run client usecase benchmark
+    python run_benchmark.py --test client_usecase --backend all
   
   # Run with async-profiler flame graphs
   python run_benchmark.py --test wordcount --backend all --profile cpu
@@ -235,7 +260,7 @@ Examples:
         """
     )
     
-    parser.add_argument('--test', choices=['unittest', 'wordcount', 'nexmark', 'benchset', 'all'], default='all',
+    parser.add_argument('--test', choices=['unittest', 'wordcount', 'nexmark', 'client_usecase', 'benchset', 'all'], default='all',
                        help='Test to run (default: all)')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='all',
                        help='State backend to use (default: all)')
@@ -279,7 +304,7 @@ Examples:
         print(f"Mini-batch: ENABLED (buffer + sort by key, no pre-aggregation)")
     print("=" * 60)
     
-    results = {'unittest': {}, 'wordcount': {}, 'nexmark': {}, 'benchset': {}}
+    results = {'unittest': {}, 'wordcount': {}, 'nexmark': {}, 'client_usecase': {}, 'benchset': {}}
     
     # Run Unit Test benchmarks
     if args.test in ['unittest', 'all']:
@@ -339,11 +364,27 @@ Examples:
             print("  cd benchmark/nexmark-src && mvn clean package -DskipTests")
         except Exception as e:
             print(f"\n[Error] NexMark failed: {e}")
+
+    # Run client usecase benchmark
+    if args.test in ['client_usecase', 'all']:
+        print("\n" + "=" * 60)
+        print("Running Client Usecase Benchmark")
+        print("=" * 60)
+        client_config = config.get('client_usecase', {})
+        for backend in backends:
+            result = run_client_usecase(
+                config,
+                backend,
+                profile_mode=args.profile,
+            )
+            if result:
+                results['client_usecase'][backend] = result
+                save_result(result, 'client_usecase', backend)
     
-    # Run Benchset (realistic business scenarios)
+    # Run Benchset (seven paper workloads)
     if args.test in ['benchset', 'all']:
         print("\n" + "=" * 60)
-        print("Running Benchset (Realistic Business Scenarios)")
+        print("Running Benchset (Seven Paper Workloads)")
         print("=" * 60)
         try:
             benchset_results = run_benchset(
@@ -355,6 +396,10 @@ Examples:
             results['benchset'] = benchset_results
             # Print benchset-specific summary
             print_benchset_summary(benchset_results, backends)
+            print("\nGenerating benchset paper figures...")
+            artifacts = generate_benchset_paper_artifacts()
+            if artifacts:
+                print("Benchset figures generated in: benchmark/results/figures/")
         except FileNotFoundError as e:
             print(f"\n[Warning] Benchset not available: {e}")
             print("To run Benchset, first compile it:")
