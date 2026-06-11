@@ -664,19 +664,22 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddLong(
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
         int64_t k = static_cast<int64_t>(key);
         int64_t v = static_cast<int64_t>(value);
-        int64_t* existing = table->get(keyGroup, k);
-        if (!existing) {
-            table->put(keyGroup, k, v);
-        } else {
-            int64_t new_val;
+        int64_t updated = v;
+        bool modified = table->modify_in_place(keyGroup, k, [&](int64_t& existing) {
             switch (builtinAggType) {
-                case 0: new_val = *existing + v; break;  // SUM
-                case 1: new_val = std::min(*existing, v); break;  // MIN
-                case 2: new_val = std::max(*existing, v); break;  // MAX
+                case 0: existing += v; break;  // SUM
+                case 1: existing = std::min(existing, v); break;  // MIN
+                case 2: existing = std::max(existing, v); break;  // MAX
                 default:
                     throw std::runtime_error("User-defined reduce requires Java callback");
             }
-            table->put(keyGroup, k, new_val);
+            updated = existing;
+        });
+        if (!modified) {
+            table->put(keyGroup, k, v);
+        }
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->put(k, updated);
         }
     })
 }

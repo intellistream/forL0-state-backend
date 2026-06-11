@@ -160,6 +160,8 @@ public final class NativeEngine {
 
     public static native void valuePutLongLong(long stateHandle, long key, int keyGroup, long value);
 
+    public static native long valueAddAndGetLongLong(long stateHandle, long key, int keyGroup, long delta);
+
     public static native void valueClearLong(long stateHandle, long key, int keyGroup);
 
     // --- long key + int value (VoidNamespace) ---
@@ -185,6 +187,8 @@ public final class NativeEngine {
     public static native long valueGetIntLong(long stateHandle, int key, int keyGroup);
 
     public static native void valuePutIntLong(long stateHandle, int key, int keyGroup, long value);
+
+    public static native long valueAddAndGetIntLong(long stateHandle, int key, int keyGroup, long delta);
 
     // --- int key + double value (VoidNamespace) ---
 
@@ -497,6 +501,7 @@ public final class NativeEngine {
     // --- ValueState: long key + long value + TimeWindow ns ---
     public static native boolean valueGetLongLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long[] out);
     public static native void valuePutLongLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long value);
+    public static native long valueAddAndGetLongLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long delta);
     public static native boolean valueContainsWithTW(long h, long key, int kg, long nsStart, long nsEnd);
     public static native void valueClearWithTW(long h, long key, int kg, long nsStart, long nsEnd);
 

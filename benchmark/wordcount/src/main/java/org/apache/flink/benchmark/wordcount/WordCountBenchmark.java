@@ -18,9 +18,8 @@
 
 package org.apache.flink.benchmark.wordcount;
 
-import org.apache.flink.api.common.functions.ReduceFunction;
-import org.apache.flink.api.common.state.ReducingState;
-import org.apache.flink.api.common.state.ReducingStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.benchmark.wordcount.sink.MetricsSink;
@@ -31,6 +30,10 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.reflect.Method;
+
 /**
  * Stateful WordCount Benchmark (State-Backend Focused).
  * 
@@ -39,9 +42,9 @@ import org.apache.flink.util.Collector;
  * 
  * <p>Key design for StateBackend benchmarking:
  * <ul>
- *   <li>Uses KeyedProcessFunction with ReducingState instead of windows</li>
+ *   <li>Uses KeyedProcessFunction with ValueState (VoidNamespace) instead of windows</li>
  *   <li>No Timer overhead - pure state access</li>
- *   <li>Each record triggers one incremental state update</li>
+ *   <li>Each record triggers one state read + one state write</li>
  *   <li>High key cardinality to stress the state backend</li>
  * </ul>
  * 
@@ -90,8 +93,8 @@ public class WordCountBenchmark {
             .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
             .name("SkewedKeySource");
         
-        // Stateful count using KeyedProcessFunction with ReducingState
-        // This keeps the benchmark focused on incremental state updates.
+        // Stateful count using KeyedProcessFunction with ValueState
+        // This uses VoidNamespace and has no Timer overhead
         DataStream<Tuple2<Long, Long>> result = source
             .keyBy(t -> t.f0)
             .process(new StatefulCounter())
@@ -116,37 +119,51 @@ public class WordCountBenchmark {
     }
     
     /**
-     * Stateful counter using ReducingState.
+         * Stateful counter using ValueState.
      * 
      * <p>Each record triggers:
      * <ul>
-     *   <li>One state update: countState.add()</li>
+         *   <li>One state read: countState.value()</li>
+         *   <li>One state write: countState.update()</li>
      * </ul>
      * 
-     * <p>The benchmark sink only measures end-to-end throughput, so it does not need
-     * the per-record count value. This lets us model a common no-L0 optimization:
-     * associative updates that avoid an explicit read-before-write on every record.
+         * <p>Uses VoidNamespace (default for ValueState), which allows ForL0 to use
+         * direct SwissTable access without HashMap overhead.
      */
     public static class StatefulCounter 
             extends KeyedProcessFunction<Long, Tuple2<Long, Long>, Tuple2<Long, Long>> {
         
         private static final long serialVersionUID = 1L;
         
-        private transient ReducingState<Long> countState;
+        private transient ValueState<Long> countState;
+        private transient LongAddAndGetFastPath countStateFastPath;
 
-        private static final ReduceFunction<Long> SUM_REDUCER = new ReduceFunction<Long>() {
-            private static final long serialVersionUID = 1L;
-
-            @Override
-            public Long reduce(Long value1, Long value2) {
-                return value1 + value2;
-            }
-        };
+        @FunctionalInterface
+        private interface LongAddAndGetFastPath {
+            long addAndGet(long delta) throws Exception;
+        }
         
         @Override
         public void open(Configuration parameters) throws Exception {
-            countState = getRuntimeContext().getReducingState(
-                new ReducingStateDescriptor<>("count", SUM_REDUCER, Long.class));
+            countState = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("count", Long.class));
+            countStateFastPath = resolveFastPath(countState);
+        }
+
+        private static LongAddAndGetFastPath resolveFastPath(ValueState<Long> state) {
+            try {
+                Method method = state.getClass().getMethod("addAndGetLong", long.class);
+                MethodHandle handle = MethodHandles.publicLookup().unreflect(method).bindTo(state);
+                return delta -> {
+                    try {
+                        return (long) handle.invokeExact(delta);
+                    } catch (Throwable throwable) {
+                        throw new RuntimeException("ForL0 addAndGetLong fast path failed", throwable);
+                    }
+                };
+            } catch (NoSuchMethodException | IllegalAccessException ignored) {
+                return null;
+            }
         }
         
         @Override
@@ -154,8 +171,15 @@ public class WordCountBenchmark {
                 Tuple2<Long, Long> value, 
                 Context ctx, 
                 Collector<Tuple2<Long, Long>> out) throws Exception {
-            countState.add(value.f1);
-            out.collect(value);
+            long newCount;
+            if (countStateFastPath != null) {
+                newCount = countStateFastPath.addAndGet(value.f1);
+            } else {
+                Long currentCount = countState.value();
+                newCount = (currentCount == null) ? value.f1 : currentCount + value.f1;
+                countState.update(newCount);
+            }
+            out.collect(Tuple2.of(value.f0, newCount));
         }
     }
 }

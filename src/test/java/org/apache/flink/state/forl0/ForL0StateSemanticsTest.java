@@ -119,6 +119,27 @@ public class ForL0StateSemanticsTest {
     }
 
     @Test
+    void valueStateAddAndGetLongAccumulates() throws Exception {
+        ForL0KeyedStateBackend<Long> backend = buildBackend();
+        try {
+            backend.setCurrentKey(1L);
+            @SuppressWarnings("unchecked")
+            ForL0ValueState<Long, VoidNamespace, Long> state =
+                    (ForL0ValueState<Long, VoidNamespace, Long>) backend.getPartitionedState(
+                            VoidNamespace.INSTANCE,
+                            VoidNamespaceSerializer.INSTANCE,
+                            new ValueStateDescriptor<>("v_add_and_get", LongSerializer.INSTANCE));
+
+            assertEquals(1L, state.addAndGetLong(1L));
+            assertEquals(Long.valueOf(1L), state.value());
+            assertEquals(3L, state.addAndGetLong(2L));
+            assertEquals(Long.valueOf(3L), state.value());
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
     void valueStateUpdateNullClearsEntry() throws Exception {
         // Flink convention (see Heap/RocksDB backends): ValueState.update(null)
         // is an explicit clear. We must honour that AND invalidate the cache.
@@ -333,6 +354,29 @@ public class ForL0StateSemanticsTest {
             assertTrue(actual instanceof BinaryRowData);
             assertEquals(21L, actual.getLong(0));
             assertEquals(9, actual.getInt(1));
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
+    void reducingStateBuiltinLongSumAccumulatesAndClears() throws Exception {
+        ForL0KeyedStateBackend<Long> backend = buildBackend();
+        try {
+            backend.setCurrentKey(6L);
+            ReducingState<Long> state = backend.getPartitionedState(
+                    VoidNamespace.INSTANCE,
+                    VoidNamespaceSerializer.INSTANCE,
+                    new ReducingStateDescriptor<>("reduce_long_sum", Long::sum, LongSerializer.INSTANCE));
+
+            state.add(1L);
+            state.add(2L);
+            state.add(3L);
+
+            assertEquals(Long.valueOf(6L), state.get());
+
+            state.clear();
+            assertNull(state.get());
         } finally {
             backend.dispose();
         }

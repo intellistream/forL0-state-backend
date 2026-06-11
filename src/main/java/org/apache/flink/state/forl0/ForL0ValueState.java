@@ -162,6 +162,51 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
         }
     }
 
+    /**
+     * Fused read-modify-write fast path for long-valued counters.
+     *
+     * <p>Used by benchmarks and counter-like operators to avoid a separate get + put JNI roundtrip.
+     */
+    public long addAndGetLong(long delta) {
+        if (valueTypeId != TypeAnalyzer.TYPE_INT64 || isRowDataValue) {
+            throw new IllegalStateException("addAndGetLong requires non-RowData long ValueState");
+        }
+
+        K key = keyContext.currentKey;
+        int keyGroup = keyContext.currentKeyGroupIndex;
+
+        switch (keyNsStrategy) {
+            case LONG_VOID:
+                return NativeEngine.valueAddAndGetLongLong(stateHandle, (Long) key, keyGroup, delta);
+            case INT_VOID:
+                return NativeEngine.valueAddAndGetIntLong(stateHandle, (Integer) key, keyGroup, delta);
+            case ROWDATA_LONG_VOID:
+                return NativeEngine.valueAddAndGetLongLong(
+                        stateHandle,
+                        rowDataKeyAccessor.extractSingleLong(key),
+                        keyGroup,
+                        delta);
+            case ROWDATA_INT_VOID:
+                return NativeEngine.valueAddAndGetIntLong(
+                        stateHandle,
+                        rowDataKeyAccessor.extractSingleInt(key),
+                        keyGroup,
+                        delta);
+            case LONG_TW: {
+                TimeWindow tw = (TimeWindow) currentNamespace;
+                return NativeEngine.valueAddAndGetLongLongWithTW(
+                        stateHandle,
+                        (Long) key,
+                        keyGroup,
+                        tw.getStart(),
+                        tw.getEnd(),
+                        delta);
+            }
+            default:
+                throw new IllegalStateException("addAndGetLong is only supported for primitive long/int key fast paths");
+        }
+    }
+
     /** Get value for a long key extracted from RowData. */
     @SuppressWarnings("unchecked")
     private V valueForLongKey(long k, int keyGroup) throws IOException {

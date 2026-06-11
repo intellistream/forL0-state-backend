@@ -55,6 +55,30 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongLong(
     })
 }
 
+JNIEXPORT jlong JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueAddAndGetLongLong(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jlong key, jint keyGroup, jlong delta) {
+    JNI_ENTRY_RETURN(jlong, 0, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
+        int64_t k = static_cast<int64_t>(key);
+        int64_t d = static_cast<int64_t>(delta);
+        int64_t updated = d;
+        bool modified = table->modify_in_place(keyGroup, k, [&](int64_t& existing) {
+            existing += d;
+            updated = existing;
+        });
+        if (!modified) {
+            table->put(keyGroup, k, d);
+        }
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->put(k, updated);
+        }
+        return static_cast<jlong>(updated);
+    })
+}
+
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_valueClearLong(
         JNIEnv* env, jclass,
@@ -216,6 +240,30 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutIntLong(
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(hotcache_key_from_i32(k), v);
         }
+    })
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueAddAndGetIntLong(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jint key, jint keyGroup, jlong delta) {
+    JNI_ENTRY_RETURN(jlong, 0, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int32_t, int64_t>(handle->table_id);
+        int32_t k = static_cast<int32_t>(key);
+        int64_t d = static_cast<int64_t>(delta);
+        int64_t updated = d;
+        bool modified = table->modify_in_place(keyGroup, k, [&](int64_t& existing) {
+            existing += d;
+            updated = existing;
+        });
+        if (!modified) {
+            table->put(keyGroup, k, d);
+        }
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->put(hotcache_key_from_i32(k), updated);
+        }
+        return static_cast<jlong>(updated);
     })
 }
 

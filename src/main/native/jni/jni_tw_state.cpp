@@ -62,6 +62,32 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongLongWithTW(
     })
 }
 
+JNIEXPORT jlong JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueAddAndGetLongLongWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jlong key, jint keyGroup,
+        jlong nsStart, jlong nsEnd, jlong delta) {
+    JNI_ENTRY_RETURN(jlong, 0, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
+        TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
+        int64_t k = static_cast<int64_t>(key);
+        int64_t d = static_cast<int64_t>(delta);
+        int64_t updated = d;
+        bool modified = table->modify_in_place(keyGroup, tw, k, [&](int64_t& existing) {
+            existing += d;
+            updated = existing;
+        });
+        if (!modified) {
+            table->put(keyGroup, tw, k, d);
+        }
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd), updated);
+        }
+        return static_cast<jlong>(updated);
+    })
+}
+
 JNIEXPORT jboolean JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_valueContainsWithTW(
         JNIEnv* env, jclass,
@@ -260,19 +286,22 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddLongWithTW(
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
         int64_t v = static_cast<int64_t>(value);
-        int64_t* existing = table->get(keyGroup, tw, k);
-        if (!existing) {
-            table->put(keyGroup, tw, k, v);
-        } else {
-            int64_t new_value;
+        int64_t updated = v;
+        bool modified = table->modify_in_place(keyGroup, tw, k, [&](int64_t& existing) {
             switch (builtinAggType) {
-                case 0: new_value = *existing + v; break;  // SUM
-                case 1: new_value = std::min(*existing, v); break;  // MIN
-                case 2: new_value = std::max(*existing, v); break;  // MAX
+                case 0: existing += v; break;  // SUM
+                case 1: existing = std::min(existing, v); break;  // MIN
+                case 2: existing = std::max(existing, v); break;  // MAX
                 default:
                     throw std::runtime_error("User-defined reduce requires Java callback");
             }
-            table->put(keyGroup, tw, k, new_value);
+            updated = existing;
+        });
+        if (!modified) {
+            table->put(keyGroup, tw, k, v);
+        }
+        if (handle->hot_cache_ll) {
+            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd), updated);
         }
     })
 }
