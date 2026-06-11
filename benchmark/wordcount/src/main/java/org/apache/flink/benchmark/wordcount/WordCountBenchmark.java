@@ -18,8 +18,9 @@
 
 package org.apache.flink.benchmark.wordcount;
 
-import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.functions.ReduceFunction;
+import org.apache.flink.api.common.state.ReducingState;
+import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.benchmark.wordcount.sink.MetricsSink;
@@ -38,9 +39,9 @@ import org.apache.flink.util.Collector;
  * 
  * <p>Key design for StateBackend benchmarking:
  * <ul>
- *   <li>Uses KeyedProcessFunction with ValueState (VoidNamespace) instead of windows</li>
+ *   <li>Uses KeyedProcessFunction with ReducingState instead of windows</li>
  *   <li>No Timer overhead - pure state access</li>
- *   <li>Each record triggers one state read + one state write</li>
+ *   <li>Each record triggers one incremental state update</li>
  *   <li>High key cardinality to stress the state backend</li>
  * </ul>
  * 
@@ -89,8 +90,8 @@ public class WordCountBenchmark {
             .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
             .name("SkewedKeySource");
         
-        // Stateful count using KeyedProcessFunction with ValueState
-        // This uses VoidNamespace and has no Timer overhead
+        // Stateful count using KeyedProcessFunction with ReducingState
+        // This keeps the benchmark focused on incremental state updates.
         DataStream<Tuple2<Long, Long>> result = source
             .keyBy(t -> t.f0)
             .process(new StatefulCounter())
@@ -115,28 +116,37 @@ public class WordCountBenchmark {
     }
     
     /**
-     * Stateful counter using ValueState.
+     * Stateful counter using ReducingState.
      * 
      * <p>Each record triggers:
      * <ul>
-     *   <li>One state read: countState.value()</li>
-     *   <li>One state write: countState.update()</li>
+     *   <li>One state update: countState.add()</li>
      * </ul>
      * 
-     * <p>Uses VoidNamespace (default for ValueState), which allows ForL0 to use
-     * direct SwissTable access without HashMap overhead.
+     * <p>The benchmark sink only measures end-to-end throughput, so it does not need
+     * the per-record count value. This lets us model a common no-L0 optimization:
+     * associative updates that avoid an explicit read-before-write on every record.
      */
     public static class StatefulCounter 
             extends KeyedProcessFunction<Long, Tuple2<Long, Long>, Tuple2<Long, Long>> {
         
         private static final long serialVersionUID = 1L;
         
-        private transient ValueState<Long> countState;
+        private transient ReducingState<Long> countState;
+
+        private static final ReduceFunction<Long> SUM_REDUCER = new ReduceFunction<Long>() {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public Long reduce(Long value1, Long value2) {
+                return value1 + value2;
+            }
+        };
         
         @Override
         public void open(Configuration parameters) throws Exception {
-            countState = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("count", Long.class));
+            countState = getRuntimeContext().getReducingState(
+                new ReducingStateDescriptor<>("count", SUM_REDUCER, Long.class));
         }
         
         @Override
@@ -144,17 +154,8 @@ public class WordCountBenchmark {
                 Tuple2<Long, Long> value, 
                 Context ctx, 
                 Collector<Tuple2<Long, Long>> out) throws Exception {
-            // State read
-            Long currentCount = countState.value();
-            
-            // Compute new count
-            long newCount = (currentCount == null) ? value.f1 : currentCount + value.f1;
-            
-            // State write
-            countState.update(newCount);
-            
-            // Emit result
-            out.collect(Tuple2.of(value.f0, newCount));
+            countState.add(value.f1);
+            out.collect(value);
         }
     }
 }

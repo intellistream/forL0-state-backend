@@ -12,6 +12,20 @@
 3. 什么时候需要 `async-profiler`
 4. 本机上已验证通过的 flame graph 采集步骤
 
+建议先统一设置以下路径变量，后面的命令都基于这些变量展开：
+
+```bash
+export REPO_ROOT=/path/to/forL0-state-backend
+export FLINK_HOME=/path/to/your/flink
+export ASYNC_PROFILER_HOME=/path/to/async-profiler-4.4-linux-arm64
+```
+
+如果你当前就在仓库根目录，也可以执行：
+
+```bash
+export REPO_ROOT="$(pwd)"
+```
+
 ## 一、GitHub 上当前已经有的内容
 
 截至当前状态，`main` 分支上已经有以下几类关键文件。
@@ -145,7 +159,7 @@ docker/deploy/forl0-l0-offline-bundle-20260611.README.md
 在当前仓库根目录执行：
 
 ```bash
-cd /home/shuhao/forL0-state-backend
+cd "$REPO_ROOT"
 
 ls -lh docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz
 ls -lh docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256
@@ -157,7 +171,7 @@ ls -lh docker/deploy/forl0-l0-offline-bundle-20260611.README.md
 在本地执行：
 
 ```bash
-cd /home/shuhao/forL0-state-backend
+cd "$REPO_ROOT"
 
 sha256sum docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz
 cat docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256
@@ -166,7 +180,7 @@ cat docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256
 如果你想直接自动校验：
 
 ```bash
-cd /home/shuhao/forL0-state-backend/docker/deploy
+cd "$REPO_ROOT/docker/deploy"
 sha256sum -c forl0-l0-offline-bundle-20260611.tar.gz.sha256
 ```
 
@@ -336,7 +350,7 @@ cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/restart.sh ~/forl0-do
 ### 第 1 步：在本地确认三件套都存在
 
 ```bash
-cd /home/shuhao/forL0-state-backend
+cd "$REPO_ROOT"
 
 ls -lh target/flink-statebackend-forL0-1.0-SNAPSHOT.jar
 ls -lh src/main/resources/native/libforl0_engine.so
@@ -422,21 +436,22 @@ python3 run_benchmark.py --test wordcount --backend all --profile cpu
 ### 第 2 步：在 host 安装 profiler
 
 ```bash
-cd /home/shuhao
+mkdir -p "$(dirname \"$ASYNC_PROFILER_HOME\")"
+cd "$(dirname \"$ASYNC_PROFILER_HOME\")"
 
 curl -L -o /tmp/async-profiler-4.4-linux-arm64.tar.gz \
   https://github.com/async-profiler/async-profiler/releases/download/v4.4/async-profiler-4.4-linux-arm64.tar.gz
 
 tar xzf /tmp/async-profiler-4.4-linux-arm64.tar.gz
 
-/home/shuhao/async-profiler-4.4-linux-arm64/bin/asprof --version
+"$ASYNC_PROFILER_HOME/bin/asprof" --version
 ```
 
 ### 第 3 步：将 profiler 复制进两个 TaskManager 容器
 
 ```bash
-sudo docker cp /home/shuhao/async-profiler-4.4-linux-arm64 flink-taskmanager-1:/opt/async-profiler-4.4-linux-arm64
-sudo docker cp /home/shuhao/async-profiler-4.4-linux-arm64 flink-taskmanager-2:/opt/async-profiler-4.4-linux-arm64
+sudo docker cp "$ASYNC_PROFILER_HOME" flink-taskmanager-1:/opt/async-profiler-4.4-linux-arm64
+sudo docker cp "$ASYNC_PROFILER_HOME" flink-taskmanager-2:/opt/async-profiler-4.4-linux-arm64
 ```
 
 ### 第 4 步：验证容器里 profiler 可用
@@ -458,12 +473,12 @@ sudo docker exec flink-taskmanager-1 bash -lc \
 ### 第 6 步：提交 HashMap benchmark
 
 ```bash
-cd /home/shuhao/forL0-state-backend/benchmark/scripts
+cd "$REPO_ROOT/benchmark/scripts"
 
-FLINK_HOME=/home/shuhao/flink-1.20.3 \
-/home/shuhao/flink-1.20.3/bin/flink run -d \
+FLINK_HOME="$FLINK_HOME" \
+"$FLINK_HOME/bin/flink" run -d \
   -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory \
-  /home/shuhao/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar \
+  "$REPO_ROOT/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar" \
   --numKeys 2000000 \
   --numRecords 2000000000 \
   --arrivalRate 0 \
@@ -508,26 +523,26 @@ sudo docker exec flink-taskmanager-1 bash -lc '
 ### 第 9 步：将 HashMap 结果拷回工作区
 
 ```bash
-mkdir -p /home/shuhao/forL0-state-backend/benchmark/results/profiles
+mkdir -p "$REPO_ROOT/benchmark/results/profiles"
 
 sudo docker cp \
   flink-taskmanager-1:/tmp/forl0-profiles/export/hashmap_cpu.html \
-  /home/shuhao/forL0-state-backend/benchmark/results/profiles/hashmap_cpu.html
+  "$REPO_ROOT/benchmark/results/profiles/hashmap_cpu.html"
 
 sudo docker cp \
   flink-taskmanager-1:/tmp/forl0-profiles/export/hashmap_cpu.collapsed \
-  /home/shuhao/forL0-state-backend/benchmark/results/profiles/hashmap_cpu.collapsed
+  "$REPO_ROOT/benchmark/results/profiles/hashmap_cpu.collapsed"
 ```
 
 ### 第 10 步：提交 ForL0 benchmark
 
 ```bash
-cd /home/shuhao/forL0-state-backend/benchmark/scripts
+cd "$REPO_ROOT/benchmark/scripts"
 
-FLINK_HOME=/home/shuhao/flink-1.20.3 \
-/home/shuhao/flink-1.20.3/bin/flink run -d \
+FLINK_HOME="$FLINK_HOME" \
+"$FLINK_HOME/bin/flink" run -d \
   -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory \
-  /home/shuhao/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar \
+  "$REPO_ROOT/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar" \
   --numKeys 2000000 \
   --numRecords 2000000000 \
   --arrivalRate 0 \
@@ -574,11 +589,11 @@ sudo docker exec flink-taskmanager-1 bash -lc '
 ```bash
 sudo docker cp \
   flink-taskmanager-1:/tmp/forl0-profiles/export/forl0_cpu.html \
-  /home/shuhao/forL0-state-backend/benchmark/results/profiles/forl0_cpu.html
+  "$REPO_ROOT/benchmark/results/profiles/forl0_cpu.html"
 
 sudo docker cp \
   flink-taskmanager-1:/tmp/forl0-profiles/export/forl0_cpu.collapsed \
-  /home/shuhao/forL0-state-backend/benchmark/results/profiles/forl0_cpu.collapsed
+  "$REPO_ROOT/benchmark/results/profiles/forl0_cpu.collapsed"
 ```
 
 ## 八、当前主要结果文件
