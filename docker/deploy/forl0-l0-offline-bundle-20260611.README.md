@@ -2,6 +2,8 @@
 
 这个离线包用于将本地鲲鹏构建好的运行产物同步到不联网的 L0 服务器。
 
+如果你会把整个仓库原封不动拷到目标机器，优先直接使用仓库内的 `docker/server_setup.sh`，那会比离线包更傻瓜一些。
+
 ## 包内内容
 
 - `artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar`
@@ -30,6 +32,22 @@
 2. 在目标机器解压。
 3. 执行 `./docker/install_offline_bundle.sh --flink-home /path/to/flink` 完成安装。
 4. 如需抓 flame graph，可加 `--copy-profiler`，或直接使用 `tools/async-profiler-4.4-linux-arm64/`。
+
+## 更推荐的方式
+
+如果目标机器上会保留完整仓库目录，直接执行：
+
+```bash
+cd ~/forL0-state-backend/docker
+./server_setup.sh
+```
+
+找不到 Flink 时再手工指定：
+
+```bash
+cd ~/forL0-state-backend/docker
+./server_setup.sh --flink-home /path/to/flink
+```
 
 ## 说明
 

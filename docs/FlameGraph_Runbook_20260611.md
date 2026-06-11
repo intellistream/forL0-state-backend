@@ -3,7 +3,7 @@
 本文档完全基于当前仓库现状重写，目标是让你在两类机器上都能直接照着操作：
 
 1. 当前这台本地鲲鹏机器：无真实 L0，但已经成功生成 flame graph
-2. 目标 L0 服务器：完全不联网，只能通过离线拷贝同步 tar 包或核心产物
+2. 目标 L0 服务器：完全不联网，但你会把整个当前仓库原封不动克隆到它的 home 目录
 
 本文档包含四部分：
 
@@ -74,7 +74,42 @@ export REPO_ROOT="$(pwd)"
 - `benchmark/results/profiles/forl0_cpu.html`
 - `benchmark/results/profiles/forl0_cpu.collapsed`
 
-## 二、两种交付方式
+## 二、推荐方式
+
+在你当前的交付方式下，最推荐的入口不是离线包，而是：
+
+1. 把整个当前仓库原封不动放到目标 L0 服务器的 home 目录
+2. 在目标机直接执行 `docker/server_setup.sh`
+
+这样最省心，因为：
+
+1. 不需要额外解压 tar 包
+2. 不需要手工拷贝 JAR 和 native 库
+3. 不需要再记一套离线包目录结构
+4. 脚本会自动探测 `FLINK_HOME`，找不到时才要求你手工指定
+
+你在目标 L0 服务器上的推荐执行方式是：
+
+```bash
+cd ~/forL0-state-backend/docker
+./server_setup.sh
+```
+
+如果自动找不到 Flink，再执行：
+
+```bash
+cd ~/forL0-state-backend/docker
+./server_setup.sh --flink-home /path/to/your/flink
+```
+
+如果你只想先安装、不立刻拉起 Docker 集群：
+
+```bash
+cd ~/forL0-state-backend/docker
+./server_setup.sh --no-start
+```
+
+## 三、两种交付方式
 
 ### 方式 A：只同步核心三件套
 
@@ -108,7 +143,7 @@ docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256
 docker/deploy/forl0-l0-offline-bundle-20260611.README.md
 ```
 
-## 三、什么时候需要 `async-profiler`
+## 四、什么时候需要 `async-profiler`
 
 ### 场景 1：只跑 benchmark，不抓 flame graph
 
@@ -135,7 +170,7 @@ docker/deploy/forl0-l0-offline-bundle-20260611.README.md
 1. `async-profiler` 不在核心三件套里
 2. `async-profiler` 已经在离线包里
 
-## 四、目标 L0 服务器的环境前提
+## 五、目标 L0 服务器的环境前提
 
 目标 L0 服务器即使不联网，也需要满足以下前提：
 
@@ -151,9 +186,9 @@ docker/deploy/forl0-l0-offline-bundle-20260611.README.md
 2. 离线包不包含 Docker 镜像本身
 3. 离线包也不替代目标机的 Flink 安装
 
-## 五、推荐方案：直接同步离线包
+## 六、备选方案：直接同步离线包
 
-如果目标 L0 服务器不联网，推荐直接同步离线包。这是当前最稳妥、最少出错的方案。
+如果你不是整仓库拷过去，而是只想带一个 tar 包，那就使用这个备选方案。
 
 ### 第 1 步：在本地确认离线包存在
 
@@ -348,7 +383,7 @@ cd ~/forl0-runtime/docker
 ./docker_run.sh status
 ```
 
-## 六、备选方案：只同步核心三件套
+## 七、备选方案：只同步核心三件套
 
 如果你不想同步整个离线包，也可以只同步三件套。
 
@@ -419,7 +454,7 @@ cp ~/forl0-manual/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar ~/forl0-benchma
 async-profiler-4.4-linux-arm64/
 ```
 
-## 七、本机上已验证通过的 flame graph 方案
+## 八、本机上已验证通过的 flame graph 方案
 
 下面这部分是已经在当前无真实 L0 的鲲鹏机器上实际跑通过的方法。
 
@@ -601,7 +636,7 @@ sudo docker cp \
   "$REPO_ROOT/benchmark/results/profiles/forl0_cpu.collapsed"
 ```
 
-## 八、当前主要结果文件
+## 九、当前主要结果文件
 
 当前与本 runbook 直接相关的主要文件如下：
 
@@ -612,13 +647,14 @@ sudo docker cp \
 - `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`
 - `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256`
 - `docker/deploy/forl0-l0-offline-bundle-20260611.README.md`
+- `docker/server_setup.sh`
 - `docker/install_offline_bundle.sh`
 - `benchmark/results/profiles/hashmap_cpu.html`
 - `benchmark/results/profiles/hashmap_cpu.collapsed`
 - `benchmark/results/profiles/forl0_cpu.html`
 - `benchmark/results/profiles/forl0_cpu.collapsed`
 
-## 九、补充说明
+## 十、补充说明
 
 ### 1. 当前本机没有真实 L0
 
