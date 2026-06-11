@@ -27,6 +27,9 @@ from generate_report import generate_benchset_paper_artifacts
 from utils.config import load_config
 
 
+APP_TEST_GROUP = {'wordcount', 'nexmark', 'client_usecase', 'benchset'}
+
+
 def run_all_benchmarks(config, backends, profile=False):
     """Run all benchmarks with specified backends."""
     results = {
@@ -260,11 +263,11 @@ Examples:
         """
     )
     
-    parser.add_argument('--test', choices=['unittest', 'wordcount', 'nexmark', 'client_usecase', 'benchset', 'all'], default='all',
+    parser.add_argument('--test', choices=['unittest', 'wordcount', 'nexmark', 'client_usecase', 'benchset', 'apps', 'all'], default='all',
                        help='Test to run (default: all)')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='all',
                        help='State backend to use (default: all)')
-    parser.add_argument('--query', type=str, default=None,
+    parser.add_argument('--query', '--queries', dest='query', type=str, default=None,
                        help='NexMark queries to run (comma-separated, e.g., q5,q8). Default: from config')
     parser.add_argument('--profile', '-p', type=str, default=None, 
                        choices=['cpu', 'cache', 'uarch', 'memory', 'hotspots'],
@@ -290,7 +293,7 @@ Examples:
     print("=" * 60)
     print(f"Test: {args.test}")
     print(f"Backends: {', '.join(backends)}")
-    if args.test in ['nexmark', 'all']:
+    if args.test in ['nexmark', 'apps', 'all']:
         print(f"NexMark Queries: {nexmark_queries}")
     if args.profile:
         profile_desc = {
@@ -305,6 +308,7 @@ Examples:
     print("=" * 60)
     
     results = {'unittest': {}, 'wordcount': {}, 'nexmark': {}, 'client_usecase': {}, 'benchset': {}}
+    run_app_suite = args.test in ['apps', 'all']
     
     # Run Unit Test benchmarks
     if args.test in ['unittest', 'all']:
@@ -327,7 +331,7 @@ Examples:
                 save_result(result, 'unittest', backend)
     
     # Run WordCount benchmarks
-    if args.test in ['wordcount', 'all']:
+    if args.test == 'wordcount' or run_app_suite:
         print("\n" + "=" * 60)
         print("Running WordCount Benchmark")
         print("=" * 60)
@@ -344,7 +348,7 @@ Examples:
                 save_result(result, 'wordcount', backend)
     
     # Run NexMark benchmarks
-    if args.test in ['nexmark', 'all']:
+    if args.test == 'nexmark' or run_app_suite:
         print("\n" + "=" * 60)
         print("Running NexMark Benchmark")
         print("=" * 60)
@@ -366,7 +370,7 @@ Examples:
             print(f"\n[Error] NexMark failed: {e}")
 
     # Run client usecase benchmark
-    if args.test in ['client_usecase', 'all']:
+    if args.test == 'client_usecase' or run_app_suite:
         print("\n" + "=" * 60)
         print("Running Client Usecase Benchmark")
         print("=" * 60)
@@ -382,7 +386,7 @@ Examples:
                 save_result(result, 'client_usecase', backend)
     
     # Run Benchset (seven paper workloads)
-    if args.test in ['benchset', 'all']:
+    if args.test == 'benchset' or run_app_suite:
         print("\n" + "=" * 60)
         print("Running Benchset (Seven Paper Workloads)")
         print("=" * 60)

@@ -176,13 +176,20 @@ public class MetricReporter {
 		double sumCpu = 0.0;
 		int realMetricSize = metrics.size();
 
-		// If the job finished, the tps will drop to 0, so we need to remove the effect of these metrics on the final result
-		for (int i = metrics.size() - 1; i >= 0; i--) {
-			if (Double.compare(metrics.get(i).getTps(), 0.0) != 0) {
-				break;
-			} else {
-				realMetricSize--;
+		// Event-count mode reports useful CPU samples even when TPS stays at 0, so only
+		// trim trailing idle samples for throughput-mode runs.
+		if (eventsNum == 0) {
+			for (int i = metrics.size() - 1; i >= 0; i--) {
+				if (Double.compare(metrics.get(i).getTps(), 0.0) != 0) {
+					break;
+				} else {
+					realMetricSize--;
+				}
 			}
+		}
+
+		if (realMetricSize <= 0) {
+			realMetricSize = metrics.size();
 		}
 
 		List<BenchmarkMetric> realMetrics = metrics.subList(0, realMetricSize);

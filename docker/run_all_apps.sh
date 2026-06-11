@@ -5,7 +5,7 @@
 #  默认行为:
 #    1. 如果尚未部署，先执行 server_setup.sh
 #    2. 确保 Docker Flink 集群已启动
-#    3. 运行 benchmark/scripts/run_benchmark.py --test all --backend all
+#    3. 运行 benchmark/scripts/run_benchmark.py --test apps --backend all
 #
 #  用法:
 #    ./run_all_apps.sh
@@ -22,8 +22,9 @@ REPO_ROOT="$(cd .. && pwd)"
 FLINK_DIR="${FLINK_HOME:-}"
 PROFILE_MODE=""
 BACKEND="all"
-TEST_NAME="all"
+TEST_NAME="apps"
 EXTRA_ARGS=()
+ENABLE_PROFILE=true
 
 usage() {
     cat <<'EOF'
@@ -33,8 +34,9 @@ usage() {
 选项:
   --flink-home PATH     Flink 安装目录；不传则复用 server_setup.sh 的自动探测
   --profile MODE        透传给 run_benchmark.py，例如 cpu / cache / uarch / memory / hotspots
+    --no-profile          关闭 profiling（默认开启 cpu 火焰图）
   --backend NAME        默认 all，可选 hashmap / forl0 / all
-  --test NAME           默认 all，可选 unittest / wordcount / nexmark / client_usecase / benchset / all
+    --test NAME           默认 apps，可选 unittest / wordcount / nexmark / client_usecase / benchset / apps / all
   -h, --help            显示帮助
 EOF
 }
@@ -52,6 +54,10 @@ while [[ $# -gt 0 ]]; do
         --backend)
             BACKEND="$2"
             shift 2
+            ;;
+        --no-profile)
+            ENABLE_PROFILE=false
+            shift
             ;;
         --test)
             TEST_NAME="$2"
@@ -75,6 +81,10 @@ fi
 
 if [[ -n "$FLINK_DIR" ]]; then
     export FLINK_HOME="$FLINK_DIR"
+fi
+
+if [[ "$ENABLE_PROFILE" == "true" && -z "$PROFILE_MODE" ]]; then
+    PROFILE_MODE="cpu"
 fi
 
 if [[ ! -f "${REPO_ROOT}/docker/forl0-local.env" ]]; then

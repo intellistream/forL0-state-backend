@@ -15,13 +15,16 @@ Usage:
 import argparse
 import json
 import os
-import re
+import socket
 import shutil
 import subprocess
 import sys
 import time
 import glob
+import re
+import math
 import requests
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -30,6 +33,27 @@ from typing import Optional, Dict, List
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.config import load_config, parse_json_from_output
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
+
+
+NEXMARK_MAIN_CLASS = 'com.github.nexmark.flink.Benchmark'
+
+
+def find_free_tcp_port() -> int:
+    """Reserve a free local TCP port number for short-lived config generation."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server_socket.bind(('0.0.0.0', 0))
+        return server_socket.getsockname()[1]
+
+
+def run_checked_command(command: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run a command and raise on failure with captured stderr/stdout."""
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=True,
+    )
 
 
 def check_flink_cluster(rest_url: str) -> bool:
@@ -69,56 +93,74 @@ def cancel_job(rest_url: str, job_id: str) -> bool:
         return False
 
 
-def submit_job_async(cmd: list, rest_url: str) -> Optional[str]:
-    """Submit a Flink job asynchronously and return job ID."""
-    detached_cmd = cmd.copy()
-    run_idx = detached_cmd.index('run')
-    detached_cmd.insert(run_idx + 1, '-d')
-    
-    try:
-        result = subprocess.run(
-            detached_cmd,
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        output = result.stdout + result.stderr
-        match = re.search(r'JobID\s+([a-f0-9]+)', output)
-        if match:
-            return match.group(1)
-        
-        print(f"  WARNING: Could not parse job ID from output:\n{output}")
-        return None
-        
-    except subprocess.TimeoutExpired:
-        print("  ERROR: Job submission timed out")
-        return None
-    except Exception as e:
-        print(f"  ERROR: Job submission failed: {e}")
+def parse_nexmark_summary(output: str) -> Optional[dict]:
+    """Parse the Total row from NexMark benchmark summary output."""
+    total_line = None
+    for line in output.splitlines():
+        if line.strip().startswith('|Total'):
+            total_line = line.strip()
+
+    if not total_line:
         return None
 
+    parts = [part.strip() for part in total_line.split('|') if part.strip()]
 
-def wait_for_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> dict:
-    """Wait for job to complete and return final status."""
-    start_time = time.time()
-    last_status = None
-    
-    while time.time() - start_time < timeout:
-        status = get_job_status(rest_url, job_id)
-        state = status.get('state', 'UNKNOWN')
-        
-        if state != last_status:
-            print(f"  Job state: {state}")
-            last_status = state
-        
-        if state in ['FINISHED', 'FAILED', 'CANCELED', 'CANCELLING']:
-            return status
-        
-        time.sleep(2)
-    
-    print("ERROR: Job timed out")
-    return {'state': 'TIMEOUT'}
+    def parse_float(value: str) -> float:
+        cleaned = value.replace(',', '').replace('/s', '').strip()
+        if cleaned in {'NaN', 'nan', 'N/A', ''}:
+            return 0.0
+        if cleaned == '�':
+            return 0.0
+
+        multiplier = 1.0
+        suffix_multipliers = {
+            'K': 1_000.0,
+            'M': 1_000_000.0,
+            'G': 1_000_000_000.0,
+        }
+        suffix = cleaned[-1:]
+        if suffix in suffix_multipliers:
+            multiplier = suffix_multipliers[suffix]
+            cleaned = cleaned[:-1].strip()
+
+        parsed = float(cleaned)
+        if math.isnan(parsed):
+            return 0.0
+        return parsed * multiplier
+
+    if len(parts) >= 7:
+        try:
+            events_num = int(parts[1].replace(',', ''))
+            cores = parse_float(parts[2])
+            time_seconds = parse_float(parts[3])
+            cores_time = parse_float(parts[4])
+            throughput = parse_float(parts[5])
+            throughput_per_core = parse_float(parts[6])
+            return {
+                'events_num': events_num,
+                'cpu': cores,
+                'time_seconds': time_seconds,
+                'cores_multiply_time_seconds': cores_time,
+                'throughput': throughput,
+                'throughput_per_core': throughput_per_core,
+            }
+        except ValueError:
+            return None
+
+    if len(parts) >= 4:
+        try:
+            throughput = parse_float(parts[1])
+            cores = parse_float(parts[2])
+            throughput_per_core = parse_float(parts[3])
+            return {
+                'cpu': cores,
+                'throughput': throughput,
+                'throughput_per_core': throughput_per_core,
+            }
+        except ValueError:
+            return None
+
+    return None
 
 
 def parse_taskmanager_log(flink_home: str) -> Optional[dict]:
@@ -266,6 +308,7 @@ class NexmarkRunner:
         
         # Nexmark DataStream JAR
         self.nexmark_jar = self._find_nexmark_jar()
+        self.nexmark_home = self._find_nexmark_home()
         
         # ForL0 JAR
         self.forl0_jar = self._find_forl0_jar()
@@ -273,13 +316,80 @@ class NexmarkRunner:
         # Results directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.results_dir = self.benchmark_root / "results" / f"nexmark_{timestamp}"
+
+        self.metric_reporter_host = self._resolve_metric_reporter_host()
+        self.metric_reporter_port: Optional[int] = None
         
         # Profiler
         self.profiler = None
+        self.metric_sender_containers = ['flink-taskmanager-1', 'flink-taskmanager-2']
+
+    def _resolve_metric_reporter_host(self) -> str:
+        """Use the Docker bridge gateway so taskmanagers can report CPU metrics back to the host."""
+        try:
+            result = subprocess.run(
+                ['sudo', '-n', 'docker', 'network', 'inspect', 'flink-net', '--format', '{{(index .IPAM.Config 0).Gateway}}'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            )
+            gateway = result.stdout.strip()
+            if gateway:
+                return gateway
+        except Exception:
+            pass
+
+        return '127.0.0.1'
+
+    def _start_metric_senders(self, env: dict) -> None:
+        """Start CpuMetricSender inside each taskmanager container for the current run."""
+        if self.metric_reporter_port is None:
+            return
+
+        metric_conf = (
+            f'nexmark.metric.reporter.host: {self.metric_reporter_host}\n'
+            f'nexmark.metric.reporter.port: {self.metric_reporter_port}\n'
+            'nexmark.metric.monitor.interval: 5 s\n'
+        )
+        for container in self.metric_sender_containers:
+            try:
+                self._stop_metric_sender(container)
+                run_checked_command([
+                    'sudo', '-n', 'docker', 'exec', container,
+                    'sh', '-lc',
+                    "mkdir -p /tmp/nexmark-metric-conf; "
+                    "cat > /tmp/nexmark-metric-conf/nexmark.yaml <<'EOF'\n"
+                    f"{metric_conf}"
+                    "EOF\n"
+                    'export FLINK_HOME=/opt/flink; export NEXMARK_CONF_DIR=/tmp/nexmark-metric-conf; '
+                    '(nohup java -cp /opt/flink/lib/nexmark-flink-0.3-SNAPSHOT.jar:/opt/flink/lib/* '
+                    'com.github.nexmark.flink.metric.cpu.CpuMetricSender '
+                    '>/tmp/cpu-metric-sender.log 2>&1 </dev/null &)'
+                ])
+            except Exception as error:
+                print(f'  WARNING: Failed to start CpuMetricSender in {container}: {error}')
+
+    def _stop_metric_sender(self, container: str) -> None:
+        """Stop CpuMetricSender inside a single taskmanager container."""
+        try:
+            run_checked_command([
+                'sudo', '-n', 'docker', 'exec', container,
+                'sh', '-lc',
+                "pkill -f '[C]puMetricSender' >/dev/null 2>&1 || true"
+            ])
+        except Exception:
+            pass
+
+    def _stop_metric_senders(self) -> None:
+        """Stop CpuMetricSender inside each taskmanager container."""
+        for container in self.metric_sender_containers:
+            self._stop_metric_sender(container)
         
     def _find_nexmark_jar(self) -> Path:
         """Find the Nexmark DataStream JAR."""
         candidates = [
+            (self.project_root / 'benchmark' / 'nexmark-src' / 'nexmark-flink' / 'target' / 'nexmark-flink-bin' / 'nexmark-flink' / 'lib', 'nexmark-flink-*.jar'),
             (self.benchmark_root / "nexmark-datastream" / "target", "nexmark-datastream-*.jar"),
             (self.project_root / "docker" / "deploy", "nexmark-flink-*.jar"),
             (self.project_root / "docker" / "deploy", "nexmark-datastream-*.jar"),
@@ -296,6 +406,21 @@ class NexmarkRunner:
             "Nexmark DataStream JAR not found. "
             "Expected either benchmark/nexmark-datastream/target/nexmark-datastream-*.jar "
             "or docker/deploy/nexmark-flink-*.jar."
+        )
+
+    def _find_nexmark_home(self) -> Path:
+        """Find the packaged NexMark distribution directory with bin/conf/queries."""
+        candidates = [
+            self.project_root / 'benchmark' / 'nexmark-src' / 'nexmark-flink' / 'target' / 'nexmark-flink-bin' / 'nexmark-flink',
+            self.project_root / 'docker' / 'deploy' / 'nexmark-flink',
+        ]
+
+        for candidate in candidates:
+            if (candidate / 'bin').exists() and (candidate / 'conf').exists() and (candidate / 'queries').exists():
+                return candidate
+
+        raise FileNotFoundError(
+            'NexMark distribution directory not found. Expected a packaged nexmark-flink directory with bin/conf/queries.'
         )
     
     def _find_forl0_jar(self) -> Path:
@@ -334,6 +459,66 @@ class NexmarkRunner:
         if not flink_lib_jar.exists():
             shutil.copy(self.forl0_jar, flink_lib_jar)
             print(f"[Nexmark] Copied ForL0 JAR to Flink lib")
+
+    def _copy_nexmark_jar_if_needed(self):
+        """Copy NexMark connector/driver JAR to Flink lib for SQL client discovery."""
+        flink_lib_jar = self.flink_home / 'lib' / self.nexmark_jar.name
+        if not flink_lib_jar.exists() or flink_lib_jar.read_bytes() != self.nexmark_jar.read_bytes():
+            shutil.copy(self.nexmark_jar, flink_lib_jar)
+            print('[Nexmark] Synced NexMark JAR to Flink lib')
+
+    def _write_nexmark_conf(self, query: str, num_events: int, tps: int, warmup_duration: int) -> Path:
+        """Write a temporary nexmark.yaml tuned for the requested query run."""
+        conf_dir = Path(tempfile.mkdtemp(prefix='nexmark-conf-'))
+        shutil.copy(self.nexmark_home / 'conf' / 'config.yaml', conf_dir / 'config.yaml')
+        shutil.copy(self.nexmark_home / 'conf' / 'log4j.properties', conf_dir / 'log4j.properties')
+
+        warmup_seconds = max(0, int(warmup_duration))
+        warmup_events = num_events if warmup_seconds > 0 else 0
+        workload_tps = max(0, int(tps))
+        warmup_tps = workload_tps if warmup_seconds > 0 else 0
+        self.metric_reporter_port = find_free_tcp_port()
+
+        nexmark_yaml = (
+            f'nexmark.metric.reporter.host: {self.metric_reporter_host}\n'
+            f'nexmark.metric.reporter.port: {self.metric_reporter_port}\n'
+            f'nexmark.workload.suite.run.events.num: {num_events}\n'
+            f'nexmark.workload.suite.run.tps: {workload_tps}\n'
+            f'nexmark.workload.suite.run.queries: "{query}"\n'
+            f'nexmark.workload.suite.run.warmup.duration: {warmup_seconds}s\n'
+            f'nexmark.workload.suite.run.warmup.events.num: {warmup_events}\n'
+            f'nexmark.workload.suite.run.warmup.tps: {warmup_tps}\n'
+            f'flink.rest.address: {self.rest_url.split("//", 1)[-1].split(":", 1)[0]}\n'
+            f'flink.rest.port: {self.rest_url.rsplit(":", 1)[-1]}\n'
+        )
+        (conf_dir / 'nexmark.yaml').write_text(nexmark_yaml)
+        return conf_dir
+
+    def _build_driver_command(self, query: str, backend: str, num_events: int, tps: int, warmup_duration: int) -> tuple[list[str], dict, Path]:
+        """Build the NexMark benchmark-driver command and environment."""
+        conf_dir = self._write_nexmark_conf(query, num_events, tps, warmup_duration)
+        classpath = f"{self.nexmark_home / 'lib'}/*:{self.flink_home / 'lib'}/*"
+        cmd = [
+            'java',
+            f'-Dlog.file={self.nexmark_home / "log" / "nexmark-flink.log"}',
+            f'-Dlog4j.configuration=file:{conf_dir / "log4j.properties"}',
+            f'-Dlog4j.configurationFile=file:{conf_dir / "log4j.properties"}',
+            '-cp',
+            classpath,
+            NEXMARK_MAIN_CLASS,
+            '--location',
+            str(self.nexmark_home),
+            '--queries',
+            query,
+            '--category',
+            'oa',
+        ]
+
+        env = os.environ.copy()
+        env['FLINK_HOME'] = str(self.flink_home)
+        env['NEXMARK_CONF_DIR'] = str(conf_dir)
+
+        return cmd, env, conf_dir
     
     def run_query(
             self, 
@@ -363,51 +548,17 @@ class NexmarkRunner:
         auction_proportion = self.nexmark_config.get('auction_proportion', 3)
         bid_proportion = self.nexmark_config.get('bid_proportion', 46)
         
-        # Find backend class
-        backends_list = {b['name']: b['class'] for b in self.config.get('backends', [])}
-        backend_class = backends_list.get(backend, '')
-        
-        # Build flink run command
-        flink_bin = self.flink_home / 'bin' / 'flink'
-        
-        cmd = [str(flink_bin), 'run']
-        
-        # Add state backend configuration
-        if backend_class:
-            cmd.append(f'-Dstate.backend.type={backend_class}')
-        
+        self._copy_nexmark_jar_if_needed()
+
         # Add ForL0-specific configuration
         if backend == 'forl0':
             self._copy_forl0_jar_if_needed()
-            forl0_args = get_forl0_config_args(self.config, backend)
-            cmd.extend(forl0_args)
-        
-        # Add JAR and arguments
-        cmd.extend([
-            str(self.nexmark_jar),
-            '--query', query,
-            '--numEvents', str(num_events),
-            '--tps', str(tps),
-            '--parallelism', str(parallelism),
-            '--checkpointInterval', str(checkpoint_interval),
-            '--backend', backend,
-            '--personProportion', str(person_proportion),
-            '--auctionProportion', str(auction_proportion),
-            '--bidProportion', str(bid_proportion),
-        ])
+        cmd, env, conf_dir = self._build_driver_command(query, backend, num_events, tps, warmup_duration)
         
         print(f"\n=== Running Nexmark {query.upper()} ({backend} backend) ===")
         print(f"Events: {num_events:,}, TPS: {tps if tps > 0 else 'unlimited'}")
         print(f"Proportions: Person({person_proportion}):Auction({auction_proportion}):Bid({bid_proportion})")
         print(f"Command: {' '.join(cmd)}\n")
-        
-        # Clear logs before running
-        clear_taskmanager_logs(str(self.flink_home))
-        
-        # Run warmup if configured
-        if warmup_duration > 0:
-            run_warmup_job(cmd, self.rest_url, warmup_duration, backend)
-            clear_taskmanager_logs(str(self.flink_home))
         
         # Initialize profiler if enabled
         tm_pids = []
@@ -434,20 +585,19 @@ class NexmarkRunner:
                     print(f"  Started {profile_mode} profiling (PID: {tm_pids[0]})")
         
         try:
-            # Submit job and wait for completion
-            job_id = submit_job_async(cmd, self.rest_url)
-            if not job_id:
-                print(f"  ERROR: Failed to submit job")
-                return None
-            
-            print(f"  Job submitted: {job_id}")
-            
-            # Wait for completion
-            status = wait_for_job_completion(self.rest_url, job_id)
-            state = status.get('state', 'UNKNOWN')
-            
-            if state != 'FINISHED':
-                print(f"  ERROR: Job ended with state: {state}")
+            self._start_metric_senders(env)
+            result = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=max(3600, int(self.nexmark_config.get('timeout_seconds', 7200))),
+            )
+            output = result.stdout + result.stderr
+            print(output)
+
+            if result.returncode != 0:
+                print('  ERROR: NexMark benchmark driver failed')
                 return None
             
             # Stop profiler
@@ -458,20 +608,30 @@ class NexmarkRunner:
                 except Exception as e:
                     print(f"  Profiler stop error: {e}")
             
-            # Parse results from TaskManager log
-            time.sleep(1)  # Give log time to flush
-            result = parse_taskmanager_log(str(self.flink_home))
-            
-            if result:
-                print(f"\n  Result: {result.get('throughput', 0):,.2f} events/sec")
-                return result
-            else:
-                print(f"  WARNING: Could not parse results from log")
-                return None
+            parsed = parse_nexmark_summary(output)
+            if parsed:
+                parsed.update({
+                    'benchmark': 'nexmark',
+                    'backend': backend,
+                    'query': query,
+                    'parallelism': parallelism,
+                    'checkpoint_interval': checkpoint_interval,
+                    'person_proportion': person_proportion,
+                    'auction_proportion': auction_proportion,
+                    'bid_proportion': bid_proportion,
+                })
+                print(f"\n  Result: {parsed.get('throughput', 0):,.2f} events/sec")
+                return parsed
+
+            print('  WARNING: Could not parse NexMark summary output')
+            return None
                 
         except Exception as e:
             print(f"  ERROR: {e}")
             return None
+        finally:
+            self._stop_metric_senders()
+            shutil.rmtree(conf_dir, ignore_errors=True)
     
     def run(
             self, 

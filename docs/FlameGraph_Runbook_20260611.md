@@ -88,6 +88,7 @@ export REPO_ROOT="$(pwd)"
 2. 不需要手工拷贝 JAR 和 native 库
 3. 不需要再记一套离线包目录结构
 4. 脚本会自动探测 `FLINK_HOME`，找不到时才要求你手工指定
+5. 脚本会自动探测可用的 Docker 调用方式；如果当前用户不能直接访问 Docker daemon，但 `sudo -n docker` 可用，也会自动切过去
 
 你在目标 L0 服务器上的推荐执行方式是：
 
@@ -696,13 +697,25 @@ sudo docker cp \
 
 ### 2. 目标机不联网不是阻塞点
 
-目标 L0 服务器不联网不是问题，当前推荐方案就是直接同步离线包。
+目标 L0 服务器不联网不是问题。当前主推荐方案是直接把整个仓库同步到目标机并执行 `docker/server_setup.sh`；离线包方案是备选路径，不是主路径。
 
-### 3. 为什么当前只有约 18% 提升
+### 3. Docker 权限说明
+
+在部分机器上，当前用户可能不能直接执行 `docker`，但可以执行 `sudo -n docker`。
+
+当前仓库里的 `docker/server_setup.sh` 和 `docker/docker_run.sh` 已经按这个现实情况做了自动探测：
+
+1. 优先尝试直接使用 `docker`
+2. 如果失败，再尝试 `sudo -n docker`
+3. 如果两者都不通，再报错退出
+
+因此正常情况下，你不需要手工改脚本；只要目标机满足“当前用户可直接用 docker”或者“当前用户可执行 sudo -n docker”二者之一即可。
+
+### 4. 为什么当前只有约 18% 提升
 
 从已生成的 flame graph 和 collapsed stacks 看，ForL0 减少了 heap state table 的开销，但端到端 CPU 仍主要消耗在 Flink 网络路径、source 和序列化上，因此 backend 优化只能改善总成本中的一部分，最终提升约 18%。
 
-### 4. `benchmark/results/` 默认被忽略
+### 5. `benchmark/results/` 默认被忽略
 
 如果需要将 flame graph HTML 和 collapsed stacks 一并提交，需要显式执行：
 

@@ -47,6 +47,11 @@ class AsyncProfiler:
         self.active_profiles: Dict[str, Path] = {}  # event -> output_file (for async mode)
         self.output_files: Dict[str, str] = {}
         self.profiled_pid: Optional[int] = None  # PID being profiled (for stop)
+        self.container_mode = False
+        self.container_name = os.environ.get('FLINK_TASKMANAGER_CONTAINER', 'flink-taskmanager-1')
+        self.container_asprof = '/tmp/async-profiler/bin/asprof'
+        self.container_output_files: Dict[str, str] = {}
+        self.docker_bin = self._detect_docker_bin()
         
         if self.home:
             # Check for asprof binary
@@ -55,6 +60,54 @@ class AsyncProfiler:
                 if path.exists() and path.is_file():
                     self.asprof_path = str(path)
                     break
+
+    def _detect_docker_bin(self) -> Optional[List[str]]:
+        """Detect usable docker command for current user/session."""
+        docker_env = os.environ.get('DOCKER_BIN')
+        if docker_env:
+            return docker_env.split()
+
+        for candidate in (['docker'], ['sudo', '-n', 'docker']):
+            try:
+                result = subprocess.run(candidate + ['ps'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return candidate
+            except Exception:
+                continue
+        return None
+
+    def _run_docker(self, args: List[str], timeout: int = 30) -> subprocess.CompletedProcess:
+        if not self.docker_bin:
+            raise RuntimeError('docker unavailable')
+        return subprocess.run(self.docker_bin + args, capture_output=True, text=True, timeout=timeout)
+
+    def _ensure_container_profiler(self) -> bool:
+        """Ensure async-profiler is available in taskmanager container."""
+        if not self.docker_bin or not self.home or not self.asprof_path:
+            return False
+
+        check = self._run_docker(['exec', self.container_name, 'sh', '-lc', f'{self.container_asprof} --version'])
+        if check.returncode == 0:
+            return True
+
+        copy = self._run_docker(['cp', self.home, f'{self.container_name}:/tmp/async-profiler'])
+        if copy.returncode != 0:
+            return False
+
+        verify = self._run_docker(['exec', self.container_name, 'sh', '-lc', f'{self.container_asprof} --version'])
+        return verify.returncode == 0
+
+    def _should_try_container_fallback(self, stderr: str) -> bool:
+        """Detect attach/load failures where container fallback may succeed."""
+        lower = stderr.lower()
+        patterns = [
+            'failed to change credentials',
+            'operation not permitted',
+            'target jvm failed to load',
+            'cannot attach',
+            'permission denied',
+        ]
+        return any(p in lower for p in patterns)
     
     def is_available(self) -> bool:
         """Check if async-profiler is available."""
@@ -65,9 +118,11 @@ class AsyncProfiler:
                 [self.asprof_path, '--version'],
                 capture_output=True, text=True, timeout=5
             )
-            return result.returncode == 0
+            if result.returncode == 0:
+                return True
+            return self._ensure_container_profiler()
         except Exception:
-            return False
+            return self._ensure_container_profiler()
     
     def get_version(self) -> Optional[str]:
         """Get async-profiler version."""
@@ -236,6 +291,21 @@ class AsyncProfiler:
                     self.profiled_pid = pid
                 else:
                     print(f"    WARNING: Profiler start failed: {result.stderr}")
+                    if self._should_try_container_fallback(result.stderr) and self._ensure_container_profiler():
+                        container_output = f"/tmp/{output_file.name}"
+                        container_cmd = [
+                            'exec', self.container_name, 'sh', '-lc',
+                            f"{self.container_asprof} start -e {actual_event} -i {actual_interval} -f {container_output} 1"
+                        ]
+                        fallback = self._run_docker(container_cmd, timeout=30)
+                        if fallback.returncode == 0:
+                            self.container_mode = True
+                            self.output_files[selected_event] = str(output_file)
+                            self.active_profiles[selected_event] = output_file
+                            self.container_output_files[selected_event] = container_output
+                            print(f"    INFO: Started profiler in container {self.container_name}")
+                        else:
+                            print(f"    WARNING: Container profiler start failed: {fallback.stderr}")
         except subprocess.TimeoutExpired:
             print(f"    WARNING: Profiler timed out for {actual_event}")
         except Exception as e:
@@ -268,21 +338,37 @@ class AsyncProfiler:
         # Stop all active profiling sessions
         for event, output_file in list(self.active_profiles.items()):
             try:
-                # Send stop signal via asprof with output file
-                stop_cmd = [
-                    self.asprof_path, 
-                    'stop',
-                    '-f', str(output_file),
-                    str(target_pid)
-                ]
                 print(f"    Stopping {event} profiler -> {output_file.name}")
-                result = subprocess.run(stop_cmd, capture_output=True, text=True, timeout=60)
-                if result.returncode != 0:
-                    print(f"    WARNING: Stop command returned error: {result.stderr}")
-                elif output_file.exists():
-                    print(f"    SUCCESS: Flame graph saved to {output_file.name}")
+                if self.container_mode and event in self.container_output_files:
+                    container_output = self.container_output_files[event]
+                    stop_cmd = [
+                        'exec', self.container_name, 'sh', '-lc',
+                        f"{self.container_asprof} stop -f {container_output} 1"
+                    ]
+                    stop_result = self._run_docker(stop_cmd, timeout=60)
+                    if stop_result.returncode != 0:
+                        print(f"    WARNING: Container stop command returned error: {stop_result.stderr}")
+                    copy_cmd = ['cp', f'{self.container_name}:{container_output}', str(output_file)]
+                    copy_result = self._run_docker(copy_cmd, timeout=30)
+                    if copy_result.returncode == 0 and output_file.exists():
+                        print(f"    SUCCESS: Flame graph saved to {output_file.name}")
+                    else:
+                        print(f"    WARNING: Failed to copy profile output from container: {copy_result.stderr}")
                 else:
-                    print(f"    WARNING: Output file not created: {output_file}")
+                    # Send stop signal via asprof with output file
+                    stop_cmd = [
+                        self.asprof_path,
+                        'stop',
+                        '-f', str(output_file),
+                        str(target_pid)
+                    ]
+                    result = subprocess.run(stop_cmd, capture_output=True, text=True, timeout=60)
+                    if result.returncode != 0:
+                        print(f"    WARNING: Stop command returned error: {result.stderr}")
+                    elif output_file.exists():
+                        print(f"    SUCCESS: Flame graph saved to {output_file.name}")
+                    else:
+                        print(f"    WARNING: Output file not created: {output_file}")
             except subprocess.TimeoutExpired:
                 print(f"    WARNING: Stop command timed out for {event}")
             except Exception as e:
@@ -290,6 +376,8 @@ class AsyncProfiler:
         
         self.active_profiles.clear()
         self.profiled_pid = None
+        self.container_output_files.clear()
+        self.container_mode = False
         
         # Return collected output files
         return self.output_files.copy()

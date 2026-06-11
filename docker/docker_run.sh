@@ -17,6 +17,33 @@ NATIVE_DIR="${FORL0_NATIVE_DIR:-}"
 CONF_DIR="$(pwd)/conf"
 NETWORK="flink-net"
 IMAGE="eclipse-temurin:8-jre"
+DOCKER_BIN="${DOCKER_BIN:-}"
+
+detect_docker_bin() {
+    if [[ -n "$DOCKER_BIN" ]]; then
+        echo "$DOCKER_BIN"
+        return 0
+    fi
+
+    if docker ps >/dev/null 2>&1; then
+        echo "docker"
+        return 0
+    fi
+
+    if sudo -n docker ps >/dev/null 2>&1; then
+        echo "sudo -n docker"
+        return 0
+    fi
+
+    return 1
+}
+
+DOCKER_BIN="$(detect_docker_bin || true)"
+if [[ -z "$DOCKER_BIN" ]]; then
+    echo "✗ 当前用户无法访问 Docker。"
+    echo "  请确认当前用户可直接执行 docker，或可执行 sudo -n docker。"
+    exit 1
+fi
 
 if [[ -z "$NATIVE_DIR" ]]; then
     if [[ -f "${FLINK_DIR}/native/libforl0_engine.so" ]]; then
@@ -79,6 +106,7 @@ do_start() {
     echo "=== 启动 BriskState Flink Docker 集群 ==="
     echo "  FLINK_HOME: ${FLINK_DIR}"
     echo "  NATIVE:     ${NATIVE_DIR}"
+    echo "  Docker:     ${DOCKER_BIN}"
     if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
         echo "  libnuma:    ${NUMA_HOST_PATH} -> ${NUMA_CONTAINER_PATH}"
     else
@@ -97,7 +125,7 @@ do_start() {
         echo "  可设置: export FORL0_NATIVE_DIR=/path/to/native-dir"
         exit 1
     fi
-    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    if ! ${DOCKER_BIN} image inspect "$IMAGE" >/dev/null 2>&1; then
         echo "✗ Docker 镜像 ${IMAGE} 不存在，请先: docker load -i images/eclipse-temurin-8-jre.tar"
         exit 1
     fi
@@ -108,11 +136,11 @@ do_start() {
     fi
 
     # 创建网络
-    docker network create "$NETWORK" 2>/dev/null || true
+    ${DOCKER_BIN} network create "$NETWORK" 2>/dev/null || true
 
     # ---- JobManager ----
     echo "[1/3] 启动 JobManager..."
-    docker run -d \
+    ${DOCKER_BIN} run -d \
         --name "$JM" \
         --hostname jobmanager \
         --network "$NETWORK" \
@@ -129,12 +157,12 @@ do_start() {
         /opt/flink/bin/jobmanager.sh start-foreground
 
     # 获取 JM 容器 IP（Docker 内置 DNS 在某些服务器上不可用，需要用 --add-host）
-    JM_IP=$(docker inspect "$JM" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+    JM_IP=$(${DOCKER_BIN} inspect "$JM" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
     echo "      JobManager IP: ${JM_IP}"
 
     # ---- TaskManager 1 ----
     echo "[2/3] 启动 TaskManager-1..."
-    docker run -d \
+    ${DOCKER_BIN} run -d \
         --name "$TM1" \
         --hostname taskmanager-1 \
         --network "$NETWORK" \
@@ -155,7 +183,7 @@ do_start() {
 
     # ---- TaskManager 2 ----
     echo "[3/3] 启动 TaskManager-2..."
-    docker run -d \
+    ${DOCKER_BIN} run -d \
         --name "$TM2" \
         --hostname taskmanager-2 \
         --network "$NETWORK" \
@@ -198,26 +226,26 @@ do_start() {
 
 do_stop() {
     echo "=== 停止 BriskState Flink Docker 集群 ==="
-    docker rm -f "$TM2" "$TM1" "$JM" 2>/dev/null || true
-    docker network rm "$NETWORK" 2>/dev/null || true
+    ${DOCKER_BIN} rm -f "$TM2" "$TM1" "$JM" 2>/dev/null || true
+    ${DOCKER_BIN} network rm "$NETWORK" 2>/dev/null || true
     echo "已停止"
 }
 
 do_logs() {
     case "${1:-all}" in
-        jm)   docker logs -f "$JM" ;;
-        tm1)  docker logs -f "$TM1" ;;
-        tm2)  docker logs -f "$TM2" ;;
-        all)  echo "=== JM ===" && docker logs --tail 20 "$JM" 2>&1; \
-              echo "=== TM1 ===" && docker logs --tail 20 "$TM1" 2>&1; \
-              echo "=== TM2 ===" && docker logs --tail 20 "$TM2" 2>&1 ;;
+        jm)   ${DOCKER_BIN} logs -f "$JM" ;;
+        tm1)  ${DOCKER_BIN} logs -f "$TM1" ;;
+        tm2)  ${DOCKER_BIN} logs -f "$TM2" ;;
+        all)  echo "=== JM ===" && ${DOCKER_BIN} logs --tail 20 "$JM" 2>&1; \
+              echo "=== TM1 ===" && ${DOCKER_BIN} logs --tail 20 "$TM1" 2>&1; \
+              echo "=== TM2 ===" && ${DOCKER_BIN} logs --tail 20 "$TM2" 2>&1 ;;
         *)    echo "用法: $0 logs [jm|tm1|tm2]" ;;
     esac
 }
 
 do_status() {
     echo "=== 容器状态 ==="
-    docker ps -a --filter "name=flink-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    ${DOCKER_BIN} ps -a --filter "name=flink-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 }
 
 # ---- Main ----

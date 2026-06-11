@@ -106,26 +106,28 @@ public class Benchmark {
 
 		WorkloadSuite workloadSuite = WorkloadSuite.fromConf(nexmarkConf, category);
 
-		// start to run queries
-		LinkedHashMap<String, JobBenchmarkMetric> totalMetrics = new LinkedHashMap<>();
-		executeQueries(
-				queries,
-				workloadSuite,
-				flinkRestClient,
-				cpuMetricReceiver,
-				monitorDelay,
-				monitorInterval,
-				monitorDuration,
-				location,
-				flinkDist,
-				totalMetrics,
-				category);
+		try {
+			// start to run queries
+			LinkedHashMap<String, JobBenchmarkMetric> totalMetrics = new LinkedHashMap<>();
+			executeQueries(
+					queries,
+					workloadSuite,
+					flinkRestClient,
+					cpuMetricReceiver,
+					monitorDelay,
+					monitorInterval,
+					monitorDuration,
+					location,
+					flinkDist,
+					totalMetrics,
+					category);
 
-		// print benchmark summary
-		printSummary(totalMetrics);
-
-		flinkRestClient.close();
-		cpuMetricReceiver.close();
+			// print benchmark summary
+			printSummary(totalMetrics);
+		} finally {
+			flinkRestClient.close();
+			cpuMetricReceiver.close();
+		}
 	}
 
 	/**

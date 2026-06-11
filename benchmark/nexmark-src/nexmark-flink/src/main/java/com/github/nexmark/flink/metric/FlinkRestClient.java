@@ -87,17 +87,41 @@ public class FlinkRestClient {
 	}
 
 	public synchronized void updateAllJobStatus() {
-		String url = String.format("http://%s/jobs", jmEndpoint);
+		String url = String.format("http://%s/jobs/overview", jmEndpoint);
 		String response = executeAsString(url);
 		try {
+			jobIds.clear();
+			lastJobId = "";
 			JsonNode jsonNode = NexmarkUtils.MAPPER.readTree(response);
 			JsonNode jobs = jsonNode.get("jobs");
+			long latestStartTime = Long.MIN_VALUE;
+			long latestModificationTime = Long.MIN_VALUE;
+			String latestRunningJobId = "";
+			String latestSeenJobId = "";
 			for (JsonNode job : jobs) {
-				String id = job.get("id").asText();
-				if (jobIds.put(id, job.get("status").asText()) == null) {
-					lastJobId = id;
+				String id = job.get("jid").asText();
+				String state = job.get("state").asText();
+				jobIds.put(id, state);
+
+				long startTime = job.has("start-time") ? job.get("start-time").asLong(Long.MIN_VALUE) : Long.MIN_VALUE;
+				long modificationTime = job.has("last-modification") ? job.get("last-modification").asLong(Long.MIN_VALUE) : Long.MIN_VALUE;
+
+				if (state.equalsIgnoreCase("RUNNING") || state.equalsIgnoreCase("INITIALIZING") || state.equalsIgnoreCase("CREATED") || state.equalsIgnoreCase("RECONCILING")) {
+					if (startTime >= latestStartTime || modificationTime >= latestModificationTime) {
+						latestRunningJobId = id;
+						latestStartTime = startTime;
+						latestModificationTime = modificationTime;
+					}
+				}
+
+				if (startTime >= latestStartTime || modificationTime >= latestModificationTime) {
+					latestSeenJobId = id;
+					latestStartTime = startTime;
+					latestModificationTime = modificationTime;
 				}
 			}
+
+			lastJobId = !isNullOrEmpty(latestRunningJobId) ? latestRunningJobId : latestSeenJobId;
 		} catch (JsonProcessingException e) {
 			throw new RuntimeException("The response is not a valid JSON string:\n" + response, e);
 		}

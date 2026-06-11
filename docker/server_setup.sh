@@ -24,6 +24,7 @@ REPO_ROOT="$(cd .. && pwd)"
 FLINK_DIR="${FLINK_HOME:-}"
 START_DOCKER=true
 SKIP_DOCKER_LOAD=false
+DOCKER_BIN="${DOCKER_BIN:-}"
 
 usage() {
     cat <<'EOF'
@@ -69,6 +70,25 @@ detect_flink_home() {
     detected="$(find "$HOME" -maxdepth 1 -type d \( -name 'flink-1.20.3' -o -name 'flink-*' \) | head -n 1 || true)"
     if [[ -n "$detected" ]]; then
         echo "$detected"
+        return 0
+    fi
+
+    return 1
+}
+
+detect_docker_bin() {
+    if [[ -n "$DOCKER_BIN" ]]; then
+        echo "$DOCKER_BIN"
+        return 0
+    fi
+
+    if docker ps >/dev/null 2>&1; then
+        echo "docker"
+        return 0
+    fi
+
+    if sudo -n docker ps >/dev/null 2>&1; then
+        echo "sudo -n docker"
         return 0
     fi
 
@@ -161,6 +181,13 @@ if [[ -z "$FLINK_DIR" || ! -d "$FLINK_DIR" ]]; then
     exit 1
 fi
 
+DOCKER_BIN="$(detect_docker_bin || true)"
+if [[ -z "$DOCKER_BIN" ]]; then
+    echo "✗ 当前用户无法访问 Docker。"
+    echo "  请确认当前用户可直接执行 docker，或可执行 sudo -n docker。"
+    exit 1
+fi
+
 BACKEND_JAR="$(pick_first_file \
     "${REPO_ROOT}/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
     "${REPO_ROOT}/docker/deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
@@ -174,11 +201,40 @@ WORDCOUNT_JAR="$(pick_first_file \
     "${REPO_ROOT}/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar" \
     "${REPO_ROOT}/docker/deploy/wordcount-benchmark-1.0-SNAPSHOT.jar")"
 
+UNITTEST_JAR="$(pick_first_file \
+    "${REPO_ROOT}/benchmark/unit-test/target/unit-test-benchmark-1.0-SNAPSHOT.jar" \
+    "${REPO_ROOT}/docker/deploy/unit-test-benchmark-1.0-SNAPSHOT.jar" || true)"
+
+NEXMARK_JAR="$(pick_first_file \
+    "${REPO_ROOT}/benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink/lib/nexmark-flink-0.3-SNAPSHOT.jar" \
+    "${REPO_ROOT}/docker/deploy/nexmark-flink-0.3-SNAPSHOT.jar" || true)"
+
+ASYNC_PROFILER_DIR=""
+ASYNC_PROFILER_ARCHIVE="$(pick_first_file \
+    "${REPO_ROOT}/offline-packages/async-profiler-4.4-linux-arm64.tar.gz" \
+    "${REPO_ROOT}/offline-packages/async-profiler-4.4-linux-x64.tar.gz" \
+    "${REPO_ROOT}/docker/deploy/async-profiler-4.4-linux-arm64.tar.gz" \
+    "${REPO_ROOT}/docker/deploy/async-profiler-4.4-linux-x64.tar.gz" || true)"
+
+if [[ -x "${REPO_ROOT}/tools/async-profiler/bin/asprof" ]]; then
+    ASYNC_PROFILER_DIR="${REPO_ROOT}/tools/async-profiler"
+elif [[ -n "${ASYNC_PROFILER_ARCHIVE}" && -f "${ASYNC_PROFILER_ARCHIVE}" ]]; then
+    mkdir -p "${REPO_ROOT}/tools"
+    tar -xzf "${ASYNC_PROFILER_ARCHIVE}" -C "${REPO_ROOT}/tools"
+    extracted_dir="$(find "${REPO_ROOT}/tools" -maxdepth 1 -type d -name 'async-profiler-*' | head -n 1 || true)"
+    if [[ -n "${extracted_dir}" && -x "${extracted_dir}/bin/asprof" ]]; then
+        rm -rf "${REPO_ROOT}/tools/async-profiler"
+        mv "${extracted_dir}" "${REPO_ROOT}/tools/async-profiler"
+        ASYNC_PROFILER_DIR="${REPO_ROOT}/tools/async-profiler"
+    fi
+fi
+
 echo "============================================================"
 echo "  ForL0 仓库一键部署"
 echo "============================================================"
 echo "  仓库路径:   ${REPO_ROOT}"
 echo "  FLINK_HOME: ${FLINK_DIR}"
+echo "  Docker:     ${DOCKER_BIN}"
 echo ""
 
 for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR"; do
@@ -188,14 +244,39 @@ for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR"; do
     fi
 done
 
+if [[ -z "$UNITTEST_JAR" || ! -f "$UNITTEST_JAR" ]]; then
+    if [[ -d "${REPO_ROOT}/benchmark/unit-test" ]]; then
+        echo "[预处理] 未找到 unit-test JAR，尝试现场构建..."
+        (
+            cd "${REPO_ROOT}/benchmark/unit-test"
+            mvn -DskipTests package
+        )
+        UNITTEST_JAR="$(pick_first_file \
+            "${REPO_ROOT}/benchmark/unit-test/target/unit-test-benchmark-1.0-SNAPSHOT.jar" \
+            "${REPO_ROOT}/docker/deploy/unit-test-benchmark-1.0-SNAPSHOT.jar" || true)"
+    fi
+fi
+
+if [[ -z "$UNITTEST_JAR" || ! -f "$UNITTEST_JAR" ]]; then
+    echo "✗ 缺少 unit-test benchmark 产物，且现场构建失败。"
+    echo "  请执行: cd ${REPO_ROOT}/benchmark/unit-test && mvn -DskipTests package"
+    exit 1
+fi
+
+if [[ -z "$NEXMARK_JAR" || ! -f "$NEXMARK_JAR" ]]; then
+    echo "✗ 缺少 NexMark JAR。"
+    echo "  请确认 benchmark/nexmark-src 或 docker/deploy 中存在 nexmark-flink-0.3-SNAPSHOT.jar"
+    exit 1
+fi
+
 if [[ "$SKIP_DOCKER_LOAD" == "false" ]]; then
     echo "[1/4] 检查 Docker 镜像..."
     IMAGE_FILE="${REPO_ROOT}/docker/images/eclipse-temurin-8-jre.tar"
-    if docker image inspect eclipse-temurin:8-jre >/dev/null 2>&1; then
+    if ${DOCKER_BIN} image inspect eclipse-temurin:8-jre >/dev/null 2>&1; then
         echo "      ✓ Docker 镜像已存在"
     elif [[ -f "$IMAGE_FILE" ]]; then
         echo "      加载本地镜像 ${IMAGE_FILE}"
-        docker load -i "$IMAGE_FILE"
+        ${DOCKER_BIN} load -i "$IMAGE_FILE"
     else
         echo "      ✗ 缺少本地镜像文件: ${IMAGE_FILE}"
         exit 1
@@ -214,24 +295,39 @@ mkdir -p "${FLINK_DIR}/lib" "${FLINK_DIR}/native"
 rm -f "${FLINK_DIR}/lib"/flink-statebackend-forl0-*.jar
 rm -f "${FLINK_DIR}/lib"/flink-statebackend-forL0-*.jar
 cp "$BACKEND_JAR" "${FLINK_DIR}/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
+cp "$NEXMARK_JAR" "${FLINK_DIR}/lib/$(basename "$NEXMARK_JAR")"
 cp "$NATIVE_LIB" "${FLINK_DIR}/native/libforl0_engine.so"
 
 cat > "${REPO_ROOT}/docker/forl0-local.env" <<EOF
 export FLINK_HOME="${FLINK_DIR}"
 export FORL0_NATIVE_DIR="${FLINK_DIR}/native"
 export WORDCOUNT_BENCHMARK_JAR="${WORDCOUNT_JAR}"
+export UNITTEST_BENCHMARK_JAR="${UNITTEST_JAR}"
+export NEXMARK_FLINK_JAR="${NEXMARK_JAR}"
 export REPO_ROOT="${REPO_ROOT}"
+export DOCKER_BIN="${DOCKER_BIN}"
+export ASYNC_PROFILER_HOME="${ASYNC_PROFILER_DIR}"
+export FLINK_TASKMANAGER_CONTAINER="flink-taskmanager-1"
 EOF
 
 echo "      ✓ backend JAR 已安装到 ${FLINK_DIR}/lib/"
+echo "      ✓ NexMark JAR 已安装到 ${FLINK_DIR}/lib/"
 echo "      ✓ native 库已安装到 ${FLINK_DIR}/native/"
+echo "      ✓ unit-test benchmark 已就绪"
 echo "      ✓ 环境文件已写入 ${REPO_ROOT}/docker/forl0-local.env"
+if [[ -n "${ASYNC_PROFILER_DIR}" && -x "${ASYNC_PROFILER_DIR}/bin/asprof" ]]; then
+    echo "      ✓ async-profiler 已就绪: ${ASYNC_PROFILER_DIR}"
+else
+    echo "      ⚠ async-profiler 未就绪，--profile cpu 可能无法产出火焰图"
+    echo "        可将 async-profiler-4.4-linux-*.tar.gz 放到 offline-packages/ 后重试"
+fi
 
 echo ""
 echo "[4/4] 启动 Docker 集群..."
 if [[ "$START_DOCKER" == "true" ]]; then
     export FLINK_HOME="${FLINK_DIR}"
     export FORL0_NATIVE_DIR="${FLINK_DIR}/native"
+    export DOCKER_BIN
     bash "${REPO_ROOT}/docker/docker_run.sh" stop 2>/dev/null || true
     bash "${REPO_ROOT}/docker/docker_run.sh" start
 else

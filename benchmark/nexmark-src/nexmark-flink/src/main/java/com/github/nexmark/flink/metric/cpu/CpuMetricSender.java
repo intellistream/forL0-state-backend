@@ -30,6 +30,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -168,14 +170,32 @@ public class CpuMetricSender implements AutoCloseable {
 
 	public static List<Integer> getTaskManagerPidList() throws IOException {
 		List<String> javaProcessors = new ArrayList<>();
-		AutoClosableProcess
-			.create("jps")
-			.setStdoutProcessor(javaProcessors::add)
-			.runBlocking();
+		try {
+			AutoClosableProcess
+				.create("jps")
+				.setStdoutProcessor(javaProcessors::add)
+				.runBlocking();
+		} catch (Throwable ignored) {
+			Process process = new ProcessBuilder("/bin/sh", "-c", "ps -eo pid,args | grep TaskManagerRunner | grep -v grep")
+				.redirectErrorStream(true)
+				.start();
+			try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+				String line;
+				while ((line = reader.readLine()) != null) {
+					javaProcessors.add(line.trim());
+				}
+			}
+			try {
+				process.waitFor();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new IOException("Interrupted while discovering TaskManager processes.", e);
+			}
+		}
 		List<Integer> taskManagers = new ArrayList<>();
 		for (String processor : javaProcessors) {
-			if (processor.endsWith("TaskManagerRunner")) {
-				String pid = processor.split(" ")[0];
+			if (processor.contains("TaskManagerRunner")) {
+				String pid = processor.trim().split("\\s+")[0];
 				taskManagers.add(Integer.parseInt(pid));
 			}
 		}

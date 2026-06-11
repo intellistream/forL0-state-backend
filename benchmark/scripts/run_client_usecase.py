@@ -9,6 +9,7 @@ configured like WordCount.
 
 import argparse
 import math
+import re
 import subprocess
 import sys
 import time
@@ -20,6 +21,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.config import load_config, get_flink_home, save_result
+from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
 def get_client_usecase_jar() -> Optional[str]:
@@ -49,6 +51,104 @@ def check_flink_cluster(rest_url: str) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
+
+def get_job_status(rest_url: str, job_id: str) -> dict:
+    """Fetch detailed Flink job status."""
+    try:
+        resp = requests.get(f"{rest_url}/jobs/{job_id}", timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return {}
+
+
+def cancel_job(rest_url: str, job_id: str) -> bool:
+    """Cancel a Flink job via REST."""
+    try:
+        resp = requests.patch(
+            f"{rest_url}/jobs/{job_id}",
+            params={'mode': 'cancel'},
+            timeout=30,
+        )
+        if resp.status_code in (200, 202):
+            return True
+        resp = requests.delete(f"{rest_url}/jobs/{job_id}/cancel", timeout=30)
+        return resp.status_code in (200, 202)
+    except Exception:
+        return False
+
+
+def submit_job_async(cmd: list[str]) -> Optional[str]:
+    """Submit the Flink job detached and return its JobID."""
+    detached_cmd = cmd.copy()
+    run_index = detached_cmd.index('run')
+    detached_cmd.insert(run_index + 1, '-d')
+
+    result = subprocess.run(
+        detached_cmd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    output = result.stdout + result.stderr
+    print(output)
+
+    if result.returncode != 0:
+        return None
+
+    match = re.search(r'JobID\s+([a-f0-9]+)', output)
+    return match.group(1) if match else None
+
+
+def all_sources_finished(job_status: dict) -> bool:
+    """Return true when all source vertices report FINISHED."""
+    vertices = job_status.get('vertices', [])
+    source_vertices = [vertex for vertex in vertices if vertex.get('name', '').startswith('Source:')]
+    return bool(source_vertices) and all(vertex.get('status') == 'FINISHED' for vertex in source_vertices)
+
+
+def wait_for_job_completion(rest_url: str, job_id: str, timeout: int) -> tuple[str, bool, float]:
+    """
+    Poll a detached client_usecase job until completion.
+
+    The workload is bounded at the sources, but the downstream pipeline can stay RUNNING.
+    Once all source vertices have finished, cancel the job and treat that controlled stop as
+    successful completion for benchmark purposes.
+    """
+    start_time = time.time()
+    bounded_completion_time = None
+    auto_stopped = False
+    last_state = None
+
+    while time.time() - start_time < timeout:
+        job_status = get_job_status(rest_url, job_id)
+        state = job_status.get('state', 'UNKNOWN')
+
+        if state != last_state:
+            print(f'  Job state: {state}')
+            last_state = state
+
+        if state in ('FAILED', 'FINISHED'):
+            effective_end = bounded_completion_time or time.time()
+            return state, auto_stopped, effective_end - start_time
+
+        if state == 'CANCELED':
+            effective_end = bounded_completion_time or time.time()
+            return ('AUTO_STOPPED' if auto_stopped else 'CANCELED'), auto_stopped, effective_end - start_time
+
+        if bounded_completion_time is None and all_sources_finished(job_status):
+            bounded_completion_time = time.time()
+            print('  All sources finished; cancelling job for clean bounded benchmark shutdown...')
+            auto_stopped = cancel_job(rest_url, job_id)
+            if not auto_stopped:
+                print('  WARNING: auto-cancel request failed; waiting for terminal state')
+
+        time.sleep(2)
+
+    effective_end = bounded_completion_time or time.time()
+    return 'TIMEOUT', auto_stopped, effective_end - start_time
 
 
 def split_total_records(total_records: int) -> tuple[int, int]:
@@ -143,34 +243,75 @@ def run_client_usecase(
         'without watermark emission. This runner compensates the record count at submission time, but long-running '
         'jobs can still accumulate state faster than expected.'
     )
-    if profile_mode:
-        print(f"Profiling requested but not implemented for client_usecase yet: {profile_mode}")
+    supported_profile_modes = {'cpu', 'cache'}
+    if profile_mode and profile_mode not in supported_profile_modes:
+        print(f"WARNING: Unsupported profile mode '{profile_mode}' for client_usecase; supported: cpu, cache")
+        profile_mode = None
     print(f"Command: {' '.join(cmd)}\n")
 
     timeout = max(3600, int(config.get('client_usecase', {}).get('timeout_seconds', 7200)))
 
+    profiler = None
+    profiler_files = None
+    tm_pids = []
+
+    if profile_mode:
+        profiler = AsyncProfiler()
+        if profiler.is_available():
+            tm_pids = find_taskmanager_pids(flink_home)
+            if tm_pids:
+                profiles_dir = Path(__file__).parent.parent / 'results' / 'profiles'
+                profiles_dir.mkdir(parents=True, exist_ok=True)
+                events = ['cpu', 'alloc'] if profile_mode == 'cpu' else ['cache-misses']
+                started = profiler.start(
+                    pid=tm_pids[0],
+                    events=events,
+                    output_dir=str(profiles_dir),
+                    backend=backend,
+                    query='client_usecase',
+                    output_format='html',
+                    duration=None,
+                )
+                if started:
+                    print(f'  Started {profile_mode} profiling on TaskManager PID {tm_pids[0]}')
+                else:
+                    print('  WARNING: Profiler failed to start; continuing without profiling')
+                    profiler = None
+            else:
+                print('  WARNING: No TaskManager PID found; skipping profiling')
+                profiler = None
+        else:
+            print('  WARNING: Async Profiler not available (set ASYNC_PROFILER_HOME)')
+            profiler = None
+
     try:
-        start_time = time.time()
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        end_time = time.time()
-
-        output = result.stdout + result.stderr
-        print(output)
-
-        if result.returncode != 0 or 'Job execution failed' in output or 'Exception' in output:
-            print('ERROR: Job failed')
+        job_id = submit_job_async(cmd)
+        if not job_id:
+            print('ERROR: Failed to submit job')
             return None
 
-        wall_time = end_time - start_time
+        print(f'  Job submitted: {job_id}')
+        final_state, auto_stopped, wall_time = wait_for_job_completion(rest_url, job_id, timeout)
+
+        if profiler and tm_pids:
+            try:
+                profiler_files = profiler.stop(tm_pids[0])
+                if profiler_files:
+                    print(f"  Profiler output files: {list(profiler_files.keys())}")
+            except Exception as exc:
+                print(f'  WARNING: Failed to stop profiler cleanly: {exc}')
+
+        if final_state in ('FAILED', 'TIMEOUT', 'CANCELED'):
+            print(f'ERROR: Job ended with state: {final_state}')
+            return None
+
         throughput = estimated_total_records / wall_time if wall_time > 0 else 0
-        return {
+        result = {
             'benchmark': 'client-usecase',
             'backend': backend,
+            'job_id': job_id,
+            'job_state': final_state,
+            'auto_stopped': auto_stopped,
             'config': {
                 'num_records': total_input_records,
                 'left_num_records_target': left_records,
@@ -187,9 +328,9 @@ def run_client_usecase(
             'throughput': throughput,
             'throughput_per_core': throughput / parallelism if parallelism > 0 else throughput,
         }
-    except subprocess.TimeoutExpired:
-        print('ERROR: Benchmark timed out')
-        return None
+        if profiler_files:
+            result['profiler_files'] = profiler_files
+        return result
     except Exception as exc:
         print(f'ERROR: {exc}')
         import traceback
