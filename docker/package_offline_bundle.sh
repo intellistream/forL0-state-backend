@@ -27,6 +27,18 @@ DOCKER_IMAGE="eclipse-temurin:8-jre"
 ARCH=""
 DOCKER_PLATFORM=""
 
+detect_sha_cmd() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        echo "sha256sum"
+        return 0
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        echo "shasum -a 256"
+        return 0
+    fi
+    return 1
+}
+
 detect_default_arch() {
     local machine
     machine="$(uname -m)"
@@ -239,6 +251,30 @@ fi
 cp -a "$REPO_ROOT/docker/deploy/." "$OUTPUT_DIR/"
 cp -a "$REPO_ROOT/docker/images/." "$OUTPUT_DIR/" 2>/dev/null || true
 cp -a "$REPO_ROOT/offline-packages/." "$OUTPUT_DIR/" 2>/dev/null || true
+
+echo "[9/9] 生成离线校验清单"
+MANIFEST_FILE="$OUTPUT_DIR/offline_bundle_manifest.txt"
+CHECKSUM_FILE="$OUTPUT_DIR/offline_bundle_sha256.txt"
+{
+    echo "ForL0 Offline Bundle Manifest"
+    echo "GeneratedAt: $(date '+%Y-%m-%d %H:%M:%S %z')"
+    echo "Arch: ${ARCH}"
+    echo "DockerPlatform: ${DOCKER_PLATFORM}"
+    echo ""
+    find "$OUTPUT_DIR" -maxdepth 1 -type f ! -name "offline_bundle_manifest.txt" ! -name "offline_bundle_sha256.txt" -printf '%f\n' | sort
+} > "$MANIFEST_FILE"
+
+SHA_CMD="$(detect_sha_cmd || true)"
+if [[ -n "$SHA_CMD" ]]; then
+    (
+        cd "$OUTPUT_DIR"
+        find . -maxdepth 1 -type f ! -name "offline_bundle_sha256.txt" -print0 | sort -z | xargs -0 $SHA_CMD
+    ) > "$CHECKSUM_FILE"
+    echo "      ✓ 清单: ${MANIFEST_FILE}"
+    echo "      ✓ 校验: ${CHECKSUM_FILE}"
+else
+    echo "      ⚠ 未找到 sha256sum/shasum，跳过 SHA256 文件生成"
+fi
 
 echo ""
 echo "打包完成。"

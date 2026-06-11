@@ -29,6 +29,15 @@ cd ~/forL0-state-backend
 - `docker/deploy/`：JAR 等部署产物
 - `docker/images/`：离线 Docker 镜像
 - `offline-packages/`：可选 async-profiler 离线包
+- `offline-artifacts/offline_bundle_manifest.txt`：文件清单
+- `offline-artifacts/offline_bundle_sha256.txt`：SHA256 校验清单
+
+离线机校验示例：
+
+```bash
+cd ~/forL0-state-backend/offline-artifacts
+sha256sum -c offline_bundle_sha256.txt
+```
 
 ## 2. 一键部署 + 运行（在离线目标机器执行）
 
