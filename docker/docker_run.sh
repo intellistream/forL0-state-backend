@@ -13,10 +13,22 @@ cd "$(dirname "$0")"
 
 REPO_ROOT="$(cd .. && pwd)"
 FLINK_DIR="${FLINK_HOME:-/home/user/flink}"
-NATIVE_DIR="${REPO_ROOT}/src/main/resources/native"
+NATIVE_DIR="${FORL0_NATIVE_DIR:-}"
 CONF_DIR="$(pwd)/conf"
 NETWORK="flink-net"
 IMAGE="eclipse-temurin:8-jre"
+
+if [[ -z "$NATIVE_DIR" ]]; then
+    if [[ -f "${FLINK_DIR}/native/libforl0_engine.so" ]]; then
+        NATIVE_DIR="${FLINK_DIR}/native"
+    elif [[ -f "${REPO_ROOT}/src/main/resources/native/libforl0_engine.so" ]]; then
+        NATIVE_DIR="${REPO_ROOT}/src/main/resources/native"
+    elif [[ -f "${REPO_ROOT}/artifacts/libforl0_engine.so" ]]; then
+        NATIVE_DIR="${REPO_ROOT}/artifacts"
+    else
+        NATIVE_DIR="${REPO_ROOT}/src/main/resources/native"
+    fi
+fi
 
 # L0 挂载参数 (仅当硬件存在时)
 L0_OPTS=()
@@ -78,6 +90,11 @@ do_start() {
     if [[ ! -d "$FLINK_DIR" ]]; then
         echo "✗ FLINK_HOME 不存在: ${FLINK_DIR}"
         echo "  请设置: export FLINK_HOME=/path/to/flink"
+        exit 1
+    fi
+    if [[ ! -f "${NATIVE_DIR}/libforl0_engine.so" ]]; then
+        echo "✗ 未找到 native 库: ${NATIVE_DIR}/libforl0_engine.so"
+        echo "  可设置: export FORL0_NATIVE_DIR=/path/to/native-dir"
         exit 1
     fi
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then

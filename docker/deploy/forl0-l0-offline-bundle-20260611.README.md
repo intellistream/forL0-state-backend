@@ -10,6 +10,7 @@
 - `benchmark/config/`
 - `benchmark/scripts/`
 - `docker/conf/`
+- `docker/install_offline_bundle.sh`
 - `docker/docker_run.sh`
 - `docker/start.sh`
 - `docker/stop.sh`
@@ -25,10 +26,10 @@
 
 ## 使用方式
 
-1. 从 GitHub 同步 `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`。
+1. 通过离线拷贝方式把 `forl0-l0-offline-bundle-20260611.tar.gz` 和对应 `.sha256` 文件带到目标机器。
 2. 在目标机器解压。
-3. 将 `artifacts/` 下的 JAR 和 `libforl0_engine.so` 按实际 Flink 安装路径放置。
-4. 如需抓 flame graph，使用 `tools/async-profiler-4.4-linux-arm64/`。
+3. 执行 `./docker/install_offline_bundle.sh --flink-home /path/to/flink` 完成安装。
+4. 如需抓 flame graph，可加 `--copy-profiler`，或直接使用 `tools/async-profiler-4.4-linux-arm64/`。
 
 ## 说明
 

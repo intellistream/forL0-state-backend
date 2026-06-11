@@ -3,7 +3,7 @@
 本文档完全基于当前仓库现状重写，目标是让你在两类机器上都能直接照着操作：
 
 1. 当前这台本地鲲鹏机器：无真实 L0，但已经成功生成 flame graph
-2. 目标 L0 服务器：不联网，但可以通过 GitHub 同步离线包或核心产物
+2. 目标 L0 服务器：完全不联网，只能通过离线拷贝同步 tar 包或核心产物
 
 本文档包含四部分：
 
@@ -57,12 +57,13 @@ export REPO_ROOT="$(pwd)"
 2. `benchmark/config/`
 3. `benchmark/scripts/`
 4. `docker/conf/`
-5. `docker/docker_run.sh`
-6. `docker/start.sh`
-7. `docker/stop.sh`
-8. `docker/restart.sh`
-9. `tools/async-profiler-4.4-linux-arm64/`
-10. 本 runbook 文档
+5. `docker/install_offline_bundle.sh`
+6. `docker/docker_run.sh`
+7. `docker/start.sh`
+8. `docker/stop.sh`
+9. `docker/restart.sh`
+10. `tools/async-profiler-4.4-linux-arm64/`
+11. 本 runbook 文档
 
 ### 3. 本机生成的 flame graph 结果
 
@@ -186,9 +187,7 @@ sha256sum -c forl0-l0-offline-bundle-20260611.tar.gz.sha256
 
 ### 第 3 步：把离线包传到目标 L0 服务器
 
-如果目标机能通过 GitHub 拉代码，直接在目标机同步仓库即可。
-
-如果目标机完全不联网，使用你们现有的离线拷贝方式，把这三个文件带过去：
+目标 L0 服务器完全不联网，因此这里默认只能使用你们现有的离线拷贝方式，把这三个文件带过去：
 
 ```text
 forl0-l0-offline-bundle-20260611.tar.gz
@@ -228,8 +227,11 @@ forl0-l0-offline-bundle-20260611.README.md
 
 ```bash
 cd ~/forl0-offline
-sha256sum -c forl0-l0-offline-bundle-20260611.tar.gz.sha256
+sha256sum forl0-l0-offline-bundle-20260611.tar.gz
+cat forl0-l0-offline-bundle-20260611.tar.gz.sha256
 ```
+
+如果两边摘要一致，就说明离线拷贝没有损坏。
 
 ### 第 7 步：解压离线包
 
@@ -259,88 +261,91 @@ forl0-l0-offline-bundle-20260611/tools
 forl0-l0-offline-bundle-20260611/docs
 ```
 
-### 第 9 步：检查核心产物是否齐全
+### 第 9 步：执行一键安装脚本
+
+以下命令在目标 L0 服务器执行：
+
+```bash
+cd ~/forl0-offline/forl0-l0-offline-bundle-20260611
+
+chmod +x docker/install_offline_bundle.sh
+
+./docker/install_offline_bundle.sh \
+  --flink-home /path/to/your/flink \
+  --install-dir ~/forl0-runtime \
+  --copy-profiler
+```
+
+如果你希望安装完后立刻拉起 Docker 集群，可以执行：
+
+```bash
+cd ~/forl0-offline/forl0-l0-offline-bundle-20260611
+
+./docker/install_offline_bundle.sh \
+  --flink-home /path/to/your/flink \
+  --install-dir ~/forl0-runtime \
+  --copy-profiler \
+  --start-docker
+```
+
+这个脚本会完成以下动作：
+
+1. 将 backend JAR 复制到 `$FLINK_HOME/lib/`
+2. 将 `libforl0_engine.so` 复制到 `$FLINK_HOME/native/`
+3. 将 benchmark 脚本、docker 脚本、配置文件复制到 `~/forl0-runtime/`
+4. 生成 `~/forl0-runtime/forl0-offline.env`
+5. 可选复制 profiler
+6. 可选直接启动 Docker 集群
+
+### 第 10 步：检查核心产物是否齐全
 
 在目标机执行：
 
 ```bash
-cd ~/forl0-offline/forl0-l0-offline-bundle-20260611
+cd ~/forl0-runtime
+
+source ~/forl0-runtime/forl0-offline.env
 
 ls -lh artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar
 ls -lh artifacts/libforl0_engine.so
 ls -lh artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar
+ls -lh docker/docker_run.sh
+ls -lh docs/FlameGraph_Runbook_20260611.md
+ls -lh "$FLINK_HOME/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
+ls -lh "$FLINK_HOME/native/libforl0_engine.so"
 ```
 
-### 第 10 步：如果需要 flame graph，检查 profiler 是否齐全
+### 第 11 步：如果需要 flame graph，检查 profiler 是否齐全
 
 在目标机执行：
 
 ```bash
-cd ~/forl0-offline/forl0-l0-offline-bundle-20260611
+cd ~/forl0-runtime
 
 ls -lh tools/async-profiler-4.4-linux-arm64/bin/asprof
 ls -lh tools/async-profiler-4.4-linux-arm64/bin/jfrconv
 ls -lh tools/async-profiler-4.4-linux-arm64/lib/libasyncProfiler.so
 ```
 
-### 第 11 步：把 backend JAR 放进 Flink
+### 第 12 步：加载运行环境并启动 Docker 集群
 
-以下命令假设目标机的 Flink 安装目录是 `$FLINK_HOME`。
-
-先设置环境变量：
+在目标机执行：
 
 ```bash
-export FLINK_HOME=/path/to/your/flink
+source ~/forl0-runtime/forl0-offline.env
+cd ~/forl0-runtime/docker
+
+./docker_run.sh start
 ```
 
-复制 backend JAR：
+
+如果只想先检查状态：
 
 ```bash
-cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar \
-   "$FLINK_HOME/lib/"
-```
+source ~/forl0-runtime/forl0-offline.env
+cd ~/forl0-runtime/docker
 
-### 第 12 步：把 native 库放到可加载位置
-
-推荐先放到一个固定目录，例如：
-
-```bash
-mkdir -p "$FLINK_HOME/native"
-
-cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/artifacts/libforl0_engine.so \
-   "$FLINK_HOME/native/"
-```
-
-### 第 13 步：放置 WordCount benchmark JAR
-
-例如放到一个工作目录：
-
-```bash
-mkdir -p ~/forl0-benchmark-artifacts
-
-cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar \
-   ~/forl0-benchmark-artifacts/
-```
-
-### 第 14 步：复制 benchmark 配置和脚本
-
-```bash
-mkdir -p ~/forl0-benchmark
-
-cp -r ~/forl0-offline/forl0-l0-offline-bundle-20260611/benchmark/config ~/forl0-benchmark/
-cp -r ~/forl0-offline/forl0-l0-offline-bundle-20260611/benchmark/scripts ~/forl0-benchmark/
-```
-
-### 第 15 步：如果使用 Docker 方案，复制 docker 配置
-
-```bash
-mkdir -p ~/forl0-docker
-
-cp -r ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/conf ~/forl0-docker/
-cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/docker_run.sh ~/forl0-docker/
-cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/start.sh ~/forl0-docker/
-cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/stop.sh ~/forl0-docker/
-cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/restart.sh ~/forl0-docker/
+./docker_run.sh status
 ```
 
 ## 六、备选方案：只同步核心三件套
@@ -607,6 +612,7 @@ sudo docker cp \
 - `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`
 - `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256`
 - `docker/deploy/forl0-l0-offline-bundle-20260611.README.md`
+- `docker/install_offline_bundle.sh`
 - `benchmark/results/profiles/hashmap_cpu.html`
 - `benchmark/results/profiles/hashmap_cpu.collapsed`
 - `benchmark/results/profiles/forl0_cpu.html`
