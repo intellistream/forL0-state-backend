@@ -48,6 +48,27 @@
 
 - `docs/FlameGraph_Runbook_20260611.md`
 
+### 4. 三个部署产物已上传到 GitHub
+
+当前仓库的 `main` 分支已经包含以下三个可直接用于部署的产物：
+
+- `target/flink-statebackend-forL0-1.0-SNAPSHOT.jar`
+- `src/main/resources/native/libforl0_engine.so`
+- `benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar`
+
+这意味着在另一台有真实 L0 硬件的鲲鹏服务器上，如果运行环境兼容，则可以直接从 GitHub 拉取这三个文件用于部署，而不需要在目标机上重新编译。
+
+### 5. 如果目标机要抓 flame graph，还需要额外补 profiler
+
+上面三个文件只覆盖运行和 benchmark 所需的核心产物；如果目标 L0 服务器还需要采集 flame graph，则还必须额外准备：
+
+- `async-profiler-4.4-linux-arm64` 目录，或等价的离线压缩包
+
+注意：`async-profiler` 不是当前仓库构建出来的自有产物，也不包含在上面三个已上传文件中。也就是说：
+
+1. 只跑 benchmark，不抓火焰图：三个文件就够
+2. 既要跑 benchmark，又要抓火焰图：还需要额外补 `async-profiler`
+
 ## 三、为什么不能直接用 benchmark 脚本自动出图
 
 虽然脚本支持：
@@ -75,14 +96,17 @@ python3 run_benchmark.py --test wordcount --backend all --profile cpu
 
 1. Flink 已部署在 `/home/shuhao/flink-1.20.3`
 2. Docker 中已启动 1 个 JobManager 和 2 个 TaskManager
-3. WordCount JAR 已存在
-4. ForL0 backend JAR 已放到 Flink `lib/`
-5. native 库已为当前 ARM64 架构重新编译
+3. 三个部署产物已可从 GitHub `main` 直接获取
+4. 如果要抓 flame graph，需额外准备 `async-profiler-4.4-linux-arm64`
+5. WordCount JAR 已存在
+6. ForL0 backend JAR 已放到 Flink `lib/`
+7. native 库已为当前 ARM64 架构重新编译
 
 检查命令如下：
 
 ```bash
 ls -lh /home/shuhao/flink-1.20.3/bin/flink
+ls -lh /home/shuhao/forL0-state-backend/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar
 ls -lh /home/shuhao/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar
 ls -lh /home/shuhao/flink-1.20.3/lib/flink-statebackend-forl0-1.0-SNAPSHOT.jar
 ls -lh /home/shuhao/forL0-state-backend/src/main/resources/native/libforl0_engine.so
@@ -264,6 +288,10 @@ sudo docker cp \
 最终结果位于：
 
 - `docs/FlameGraph_Runbook_20260611.md`
+- `target/flink-statebackend-forL0-1.0-SNAPSHOT.jar`
+- `src/main/resources/native/libforl0_engine.so`
+- `benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar`
+- `async-profiler-4.4-linux-arm64`（如果目标机需要抓 flame graph，需要额外准备，不包含在仓库构建产物中）
 - `benchmark/results/profiles/hashmap_cpu.html`
 - `benchmark/results/profiles/hashmap_cpu.collapsed`
 - `benchmark/results/profiles/forl0_cpu.html`
