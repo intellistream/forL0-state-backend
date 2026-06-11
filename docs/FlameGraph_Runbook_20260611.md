@@ -1,77 +1,410 @@
-# Flame Graph 生成与本次变更说明
+# Flame Graph Runbook 2026-06-11
 
-本文档记录 2026-06-11 在当前鲲鹏服务器上，如何为 WordCount benchmark 成功生成 `hashmap` 和 `forl0` 两种后端的 CPU flame graph，以及本次实际做过的环境和产物变更。
+本文档完全基于当前仓库现状重写，目标是让你在两类机器上都能直接照着操作：
 
-## 一、目标
+1. 当前这台本地鲲鹏机器：无真实 L0，但已经成功生成 flame graph
+2. 目标 L0 服务器：不联网，但可以通过 GitHub 同步离线包或核心产物
 
-在这台机器上成功生成以下产物：
+本文档包含四部分：
 
-- `benchmark/results/profiles/hashmap_cpu.html`
-- `benchmark/results/profiles/hashmap_cpu.collapsed`
-- `benchmark/results/profiles/forl0_cpu.html`
-- `benchmark/results/profiles/forl0_cpu.collapsed`
+1. 当前 GitHub 上已经有什么
+2. 如何把文件同步到不联网的 L0 服务器
+3. 什么时候需要 `async-profiler`
+4. 本机上已验证通过的 flame graph 采集步骤
 
-并基于 flame graph 分析为什么当前 ForL0 相比 HashMap 只提升约 18%。
+## 一、GitHub 上当前已经有的内容
 
-## 二、本次实际变更
+截至当前状态，`main` 分支上已经有以下几类关键文件。
 
-本次操作中，工作区内涉及到的主要变更如下：
+### 1. 核心三件套
 
-### 1. Native 库重新编译
-
-由于当前机器是 ARM64 / aarch64，而仓库中原先的 native 产物不能直接用于当前环境，因此重新编译并覆盖了以下文件：
-
-- `src/main/native/libforl0_engine.so`
-- `src/main/resources/native/libforl0_engine.so`
-- `src/main/native/engine/hot_cache.o`
-- `src/main/native/jni/forl0_jni.o`
-- `src/main/native/jni/jni_checkpoint.o`
-- `src/main/native/jni/jni_list_state.o`
-- `src/main/native/jni/jni_map_state.o`
-- `src/main/native/jni/jni_tw_state.o`
-- `src/main/native/jni/jni_value_state.o`
-
-### 2. 生成了 benchmark profiling 结果
-
-本次成功生成的 flame graph 和 collapsed stacks 位于：
-
-- `benchmark/results/profiles/hashmap_cpu.html`
-- `benchmark/results/profiles/hashmap_cpu.collapsed`
-- `benchmark/results/profiles/forl0_cpu.html`
-- `benchmark/results/profiles/forl0_cpu.collapsed`
-
-注意：`benchmark/results/` 在仓库中默认被 `.gitignore` 忽略，如需提交这些产物，必须使用 `git add -f`。
-
-### 3. 新增本文档
-
-新增文档：
-
-- `docs/FlameGraph_Runbook_20260611.md`
-
-### 4. 三个部署产物已上传到 GitHub
-
-当前仓库的 `main` 分支已经包含以下三个可直接用于部署的产物：
+这三件是最小可运行集合：
 
 - `target/flink-statebackend-forL0-1.0-SNAPSHOT.jar`
 - `src/main/resources/native/libforl0_engine.so`
 - `benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar`
 
-这意味着在另一台有真实 L0 硬件的鲲鹏服务器上，如果运行环境兼容，则可以直接从 GitHub 拉取这三个文件用于部署，而不需要在目标机上重新编译。
+用途：
 
-### 5. 如果目标机要抓 flame graph，还需要额外补 profiler
+1. 在目标机上部署 ForL0 backend
+2. 在目标机上运行 WordCount benchmark
 
-上面三个文件只覆盖运行和 benchmark 所需的核心产物；如果目标 L0 服务器还需要采集 flame graph，则还必须额外准备：
+### 2. 离线包
 
-- `async-profiler-4.4-linux-arm64` 目录，或等价的离线压缩包
+这是一份给不联网 L0 服务器准备的完整同步包：
 
-注意：`async-profiler` 不是当前仓库构建出来的自有产物，也不包含在上面三个核心部署文件中。但如果使用已经上传到 GitHub 的离线包 `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`，其中已经包含了 `tools/async-profiler-4.4-linux-arm64/`，不需要再单独准备。也就是说：
+- `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`
+- `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256`
+- `docker/deploy/forl0-l0-offline-bundle-20260611.README.md`
 
-1. 只跑 benchmark，不抓火焰图：三个文件就够
-2. 既要跑 benchmark，又要抓火焰图：
-  - 如果只同步三件套，还需要额外补 `async-profiler`
-  - 如果直接同步离线包，则 profiler 已经在包内
+它已经包含：
 
-## 三、为什么不能直接用 benchmark 脚本自动出图
+1. 核心三件套
+2. `benchmark/config/`
+3. `benchmark/scripts/`
+4. `docker/conf/`
+5. `docker/docker_run.sh`
+6. `docker/start.sh`
+7. `docker/stop.sh`
+8. `docker/restart.sh`
+9. `tools/async-profiler-4.4-linux-arm64/`
+10. 本 runbook 文档
+
+### 3. 本机生成的 flame graph 结果
+
+当前仓库中还包含已经产出的 flame graph 结果：
+
+- `benchmark/results/profiles/hashmap_cpu.html`
+- `benchmark/results/profiles/hashmap_cpu.collapsed`
+- `benchmark/results/profiles/forl0_cpu.html`
+- `benchmark/results/profiles/forl0_cpu.collapsed`
+
+## 二、两种交付方式
+
+### 方式 A：只同步核心三件套
+
+适用场景：
+
+1. 目标机只需要运行 benchmark
+2. 目标机不需要抓 flame graph
+3. 你想手工控制 Flink 安装路径和部署位置
+
+需要同步的文件：
+
+```text
+target/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+src/main/resources/native/libforl0_engine.so
+benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar
+```
+
+### 方式 B：直接同步离线包
+
+适用场景：
+
+1. 目标 L0 服务器不联网
+2. 希望一次性把运行脚本、配置、核心产物和 profiler 一起带过去
+3. 希望减少手工漏文件的风险
+
+需要同步的文件：
+
+```text
+docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz
+docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256
+docker/deploy/forl0-l0-offline-bundle-20260611.README.md
+```
+
+## 三、什么时候需要 `async-profiler`
+
+### 场景 1：只跑 benchmark，不抓 flame graph
+
+不需要额外关心 `async-profiler`。
+
+你可以：
+
+1. 只同步核心三件套
+2. 或者直接同步离线包
+
+### 场景 2：目标机要抓 flame graph
+
+必须保证目标机可用 `async-profiler-4.4-linux-arm64`。
+
+这时分两种情况：
+
+1. 如果你只同步核心三件套：
+   还需要另外准备 `async-profiler-4.4-linux-arm64`
+2. 如果你直接同步离线包：
+   不需要再单独准备，因为离线包里已经有 `tools/async-profiler-4.4-linux-arm64/`
+
+一句话总结：
+
+1. `async-profiler` 不在核心三件套里
+2. `async-profiler` 已经在离线包里
+
+## 四、目标 L0 服务器的环境前提
+
+目标 L0 服务器即使不联网，也需要满足以下前提：
+
+1. 目标机器是兼容的 Linux ARM64 / 鲲鹏环境
+2. 已安装 Java
+3. 已安装 Flink
+4. 如果使用 Docker 方案，目标机已有 Docker 运行环境
+5. 目标机有真实 L0 运行环境，例如设备节点和相关系统库
+
+注意：
+
+1. 离线包不包含系统级 L0 驱动
+2. 离线包不包含 Docker 镜像本身
+3. 离线包也不替代目标机的 Flink 安装
+
+## 五、推荐方案：直接同步离线包
+
+如果目标 L0 服务器不联网，推荐直接同步离线包。这是当前最稳妥、最少出错的方案。
+
+### 第 1 步：在本地确认离线包存在
+
+在当前仓库根目录执行：
+
+```bash
+cd /home/shuhao/forL0-state-backend
+
+ls -lh docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz
+ls -lh docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256
+ls -lh docker/deploy/forl0-l0-offline-bundle-20260611.README.md
+```
+
+### 第 2 步：校验离线包摘要
+
+在本地执行：
+
+```bash
+cd /home/shuhao/forL0-state-backend
+
+sha256sum docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz
+cat docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256
+```
+
+如果你想直接自动校验：
+
+```bash
+cd /home/shuhao/forL0-state-backend/docker/deploy
+sha256sum -c forl0-l0-offline-bundle-20260611.tar.gz.sha256
+```
+
+### 第 3 步：把离线包传到目标 L0 服务器
+
+如果目标机能通过 GitHub 拉代码，直接在目标机同步仓库即可。
+
+如果目标机完全不联网，使用你们现有的离线拷贝方式，把这三个文件带过去：
+
+```text
+forl0-l0-offline-bundle-20260611.tar.gz
+forl0-l0-offline-bundle-20260611.tar.gz.sha256
+forl0-l0-offline-bundle-20260611.README.md
+```
+
+### 第 4 步：在目标机创建工作目录
+
+以下命令在目标 L0 服务器执行：
+
+```bash
+mkdir -p ~/forl0-offline
+cd ~/forl0-offline
+```
+
+### 第 5 步：将离线包放入工作目录
+
+假设你已经把文件拷到了 `~/forl0-offline/`：
+
+```bash
+cd ~/forl0-offline
+ls -lh
+```
+
+应该至少能看到：
+
+```text
+forl0-l0-offline-bundle-20260611.tar.gz
+forl0-l0-offline-bundle-20260611.tar.gz.sha256
+forl0-l0-offline-bundle-20260611.README.md
+```
+
+### 第 6 步：在目标机校验离线包
+
+在目标机执行：
+
+```bash
+cd ~/forl0-offline
+sha256sum -c forl0-l0-offline-bundle-20260611.tar.gz.sha256
+```
+
+### 第 7 步：解压离线包
+
+在目标机执行：
+
+```bash
+cd ~/forl0-offline
+tar xzf forl0-l0-offline-bundle-20260611.tar.gz
+```
+
+### 第 8 步：检查解压后的目录结构
+
+在目标机执行：
+
+```bash
+cd ~/forl0-offline
+find forl0-l0-offline-bundle-20260611 -maxdepth 2 -type d | sort
+```
+
+你应该能看到这些关键目录：
+
+```text
+forl0-l0-offline-bundle-20260611/artifacts
+forl0-l0-offline-bundle-20260611/benchmark
+forl0-l0-offline-bundle-20260611/docker
+forl0-l0-offline-bundle-20260611/tools
+forl0-l0-offline-bundle-20260611/docs
+```
+
+### 第 9 步：检查核心产物是否齐全
+
+在目标机执行：
+
+```bash
+cd ~/forl0-offline/forl0-l0-offline-bundle-20260611
+
+ls -lh artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+ls -lh artifacts/libforl0_engine.so
+ls -lh artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar
+```
+
+### 第 10 步：如果需要 flame graph，检查 profiler 是否齐全
+
+在目标机执行：
+
+```bash
+cd ~/forl0-offline/forl0-l0-offline-bundle-20260611
+
+ls -lh tools/async-profiler-4.4-linux-arm64/bin/asprof
+ls -lh tools/async-profiler-4.4-linux-arm64/bin/jfrconv
+ls -lh tools/async-profiler-4.4-linux-arm64/lib/libasyncProfiler.so
+```
+
+### 第 11 步：把 backend JAR 放进 Flink
+
+以下命令假设目标机的 Flink 安装目录是 `$FLINK_HOME`。
+
+先设置环境变量：
+
+```bash
+export FLINK_HOME=/path/to/your/flink
+```
+
+复制 backend JAR：
+
+```bash
+cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar \
+   "$FLINK_HOME/lib/"
+```
+
+### 第 12 步：把 native 库放到可加载位置
+
+推荐先放到一个固定目录，例如：
+
+```bash
+mkdir -p "$FLINK_HOME/native"
+
+cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/artifacts/libforl0_engine.so \
+   "$FLINK_HOME/native/"
+```
+
+### 第 13 步：放置 WordCount benchmark JAR
+
+例如放到一个工作目录：
+
+```bash
+mkdir -p ~/forl0-benchmark-artifacts
+
+cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar \
+   ~/forl0-benchmark-artifacts/
+```
+
+### 第 14 步：复制 benchmark 配置和脚本
+
+```bash
+mkdir -p ~/forl0-benchmark
+
+cp -r ~/forl0-offline/forl0-l0-offline-bundle-20260611/benchmark/config ~/forl0-benchmark/
+cp -r ~/forl0-offline/forl0-l0-offline-bundle-20260611/benchmark/scripts ~/forl0-benchmark/
+```
+
+### 第 15 步：如果使用 Docker 方案，复制 docker 配置
+
+```bash
+mkdir -p ~/forl0-docker
+
+cp -r ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/conf ~/forl0-docker/
+cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/docker_run.sh ~/forl0-docker/
+cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/start.sh ~/forl0-docker/
+cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/stop.sh ~/forl0-docker/
+cp ~/forl0-offline/forl0-l0-offline-bundle-20260611/docker/restart.sh ~/forl0-docker/
+```
+
+## 六、备选方案：只同步核心三件套
+
+如果你不想同步整个离线包，也可以只同步三件套。
+
+### 第 1 步：在本地确认三件套都存在
+
+```bash
+cd /home/shuhao/forL0-state-backend
+
+ls -lh target/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+ls -lh src/main/resources/native/libforl0_engine.so
+ls -lh benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar
+```
+
+### 第 2 步：将三件套拷到目标机
+
+目标机如果不联网，就按你们现有的离线方式拷这三个文件：
+
+```text
+flink-statebackend-forL0-1.0-SNAPSHOT.jar
+libforl0_engine.so
+wordcount-benchmark-1.0-SNAPSHOT.jar
+```
+
+### 第 3 步：在目标机创建工作目录
+
+```bash
+mkdir -p ~/forl0-manual/artifacts
+cd ~/forl0-manual/artifacts
+```
+
+### 第 4 步：把三件套放进该目录
+
+```bash
+ls -lh
+```
+
+你应该看到：
+
+```text
+flink-statebackend-forL0-1.0-SNAPSHOT.jar
+libforl0_engine.so
+wordcount-benchmark-1.0-SNAPSHOT.jar
+```
+
+### 第 5 步：手工部署到 Flink
+
+```bash
+export FLINK_HOME=/path/to/your/flink
+
+mkdir -p "$FLINK_HOME/native"
+
+cp ~/forl0-manual/artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar "$FLINK_HOME/lib/"
+cp ~/forl0-manual/artifacts/libforl0_engine.so "$FLINK_HOME/native/"
+```
+
+### 第 6 步：放置 benchmark JAR
+
+```bash
+mkdir -p ~/forl0-benchmark-artifacts
+cp ~/forl0-manual/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar ~/forl0-benchmark-artifacts/
+```
+
+### 第 7 步：如果还要抓 flame graph，则额外同步 profiler
+
+只有在“只同步三件套但目标机还要抓 flame graph”时，才需要再额外带上：
+
+```text
+async-profiler-4.4-linux-arm64/
+```
+
+## 七、本机上已验证通过的 flame graph 方案
+
+下面这部分是已经在当前无真实 L0 的鲲鹏机器上实际跑通过的方法。
+
+### 第 1 步：为什么不能直接依赖脚本的 `--profile cpu`
 
 虽然脚本支持：
 
@@ -79,85 +412,50 @@
 python3 run_benchmark.py --test wordcount --backend all --profile cpu
 ```
 
-但在这台机器上直接这样跑，没有稳定产出 flame graph，原因有两个：
+但在当前环境里，直接这样跑不能稳定产出 flame graph，原因是：
 
 1. 最初没有安装 `async-profiler`
-2. 即使 host 上安装了 `async-profiler`，TaskManager 运行在 Docker 容器里，容器内部看不到 host 上的 `/home/shuhao/async-profiler-4.4-linux-arm64`，导致 attach 失败
+2. 即使 host 上安装了 profiler，TaskManager 运行在 Docker 容器里，容器内部看不到 host 上的 profiler 目录
 
-因此最终采用的可靠方案是：
+所以最终采用的是“容器内 attach”方案。
 
-1. 在 host 上安装 `async-profiler`
-2. 将 profiler 复制进 TaskManager 容器
-3. 用 detached 模式提交 benchmark
-4. 在容器内对 TaskManager JVM 直接采样
-5. 用 `jfrconv` 将 JFR 转成 HTML flame graph 和 collapsed stacks
-
-## 四、环境前提
-
-需要满足以下条件：
-
-1. Flink 已部署在 `/home/shuhao/flink-1.20.3`
-2. Docker 中已启动 1 个 JobManager 和 2 个 TaskManager
-3. 三个部署产物已可从 GitHub `main` 直接获取
-4. 如果要抓 flame graph，需满足以下二选一：
-  - 单独准备 `async-profiler-4.4-linux-arm64`
-  - 或直接使用已上传的离线包 `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`
-5. WordCount JAR 已存在
-6. ForL0 backend JAR 已放到 Flink `lib/`
-7. native 库已为当前 ARM64 架构重新编译
-
-检查命令如下：
-
-```bash
-ls -lh /home/shuhao/flink-1.20.3/bin/flink
-ls -lh /home/shuhao/forL0-state-backend/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar
-ls -lh /home/shuhao/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar
-ls -lh /home/shuhao/flink-1.20.3/lib/flink-statebackend-forl0-1.0-SNAPSHOT.jar
-ls -lh /home/shuhao/forL0-state-backend/src/main/resources/native/libforl0_engine.so
-curl http://localhost:8081/overview
-sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-```
-
-## 五、安装 async-profiler 到 host
-
-本次使用版本：`async-profiler-4.4-linux-arm64`
+### 第 2 步：在 host 安装 profiler
 
 ```bash
 cd /home/shuhao
+
 curl -L -o /tmp/async-profiler-4.4-linux-arm64.tar.gz \
   https://github.com/async-profiler/async-profiler/releases/download/v4.4/async-profiler-4.4-linux-arm64.tar.gz
+
 tar xzf /tmp/async-profiler-4.4-linux-arm64.tar.gz
+
 /home/shuhao/async-profiler-4.4-linux-arm64/bin/asprof --version
 ```
 
-## 六、将 profiler 复制进 TaskManager 容器
+### 第 3 步：将 profiler 复制进两个 TaskManager 容器
 
 ```bash
 sudo docker cp /home/shuhao/async-profiler-4.4-linux-arm64 flink-taskmanager-1:/opt/async-profiler-4.4-linux-arm64
 sudo docker cp /home/shuhao/async-profiler-4.4-linux-arm64 flink-taskmanager-2:/opt/async-profiler-4.4-linux-arm64
 ```
 
-验证命令：
+### 第 4 步：验证容器里 profiler 可用
 
 ```bash
 sudo docker exec flink-taskmanager-1 /opt/async-profiler-4.4-linux-arm64/bin/asprof --version
 sudo docker exec flink-taskmanager-2 /opt/async-profiler-4.4-linux-arm64/bin/asprof --version
 ```
 
-## 七、确认 TaskManager JVM 进程
-
-本次容器环境中，TaskManager Java 进程即 PID `1`。
-
-确认命令：
+### 第 5 步：确认容器内 TaskManager 进程 PID
 
 ```bash
 sudo docker exec flink-taskmanager-1 bash -lc \
   'ps -eo pid,cmd | grep -E "TaskManagerRunner|java" | grep -v grep'
 ```
 
-## 八、采集 HashMap backend flame graph
+当前环境下 PID 是 `1`。
 
-### 1. 提交 detached benchmark
+### 第 6 步：提交 HashMap benchmark
 
 ```bash
 cd /home/shuhao/forL0-state-backend/benchmark/scripts
@@ -175,7 +473,7 @@ FLINK_HOME=/home/shuhao/flink-1.20.3 \
   --backend hashmap
 ```
 
-### 2. 在容器内录制 CPU JFR
+### 第 7 步：在容器内录制 HashMap JFR
 
 ```bash
 sudo docker exec flink-taskmanager-1 bash -lc '
@@ -189,7 +487,7 @@ sudo docker exec flink-taskmanager-1 bash -lc '
 '
 ```
 
-### 3. 转换为 flame graph 与 collapsed stacks
+### 第 8 步：将 HashMap JFR 转为 flame graph 和 collapsed
 
 ```bash
 sudo docker exec flink-taskmanager-1 bash -lc '
@@ -207,7 +505,7 @@ sudo docker exec flink-taskmanager-1 bash -lc '
 '
 ```
 
-### 4. 将产物拷回工作区
+### 第 9 步：将 HashMap 结果拷回工作区
 
 ```bash
 mkdir -p /home/shuhao/forL0-state-backend/benchmark/results/profiles
@@ -221,11 +519,7 @@ sudo docker cp \
   /home/shuhao/forL0-state-backend/benchmark/results/profiles/hashmap_cpu.collapsed
 ```
 
-## 九、采集 ForL0 backend flame graph
-
-### 1. 提交 detached benchmark
-
-注意，这里手工提交时使用的是完整工厂类名，而不是简写 `forl0`：
+### 第 10 步：提交 ForL0 benchmark
 
 ```bash
 cd /home/shuhao/forL0-state-backend/benchmark/scripts
@@ -243,7 +537,7 @@ FLINK_HOME=/home/shuhao/flink-1.20.3 \
   --backend forl0
 ```
 
-### 2. 在容器内录制 CPU JFR
+### 第 11 步：在容器内录制 ForL0 JFR
 
 ```bash
 sudo docker exec flink-taskmanager-1 bash -lc '
@@ -257,7 +551,7 @@ sudo docker exec flink-taskmanager-1 bash -lc '
 '
 ```
 
-### 3. 转换为 flame graph 与 collapsed stacks
+### 第 12 步：将 ForL0 JFR 转为 flame graph 和 collapsed
 
 ```bash
 sudo docker exec flink-taskmanager-1 bash -lc '
@@ -275,7 +569,7 @@ sudo docker exec flink-taskmanager-1 bash -lc '
 '
 ```
 
-### 4. 将产物拷回工作区
+### 第 13 步：将 ForL0 结果拷回工作区
 
 ```bash
 sudo docker cp \
@@ -287,34 +581,39 @@ sudo docker cp \
   /home/shuhao/forL0-state-backend/benchmark/results/profiles/forl0_cpu.collapsed
 ```
 
-## 十、结果位置
+## 八、当前主要结果文件
 
-最终结果位于：
+当前与本 runbook 直接相关的主要文件如下：
 
 - `docs/FlameGraph_Runbook_20260611.md`
 - `target/flink-statebackend-forL0-1.0-SNAPSHOT.jar`
 - `src/main/resources/native/libforl0_engine.so`
 - `benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar`
-- `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`（离线包，已包含 `async-profiler-4.4-linux-arm64`）
-- `async-profiler-4.4-linux-arm64`（如果不使用离线包而是只同步三件套，则需要额外准备）
+- `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`
+- `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256`
+- `docker/deploy/forl0-l0-offline-bundle-20260611.README.md`
 - `benchmark/results/profiles/hashmap_cpu.html`
 - `benchmark/results/profiles/hashmap_cpu.collapsed`
 - `benchmark/results/profiles/forl0_cpu.html`
 - `benchmark/results/profiles/forl0_cpu.collapsed`
 
-## 十一、补充说明
+## 九、补充说明
 
-### 1. 本机没有真实 L0
+### 1. 当前本机没有真实 L0
 
-本次排查中，按 `/dev/l0` 是否存在作为判断标准，当前机器没有真实 L0 设备，因此本次 profile 和 benchmark 结果不包含真实 L0 硬件带来的收益。
+当前这台本地鲲鹏机器没有真实 L0 设备，因此本机 benchmark 和 flame graph 反映的是“无真实 L0 硬件加速”的情况。
 
-### 2. 为什么只有约 18% 提升
+### 2. 目标机不联网不是阻塞点
 
-从生成的 flame graph 和 collapsed stacks 看，ForL0 确实减少了 heap state table 的开销，但端到端 CPU 仍然主要消耗在 Flink 网络路径、source 和序列化上，因此 backend 优化只能改善总成本中的一部分，最终整体提升约 18%。
+目标 L0 服务器不联网不是问题，当前推荐方案就是直接同步离线包。
 
-### 3. benchmark/results 默认被忽略
+### 3. 为什么当前只有约 18% 提升
 
-如果希望将 flame graph HTML 和 collapsed stacks 一并提交，需要显式执行：
+从已生成的 flame graph 和 collapsed stacks 看，ForL0 减少了 heap state table 的开销，但端到端 CPU 仍主要消耗在 Flink 网络路径、source 和序列化上，因此 backend 优化只能改善总成本中的一部分，最终提升约 18%。
+
+### 4. `benchmark/results/` 默认被忽略
+
+如果需要将 flame graph HTML 和 collapsed stacks 一并提交，需要显式执行：
 
 ```bash
 git add -f benchmark/results/profiles/hashmap_cpu.html \
