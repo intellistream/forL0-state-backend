@@ -64,10 +64,12 @@
 
 - `async-profiler-4.4-linux-arm64` 目录，或等价的离线压缩包
 
-注意：`async-profiler` 不是当前仓库构建出来的自有产物，也不包含在上面三个已上传文件中。也就是说：
+注意：`async-profiler` 不是当前仓库构建出来的自有产物，也不包含在上面三个核心部署文件中。但如果使用已经上传到 GitHub 的离线包 `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`，其中已经包含了 `tools/async-profiler-4.4-linux-arm64/`，不需要再单独准备。也就是说：
 
 1. 只跑 benchmark，不抓火焰图：三个文件就够
-2. 既要跑 benchmark，又要抓火焰图：还需要额外补 `async-profiler`
+2. 既要跑 benchmark，又要抓火焰图：
+  - 如果只同步三件套，还需要额外补 `async-profiler`
+  - 如果直接同步离线包，则 profiler 已经在包内
 
 ## 三、为什么不能直接用 benchmark 脚本自动出图
 
@@ -97,7 +99,9 @@ python3 run_benchmark.py --test wordcount --backend all --profile cpu
 1. Flink 已部署在 `/home/shuhao/flink-1.20.3`
 2. Docker 中已启动 1 个 JobManager 和 2 个 TaskManager
 3. 三个部署产物已可从 GitHub `main` 直接获取
-4. 如果要抓 flame graph，需额外准备 `async-profiler-4.4-linux-arm64`
+4. 如果要抓 flame graph，需满足以下二选一：
+  - 单独准备 `async-profiler-4.4-linux-arm64`
+  - 或直接使用已上传的离线包 `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`
 5. WordCount JAR 已存在
 6. ForL0 backend JAR 已放到 Flink `lib/`
 7. native 库已为当前 ARM64 架构重新编译
@@ -291,7 +295,8 @@ sudo docker cp \
 - `target/flink-statebackend-forL0-1.0-SNAPSHOT.jar`
 - `src/main/resources/native/libforl0_engine.so`
 - `benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar`
-- `async-profiler-4.4-linux-arm64`（如果目标机需要抓 flame graph，需要额外准备，不包含在仓库构建产物中）
+- `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz`（离线包，已包含 `async-profiler-4.4-linux-arm64`）
+- `async-profiler-4.4-linux-arm64`（如果不使用离线包而是只同步三件套，则需要额外准备）
 - `benchmark/results/profiles/hashmap_cpu.html`
 - `benchmark/results/profiles/hashmap_cpu.collapsed`
 - `benchmark/results/profiles/forl0_cpu.html`
