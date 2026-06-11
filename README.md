@@ -100,7 +100,7 @@ state.backend: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
 # 只有两个开关：enabled 与 size。容量过大会在 cache_tuner_init 阶段被内核
 # 模块拒绝并自动降级为关闭（WARN 日志可查）。
 state.backend.forl0.l0-cache.enabled: false
-state.backend.forl0.l0-cache.size:    8mb
+state.backend.forl0.l0-cache.size:    20mb
 ```
 
 #### 多 slot 部署时的 l0-cache.size 公式
@@ -151,7 +151,7 @@ env.setStateBackend(stateBackend);
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `state.backend.forl0.l0-cache.enabled` | boolean | `false` | 是否请求开启 L0 Hot-Key Cache |
-| `state.backend.forl0.l0-cache.size` | MemorySize | `8mb` | 请求的 L0 容量；受 `max_numa_capacity` 与同 NUMA slot 数约束，实际值见 metric `forl0.hotcache.bytesCapacity` |
+| `state.backend.forl0.l0-cache.size` | MemorySize | `20mb` | 请求的 L0 容量；受 `max_numa_capacity` 与同 NUMA slot 数约束，实际值见 metric `forl0.hotcache.bytesCapacity` |
 
 #### 3. 验证部署
 

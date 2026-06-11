@@ -50,8 +50,8 @@ public class ForL0Options {
     public static final ConfigOption<MemorySize> L0_CACHE_SIZE =
             ConfigOptions.key("state.backend.forl0.l0-cache.size")
                     .memoryType()
-                    .defaultValue(MemorySize.ofMebiBytes(256))
-                    .withDescription("Size of L0 Cache memory pool. Examples: 256mb, 1gb.");
+                    .defaultValue(MemorySize.ofMebiBytes(20))
+                    .withDescription("Size of L0 Cache memory pool. Examples: 20mb, 64mb.");
 
     // ========== Internal Constants ==========
 
