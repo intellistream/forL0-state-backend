@@ -46,9 +46,14 @@ BENCHMARKS = ['wc', 'fd', 'sd', 'tm', 'lg', 'vs', 'lr']
 def get_benchset_jar() -> Optional[str]:
     """Get path to benchset JAR file."""
     benchmark_root = get_benchmark_root()
-    jar_path = benchmark_root / 'benchset' / 'target' / 'benchset-1.0-SNAPSHOT.jar'
-    if jar_path.exists():
-        return str(jar_path)
+    candidate_paths = [
+        benchmark_root / 'benchset' / 'target' / 'benchset-1.0-SNAPSHOT.jar',
+        benchmark_root / 'docker' / 'deploy' / 'benchset-1.0-SNAPSHOT.jar',
+    ]
+
+    for jar_path in candidate_paths:
+        if jar_path.exists():
+            return str(jar_path)
     return None
 
 

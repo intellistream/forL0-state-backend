@@ -279,28 +279,44 @@ class NexmarkRunner:
         
     def _find_nexmark_jar(self) -> Path:
         """Find the Nexmark DataStream JAR."""
-        target_dir = self.benchmark_root / "nexmark-datastream" / "target"
-        pattern = "nexmark-datastream-*.jar"
-        
-        for jar in target_dir.glob(pattern):
-            if "sources" not in jar.name and "javadoc" not in jar.name and "original" not in jar.name:
-                return jar
-        
+        candidates = [
+            (self.benchmark_root / "nexmark-datastream" / "target", "nexmark-datastream-*.jar"),
+            (self.project_root / "docker" / "deploy", "nexmark-flink-*.jar"),
+            (self.project_root / "docker" / "deploy", "nexmark-datastream-*.jar"),
+        ]
+
+        for target_dir, pattern in candidates:
+            if not target_dir.exists():
+                continue
+            for jar in target_dir.glob(pattern):
+                if "sources" not in jar.name and "javadoc" not in jar.name and "original" not in jar.name:
+                    return jar
+
         raise FileNotFoundError(
-            f"Nexmark DataStream JAR not found in {target_dir}. "
-            "Run 'cd benchmark/nexmark-datastream && mvn package -DskipTests' first."
+            "Nexmark DataStream JAR not found. "
+            "Expected either benchmark/nexmark-datastream/target/nexmark-datastream-*.jar "
+            "or docker/deploy/nexmark-flink-*.jar."
         )
     
     def _find_forl0_jar(self) -> Path:
         """Find the ForL0 StateBackend JAR."""
-        target_dir = self.project_root / "target"
-        pattern = "flink-statebackend-forL0-*.jar"
-        
-        for jar in target_dir.glob(pattern):
-            if "sources" not in jar.name and "javadoc" not in jar.name:
-                return jar
-        
-        raise FileNotFoundError(f"ForL0 JAR not found in {target_dir}. Run 'mvn package' first.")
+        candidates = [
+            (self.project_root / "target", "flink-statebackend-forL0-*.jar"),
+            (self.project_root / "docker" / "deploy", "flink-statebackend-forL0-*.jar"),
+            (self.project_root / "docker" / "deploy", "flink-statebackend-forl0-*.jar"),
+        ]
+
+        for target_dir, pattern in candidates:
+            if not target_dir.exists():
+                continue
+            for jar in target_dir.glob(pattern):
+                if "sources" not in jar.name and "javadoc" not in jar.name:
+                    return jar
+
+        raise FileNotFoundError(
+            "ForL0 JAR not found. Expected either target/flink-statebackend-forL0-*.jar "
+            "or docker/deploy/flink-statebackend-forL0-*.jar."
+        )
     
     def _get_query_events(self, query: str) -> int:
         """Get events number for a specific query from config."""

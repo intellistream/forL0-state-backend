@@ -80,6 +80,7 @@ export REPO_ROOT="$(pwd)"
 
 1. 把整个当前仓库原封不动放到目标 L0 服务器的 home 目录
 2. 在目标机直接执行 `docker/server_setup.sh`
+3. 部署完成后直接执行 `docker/run_all_apps.sh`
 
 这样最省心，因为：
 
@@ -93,6 +94,38 @@ export REPO_ROOT="$(pwd)"
 ```bash
 cd ~/forL0-state-backend/docker
 ./server_setup.sh
+```
+
+部署完成后，如果你希望一口气把当前仓库里能跑的 apps 全部跑完，直接执行：
+
+```bash
+cd ~/forL0-state-backend/docker
+./run_all_apps.sh
+```
+
+如果你只想跑某一类应用，可以执行：
+
+```bash
+cd ~/forL0-state-backend/docker
+./run_all_apps.sh --test wordcount
+./run_all_apps.sh --test nexmark
+./run_all_apps.sh --test benchset
+./run_all_apps.sh --test client_usecase
+./run_all_apps.sh --test unittest
+```
+
+如果你想只跑 ForL0 backend：
+
+```bash
+cd ~/forL0-state-backend/docker
+./run_all_apps.sh --backend forl0
+```
+
+如果你想在全量运行时顺带抓 profiler：
+
+```bash
+cd ~/forL0-state-backend/docker
+./run_all_apps.sh --profile cpu
 ```
 
 如果自动找不到 Flink，再执行：
@@ -648,6 +681,7 @@ sudo docker cp \
 - `docker/deploy/forl0-l0-offline-bundle-20260611.tar.gz.sha256`
 - `docker/deploy/forl0-l0-offline-bundle-20260611.README.md`
 - `docker/server_setup.sh`
+- `docker/run_all_apps.sh`
 - `docker/install_offline_bundle.sh`
 - `benchmark/results/profiles/hashmap_cpu.html`
 - `benchmark/results/profiles/hashmap_cpu.collapsed`
