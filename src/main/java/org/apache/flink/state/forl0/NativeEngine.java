@@ -396,6 +396,15 @@ public final class NativeEngine {
     public static native void reduceAddGeneric(long stateHandle, byte[] key, int keyGroup,
                                                byte[] value, int builtinAggType);
 
+    // Generic key + long accumulator fast path (reduces value serialization/JNI byte[] churn)
+    public static native boolean valueGetGenericLongSafe(long stateHandle, byte[] key, int keyGroup, long[] out);
+    public static native void valuePutGenericLong(long stateHandle, byte[] key, int keyGroup, long value);
+    public static native void reduceAddGenericLong(long stateHandle, byte[] key, int keyGroup,
+                                                   long value, int builtinAggType);
+    /** If key exists: returns true and writes old value to out[0]. If absent: inserts newValue and returns false. */
+    public static native boolean reduceGetAndPutGenericLong(long stateHandle, byte[] key, int keyGroup,
+                                                            long newValue, long[] out);
+
     public static native void reduceClear(long stateHandle, long key, int keyGroup);
 
     // Aggregating state: accumulator get/add
@@ -520,6 +529,19 @@ public final class NativeEngine {
     public static native void reduceAddLongWithTW(long h, long key, int kg, long nsStart, long nsEnd, long value, int builtinAggType);
     public static native void reduceClearWithTW(long h, long key, int kg, long nsStart, long nsEnd);
 
+    // --- ReducingState: bytes/String key + long value + TimeWindow ns (BYTES_TW fast path) ---
+    public static native boolean reduceGetBytesLongWithTW(long h, byte[] key, int kg, long nsStart, long nsEnd, long[] out);
+    public static native void reduceAddBytesLongWithTW(long h, byte[] key, int kg, long nsStart, long nsEnd, long value, int builtinAggType);
+    /**
+     * Batch variant: adds the same value to multiple TimeWindows in a single JNI crossing.
+     * @param nsArray interleaved [start0, end0, start1, end1, ...] array
+     * @param windowCount number of TimeWindow entries (nsArray length = windowCount * 2)
+     */
+    public static native void reduceAddBytesLongWithTWBatch(long h, byte[] key, int kg, long[] nsArray, int windowCount, long value, int builtinAggType);
+    public static native boolean reduceGetAndPutBytesLongWithTW(long h, byte[] key, int kg, long nsStart, long nsEnd, long newValue, long[] out);
+    public static native void valuePutBytesLongWithTW(long h, byte[] key, int kg, long nsStart, long nsEnd, long value);
+    public static native void valueClearBytesWithTW(long h, byte[] key, int kg, long nsStart, long nsEnd);
+
     // --- ReducingState: combined get+put (saves 1 JNI call on first insert) ---
     /** If key exists: returns true, writes old value to out[0]. If absent: inserts newValue, returns false. */
     public static native boolean reduceGetAndPutLong(long h, long key, int kg, long newValue, long[] out);
@@ -531,6 +553,12 @@ public final class NativeEngine {
     public static native byte[] valueGetAndPutLongBytesWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] newValue);
     public static native byte[] valueGetAndPutGenericBytes(long h, byte[] key, int kg, byte[] newValue);
 
+    // --- OPT-11: get-or-put bytes (write only if absent) ---
+    /** If key exists: returns old value bytes and does not write. If absent: writes newValue and returns null. */
+    public static native byte[] valueGetOrPutLongBytes(long h, long key, int kg, byte[] newValue);
+    public static native byte[] valueGetOrPutLongBytesWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] newValue);
+    public static native byte[] valueGetOrPutGenericBytes(long h, byte[] key, int kg, byte[] newValue);
+
     // --- ListState: long key + TimeWindow ns ---
     public static native byte[] listGetWithTW(long h, long key, int kg, long nsStart, long nsEnd);
     public static native void listAddWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] element);
@@ -541,6 +569,7 @@ public final class NativeEngine {
     public static native void mapPutWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] userKey, byte[] userValue);
     public static native void mapRemoveWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] userKey);
     public static native boolean mapContainsWithTW(long h, long key, int kg, long nsStart, long nsEnd, byte[] userKey);
+    public static native boolean mapIsEmptyWithTW(long h, long key, int kg, long nsStart, long nsEnd);
     public static native byte[] mapEntriesWithTW(long h, long key, int kg, long nsStart, long nsEnd);
     public static native void mapClearWithTW(long h, long key, int kg, long nsStart, long nsEnd);
 }

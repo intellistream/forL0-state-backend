@@ -238,6 +238,22 @@ ls -lh docker/deploy/forl0-l0-offline-bundle-20260611.README.md
 
 ### 第 2 步：校验离线包摘要
 
+## 七、2026-06-12 火焰图观察
+
+这次基于仓库里已经产出的 flame graph 和新跑出来的 WordCount 结果，能得出的结论比较明确：
+
+1. NexMark 的现有 CPU 图大多还是 scheduler sleep / park 主导，说明很多采样点落在空转或等待上，不适合直接拿来判断数据路径瓶颈。
+2. Client Usecase 的有效热点更集中，主要落在 `ForL0MapState.get/put`、`NativeEngine.mapGetGeneric/valueGetGeneric`、`JNI NewByteArray`、以及 `PojoSerializer` / `StringSerializer` / `MapSerializer` 这一串序列化路径上。
+3. WordCount 这次 profiling 启动被容器里残留的 async-profiler 会话干扰，说明采样脚本还需要更强的清理容错，避免下一次分析又卡在同一个问题上。
+4. 共性问题不是某一个 workload 的业务逻辑，而是 state 访问链路上的序列化、JNI 边界分配、以及 profile 采样质量本身。
+
+对应的参数方向也比较一致：
+
+1. NexMark 继续保留 query-level overrides，q9 偏小表、q11/q18 偏大表是合理的。
+2. Client Usecase 维持更大的 cache 和 table 容量，优先减少 map state 热点的分配和查找成本。
+3. WordCount 继续用较大的 cache 和更高的初始容量，等拿到稳定 CPU 图后再细调。
+4. 后续若要做更细粒度优化，优先盯住 `NativeEngine.*Generic`、`ForL0*State` 序列化路径和 JNI 临时对象分配，而不是先调更复杂的业务侧参数。
+
 在本地执行：
 
 ```bash

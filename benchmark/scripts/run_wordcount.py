@@ -20,6 +20,7 @@ import requests  # type: ignore
 import subprocess
 import sys
 import time
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +36,100 @@ from utils.config import (
 from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
 from utils.vtune_profiler import VTuneProfiler, get_profiler_summary as get_vtune_summary
 from utils.hardware_metrics import HardwareMetricsCollector
+
+
+def run_checked_command(command: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run a command and raise on failure with captured stderr/stdout."""
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=True,
+    )
+
+
+def start_container_profiler(
+    profile_mode: str,
+    backend: str,
+) -> Optional[dict]:
+    """Start async-profiler inside flink-taskmanager-1 container for Docker deployments."""
+    profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
+    if not profiler_home:
+        return None
+
+    host_asprof = Path(profiler_home) / 'bin' / 'asprof'
+    if not host_asprof.exists():
+        return None
+
+    container = 'flink-taskmanager-1'
+    target_dir = '/tmp/async-profiler'
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    event = 'cpu' if profile_mode == 'cpu' else 'cache-misses'
+    local_profiles_dir = get_results_dir('profiles')
+    local_name = f'flamegraph_{event}_{backend}_{timestamp}.html'
+    tmp_output = f'/tmp/{local_name}'
+
+    try:
+        run_checked_command([
+            'sudo', '-n', 'docker', 'cp', str(Path(profiler_home)), f'{container}:{target_dir}'
+        ], timeout=60)
+
+        run_checked_command([
+            'sudo', '-n', 'docker', 'exec', container,
+            'sh', '-lc', f'{target_dir}/bin/asprof --version >/dev/null'
+        ], timeout=15)
+
+        # Clear any stale async-profiler session before starting a fresh capture.
+        try:
+            run_checked_command([
+                'sudo', '-n', 'docker', 'exec', container,
+                'sh', '-lc',
+                (
+                    f'{target_dir}/bin/asprof stop 1 >/dev/null 2>&1 || true; '
+                    f'{target_dir}/bin/asprof stop -f {tmp_output} 1 >/dev/null 2>&1 || true'
+                )
+            ], timeout=15)
+        except Exception:
+            pass
+
+        interval = '10000' if event == 'cache-misses' else '10ms'
+        run_checked_command([
+            'sudo', '-n', 'docker', 'exec', container,
+            'sh', '-lc',
+            f'{target_dir}/bin/asprof start -e {event} -i {interval} -f {tmp_output} 1'
+        ], timeout=20)
+
+        return {
+            'container': container,
+            'tmp_output': tmp_output,
+            'local_output': str(local_profiles_dir / local_name),
+            'event': event,
+        }
+    except Exception as error:
+        print(f"  WARNING: Container profiler startup failed: {error}")
+        return None
+
+
+def stop_container_profiler(session: dict) -> Optional[str]:
+    """Stop container profiler and copy output back to host."""
+    container = session['container']
+    tmp_output = session['tmp_output']
+    local_output = session['local_output']
+
+    try:
+        run_checked_command([
+            'sudo', '-n', 'docker', 'exec', container,
+            'sh', '-lc', f'/tmp/async-profiler/bin/asprof stop -f {tmp_output} 1'
+        ], timeout=60)
+
+        run_checked_command([
+            'sudo', '-n', 'docker', 'cp', f'{container}:{tmp_output}', local_output
+        ], timeout=60)
+        return local_output
+    except Exception as error:
+        print(f"  WARNING: Container profiler stop/copy failed: {error}")
+        return None
 
 def check_flink_cluster(rest_url: str) -> bool:
     """Check if Flink cluster is running."""
@@ -73,6 +168,39 @@ def cancel_job(rest_url: str, job_id: str) -> bool:
     except Exception as e:
         print(f"  WARNING: Failed to cancel job: {e}")
         return False
+
+
+def list_running_jobs(rest_url: str) -> list[dict]:
+    """List currently RUNNING Flink jobs."""
+    try:
+        resp = requests.get(f"{rest_url}/jobs/overview", timeout=10)
+        if resp.status_code != 200:
+            return []
+        jobs = resp.json().get('jobs', [])
+        return [job for job in jobs if job.get('state') == 'RUNNING']
+    except Exception:
+        return []
+
+
+def cleanup_running_jobs(rest_url: str, reason: str) -> None:
+    """Best-effort cancellation of lingering jobs to avoid benchmark interference."""
+    running = list_running_jobs(rest_url)
+    if not running:
+        return
+
+    print(f"  [WordCount] Cleaning {len(running)} running job(s) before {reason}")
+    for job in running:
+        job_id = job.get('jid')
+        name = job.get('name', 'unknown')
+        if not job_id:
+            continue
+        if cancel_job(rest_url, job_id):
+            print(f"    canceled {job_id} ({name})")
+        else:
+            print(f"    WARNING: failed to cancel {job_id} ({name})")
+
+    # Give the cluster a short settling window after cancellation.
+    time.sleep(2)
 
 
 def submit_job_async(cmd: list, rest_url: str) -> Optional[str]:
@@ -223,7 +351,7 @@ def parse_taskmanager_log(flink_home: str, wc_config: dict, runtime_config: dict
     return None
 
 
-def get_forl0_config_args(config: dict, backend: str) -> list:
+def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'wordcount') -> list:
     """
     Get ForL0 StateBackend configuration as Flink -D arguments.
     
@@ -247,10 +375,19 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
     if not backend_config:
         return []
     
+    effective_config = dict(backend_config)
+    workload_overrides = backend_config.get('workload_overrides', {})
+    if isinstance(workload_overrides, dict):
+        workload_cfg = workload_overrides.get(workload_key, {})
+        if isinstance(workload_cfg, dict):
+            effective_config.update(workload_cfg)
+
     args = []
     
     # Map YAML config keys to Flink configuration keys
     config_mapping = {
+        'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
+        'max_table_capacity': 'state.backend.forl0.max-table-capacity',
         'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
         'l0_cache_size': 'state.backend.forl0.l0-cache.size',
         'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
@@ -259,8 +396,8 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
     }
     
     for yaml_key, flink_key in config_mapping.items():
-        if yaml_key in backend_config:
-            value = backend_config[yaml_key]
+        if yaml_key in effective_config:
+            value = effective_config[yaml_key]
             # Convert Python bool to lowercase string
             if isinstance(value, bool):
                 value = 'true' if value else 'false'
@@ -382,6 +519,8 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         print(f"ERROR: Flink cluster not running at {rest_url}")
         print(f"  Start cluster with: {flink_home}/bin/start-cluster.sh")
         return None
+
+    cleanup_running_jobs(rest_url, f'wordcount:{backend}')
     
     jar_path = get_wordcount_jar()
     if not jar_path:
@@ -402,20 +541,26 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         cmd.append(f'-Dstate.backend.type={backend_class}')
     
     # Add ForL0-specific configuration parameters
-    forl0_args = get_forl0_config_args(config, backend)
+    forl0_args = get_forl0_config_args(config, backend, workload_key='wordcount')
     cmd.extend(forl0_args)
     
+    checkpoint_interval = runtime_config.get(
+        'wordcount_checkpoint_interval',
+        runtime_config.get('checkpoint_interval', 0),
+    )
+
     # Add JAR and arguments
-    # WordCount now uses KeyedProcessFunction + ValueState (VoidNamespace)
-    # No window parameters needed - pure state access testing
     cmd.extend([
         jar_path,
         '--numKeys', str(wc_config.get('num_keys', 1000000)),
         '--numRecords', str(wc_config.get('num_records', 100000000)),
         '--arrivalRate', str(wc_config.get('arrival_rate', 0)),
         '--skewFactor', str(wc_config.get('skew_factor', 0)),
+        '--workloadMode', str(wc_config.get('workload_mode', 'stateful_counter')),
+        '--windowSize', str(wc_config.get('window_size', 5)),
+        '--slideSize', str(wc_config.get('slide_size', 200)),
         '--parallelism', str(runtime_config.get('parallelism', 2)),
-        '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 0)),
+        '--checkpointInterval', str(checkpoint_interval),
         '--backend', backend,
     ])
     
@@ -480,6 +625,7 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         jfr_file = None
         profiler_files = None  # Initialize profiler_files
         vtune_result_dir = None
+        container_profiler_session = None
         
         # Find TaskManager PIDs
         if profiler or vtune_profiler:
@@ -488,32 +634,43 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
                 print("  WARNING: No TaskManager PIDs found for profiling")
         
         # Start async-profiler if needed (cpu/cache modes)
-        if profiler and tm_pids:
-            print(f"  Profiling TaskManager PIDs: {tm_pids}")
-            profiles_dir = get_results_dir('profiles')
-            
-            if profile_mode == 'cpu':
-                # CPU profiling: flame graphs
-                profiler.start(
-                    pid=tm_pids[0],
-                    events=['cpu', 'alloc'],
-                    output_dir=str(profiles_dir),
-                    backend=backend,
-                    output_format='html',
-                    duration=None
+        if profile_mode in ['cpu', 'cache']:
+            container_profiler_session = start_container_profiler(profile_mode, backend)
+            if container_profiler_session:
+                print(
+                    f"  Started {profile_mode} profiling in container "
+                    f"({container_profiler_session['container']}, event={container_profiler_session['event']})"
                 )
-                print(f"  Started CPU profiling (cpu + alloc)")
-            elif profile_mode == 'cache':
-                # Cache profiling: HTML flame graph for cache-misses
-                profiler.start(
-                    pid=tm_pids[0],
-                    events=['cache-misses'],
-                    output_dir=str(profiles_dir),
-                    backend=backend,
-                    output_format='html',
-                    duration=None
-                )
-                print(f"  Started cache profiling (cache-misses)")
+            elif profiler and tm_pids:
+                print(f"  Profiling TaskManager PIDs: {tm_pids}")
+                profiles_dir = get_results_dir('profiles')
+
+                if profile_mode == 'cpu':
+                    started = profiler.start(
+                        pid=tm_pids[0],
+                        events=['cpu', 'alloc'],
+                        output_dir=str(profiles_dir),
+                        backend=backend,
+                        output_format='html',
+                        duration=None
+                    )
+                    if started:
+                        print("  Started CPU profiling (host-side)")
+                    else:
+                        print("  WARNING: Host-side CPU profiler failed to start")
+                elif profile_mode == 'cache':
+                    started = profiler.start(
+                        pid=tm_pids[0],
+                        events=['cache-misses'],
+                        output_dir=str(profiles_dir),
+                        backend=backend,
+                        output_format='html',
+                        duration=None
+                    )
+                    if started:
+                        print("  Started cache profiling (host-side)")
+                    else:
+                        print("  WARNING: Host-side cache profiler failed to start")
         
         # [BENCHMARK_TEST] Start hardware metrics collection before job
         if hw_collector:
@@ -568,11 +725,18 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         print(output)
         
         # [BENCHMARK_TEST] Stop profiler first (generates flame graph)
-        if profiler and tm_pids:
+        if container_profiler_session:
+            profiler_file = stop_container_profiler(container_profiler_session)
+            if profiler_file:
+                profiler_files = {'container': profiler_file}
+                print(f"  Profiler output: {profiler_file}")
+            else:
+                print("  WARNING: Container profiler did not produce output")
+        elif profiler and tm_pids:
             for pid in tm_pids[:1]:
                 profiler_files = profiler.stop(pid)
             if profiler_files:
-                print(f"  Profiler output files: {list(profiler_files.keys())}")
+                print(f"  Profiler output files: {list(profiler_files.values())}")
         
         # [BENCHMARK_TEST] Stop hardware metrics collection
         if hw_collector:

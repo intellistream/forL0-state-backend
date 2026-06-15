@@ -697,6 +697,81 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetGeneric(
     })
 }
 
+JNIEXPORT jboolean JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueGetGenericLongSafe(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup, jlongArray out) {
+    JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        std::string k = jbytearray_to_string(env, key);
+        int64_t* val = table->get(keyGroup, k);
+        if (!val) {
+            return JNI_FALSE;
+        }
+        jlong v = static_cast<jlong>(*val);
+        env->SetLongArrayRegion(out, 0, 1, &v);
+        return JNI_TRUE;
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valuePutGenericLong(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup, jlong value) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        std::string k = jbytearray_to_string(env, key);
+        table->put(keyGroup, std::move(k), static_cast<int64_t>(value));
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_reduceAddGenericLong(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlong value, jint builtinAggType) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        std::string k = jbytearray_to_string(env, key);
+        int64_t v = static_cast<int64_t>(value);
+        bool modified = table->modify_in_place(keyGroup, k, [&](int64_t& existing) {
+            switch (builtinAggType) {
+                case 0: existing += v; break;  // SUM
+                case 1: existing = std::min(existing, v); break;  // MIN
+                case 2: existing = std::max(existing, v); break;  // MAX
+                default:
+                    throw std::runtime_error("User-defined reduce requires Java callback");
+            }
+        });
+        if (!modified) {
+            table->put(keyGroup, std::move(k), v);
+        }
+    })
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutGenericLong(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlong newValue, jlongArray out) {
+    JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        std::string k = jbytearray_to_string(env, key);
+        int64_t* val = table->get(keyGroup, k);
+        if (val) {
+            jlong v = static_cast<jlong>(*val);
+            env->SetLongArrayRegion(out, 0, 1, &v);
+            return JNI_TRUE;
+        }
+        table->put(keyGroup, std::move(k), static_cast<int64_t>(newValue));
+        return JNI_FALSE;
+    })
+}
+
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_reduceAddGeneric(
         JNIEnv* env, jclass,

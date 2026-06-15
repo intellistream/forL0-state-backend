@@ -23,6 +23,7 @@ import time
 import glob
 import re
 import math
+import statistics
 import requests
 import tempfile
 from datetime import datetime
@@ -33,6 +34,7 @@ from typing import Optional, Dict, List
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.config import load_config, parse_json_from_output
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
+from utils.flamegraph_quality import analyze_flamegraph_quality
 
 
 NEXMARK_MAIN_CLASS = 'com.github.nexmark.flink.Benchmark'
@@ -197,8 +199,12 @@ def clear_taskmanager_logs(flink_home: str):
             pass
 
 
-def get_forl0_config_args(config: dict, backend: str) -> list:
-    """Get ForL0 StateBackend configuration as Flink -D arguments."""
+def get_forl0_config_args(config: dict, backend: str, query: Optional[str] = None) -> list:
+    """Get ForL0 StateBackend configuration as Flink -D arguments.
+
+    Supports optional per-query overrides under:
+        backends[].config.query_overrides.<query_name>.*
+    """
     if backend != 'forl0':
         return []
     
@@ -211,8 +217,24 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
     if not backend_config:
         return []
     
+    effective_config = dict(backend_config)
+
+    workload_overrides = backend_config.get('workload_overrides', {})
+    if isinstance(workload_overrides, dict):
+        nexmark_cfg = workload_overrides.get('nexmark', {})
+        if isinstance(nexmark_cfg, dict):
+            effective_config.update(nexmark_cfg)
+
+    query_overrides = backend_config.get('query_overrides', {})
+    if query and isinstance(query_overrides, dict):
+        query_cfg = query_overrides.get(query, {})
+        if isinstance(query_cfg, dict):
+            effective_config.update(query_cfg)
+
     args = []
     config_mapping = {
+        'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
+        'max_table_capacity': 'state.backend.forl0.max-table-capacity',
         'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
         'l0_cache_size': 'state.backend.forl0.l0-cache.size',
         'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
@@ -221,8 +243,8 @@ def get_forl0_config_args(config: dict, backend: str) -> list:
     }
     
     for yaml_key, flink_key in config_mapping.items():
-        if yaml_key in backend_config:
-            value = backend_config[yaml_key]
+        if yaml_key in effective_config:
+            value = effective_config[yaml_key]
             if isinstance(value, bool):
                 value = 'true' if value else 'false'
             args.append(f'-D{flink_key}={value}')
@@ -323,6 +345,7 @@ class NexmarkRunner:
         # Profiler
         self.profiler = None
         self.metric_sender_containers = ['flink-taskmanager-1', 'flink-taskmanager-2']
+        self.container_profiler_session: Optional[Dict[str, str]] = None
 
     def _resolve_metric_reporter_host(self) -> str:
         """Use the Docker bridge gateway so taskmanagers can report CPU metrics back to the host."""
@@ -385,6 +408,132 @@ class NexmarkRunner:
         """Stop CpuMetricSender inside each taskmanager container."""
         for container in self.metric_sender_containers:
             self._stop_metric_sender(container)
+
+    def _list_running_jobs(self) -> list[dict]:
+        """List running Flink jobs via REST API."""
+        try:
+            resp = requests.get(f"{self.rest_url}/jobs/overview", timeout=10)
+            if resp.status_code != 200:
+                return []
+            jobs = resp.json().get('jobs', [])
+            return [j for j in jobs if j.get('state') == 'RUNNING']
+        except Exception:
+            return []
+
+    def _cancel_running_jobs(self, reason: str) -> None:
+        """Best-effort cancellation of all running jobs to avoid benchmark interference."""
+        running = self._list_running_jobs()
+        if not running:
+            return
+
+        print(f"  [Nexmark] Cleaning {len(running)} running job(s) before {reason}")
+        for job in running:
+            jid = job.get('jid')
+            name = job.get('name', 'unknown')
+            if not jid:
+                continue
+            if cancel_job(self.rest_url, jid):
+                print(f"    canceled {jid} ({name})")
+            else:
+                print(f"    WARNING: failed to cancel {jid} ({name})")
+
+        # Give the cluster a brief settling window after cancellation.
+        time.sleep(2)
+
+    def _start_container_profiler(self, backend: str, query: str, profile_mode: str) -> bool:
+        """Start async-profiler inside taskmanager container and return whether startup succeeded."""
+        profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
+        if not profiler_home:
+            return False
+
+        host_asprof = Path(profiler_home) / 'bin' / 'asprof'
+        if not host_asprof.exists():
+            return False
+
+        container = self.metric_sender_containers[0]
+        target_dir = '/tmp/async-profiler'
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        event = 'cpu' if profile_mode == 'cpu' else 'cache-misses'
+        local_profiles_dir = self.results_dir / 'profiles'
+        local_profiles_dir.mkdir(parents=True, exist_ok=True)
+        local_name = f'flamegraph_{event}_{backend}_{query}_{timestamp}.html'
+        tmp_output = f'/tmp/{local_name}'
+
+        try:
+            # Ensure async-profiler exists in container. Re-copy every run to keep tooling deterministic.
+            run_checked_command([
+                'sudo', '-n', 'docker', 'cp', str(Path(profiler_home)), f'{container}:{target_dir}'
+            ], timeout=60)
+
+            run_checked_command([
+                'sudo', '-n', 'docker', 'exec', container,
+                'sh', '-lc', f'{target_dir}/bin/asprof --version >/dev/null'
+            ], timeout=15)
+
+            # Best-effort cleanup of a stale previous session.
+            run_checked_command([
+                'sudo', '-n', 'docker', 'exec', container,
+                'sh', '-lc', f'{target_dir}/bin/asprof stop 1 >/dev/null 2>&1 || true'
+            ], timeout=15)
+
+            interval = '10000' if event == 'cache-misses' else '10ms'
+            run_checked_command([
+                'sudo', '-n', 'docker', 'exec', container,
+                'sh', '-lc',
+                f'{target_dir}/bin/asprof start -e {event} -i {interval} -f {tmp_output} 1'
+            ], timeout=20)
+
+            self.container_profiler_session = {
+                'container': container,
+                'tmp_output': tmp_output,
+                'local_output': str(local_profiles_dir / local_name),
+                'event': event,
+            }
+            return True
+        except Exception as error:
+            print(f'  WARNING: Container profiler startup failed: {error}')
+            self.container_profiler_session = None
+            return False
+
+    def _stop_container_profiler(self) -> Optional[str]:
+        """Stop container profiler if active and copy output file to host."""
+        if not self.container_profiler_session:
+            return None
+
+        session = self.container_profiler_session
+        self.container_profiler_session = None
+        container = session['container']
+        tmp_output = session['tmp_output']
+        local_output = session['local_output']
+
+        try:
+            run_checked_command([
+                'sudo', '-n', 'docker', 'exec', container,
+                'sh', '-lc', f'/tmp/async-profiler/bin/asprof stop -f {tmp_output} 1'
+            ], timeout=60)
+
+            run_checked_command([
+                'sudo', '-n', 'docker', 'cp', f'{container}:{tmp_output}', local_output
+            ], timeout=60)
+            return local_output
+        except Exception as error:
+            print(f'  WARNING: Container profiler stop/copy failed: {error}')
+            return None
+
+    def _report_flamegraph_quality(self, profiler_file: str) -> None:
+        """Print a concise quality report for generated flamegraphs."""
+        quality = analyze_flamegraph_quality(profiler_file)
+        if not quality:
+            print('  WARNING: Could not parse flamegraph for quality analysis')
+            return
+
+        idle_ratio = quality.get('idle_ratio', 0.0)
+        status = 'IDLE-DOMINATED' if quality.get('idle_dominated') else 'OK'
+        print(f"  Flamegraph quality: {status} (idle={idle_ratio * 100:.1f}%)")
+        for item in quality.get('top_non_idle', [])[:5]:
+            frame = item.get('frame', 'unknown')
+            ratio = item.get('ratio', 0.0)
+            print(f"    non-idle hotspot {ratio * 100:5.1f}%  {frame}")
         
     def _find_nexmark_jar(self) -> Path:
         """Find the Nexmark DataStream JAR."""
@@ -467,11 +616,28 @@ class NexmarkRunner:
             shutil.copy(self.nexmark_jar, flink_lib_jar)
             print('[Nexmark] Synced NexMark JAR to Flink lib')
 
-    def _write_nexmark_conf(self, query: str, num_events: int, tps: int, warmup_duration: int) -> Path:
+    def _write_nexmark_conf(
+        self,
+        query: str,
+        num_events: int,
+        tps: int,
+        warmup_duration: int,
+        checkpoint_interval_ms: int,
+    ) -> Path:
         """Write a temporary nexmark.yaml tuned for the requested query run."""
         conf_dir = Path(tempfile.mkdtemp(prefix='nexmark-conf-'))
         shutil.copy(self.nexmark_home / 'conf' / 'config.yaml', conf_dir / 'config.yaml')
         shutil.copy(self.nexmark_home / 'conf' / 'log4j.properties', conf_dir / 'log4j.properties')
+
+        config_yaml_path = conf_dir / 'config.yaml'
+        config_yaml = config_yaml_path.read_text()
+        config_yaml = re.sub(
+            r'^execution\.checkpointing\.interval:.*$',
+            f'execution.checkpointing.interval: {checkpoint_interval_ms}',
+            config_yaml,
+            flags=re.MULTILINE,
+        )
+        config_yaml_path.write_text(config_yaml)
 
         warmup_seconds = max(0, int(warmup_duration))
         warmup_events = num_events if warmup_seconds > 0 else 0
@@ -494,15 +660,27 @@ class NexmarkRunner:
         (conf_dir / 'nexmark.yaml').write_text(nexmark_yaml)
         return conf_dir
 
-    def _build_driver_command(self, query: str, backend: str, num_events: int, tps: int, warmup_duration: int) -> tuple[list[str], dict, Path]:
+    def _build_driver_command(
+        self,
+        query: str,
+        backend: str,
+        num_events: int,
+        tps: int,
+        warmup_duration: int,
+        checkpoint_interval_ms: int,
+    ) -> tuple[list[str], dict, Path]:
         """Build the NexMark benchmark-driver command and environment."""
-        conf_dir = self._write_nexmark_conf(query, num_events, tps, warmup_duration)
+        conf_dir = self._write_nexmark_conf(query, num_events, tps, warmup_duration, checkpoint_interval_ms)
         classpath = f"{self.nexmark_home / 'lib'}/*:{self.flink_home / 'lib'}/*"
+        forl0_args = get_forl0_config_args(self.config, backend, query)
         cmd = [
             'java',
             f'-Dlog.file={self.nexmark_home / "log" / "nexmark-flink.log"}',
             f'-Dlog4j.configuration=file:{conf_dir / "log4j.properties"}',
             f'-Dlog4j.configurationFile=file:{conf_dir / "log4j.properties"}',
+        ]
+        cmd.extend(forl0_args)
+        cmd.extend([
             '-cp',
             classpath,
             NEXMARK_MAIN_CLASS,
@@ -512,7 +690,7 @@ class NexmarkRunner:
             query,
             '--category',
             'oa',
-        ]
+        ])
 
         env = os.environ.copy()
         env['FLINK_HOME'] = str(self.flink_home)
@@ -538,7 +716,10 @@ class NexmarkRunner:
         """
         
         parallelism = self.runtime_config.get('parallelism', 4)
-        checkpoint_interval = self.runtime_config.get('checkpoint_interval', 0)
+        checkpoint_interval = self.runtime_config.get(
+            'nexmark_checkpoint_interval',
+            self.runtime_config.get('checkpoint_interval', 0),
+        )
         num_events = self._get_query_events(query)
         tps = self.nexmark_config.get('tps', 0)
         warmup_duration = self.nexmark_config.get('warmup_duration', 0)
@@ -553,91 +734,170 @@ class NexmarkRunner:
         # Add ForL0-specific configuration
         if backend == 'forl0':
             self._copy_forl0_jar_if_needed()
-        cmd, env, conf_dir = self._build_driver_command(query, backend, num_events, tps, warmup_duration)
+        cmd, env, conf_dir = self._build_driver_command(
+            query,
+            backend,
+            num_events,
+            tps,
+            warmup_duration,
+            checkpoint_interval,
+        )
         
         print(f"\n=== Running Nexmark {query.upper()} ({backend} backend) ===")
         print(f"Events: {num_events:,}, TPS: {tps if tps > 0 else 'unlimited'}")
         print(f"Proportions: Person({person_proportion}):Auction({auction_proportion}):Bid({bid_proportion})")
         print(f"Command: {' '.join(cmd)}\n")
         
-        # Initialize profiler if enabled
-        tm_pids = []
-        if profile_mode and profile_mode in ['cpu', 'cache']:
-            profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
-            self.profiler = AsyncProfiler(profiler_home)
-            
-            if self.profiler.is_available():
-                tm_pids = find_taskmanager_pids(str(self.flink_home))
-                if tm_pids:
-                    profiles_dir = self.results_dir / "profiles"
-                    profiles_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    events = ['cpu', 'alloc'] if profile_mode == 'cpu' else ['cache-misses']
-                    self.profiler.start(
-                        pid=tm_pids[0],
-                        events=events,
-                        output_dir=str(profiles_dir),
-                        backend=backend,
-                        query=query,
-                        output_format='html',
-                        duration=None
-                    )
-                    print(f"  Started {profile_mode} profiling (PID: {tm_pids[0]})")
-        
+        max_attempts = max(1, int(self.nexmark_config.get('max_attempts_per_query', 3)))
+        query_timeout = max(3600, int(self.nexmark_config.get('timeout_seconds', 7200)))
+        retry_backoff_seconds = max(1, int(self.nexmark_config.get('retry_backoff_seconds', 4)))
+        min_profile_cpu_cores = float(self.nexmark_config.get('min_profile_cpu_cores', 0.05))
+
         try:
-            self._start_metric_senders(env)
-            result = subprocess.run(
-                cmd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=max(3600, int(self.nexmark_config.get('timeout_seconds', 7200))),
-            )
-            output = result.stdout + result.stderr
-            print(output)
+            for attempt in range(1, max_attempts + 1):
+                if attempt > 1:
+                    print(f"  [Nexmark] Retry attempt {attempt}/{max_attempts} for {query} ({backend})")
 
-            if result.returncode != 0:
-                print('  ERROR: NexMark benchmark driver failed')
-                return None
-            
-            # Stop profiler
-            if self.profiler and tm_pids:
+                self._cancel_running_jobs(f"{backend}:{query} attempt {attempt}")
+
+                # Initialize profiler if enabled (per-attempt lifecycle).
+                tm_pids = []
+                using_container_profiler = False
+                if profile_mode and profile_mode in ['cpu', 'cache']:
+                    # Prefer container-side profiling in Docker deployments; fall back to host-side attach.
+                    using_container_profiler = self._start_container_profiler(backend, query, profile_mode)
+                    if using_container_profiler and self.container_profiler_session:
+                        print(
+                            f"  Started {profile_mode} profiling in container "
+                            f"({self.container_profiler_session['container']}, event={self.container_profiler_session['event']})"
+                        )
+                    else:
+                        profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
+                        self.profiler = AsyncProfiler(profiler_home)
+                        if self.profiler.is_available():
+                            tm_pids = find_taskmanager_pids(str(self.flink_home))
+                            if tm_pids:
+                                profiles_dir = self.results_dir / "profiles"
+                                profiles_dir.mkdir(parents=True, exist_ok=True)
+
+                                events = ['cpu', 'alloc'] if profile_mode == 'cpu' else ['cache-misses']
+                                started = self.profiler.start(
+                                    pid=tm_pids[0],
+                                    events=events,
+                                    output_dir=str(profiles_dir),
+                                    backend=backend,
+                                    query=query,
+                                    output_format='html',
+                                    duration=None
+                                )
+                                if started:
+                                    print(f"  Started {profile_mode} profiling (host PID: {tm_pids[0]})")
+                                else:
+                                    print("  WARNING: Host-side profiler failed to start")
+                            else:
+                                print("  WARNING: No TaskManager PID found for host-side profiling")
+                        else:
+                            print("  WARNING: Async Profiler not available; profiling disabled")
+
+                should_retry = False
                 try:
-                    self.profiler.stop(tm_pids[0])
-                    print(f"  Profiler stopped")
-                except Exception as e:
-                    print(f"  Profiler stop error: {e}")
-            
-            parsed = parse_nexmark_summary(output)
-            if parsed:
-                parsed.update({
-                    'benchmark': 'nexmark',
-                    'backend': backend,
-                    'query': query,
-                    'parallelism': parallelism,
-                    'checkpoint_interval': checkpoint_interval,
-                    'person_proportion': person_proportion,
-                    'auction_proportion': auction_proportion,
-                    'bid_proportion': bid_proportion,
-                })
-                print(f"\n  Result: {parsed.get('throughput', 0):,.2f} events/sec")
-                return parsed
+                    self._start_metric_senders(env)
+                    result = subprocess.run(
+                        cmd,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=query_timeout,
+                    )
+                    output = result.stdout + result.stderr
+                    print(output)
 
-            print('  WARNING: Could not parse NexMark summary output')
-            return None
-                
-        except Exception as e:
-            print(f"  ERROR: {e}")
+                    output_lower = output.lower()
+                    retryable_error = (
+                        "metric reporter doesn't collect any metrics" in output_lower
+                        or "can't find tps metric name from the response" in output_lower
+                        or 'process failed due to timeout' in output_lower
+                        or 'profiler already started' in output_lower
+                    )
+
+                    if result.returncode != 0:
+                        print('  ERROR: NexMark benchmark driver failed')
+                        should_retry = retryable_error
+                    else:
+                        parsed = parse_nexmark_summary(output)
+                        if parsed:
+                            # Filter clearly invalid samples from noisy metric reporter runs.
+                            cpu = parsed.get('cpu', 0)
+                            tpc = parsed.get('throughput_per_core', 0)
+                            invalid_sample = cpu <= 0 or tpc <= 0
+
+                            # For profiling runs, reject samples that are too idle to expose real hotspots.
+                            if profile_mode and profile_mode in ['cpu', 'cache'] and cpu < min_profile_cpu_cores:
+                                print(
+                                    f'  WARNING: Profile sample too idle (cpu={cpu:.3f} < '
+                                    f'min_profile_cpu_cores={min_profile_cpu_cores:.3f}), retrying'
+                                )
+                                invalid_sample = True
+
+                            if invalid_sample:
+                                print('  WARNING: Invalid sample detected (cpu/throughput too low), retrying')
+                                should_retry = True
+                            else:
+                                parsed.update({
+                                    'benchmark': 'nexmark',
+                                    'backend': backend,
+                                    'query': query,
+                                    'parallelism': parallelism,
+                                    'checkpoint_interval': checkpoint_interval,
+                                    'person_proportion': person_proportion,
+                                    'auction_proportion': auction_proportion,
+                                    'bid_proportion': bid_proportion,
+                                })
+                                print(f"\n  Result: {parsed.get('throughput', 0):,.2f} events/sec")
+                                return parsed
+                        else:
+                            print('  WARNING: Could not parse NexMark summary output')
+                            should_retry = True
+
+                except Exception as e:
+                    print(f"  ERROR: {e}")
+                    should_retry = True
+                finally:
+                    # Always stop profiler sessions, including benchmark-driver failures.
+                    if using_container_profiler:
+                        profiler_file = self._stop_container_profiler()
+                        if profiler_file:
+                            print(f"  Profiler output: {profiler_file}")
+                            self._report_flamegraph_quality(profiler_file)
+                    elif self.profiler and tm_pids:
+                        try:
+                            stopped_files = self.profiler.stop(tm_pids[0])
+                            if stopped_files:
+                                print(f"  Profiler output files: {list(stopped_files.values())}")
+                                for profiler_file in stopped_files.values():
+                                    self._report_flamegraph_quality(profiler_file)
+                        except Exception as e:
+                            print(f"  Profiler stop error: {e}")
+                    self._stop_metric_senders()
+
+                if not should_retry:
+                    return None
+                if attempt < max_attempts:
+                    self._cancel_running_jobs(f"retry backoff {backend}:{query} attempt {attempt}")
+                    backoff = retry_backoff_seconds * attempt
+                    print(f"  [Nexmark] Backoff {backoff}s before next attempt")
+                    time.sleep(backoff)
+
             return None
         finally:
-            self._stop_metric_senders()
             shutil.rmtree(conf_dir, ignore_errors=True)
     
     def run(
             self, 
             backends: List[str], 
             queries: Optional[str] = None,
-            profile_mode: Optional[str] = None
+            profile_mode: Optional[str] = None,
+            repeat: Optional[int] = None
     ) -> dict:
         """Run Nexmark benchmark for specified backends and queries.
         
@@ -661,14 +921,22 @@ class NexmarkRunner:
             queries = self.nexmark_config.get('queries', 'q5')
         
         query_list = [q.strip() for q in queries.split(',')]
+        repeat_runs = max(1, int(repeat if repeat is not None else self.nexmark_config.get('repeat_per_query', 1)))
+        min_success_samples = int(self.nexmark_config.get('min_success_samples', repeat_runs))
+        min_success_samples = max(1, min(min_success_samples, repeat_runs))
         
         print(f"\n{'='*60}")
         print(f"Nexmark DataStream Benchmark")
         print(f"{'='*60}")
         print(f"Queries: {query_list}")
         print(f"Backends: {backends}")
+        print(f"Repeat per query: {repeat_runs}")
+        print(f"Min successful samples: {min_success_samples}")
         print(f"Mode: {self.mode}")
         print(f"{'='*60}\n")
+
+        # Defensive cleanup: benchmark quality degrades sharply with lingering jobs.
+        self._cancel_running_jobs('benchmark run start')
         
         results = {}
         
@@ -683,10 +951,34 @@ class NexmarkRunner:
             }
             
             for query in query_list:
-                result = self.run_query(query, backend, profile_mode)
-                
-                if result:
-                    backend_results['query_results'][query] = result
+                run_samples = []
+                for run_idx in range(1, repeat_runs + 1):
+                    if repeat_runs > 1:
+                        print(f"\n[Nexmark] Sample {run_idx}/{repeat_runs} for {backend}:{query}")
+                    result = self.run_query(query, backend, profile_mode)
+                    if result:
+                        run_samples.append(result)
+
+                if run_samples:
+                    if len(run_samples) < min_success_samples:
+                        print(
+                            f"  [Nexmark] Insufficient valid samples for {backend}:{query}: "
+                            f"{len(run_samples)}/{min_success_samples} required"
+                        )
+                        backend_results['failed_queries'].append(query)
+                        continue
+
+                    if len(run_samples) == 1:
+                        backend_results['query_results'][query] = run_samples[0]
+                    else:
+                        aggregated = self._aggregate_query_results(run_samples)
+                        aggregated['samples_collected'] = len(run_samples)
+                        backend_results['query_results'][query] = aggregated
+                        print(
+                            f"  [Nexmark] Aggregated median for {query}: "
+                            f"{aggregated.get('throughput', 0):,.0f} events/sec "
+                            f"({aggregated.get('throughput_per_core', 0):,.0f}/core)"
+                        )
                 else:
                     backend_results['failed_queries'].append(query)
             
@@ -708,6 +1000,29 @@ class NexmarkRunner:
         self._print_comparison(results)
         
         return results
+
+    def _aggregate_query_results(self, samples: List[dict]) -> dict:
+        """Aggregate repeated query samples with median to reduce noise."""
+        template = dict(samples[0])
+
+        numeric_fields = [
+            'cpu',
+            'time_seconds',
+            'cores_multiply_time_seconds',
+            'throughput',
+            'throughput_per_core',
+        ]
+
+        for field in numeric_fields:
+            values = [s.get(field) for s in samples if isinstance(s.get(field), (int, float))]
+            if values:
+                template[field] = float(statistics.median(values))
+
+        events_values = [int(s.get('events_num')) for s in samples if s.get('events_num') is not None]
+        if events_values:
+            template['events_num'] = int(statistics.median(events_values))
+
+        return template
     
     def _save_results(self, results: dict):
         """Save benchmark results to JSON."""
@@ -769,6 +1084,9 @@ def main():
     parser.add_argument("--profile", "-p",
                        type=str, default=None, choices=['cpu', 'cache'],
                        help="Enable profiling: cpu (flame graphs) or cache (cache statistics)")
+    parser.add_argument("--repeat", "-r",
+                       type=int, default=None,
+                       help="Repeat each query N times and aggregate by median")
     
     args = parser.parse_args()
     
@@ -786,7 +1104,8 @@ def main():
     results = runner.run(
         backends=backends,
         queries=args.queries,
-        profile_mode=args.profile
+        profile_mode=args.profile,
+        repeat=args.repeat,
     )
     
     # Return non-zero if any query failed

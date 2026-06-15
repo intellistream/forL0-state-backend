@@ -320,6 +320,151 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceClearWithTW(
 }
 
 // ============================================================================
+//  ReducingState / ValueState: bytes/String key + long value + TimeWindow ns
+//  BYTES_TW fast path: avoids embedding namespace in serialized key bytes.
+// ============================================================================
+
+JNIEXPORT jboolean JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_reduceGetBytesLongWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlong nsStart, jlong nsEnd, jlongArray out) {
+    JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
+        std::string k = jbytearray_to_string(env, key);
+        int64_t* val = table->get(keyGroup, tw, k);
+        if (!val) return JNI_FALSE;
+        jlong v = static_cast<jlong>(*val);
+        env->SetLongArrayRegion(out, 0, 1, &v);
+        return JNI_TRUE;
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_reduceAddBytesLongWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlong nsStart, jlong nsEnd, jlong value, jint builtinAggType) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
+        std::string k = jbytearray_to_string(env, key);
+        int64_t v = static_cast<int64_t>(value);
+        bool modified = table->modify_in_place(keyGroup, tw, k, [&](int64_t& existing) {
+            switch (builtinAggType) {
+                case 0: existing += v; break;  // SUM
+                case 1: existing = std::min(existing, v); break;  // MIN
+                case 2: existing = std::max(existing, v); break;  // MAX
+                default:
+                    throw std::runtime_error("User-defined reduce requires Java callback");
+            }
+        });
+        if (!modified) {
+            table->put(keyGroup, tw, std::move(k), v);
+        }
+    })
+}
+
+// ============================================================================
+//  Batch variant: adds the same value to multiple TimeWindows in ONE JNI crossing.
+//  nsArray is interleaved [start0, end0, start1, end1, ...].
+//  This amortizes JNI overhead for sliding window scenarios (25 windows → 1 crossing).
+// ============================================================================
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_reduceAddBytesLongWithTWBatch(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlongArray nsArray, jint windowCount, jlong value, jint builtinAggType) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        std::string k = jbytearray_to_string(env, key);
+        int64_t v = static_cast<int64_t>(value);
+
+        // Read all namespace pairs from the Java array at once (minimizes JNI access).
+        const int count = static_cast<int>(windowCount);
+        jlong* nsPtr = env->GetLongArrayElements(nsArray, nullptr);
+
+        for (int i = 0; i < count; ++i) {
+            TimeWindow tw(static_cast<int64_t>(nsPtr[i * 2]),
+                          static_cast<int64_t>(nsPtr[i * 2 + 1]));
+            bool modified = table->modify_in_place(keyGroup, tw, k, [&](int64_t& existing) {
+                switch (builtinAggType) {
+                    case 0: existing += v; break;
+                    case 1: existing = std::min(existing, v); break;
+                    case 2: existing = std::max(existing, v); break;
+                    default: break;
+                }
+            });
+            if (!modified) {
+                // First insert for this window: copy the key string.
+                table->put(keyGroup, tw, k, v);
+            }
+        }
+
+        env->ReleaseLongArrayElements(nsArray, nsPtr, JNI_ABORT);
+    })
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutBytesLongWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlong nsStart, jlong nsEnd, jlong newValue, jlongArray out) {
+    JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
+        std::string k = jbytearray_to_string(env, key);
+        int64_t* val = table->get(keyGroup, tw, k);
+        if (val) {
+            jlong v = static_cast<jlong>(*val);
+            env->SetLongArrayRegion(out, 0, 1, &v);
+            return JNI_TRUE;
+        }
+        table->put(keyGroup, tw, std::move(k), static_cast<int64_t>(newValue));
+        return JNI_FALSE;
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valuePutBytesLongWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlong nsStart, jlong nsEnd, jlong value) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
+        std::string k = jbytearray_to_string(env, key);
+        table->put(keyGroup, tw, std::move(k), static_cast<int64_t>(value));
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueClearBytesWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup,
+        jlong nsStart, jlong nsEnd) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
+        std::string k = jbytearray_to_string(env, key);
+        auto vt = handle->value_type;
+        if (vt == StateHandle::ValueType::INT64) {
+            handle->engine->get_state_table<std::string, int64_t>(handle->table_id)
+                ->remove(keyGroup, tw, k);
+        } else {
+            handle->engine->get_state_table<std::string, std::string>(handle->table_id)
+                ->remove(keyGroup, tw, k);
+        }
+    })
+}
+
+// ============================================================================
 //  ListState: long key + TimeWindow ns
 // ============================================================================
 
@@ -451,6 +596,20 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapContainsWithTW(
         if (!inner) return JNI_FALSE;
         std::string uk = jbytearray_to_string(env, userKey);
         return (inner->find(uk) != inner->end()) ? JNI_TRUE : JNI_FALSE;
+    })
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_mapIsEmptyWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jlong key, jint keyGroup,
+        jlong nsStart, jlong nsEnd) {
+    JNI_ENTRY_RETURN(jboolean, JNI_TRUE, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
+        InnerMap* inner = table->get(keyGroup, tw, static_cast<int64_t>(key));
+        return (!inner || inner->empty()) ? JNI_TRUE : JNI_FALSE;
     })
 }
 

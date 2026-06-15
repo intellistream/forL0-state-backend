@@ -52,6 +52,7 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
     private final boolean voidNamespace;
     private final boolean isTimeWindowNs;
     private final boolean isRowDataKey;
+    private final boolean isStringKey;
     private final RowDataKeyAccessor rowDataKeyAccessor;
     private final boolean isRowDataValue;
     private final RowDataKeyAccessor rowDataValueAccessor;
@@ -63,7 +64,21 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
     private final int rowDataValueArity;
     private final int builtinAggType;
 
-    private enum KeyNsStrategy { LONG_VOID, LONG_TW, GENERIC }
+    // BYTES_TW batch buffer: accumulates TimeWindow pairs for a single key,
+    // then flushes in one JNI call to amortize JNI crossing cost (25 windows → 1 crossing).
+    private static final int BATCH_CAP = 64;  // max windows per batch (sliding window = 25)
+    private final long[] batchNs = new long[BATCH_CAP * 2];  // interleaved [start, end, ...]
+    private int batchCount = 0;
+    private byte[] batchKeyBytes = null;
+    private int batchKeyGroup = -1;
+    private long batchValue = 0;
+
+    // Key serialization cache: avoids re-serializing the same key object
+    // across multiple windows (reference equality check — very fast).
+    private Object lastSerKeyRef;
+    private byte[] lastSerKeyBytes;
+
+    private enum KeyNsStrategy { LONG_VOID, LONG_TW, BYTES_TW, GENERIC }
     private final KeyNsStrategy keyNsStrategy;
 
     ForL0ReducingState(
@@ -87,6 +102,7 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
         this.isTimeWindowNs = TypeAnalyzer.isTimeWindowSerializer(namespaceSerializer);
         this.isRowDataKey = TypeAnalyzer.isRowDataSerializer(keySerializer);
         this.rowDataKeyAccessor = isRowDataKey ? TypeAnalyzer.createRowDataKeyAccessor(keySerializer) : null;
+        this.isStringKey = keyTypeId == TypeAnalyzer.TYPE_STRING || keyTypeId == TypeAnalyzer.TYPE_BYTES;
         this.isRowDataValue = TypeAnalyzer.isRowDataSerializer(valueSerializer);
         this.rowDataValueAccessor = isRowDataValue
                 ? TypeAnalyzer.createRowDataKeyAccessor(valueSerializer) : null;
@@ -100,6 +116,8 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
             this.keyNsStrategy = KeyNsStrategy.LONG_VOID;
         } else if (isTimeWindowNs && keyTypeId == TypeAnalyzer.TYPE_INT64) {
             this.keyNsStrategy = KeyNsStrategy.LONG_TW;
+        } else if (isTimeWindowNs && isStringKey && valueTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.keyNsStrategy = KeyNsStrategy.BYTES_TW;
         } else {
             this.keyNsStrategy = KeyNsStrategy.GENERIC;
         }
@@ -140,9 +158,29 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
                     byte[] data = NativeEngine.valueGetLongStringWithTW(stateHandle, k, kg, tw.getStart(), tw.getEnd());
                     return data != null ? deserializeValue(data) : getDefaultValue();
                 }
+                case BYTES_TW: {
+                    flushBatch();
+                    byte[] keyBytes = serializeKeyOnlyCached(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    if (!NativeEngine.reduceGetBytesLongWithTW(stateHandle, keyBytes, kg,
+                            tw.getStart(), tw.getEnd(), primitiveBuf)) {
+                        return getDefaultValue();
+                    }
+                    return (V) Long.valueOf(primitiveBuf[0]);
+                }
                 default: {
                     byte[] keyBytes = serializeKey(keyContext.currentKey);
                     int kg = keyContext.currentKeyGroupIndex;
+                    if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
+                        if (!NativeEngine.valueGetGenericLongSafe(stateHandle, keyBytes, kg, primitiveBuf)) {
+                            return getDefaultValue();
+                        }
+                        if (isRowDataValue) {
+                            return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                        }
+                        return (V) Long.valueOf(primitiveBuf[0]);
+                    }
                     if (isRowDataValue) return zeroCopyGetGeneric(keyBytes, kg);
                     byte[] data = NativeEngine.reduceGetGeneric(stateHandle, keyBytes, kg);
                     return data != null ? deserializeValue(data) : getDefaultValue();
@@ -176,12 +214,12 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
                         }
                     } else {
                         byte[] oldBytes = NativeEngine.valueGetLongString(stateHandle, k, keyGroup);
-                        if (oldBytes != null) {
+                        if (oldBytes == null) {
+                            NativeEngine.valuePutLongString(stateHandle, k, keyGroup, serializeValue(value));
+                        } else {
                             V oldValue = deserializeValue(oldBytes);
                             V reduced = reduceFunction.reduce(oldValue, value);
                             NativeEngine.valuePutLongString(stateHandle, k, keyGroup, serializeValue(reduced));
-                        } else {
-                            NativeEngine.valuePutLongString(stateHandle, k, keyGroup, serializeValue(value));
                         }
                     }
                     return;
@@ -202,25 +240,71 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
                         }
                     } else {
                         byte[] oldBytes = NativeEngine.valueGetLongStringWithTW(stateHandle, k, keyGroup, nsStart, nsEnd);
-                        if (oldBytes != null) {
+                        if (oldBytes == null) {
+                            NativeEngine.valuePutLongStringWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, serializeValue(value));
+                        } else {
                             V oldValue = deserializeValue(oldBytes);
                             V reduced = reduceFunction.reduce(oldValue, value);
                             NativeEngine.valuePutLongStringWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, serializeValue(reduced));
-                        } else {
-                            NativeEngine.valuePutLongStringWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, serializeValue(value));
+                        }
+                    }
+                    return;
+                }
+                case BYTES_TW: {
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    long nsStart = tw.getStart(), nsEnd = tw.getEnd();
+                    long longValue = (Long) value;
+
+                    // Buffer the TimeWindow for batch flush (amortizes JNI crossing).
+                    if (batchCount > 0 && (batchKeyGroup != keyGroup || batchValue != longValue)) {
+                        flushBatch();
+                    }
+                    if (batchCount == 0) {
+                        batchKeyBytes = serializeKeyOnlyCached(key);
+                        batchKeyGroup = keyGroup;
+                        batchValue = longValue;
+                    }
+                    batchNs[batchCount * 2] = nsStart;
+                    batchNs[batchCount * 2 + 1] = nsEnd;
+                    batchCount++;
+
+                    if (builtinAggType != BUILTIN_AGG_USER_DEFINED) {
+                        if (batchCount >= BATCH_CAP) {
+                            flushBatch();
+                        }
+                    } else {
+                        // User-defined reduce: flush immediately for read-modify-write.
+                        flushBatch();
+                        if (NativeEngine.reduceGetAndPutBytesLongWithTW(stateHandle, batchKeyBytes, keyGroup,
+                                nsStart, nsEnd, longValue, primitiveBuf)) {
+                            @SuppressWarnings("unchecked")
+                            V reduced = reduceFunction.reduce((V) Long.valueOf(primitiveBuf[0]), value);
+                            NativeEngine.valuePutBytesLongWithTW(stateHandle, batchKeyBytes, keyGroup,
+                                    nsStart, nsEnd, (Long) reduced);
                         }
                     }
                     return;
                 }
                 default: {
                     byte[] keyBytes = serializeKey(key);
+                    if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
+                        long longValue = (Long) value;
+                        if (builtinAggType != BUILTIN_AGG_USER_DEFINED) {
+                            NativeEngine.reduceAddGenericLong(stateHandle, keyBytes, keyGroup, longValue, builtinAggType);
+                        } else if (NativeEngine.reduceGetAndPutGenericLong(stateHandle, keyBytes, keyGroup, longValue, primitiveBuf)) {
+                            @SuppressWarnings("unchecked")
+                            V reduced = reduceFunction.reduce((V) Long.valueOf(primitiveBuf[0]), value);
+                            NativeEngine.valuePutGenericLong(stateHandle, keyBytes, keyGroup, (Long) reduced);
+                        }
+                        return;
+                    }
                     byte[] oldBytes = NativeEngine.reduceGetGeneric(stateHandle, keyBytes, keyGroup);
-                    if (oldBytes != null) {
+                    if (oldBytes == null) {
+                        NativeEngine.valuePutGeneric(stateHandle, keyBytes, keyGroup, serializeValue(value));
+                    } else {
                         V oldValue = deserializeValue(oldBytes);
                         V newValue = reduceFunction.reduce(oldValue, value);
                         NativeEngine.valuePutGeneric(stateHandle, keyBytes, keyGroup, serializeValue(newValue));
-                    } else {
-                        NativeEngine.valuePutGeneric(stateHandle, keyBytes, keyGroup, serializeValue(value));
                     }
                 }
             }
@@ -300,9 +384,25 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
                     byte[] data = NativeEngine.valueGetLongStringWithTW(stateHandle, k, kg, tw.getStart(), tw.getEnd());
                     return data != null ? deserializeValue(data) : null;
                 }
+                case BYTES_TW: {
+                    flushBatch();
+                    byte[] keyBytes = serializeKeyOnlyCached(keyContext.currentKey);
+                    int kg = keyContext.currentKeyGroupIndex;
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    if (!NativeEngine.reduceGetBytesLongWithTW(stateHandle, keyBytes, kg,
+                            tw.getStart(), tw.getEnd(), primitiveBuf)) return null;
+                    return (V) Long.valueOf(primitiveBuf[0]);
+                }
                 default: {
                     byte[] keyBytes = serializeKey(keyContext.currentKey);
                     int kg = keyContext.currentKeyGroupIndex;
+                    if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
+                        if (!NativeEngine.valueGetGenericLongSafe(stateHandle, keyBytes, kg, primitiveBuf)) return null;
+                        if (isRowDataValue) {
+                            return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                        }
+                        return (V) Long.valueOf(primitiveBuf[0]);
+                    }
                     if (isRowDataValue) {
                         if (NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, kg, nativePtrBuf)) return wrapNativePtr();
                         return null;
@@ -341,9 +441,23 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
                     }
                     return;
                 }
+                case BYTES_TW: {
+                    flushBatch();
+                    byte[] keyBytes = serializeKeyOnlyCached(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.valuePutBytesLongWithTW(stateHandle, keyBytes,
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd(), (Long) valueToStore);
+                    return;
+                }
                 default:
-                    NativeEngine.valuePutGeneric(stateHandle, serializeKey(keyContext.currentKey),
-                            keyContext.currentKeyGroupIndex, serializeValue(valueToStore));
+                    byte[] keyBytes = serializeKey(keyContext.currentKey);
+                    if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
+                        NativeEngine.valuePutGenericLong(stateHandle, keyBytes,
+                                keyContext.currentKeyGroupIndex, (Long) valueToStore);
+                    } else {
+                        NativeEngine.valuePutGeneric(stateHandle, keyBytes,
+                                keyContext.currentKeyGroupIndex, serializeValue(valueToStore));
+                    }
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to update internal ReducingState", e);
@@ -360,6 +474,14 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
                 case LONG_TW: {
                     TimeWindow tw = (TimeWindow) currentNamespace;
                     NativeEngine.valueClearWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    return;
+                }
+                case BYTES_TW: {
+                    flushBatch();
+                    byte[] keyBytes = serializeKeyOnlyCached(keyContext.currentKey);
+                    TimeWindow tw = (TimeWindow) currentNamespace;
+                    NativeEngine.valueClearBytesWithTW(stateHandle, keyBytes,
                             keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
                     return;
                 }
@@ -458,6 +580,40 @@ public class ForL0ReducingState<K, N, V> implements InternalReducingState<K, N, 
         }
         keySerializer.serialize(key, keyOut);
         return keyOut.getCopyOfBuffer();
+    }
+
+    /**
+     * Serialize key WITHOUT namespace prefix — used by BYTES_TW strategy where
+     * the TimeWindow namespace is passed separately as (nsStart, nsEnd) longs.
+     * Uses reference-equality cache: same key object → reuse previous bytes.
+     * This saves 24 out of 25 serializations in sliding window scenarios.
+     */
+    private byte[] serializeKeyOnly(K key) throws IOException {
+        keyOut.clear();
+        keySerializer.serialize(key, keyOut);
+        return keyOut.getCopyOfBuffer();
+    }
+
+    /** Cached variant: reuses bytes when the same key OBJECT reference is seen again. */
+    private byte[] serializeKeyOnlyCached(K key) throws IOException {
+        if (key == lastSerKeyRef && lastSerKeyBytes != null) {
+            return lastSerKeyBytes;
+        }
+        lastSerKeyBytes = serializeKeyOnly(key);
+        lastSerKeyRef = key;
+        return lastSerKeyBytes;
+    }
+
+    /**
+     * Flush buffered BYTES_TW batch to native engine in a single JNI call.
+     * Called when: batch is full, key changes, or a get/clear operation needs fresh data.
+     */
+    private void flushBatch() {
+        if (batchCount == 0) return;
+        NativeEngine.reduceAddBytesLongWithTWBatch(
+                stateHandle, batchKeyBytes, batchKeyGroup,
+                batchNs, batchCount, batchValue, builtinAggType);
+        batchCount = 0;
     }
 
     private byte[] serializeValue(V value) throws IOException {

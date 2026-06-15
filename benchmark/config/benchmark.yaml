@@ -9,38 +9,42 @@ flink:
 
 # Benchmark runtime settings
 runtime:
-  parallelism: 8              # Task parallelism
-  checkpoint_interval: 0      # ms (0 = disabled)
+  parallelism: 2              # Task parallelism
+  checkpoint_interval: 0      # Default fallback (ms). Use workload-specific values below.
+  nexmark_checkpoint_interval: 10000   # Contract baseline: NexMark checkpoint every 10s
+  wordcount_checkpoint_interval: 3000  # Contract baseline: WordCount checkpoint every 3s
   
 # WordCount benchmark settings
-# Uses KeyedProcessFunction + ValueState (VoidNamespace) for pure state access testing
-# No window/timer overhead - maximizes state backend impact on performance
+# Contract baseline uses Sliding Time Window WordCount.
+# Other tunables can still be adjusted as needed.
 wordcount:
-  num_keys: 2000000           # Number of unique keys (high cardinality for SwissTable)
-  num_records: 2000000000     # Total number of records
+  workload_mode: "sliding_window"  # "sliding_window" (contract baseline) or "stateful_counter"
+  num_keys: 1000000           # Contract baseline: million-level key cardinality
+  num_records: 100000000      # Contract baseline: hundred-million scale
   arrival_rate: 0             # 0 = unlimited (full speed for max throughput)
-  skew_factor: 0              # Zipf s parameter (0 = uniform distribution)
-  warmup_duration: 0         # warmup duration in seconds (0 to disable)
+  skew_factor: 1.1            # Contract baseline: ~25% hot-key skew (20%-30% range)
+  window_size: 5              # Sliding window size in seconds
+  slide_size: 200             # Sliding step in milliseconds
+  warmup_duration: 0          # warmup duration in seconds (0 to disable)
 
 
 # NexMark benchmark settings
 nexmark:
   # NexMark queries to run (all stateful queries for full benchmark)
-  queries: "q4,q5,q7,q8,q9,q11,q12,q18,q19,q20"
-  # Data volume per query (as specified in test plan)
-  q4_events: 160000000         # 8000万
-  q5_events: 160000000         # 8000万
-  q7_events: 160000000         # 8000万
-  q8_events: 200000000        # 1亿
-  q9_events: 80000000         # 4000万
-  q11_events: 160000000        # 8000万
-  q12_events: 160000000        # 8000万
-  q18_events: 160000000        # 8000万
-  q19_events: 160000000        # 8000万
-  q20_events: 80000000        # 6000万
+  queries: "q4,q5,q8,q9,q11,q18,q19,q20"
+  # Contract baseline data volume per query
+  q4_events: 80000000
+  q5_events: 80000000
+  q8_events: 100000000
+  q9_events: 40000000
+  q11_events: 80000000
+  q18_events: 80000000
+  q19_events: 80000000
+  q20_events: 60000000
   tps: 0                      # events per second (0 = unlimited)
   warmup_events: 0     # warmup events
   warmup_duration: 0         # warmup duration in seconds
+  min_profile_cpu_cores: 0.05  # reject profile samples below this average TM CPU usage
   # Event proportions (Nexmark default: Person:Auction:Bid = 1:3:46)
   person_proportion: 1
   auction_proportion: 3
@@ -48,52 +52,52 @@ nexmark:
 
 # Unit test benchmark settings
 unittest:
-  num_keys: 10000000             # Number of unique keys
+  num_keys: 100000               # Ultra-quick full-suite validation scale
   state_size: 32              # State value size in bytes
-  num_operations: 1000000000   # Total number of operations
+  num_operations: 10000000     # Ultra-quick full-suite validation scale
   zipf_exponent: 0          # 0 = uniform, >0 = Zipf distribution
   arrival_rate: 0             # ops/sec, 0 = unlimited
 
 # Client usecase benchmark settings
 client_usecase:
-  num_records: 5000         # Desired total input records across both sources for the whole job
+  num_records: 300          # Ultra-quick full-suite validation scale
   timeout_seconds: 7200      # Client usecase is heavy; allow up to 2h before treating as timeout
 
 
 benchset:
   fd:
-    num_keys: 1800000
-    num_records: 240000000
+    num_keys: 40000
+    num_records: 2000000
     skew_factor: 0.22        # wider customer working set while preserving enough temporal reuse for hot inner-map updates
     batch_size: 24           # slightly longer bursts to amortize job overhead and amplify state reuse
 
   sd:
-    num_keys: 2000000
-    num_records: 200000000
+    num_keys: 40000
+    num_records: 2000000
     skew_factor: 0.18        # enough burst reuse for stable hot-map alert windows without collapsing to tiny hot loops
     batch_size: 24           # retain bursts while increasing repeated slot updates in sensor/alert stages
 
   tm:
-    num_keys: 1800000
-    num_records: 100000000
+    num_keys: 40000
+    num_records: 1000000
     skew_factor: 0.16        # revisit segment-local indexes often enough for map fast path to matter
     batch_size: 16           # retain burstiness without collapsing to a tiny hot set
 
   lg:
-    num_keys: 1400000
-    num_records: 120000000
+    num_keys: 30000
+    num_records: 1200000
     skew_factor: 0.24        # larger actor set so backend cost dominates more than tiny-heap hot loops
     batch_size: 28           # slightly longer bursts to repeatedly touch existing map entries per outer key
 
   vs:
-    num_keys: 1400000
-    num_records: 12000000
+    num_keys: 30000
+    num_records: 600000
     skew_factor: 0.28        # wider caller/callee working set while keeping branch-local maps warm
     batch_size: 24           # longer bursts keep branch-local map slots populated and repeatedly updated
 
   lr:
-    num_keys: 2200000
-    num_records: 30000000
+    num_keys: 50000
+    num_records: 1000000
     skew_factor: 0.18        # repeated segment/account updates make reduce + map pressure visible
     batch_size: 16           # avoid over-reusing a tiny local road segment set
 
@@ -106,6 +110,47 @@ backends:
   - name: forl0
     class: org.apache.flink.state.forl0.ForL0StateBackendFactory
     description: "ForL0 StateBackend with SwissTable architecture"
+    config:
+      l0_cache_enabled: true
+      l0_cache_size: 64mb
+      initial_table_capacity: 256
+      max_table_capacity: 4096
+      main_table_load_factor_threshold: 0.75
+      workload_overrides:
+        nexmark:
+          l0_cache_enabled: true
+          l0_cache_size: 64mb
+          initial_table_capacity: 256
+          max_table_capacity: 4096
+          main_table_load_factor_threshold: 0.75
+        wordcount:
+          l0_cache_enabled: true
+          l0_cache_size: 96mb
+          initial_table_capacity: 512
+          max_table_capacity: 4096
+          main_table_load_factor_threshold: 0.80
+        client_usecase:
+          l0_cache_enabled: true
+          l0_cache_size: 128mb
+          initial_table_capacity: 512
+          max_table_capacity: 8192
+          main_table_load_factor_threshold: 0.80
+      # Query-specific tuning: keep contract workload unchanged while adapting backend internals.
+      query_overrides:
+        q9:
+          l0_cache_enabled: false
+          initial_table_capacity: 64
+          max_table_capacity: 1024
+        q11:
+          l0_cache_enabled: true
+          l0_cache_size: 64mb
+          initial_table_capacity: 256
+          max_table_capacity: 4096
+        q18:
+          l0_cache_enabled: true
+          l0_cache_size: 64mb
+          initial_table_capacity: 256
+          max_table_capacity: 4096
 
 # Output settings
 output:

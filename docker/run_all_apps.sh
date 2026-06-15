@@ -25,6 +25,113 @@ BACKEND="all"
 TEST_NAME="apps"
 EXTRA_ARGS=()
 ENABLE_PROFILE=true
+BENCH_PYTHON=""
+
+bootstrap_async_profiler() {
+    local discovered_home="${ASYNC_PROFILER_HOME:-}"
+
+    if [[ "$ENABLE_PROFILE" != "true" ]]; then
+        return 0
+    fi
+
+    if [[ -n "$discovered_home" && -x "$discovered_home/bin/asprof" ]]; then
+        export ASYNC_PROFILER_HOME="$discovered_home"
+        echo "      ✓ 使用 ASYNC_PROFILER_HOME=$ASYNC_PROFILER_HOME"
+        return 0
+    fi
+
+    for candidate in \
+        "${REPO_ROOT}/tools/async-profiler" \
+        "$HOME/async-profiler" \
+        "$HOME/async-profiler-4.4-linux-arm64" \
+        "$HOME/async-profiler-4.4-linux-x64" \
+        /opt/async-profiler; do
+        if [[ -x "$candidate/bin/asprof" ]]; then
+            discovered_home="$candidate"
+            break
+        fi
+    done
+
+    if [[ -z "$discovered_home" ]]; then
+        discovered_home="$(find "$HOME" -maxdepth 2 -type f -path '*/bin/asprof' 2>/dev/null | head -n 1 | xargs -r dirname | xargs -r dirname)"
+    fi
+
+    if [[ -n "$discovered_home" && -x "$discovered_home/bin/asprof" ]]; then
+        export ASYNC_PROFILER_HOME="$discovered_home"
+        echo "      ✓ 自动发现 async-profiler: $ASYNC_PROFILER_HOME"
+    else
+        echo "      ⚠ 未发现 async-profiler（CPU 火焰图将无法生成）"
+    fi
+}
+
+bootstrap_benchmark_python() {
+    local requirements_file="${REPO_ROOT}/benchmark/requirements.txt"
+    local offline_wheels_dir=""
+    local venv_dir="${REPO_ROOT}/.venv-benchmark"
+
+    for candidate in \
+        "${REPO_ROOT}/offline-packages" \
+        "${REPO_ROOT}/benchmark/offline-packages"; do
+        if [[ -d "$candidate" ]]; then
+            offline_wheels_dir="$candidate"
+            break
+        fi
+    done
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "✗ 未找到 python3，无法运行 benchmark 脚本"
+        exit 1
+    fi
+
+    if [[ ! -f "$requirements_file" ]]; then
+        echo "✗ 缺少 requirements 文件: $requirements_file"
+        exit 1
+    fi
+
+    if [[ ! -x "$venv_dir/bin/python" ]]; then
+        echo "[3/4] 创建 benchmark Python 虚拟环境..."
+        python3 -m venv "$venv_dir"
+    else
+        echo "[3/4] 复用已有 benchmark Python 虚拟环境"
+    fi
+
+    local py_bin="$venv_dir/bin/python"
+    local pip_bin="$venv_dir/bin/pip"
+    local deps_ok=true
+
+    if ! "$py_bin" - <<'PY' >/dev/null 2>&1
+import yaml
+import pandas
+import numpy
+import matplotlib
+import seaborn
+import jinja2
+import requests
+import tqdm
+PY
+    then
+        deps_ok=false
+    fi
+
+    if [[ "$deps_ok" == "false" ]]; then
+        echo "      安装 benchmark Python 依赖（优先离线）..."
+        if [[ -n "$offline_wheels_dir" && -d "$offline_wheels_dir" ]]; then
+            if "$pip_bin" install --no-index --find-links "$offline_wheels_dir" -r "$requirements_file"; then
+                echo "      ✓ 离线依赖安装成功"
+            else
+                echo "      ⚠ 离线依赖安装失败，尝试在线安装"
+                "$pip_bin" install -r "$requirements_file"
+            fi
+        else
+            echo "      ⚠ 未找到离线包目录（offline-packages），尝试在线安装"
+            "$pip_bin" install -r "$requirements_file"
+        fi
+    else
+        echo "      ✓ benchmark Python 依赖已满足"
+    fi
+
+    BENCH_PYTHON="$py_bin"
+}
 
 usage() {
     cat <<'EOF'
@@ -107,9 +214,12 @@ else
     echo "[2/3] Flink 集群已就绪"
 fi
 
-echo "[3/3] 开始运行 benchmark/scripts/run_benchmark.py"
+bootstrap_benchmark_python
+bootstrap_async_profiler
 
-cmd=(python3 "${REPO_ROOT}/benchmark/scripts/run_benchmark.py" --test "$TEST_NAME" --backend "$BACKEND")
+echo "[4/4] 开始运行 benchmark/scripts/run_benchmark.py"
+
+cmd=("${BENCH_PYTHON}" "${REPO_ROOT}/benchmark/scripts/run_benchmark.py" --test "$TEST_NAME" --backend "$BACKEND")
 if [[ -n "$PROFILE_MODE" ]]; then
     cmd+=(--profile "$PROFILE_MODE")
 fi

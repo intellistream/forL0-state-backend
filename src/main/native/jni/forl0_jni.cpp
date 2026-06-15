@@ -248,6 +248,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
                 table_id = engine->register_state<int64_t, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::INT64;
                 stored_value_type = StateHandle::ValueType::BYTES;
+            } else if (kind == StateHandle::StateKind::REDUCING && (valueTypeId == 2 || valueTypeId == 1)) {
+                // BYTES_TW: String/bytes key + long value ReducingState with TimeWindow ns.
+                // Stores <std::string, int64_t> so C++ can do builtin aggregation in-place.
+                table_id = engine->register_state<std::string, int64_t>(name, void_ns);
+                stored_key_type = StateHandle::KeyType::BYTES;
+                stored_value_type = StateHandle::ValueType::INT64;
             } else {
                 table_id = engine->register_state<std::string, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::BYTES;
@@ -355,6 +361,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
                 table_id = engine->register_state<int64_t, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::INT64;
                 stored_value_type = StateHandle::ValueType::BYTES;
+            } else if (is_reducing && (valueTypeId == 2 || valueTypeId == 1)) {
+                // String/bytes key + long value ReducingState (VoidNamespace).
+                // Stores <std::string, int64_t> so reduceAddGenericLong can do in-place aggregation.
+                table_id = engine->register_state<std::string, int64_t>(name, void_ns);
+                stored_key_type = StateHandle::KeyType::BYTES;
+                stored_value_type = StateHandle::ValueType::INT64;
             } else {
                 table_id = engine->register_state<std::string, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::BYTES;

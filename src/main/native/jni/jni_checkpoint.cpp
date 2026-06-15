@@ -118,6 +118,8 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
             WRITE_KG(int64_t, int64_t);
         if (kt == StateHandle::KeyType::INT64 && (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING))
             WRITE_KG(int64_t, std::string);
+        if (kt == StateHandle::KeyType::BYTES && vt == StateHandle::ValueType::INT64)
+            WRITE_KG(std::string, int64_t);
         WRITE_KG(std::string, std::string);
     }
 
@@ -213,6 +215,8 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
             READ_KG(int64_t, int64_t);
         if (kt == StateHandle::KeyType::INT64 && (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING))
             READ_KG(int64_t, std::string);
+        if (kt == StateHandle::KeyType::BYTES && vt == StateHandle::ValueType::INT64)
+            READ_KG(std::string, int64_t);
         READ_KG(std::string, std::string);
     }
 

@@ -28,6 +28,8 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
 
 import java.lang.invoke.MethodHandle;
@@ -73,6 +75,9 @@ public class WordCountBenchmark {
         long numRecords = params.getLong("numRecords", 100_000_000L);
         double skewFactor = params.getDouble("skewFactor", 1.1);
         int arrivalRate = params.getInt("arrivalRate", 0);  // records/s, 0 = unlimited (default: unlimited for max throughput)
+        String workloadMode = params.get("workloadMode", "stateful_counter").toLowerCase();
+        int windowSize = params.getInt("windowSize", 5);
+        int slideSizeMs = params.getInt("slideSize", 200);
         int parallelism = params.getInt("parallelism", 8);
         String outputPath = params.get("output", null);
         String backend = params.get("backend", "unknown");
@@ -89,16 +94,26 @@ public class WordCountBenchmark {
         }
         
         // Create skewed key source - outputs Tuple2<key, 1L>
-        DataStream<Tuple2<Long, Long>> source = env
+        DataStream<Tuple2<String, Long>> source = env
             .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
             .name("SkewedKeySource");
         
-        // Stateful count using KeyedProcessFunction with ValueState
-        // This uses VoidNamespace and has no Timer overhead
-        DataStream<Tuple2<Long, Long>> result = source
-            .keyBy(t -> t.f0)
-            .process(new StatefulCounter())
-            .name("StatefulCounter");
+        DataStream<Tuple2<String, Long>> result;
+        if ("sliding_window".equals(workloadMode)) {
+            // Sliding processing-time window to match contract scenario.
+            result = source
+                .keyBy(t -> t.f0)
+                .window(SlidingProcessingTimeWindows.of(Time.seconds(windowSize), Time.milliseconds(slideSizeMs)))
+                .sum(1)
+                .name("SlidingWindowWordCount");
+        } else {
+            // Stateful count using KeyedProcessFunction with ValueState
+            // This uses VoidNamespace and has no Timer overhead
+            result = source
+                .keyBy(t -> t.f0)
+                .process(new StatefulCounter())
+                .name("StatefulCounter");
+        }
         
         // Metrics sink
         result.addSink(new MetricsSink(outputPath, parallelism, backend, numRecords))
@@ -106,11 +121,16 @@ public class WordCountBenchmark {
             .setParallelism(1);
         
         // Execute
-        System.out.println("=== Stateful WordCount Benchmark (StateBackend Focused) ===");
+        System.out.println("=== WordCount Benchmark ===");
+        System.out.println("workloadMode: " + workloadMode);
         System.out.println("numKeys: " + numKeys);
         System.out.println("numRecords: " + numRecords);
         System.out.println("skewFactor: " + skewFactor);
         System.out.println("arrivalRate: " + (arrivalRate > 0 ? arrivalRate + " records/s" : "unlimited"));
+        if ("sliding_window".equals(workloadMode)) {
+            System.out.println("windowSize: " + windowSize + "s");
+            System.out.println("slideSize: " + slideSizeMs + "ms");
+        }
         System.out.println("parallelism: " + parallelism);
         System.out.println("checkpointing: " + (checkpointInterval > 0 ? checkpointInterval + "ms" : "disabled"));
         System.out.println("============================================================");
@@ -131,7 +151,7 @@ public class WordCountBenchmark {
          * direct SwissTable access without HashMap overhead.
      */
     public static class StatefulCounter 
-            extends KeyedProcessFunction<Long, Tuple2<Long, Long>, Tuple2<Long, Long>> {
+            extends KeyedProcessFunction<String, Tuple2<String, Long>, Tuple2<String, Long>> {
         
         private static final long serialVersionUID = 1L;
         
@@ -168,9 +188,9 @@ public class WordCountBenchmark {
         
         @Override
         public void processElement(
-                Tuple2<Long, Long> value, 
+            Tuple2<String, Long> value,
                 Context ctx, 
-                Collector<Tuple2<Long, Long>> out) throws Exception {
+            Collector<Tuple2<String, Long>> out) throws Exception {
             long newCount;
             if (countStateFastPath != null) {
                 newCount = countStateFastPath.addAndGet(value.f1);

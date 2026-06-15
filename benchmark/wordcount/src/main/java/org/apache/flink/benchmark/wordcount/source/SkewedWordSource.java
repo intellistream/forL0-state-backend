@@ -37,7 +37,7 @@ import java.util.Random;
  *   <li>s = 1.2: approximately 30% skew</li>
  * </ul>
  */
-public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<Long, Long>> {
+public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<String, Long>> {
     
     private static final long serialVersionUID = 1L;
     
@@ -76,7 +76,7 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<Long, Lo
     }
     
     @Override
-    public void run(SourceContext<Tuple2<Long, Long>> ctx) throws Exception {
+    public void run(SourceContext<Tuple2<String, Long>> ctx) throws Exception {
         int parallelism = getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks();
         int subtaskIndex = getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
         
@@ -104,7 +104,8 @@ public class SkewedWordSource extends RichParallelSourceFunction<Tuple2<Long, Lo
         
         while (running && count < (endRecord - startRecord)) {
             // Generate key using uniform or Zipf distribution
-            long key = useUniform ? random.nextInt(numKeys) : zipf.sample();
+            long keyId = useUniform ? random.nextInt(numKeys) : zipf.sample();
+            String key = "word_" + keyId;
             
             // Emit record: (key, 1L)
             synchronized (ctx.getCheckpointLock()) {

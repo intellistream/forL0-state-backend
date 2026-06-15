@@ -24,6 +24,49 @@ from utils.config import load_config, get_flink_home, save_result
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
+def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'client_usecase') -> list:
+    """Get ForL0 backend config args and merge workload-specific overrides."""
+    if backend != 'forl0':
+        return []
+
+    backend_config = None
+    for b in config.get('backends', []):
+        if b.get('name') == 'forl0':
+            backend_config = b.get('config', {})
+            break
+
+    if not backend_config:
+        return []
+
+    effective_config = dict(backend_config)
+    workload_overrides = backend_config.get('workload_overrides', {})
+    if isinstance(workload_overrides, dict):
+        workload_cfg = workload_overrides.get(workload_key, {})
+        if isinstance(workload_cfg, dict):
+            effective_config.update(workload_cfg)
+
+    config_mapping = {
+        'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
+        'max_table_capacity': 'state.backend.forl0.max-table-capacity',
+        'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
+        'l0_cache_size': 'state.backend.forl0.l0-cache.size',
+        'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
+        'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
+        'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
+    }
+
+    args = []
+    for yaml_key, flink_key in config_mapping.items():
+        if yaml_key in effective_config:
+            value = effective_config[yaml_key]
+            if isinstance(value, bool):
+                value = 'true' if value else 'false'
+            args.append(f'-D{flink_key}={value}')
+
+    args.append('-DforL0.metricsCollector.enabled=true')
+    return args
+
+
 def get_client_usecase_jar() -> Optional[str]:
     """Get path to the packaged client usecase JAR."""
     project_root = Path(__file__).parent.parent.parent
@@ -78,6 +121,39 @@ def cancel_job(rest_url: str, job_id: str) -> bool:
         return resp.status_code in (200, 202)
     except Exception:
         return False
+
+
+def list_running_jobs(rest_url: str) -> list[dict]:
+    """List currently RUNNING Flink jobs."""
+    try:
+        resp = requests.get(f"{rest_url}/jobs/overview", timeout=10)
+        if resp.status_code != 200:
+            return []
+        jobs = resp.json().get('jobs', [])
+        return [job for job in jobs if job.get('state') == 'RUNNING']
+    except Exception:
+        return []
+
+
+def cleanup_running_jobs(rest_url: str, reason: str) -> None:
+    """Best-effort cancellation of lingering jobs to avoid benchmark interference."""
+    running = list_running_jobs(rest_url)
+    if not running:
+        return
+
+    print(f"  [ClientUsecase] Cleaning {len(running)} running job(s) before {reason}")
+    for job in running:
+        job_id = job.get('jid')
+        name = job.get('name', 'unknown')
+        if not job_id:
+            continue
+        if cancel_job(rest_url, job_id):
+            print(f"    canceled {job_id} ({name})")
+        else:
+            print(f"    WARNING: failed to cancel {job_id} ({name})")
+
+    # Give the cluster a short settling window after cancellation.
+    time.sleep(2)
 
 
 def submit_job_async(cmd: list[str]) -> Optional[str]:
@@ -197,6 +273,8 @@ def run_client_usecase(
         print(f'  Start cluster with: {flink_home}/bin/start-cluster.sh')
         return None
 
+    cleanup_running_jobs(rest_url, f'client_usecase:{backend}')
+
     jar_path = get_client_usecase_jar()
     if not jar_path:
         print('ERROR: Client usecase JAR not found.')
@@ -217,6 +295,7 @@ def run_client_usecase(
     cmd = [str(flink_bin), 'run']
     if backend_class:
         cmd.append(f'-Dstate.backend.type={backend_class}')
+    cmd.extend(get_forl0_config_args(config, backend, workload_key='client_usecase'))
 
     cmd.extend([
         jar_path,

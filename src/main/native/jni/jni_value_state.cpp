@@ -999,4 +999,70 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetAndPutGenericBytes(
     })
 }
 
+// ============================================================================
+//  OPT-11: Combined get-or-put for bytes value path.
+//  If key exists: returns old value as byte[] and does NOT modify slot.
+//  If key absent: writes newValue and returns null.
+//  Avoids extra write amplification on hot existing keys.
+// ============================================================================
+
+// int64 key + VoidNamespace
+JNIEXPORT jbyteArray JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueGetOrPutLongBytes(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jlong key, jint keyGroup, jbyteArray newValue) {
+    JNI_ENTRY_RETURN(jbyteArray, nullptr, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
+        int64_t k = static_cast<int64_t>(key);
+        std::string* existing = table->get(keyGroup, k);
+        if (existing) {
+            return string_to_jbytearray(env, *existing);
+        }
+        std::string nv = jbytearray_to_string(env, newValue);
+        table->put(keyGroup, k, std::move(nv));
+        return nullptr;
+    })
+}
+
+// int64 key + TimeWindow namespace
+JNIEXPORT jbyteArray JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueGetOrPutLongBytesWithTW(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jlong key, jint keyGroup,
+        jlong nsStart, jlong nsEnd, jbyteArray newValue) {
+    JNI_ENTRY_RETURN(jbyteArray, nullptr, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
+        int64_t k = static_cast<int64_t>(key);
+        TimeWindow tw{static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd)};
+        std::string* existing = table->get(keyGroup, tw, k);
+        if (existing) {
+            return string_to_jbytearray(env, *existing);
+        }
+        std::string nv = jbytearray_to_string(env, newValue);
+        table->put(keyGroup, tw, k, std::move(nv));
+        return nullptr;
+    })
+}
+
+// generic key (bytes) + VoidNamespace
+JNIEXPORT jbyteArray JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_valueGetOrPutGenericBytes(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jbyteArray key, jint keyGroup, jbyteArray newValue) {
+    JNI_ENTRY_RETURN(jbyteArray, nullptr, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
+        std::string k = jbytearray_to_string(env, key);
+        std::string* existing = table->get(keyGroup, k);
+        if (existing) {
+            return string_to_jbytearray(env, *existing);
+        }
+        std::string nv = jbytearray_to_string(env, newValue);
+        table->put(keyGroup, k, std::move(nv));
+        return nullptr;
+    })
+}
+
 }  // extern "C"
