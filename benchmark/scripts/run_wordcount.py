@@ -16,7 +16,6 @@ Usage:
 
 import argparse
 import json
-import requests  # type: ignore
 import subprocess
 import sys
 import time
@@ -26,6 +25,7 @@ from typing import Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+from utils import requests_shim as requests  # type: ignore[assignment]
 
 from datetime import datetime
 from utils.config import (
@@ -557,6 +557,7 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         '--arrivalRate', str(wc_config.get('arrival_rate', 0)),
         '--skewFactor', str(wc_config.get('skew_factor', 0)),
         '--workloadMode', str(wc_config.get('workload_mode', 'stateful_counter')),
+        '--keyType', str(wc_config.get('key_type', 'string')),
         '--windowSize', str(wc_config.get('window_size', 5)),
         '--slideSize', str(wc_config.get('slide_size', 200)),
         '--parallelism', str(runtime_config.get('parallelism', 2)),
@@ -786,12 +787,80 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         return None
 
 
+def run_wordcount_scenario(config: dict, scenario: dict, backend: str,
+                           profile_mode: Optional[str] = None) -> Optional[dict]:
+    """Run a single WordCount scenario (from wordcount_scenarios list).
+
+    This overrides the top-level wordcount config with scenario-specific values
+    so that each scenario is self-contained.
+    """
+    # Merge scenario into the wordcount config temporarily
+    wc_config = dict(config.get('wordcount', {}))
+    for key in ('workload_mode', 'num_keys', 'num_records', 'skew_factor',
+                'arrival_rate', 'window_size', 'slide_size', 'key_type'):
+        if key in scenario:
+            wc_config[key] = scenario[key]
+
+    runtime_config = dict(config.get('runtime', {}))
+    if 'parallelism' in scenario:
+        runtime_config['parallelism'] = scenario['parallelism']
+    if 'checkpoint_interval' in scenario:
+        runtime_config['wordcount_checkpoint_interval'] = scenario['checkpoint_interval']
+
+    patched_config = dict(config)
+    patched_config['wordcount'] = wc_config
+    patched_config['runtime'] = runtime_config
+
+    result = run_wordcount(patched_config, backend, profile_mode=profile_mode)
+    if result:
+        result['scenario'] = scenario.get('name', 'default')
+        result['scenario_description'] = scenario.get('description', '')
+    return result
+
+
+def print_scenario_comparison(scenario_name: str, results: dict):
+    """Print a side-by-side comparison for a single scenario."""
+    hashmap = results.get('hashmap', {})
+    forl0 = results.get('forl0', {})
+    if not hashmap or not forl0:
+        return
+
+    hm_tpc = hashmap.get('throughput_per_core', 0)
+    fl_tpc = forl0.get('throughput_per_core', 0)
+    hm_tp = hashmap.get('throughput', 0)
+    fl_tp = forl0.get('throughput', 0)
+
+    if hm_tpc > 0:
+        improvement = ((fl_tpc - hm_tpc) / hm_tpc) * 100
+    else:
+        improvement = 0
+
+    print(f"\n{'=' * 60}")
+    print(f"  Scenario: {scenario_name}")
+    if hashmap.get('scenario_description'):
+        print(f"  {hashmap['scenario_description']}")
+    print(f"{'=' * 60}")
+    print(f"  {'Metric':<25s} {'HashMap':>14s} {'ForL0':>14s} {'Δ':>10s}")
+    print(f"  {'-' * 63}")
+    print(f"  {'Throughput (rec/s)':<25s} {hm_tp:>14,.0f} {fl_tp:>14,.0f} {improvement:>+9.1f}%")
+    print(f"  {'Throughput/core':<25s} {hm_tpc:>14,.0f} {fl_tpc:>14,.0f} {improvement:>+9.1f}%")
+    hm_time = hashmap.get('total_time_seconds', 0)
+    fl_time = forl0.get('total_time_seconds', 0)
+    print(f"  {'Total time (s)':<25s} {hm_time:>14.1f} {fl_time:>14.1f}")
+    print(f"  {'Parallelism':<25s} {hashmap.get('parallelism', '?'):>14} {forl0.get('parallelism', '?'):>14}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description='Run WordCount Benchmark')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='hashmap',
                        help='State backend to use (default: hashmap)')
     parser.add_argument('--profile', action='store_true',
                        help='Enable profiling (flame graphs + hardware metrics)')
+    parser.add_argument('--scenario', type=str, default=None,
+                       help='Run a specific scenario from wordcount_scenarios in config')
+    parser.add_argument('--all-scenarios', action='store_true',
+                       help='Run all scenarios from wordcount_scenarios in config')
     
     args = parser.parse_args()
     
@@ -809,10 +878,59 @@ def main():
     
     config = load_config()
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
+    profile_mode = 'cpu' if args.profile else None
+
+    # ---- Scenario-based execution ----
+    scenarios = config.get('wordcount_scenarios', [])
+    if args.all_scenarios and scenarios:
+        all_results = {}
+        for scenario in scenarios:
+            sname = scenario.get('name', 'unknown')
+            print(f"\n{'#' * 60}")
+            print(f"# Scenario: {sname}")
+            print(f"# {scenario.get('description', '')}")
+            print(f"{'#' * 60}\n")
+            all_results[sname] = {}
+            for backend in backends:
+                result = run_wordcount_scenario(config, scenario, backend, profile_mode=profile_mode)
+                if result:
+                    all_results[sname][backend] = result
+                    tag = f"wordcount_{sname}"
+                    save_result(result, tag, backend)
+        # Print summary table
+        print(f"\n\n{'#' * 60}")
+        print(f"#  FULL SCENARIO COMPARISON SUMMARY")
+        print(f"{'#' * 60}")
+        for sname, sresults in all_results.items():
+            print_scenario_comparison(sname, sresults)
+        return all_results
+
+    if args.scenario and scenarios:
+        scenario = None
+        for s in scenarios:
+            if s.get('name') == args.scenario:
+                scenario = s
+                break
+        if not scenario:
+            print(f"ERROR: Scenario '{args.scenario}' not found in wordcount_scenarios")
+            print(f"Available: {[s.get('name') for s in scenarios]}")
+            return None
+        results = {}
+        for backend in backends:
+            result = run_wordcount_scenario(config, scenario, backend, profile_mode=profile_mode)
+            if result:
+                results[backend] = result
+                tag = f"wordcount_{scenario['name']}"
+                save_result(result, tag, backend)
+        if len(results) == 2:
+            print_scenario_comparison(scenario['name'], results)
+        return results
+
+    # ---- Original single-mode execution (backward compatible) ----
     results = {}
     
     for backend in backends:
-        result = run_wordcount(config, backend, profile_mode='cpu' if args.profile else None)
+        result = run_wordcount(config, backend, profile_mode=profile_mode)
         if result:
             results[backend] = result
             save_result(result, 'wordcount', backend)

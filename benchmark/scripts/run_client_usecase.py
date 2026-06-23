@@ -16,9 +16,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import requests
-
 sys.path.insert(0, str(Path(__file__).parent))
+from utils import requests_shim as requests  # type: ignore[assignment]
 
 from utils.config import load_config, get_flink_home, save_result
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
@@ -417,13 +416,53 @@ def run_client_usecase(
         return None
 
 
+def apply_client_usecase_scenario(config: dict, scenario_name: str) -> dict:
+    """Apply a client_usecase_scenarios entry to the config dict (returns a copy)."""
+    import copy
+    scenarios = config.get('client_usecase_scenarios', [])
+    scenario = None
+    for s in scenarios:
+        if s.get('name') == scenario_name:
+            scenario = s
+            break
+    if not scenario:
+        print(f"ERROR: client_usecase scenario '{scenario_name}' not found.")
+        print(f"Available: {[s.get('name') for s in scenarios]}")
+        sys.exit(1)
+
+    config = copy.deepcopy(config)
+
+    # Override client_usecase settings
+    for key in ('num_records', 'timeout_seconds', 'checkpoint_interval'):
+        if key in scenario:
+            config['client_usecase'][key] = scenario[key]
+
+    # ForL0 backend overrides
+    forl0_overrides = scenario.get('forl0_overrides', {})
+    if forl0_overrides:
+        for b in config.get('backends', []):
+            if b.get('name') == 'forl0':
+                b.setdefault('config', {}).setdefault('workload_overrides', {}).setdefault('client_usecase', {})
+                b['config']['workload_overrides']['client_usecase'].update(forl0_overrides)
+
+    print(f"[Client Usecase] Scenario: {scenario_name} — {scenario.get('description', '')}")
+    return config
+
+
 def main():
     parser = argparse.ArgumentParser(description='Run client usecase benchmark on Flink cluster')
     parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='all')
     parser.add_argument('--profile', type=str, default=None)
+    parser.add_argument('--scenario', type=str, default=None,
+                       help='Run a named scenario from client_usecase_scenarios in config')
     args = parser.parse_args()
 
     config = load_config()
+
+    # Apply scenario overrides if specified
+    if args.scenario:
+        config = apply_client_usecase_scenario(config, args.scenario)
+
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
 
     results = {}
@@ -435,7 +474,8 @@ def main():
         )
         if result:
             results[backend] = result
-            save_result(result, 'client_usecase', backend)
+            tag = f"client_usecase_{args.scenario}" if args.scenario else 'client_usecase'
+            save_result(result, tag, backend)
 
     if results:
         print('\nSummary:')

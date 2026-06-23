@@ -20,7 +20,6 @@ Usage:
 import argparse
 import json
 import re
-import requests
 import subprocess
 import sys
 import time
@@ -28,6 +27,7 @@ from pathlib import Path
 from typing import Optional, List, Dict
 
 sys.path.insert(0, str(Path(__file__).parent))
+from utils import requests_shim as requests  # type: ignore[assignment]
 
 from utils.config import (
     load_config, get_benchmark_root,

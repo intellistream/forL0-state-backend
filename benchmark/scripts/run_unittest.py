@@ -17,11 +17,11 @@ import argparse
 import subprocess
 import sys
 import time
-import requests
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+from utils import requests_shim as requests  # type: ignore[assignment]
 
 from utils.config import (
     load_config, get_flink_home, get_results_dir,

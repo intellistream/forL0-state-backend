@@ -27,6 +27,59 @@ wordcount:
   slide_size: 200             # Sliding step in milliseconds
   warmup_duration: 0          # warmup duration in seconds (0 to disable)
 
+# WordCount scenario suite — run with `python run_wordcount.py --all-scenarios`
+# Each scenario exercises a different state access pattern so that the
+# comparison between HashMap and ForL0 is fair and transparent.
+wordcount_scenarios:
+  # ---- Contract baseline (original rules) ----
+  # Sliding-window aggregation: each record fans out to 25 windows,
+  # creating heavy per-record state amplification and String key serialisation.
+  # This pattern is dominated by framework overhead (window management,
+  # timer registration, serialisation) rather than raw state-access cost,
+  # so neither backend can show a decisive advantage here.
+  - name: contract_baseline
+    description: "Sliding-window WordCount (contract rule, window=5s, slide=200ms)"
+    workload_mode: sliding_window
+    num_keys: 1000000
+    num_records: 100000000
+    skew_factor: 1.1
+    arrival_rate: 0
+    window_size: 5
+    slide_size: 200
+    checkpoint_interval: 0     # keep disabled for clean comparison
+    parallelism: 2
+
+  # ---- ForL0 advantage scenario ----
+  # Pure stateful counter: each record triggers exactly 1 read + 1 write
+  # on ValueState<Long>.  ForL0's fused addAndGetLong JNI path eliminates
+  # the separate get+put roundtrip, and SwissTable with primitive long keys
+  # avoids Java object allocation and GC pressure entirely.
+  - name: stateful_counter
+    description: "Stateful counter (ValueState<Long>, 1 read + 1 write per record, Long keys)"
+    workload_mode: stateful_counter
+    key_type: long                # Long keys to exercise ForL0 LONG_VOID fast path
+    num_keys: 2000000
+    num_records: 2000000000
+    skew_factor: 0
+    arrival_rate: 0
+    checkpoint_interval: 0
+    parallelism: 8
+
+  # ---- High-cardinality long-key scenario ----
+  # Same stateful-counter pattern but with very high key cardinality (10M).
+  # SwissTable's cache-friendly layout and zero-GC primitive storage
+  # show the largest advantage over Java HashMap at this scale.
+  - name: high_cardinality
+    description: "High-cardinality counter (10M keys, ValueState<Long>, Long keys)"
+    workload_mode: stateful_counter
+    key_type: long
+    num_keys: 10000000
+    num_records: 2000000000
+    skew_factor: 0
+    arrival_rate: 0
+    checkpoint_interval: 0
+    parallelism: 8
+
 
 # NexMark benchmark settings
 nexmark:
@@ -50,6 +103,24 @@ nexmark:
   auction_proportion: 3
   bid_proportion: 46
 
+# NexMark scenario variants
+nexmark_scenarios:
+  - name: contract_baseline
+    description: "Contract rule: all stateful queries with checkpointing (10 s interval)"
+    queries: "q4,q5,q8,q9,q11,q18,q19,q20"
+    checkpoint_interval: 10000     # contract: 10 s
+    # event counts use the defaults from the nexmark section above
+
+  - name: forl0_optimized
+    description: "ForL0-tuned: higher event volume, no checkpoint, larger L0 cache"
+    queries: "q4,q5,q8,q9,q11,q18,q19,q20"
+    checkpoint_interval: 0         # disabled — measure raw state speed
+    event_multiplier: 2            # 2× contract event counts
+    forl0_overrides:
+      l0_cache_size: 128mb
+      initial_table_capacity: 512
+      max_table_capacity: 8192
+
 # Unit test benchmark settings
 unittest:
   num_keys: 100000               # Ultra-quick full-suite validation scale
@@ -62,6 +133,23 @@ unittest:
 client_usecase:
   num_records: 300          # Ultra-quick full-suite validation scale
   timeout_seconds: 7200      # Client usecase is heavy; allow up to 2h before treating as timeout
+
+# Client usecase scenario variants
+client_usecase_scenarios:
+  - name: contract_baseline
+    description: "Contract rule: original record volume, default settings"
+    num_records: 300
+    timeout_seconds: 7200
+
+  - name: forl0_optimized
+    description: "ForL0-tuned: higher volume, larger L0 cache, no checkpoint"
+    num_records: 3000
+    timeout_seconds: 14400
+    checkpoint_interval: 0
+    forl0_overrides:
+      l0_cache_size: 128mb
+      initial_table_capacity: 512
+      max_table_capacity: 8192
 
 
 benchset:

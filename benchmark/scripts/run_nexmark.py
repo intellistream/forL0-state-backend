@@ -24,7 +24,6 @@ import glob
 import re
 import math
 import statistics
-import requests
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +31,7 @@ from typing import Optional, Dict, List
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+from utils import requests_shim as requests  # type: ignore[assignment]
 from utils.config import load_config, parse_json_from_output
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 from utils.flamegraph_quality import analyze_flamegraph_quality
@@ -319,12 +319,10 @@ class NexmarkRunner:
         # Run mode (benchmark, test, etc.)
         self.mode = self.nexmark_config.get('mode', 'benchmark')
         
-        # Flink paths
-        flink_home_env = os.environ.get('FLINK_HOME')
-        if flink_home_env:
-            self.flink_home = Path(flink_home_env)
-        else:
-            self.flink_home = Path.home() / "flink" / "flink-1.20.0"
+        # Flink paths — auto-detect via shared utility
+        from utils.config import get_flink_home
+        fh = get_flink_home()
+        self.flink_home = Path(fh) if fh else Path.home() / 'flink' / 'flink-1.20.0'
         
         self.rest_url = self.flink_config.get('rest_url', 'http://localhost:8081')
         
@@ -1072,6 +1070,49 @@ class NexmarkRunner:
                     print(f"  {query}: {comp_perf:,.0f} vs {base_perf:,.0f} ({symbol}{diff_pct:.1f}%)")
 
 
+def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
+    """Apply a nexmark_scenarios entry to the config dict (returns a copy)."""
+    import copy
+    scenarios = config.get('nexmark_scenarios', [])
+    scenario = None
+    for s in scenarios:
+        if s.get('name') == scenario_name:
+            scenario = s
+            break
+    if not scenario:
+        print(f"ERROR: NexMark scenario '{scenario_name}' not found.")
+        print(f"Available: {[s.get('name') for s in scenarios]}")
+        sys.exit(1)
+
+    config = copy.deepcopy(config)
+
+    # Override queries
+    if 'queries' in scenario:
+        config['nexmark']['queries'] = scenario['queries']
+
+    # Override checkpoint interval
+    if 'checkpoint_interval' in scenario:
+        config['runtime']['nexmark_checkpoint_interval'] = scenario['checkpoint_interval']
+
+    # Scale event counts
+    mult = scenario.get('event_multiplier', 1)
+    if mult != 1:
+        for key in list(config['nexmark'].keys()):
+            if key.endswith('_events'):
+                config['nexmark'][key] = int(config['nexmark'][key] * mult)
+
+    # ForL0 backend overrides
+    forl0_overrides = scenario.get('forl0_overrides', {})
+    if forl0_overrides:
+        for b in config.get('backends', []):
+            if b.get('name') == 'forl0':
+                b.setdefault('config', {}).setdefault('workload_overrides', {}).setdefault('nexmark', {})
+                b['config']['workload_overrides']['nexmark'].update(forl0_overrides)
+
+    print(f"[NexMark] Scenario: {scenario_name} — {scenario.get('description', '')}")
+    return config
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run Nexmark DataStream benchmark")
     parser.add_argument("--backend", "-b", 
@@ -1087,11 +1128,17 @@ def main():
     parser.add_argument("--repeat", "-r",
                        type=int, default=None,
                        help="Repeat each query N times and aggregate by median")
+    parser.add_argument("--scenario", type=str, default=None,
+                       help="Run a named scenario from nexmark_scenarios in config")
     
     args = parser.parse_args()
     
     # Load config
     config = load_config()
+
+    # Apply scenario overrides if specified
+    if args.scenario:
+        config = apply_nexmark_scenario(config, args.scenario)
     
     # Determine backends
     if args.backend == "all":

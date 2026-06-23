@@ -23,14 +23,31 @@ def load_config():
 
 
 def get_flink_home():
-    """Get Flink home directory."""
+    """Get Flink home directory. Auto-detects from common locations if not set."""
+    # 1. Check environment variable first
+    env_val = os.environ.get('FLINK_HOME', '')
+    if env_val and Path(env_val).is_dir():
+        return env_val
+
+    # 2. Check config file (non-placeholder values)
     config = load_config()
-    flink_home = config.get('flink', {}).get('home', '${FLINK_HOME}')
-    if flink_home.startswith('${'):
-        # Resolve environment variable
-        env_var = flink_home[2:-1]
-        flink_home = os.environ.get(env_var, '')
-    return flink_home
+    cfg_val = config.get('flink', {}).get('home', '')
+    if cfg_val and not cfg_val.startswith('${') and Path(cfg_val).is_dir():
+        os.environ['FLINK_HOME'] = cfg_val
+        return cfg_val
+
+    # 3. Auto-detect: search common locations (newest version first)
+    for search_dir in [Path.home(), Path.home() / 'flink', Path('/opt'), Path('/usr/local')]:
+        if not search_dir.exists():
+            continue
+        candidates = sorted(search_dir.glob('flink-1.20.*'), reverse=True)
+        for candidate in candidates:
+            if (candidate / 'bin' / 'start-cluster.sh').exists():
+                os.environ['FLINK_HOME'] = str(candidate)
+                return str(candidate)
+
+    # 4. Fallback
+    return ''
 
 
 def get_results_dir(subdir='raw'):

@@ -20,6 +20,7 @@ package org.apache.flink.benchmark.wordcount;
 
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.benchmark.wordcount.sink.MetricsSink;
@@ -76,6 +77,7 @@ public class WordCountBenchmark {
         double skewFactor = params.getDouble("skewFactor", 1.1);
         int arrivalRate = params.getInt("arrivalRate", 0);  // records/s, 0 = unlimited (default: unlimited for max throughput)
         String workloadMode = params.get("workloadMode", "stateful_counter").toLowerCase();
+        String keyType = params.get("keyType", "string").toLowerCase();  // "string" or "long"
         int windowSize = params.getInt("windowSize", 5);
         int slideSizeMs = params.getInt("slideSize", 200);
         int parallelism = params.getInt("parallelism", 8);
@@ -93,12 +95,39 @@ public class WordCountBenchmark {
             env.enableCheckpointing(checkpointInterval);
         }
         
+        // When keyType=long, use Long keys to exercise ForL0's primitive fast paths
+        boolean useLongKeys = "long".equals(keyType);
+
+        DataStream<Tuple2<String, Long>> result;
+        if (useLongKeys && "stateful_counter".equals(workloadMode)) {
+            // Long-key stateful counter — exercises ForL0 LONG_VOID + addAndGetLong fast path
+            DataStream<Tuple2<Long, Long>> longSource = env
+                .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
+                .map(t -> Tuple2.of((long) t.f0.hashCode(), t.f1))
+                .returns(new TypeHint<Tuple2<Long, Long>>() {})
+                .name("LongKeySource");
+            DataStream<Tuple2<String, Long>> longResult = longSource
+                .keyBy(t -> t.f0)
+                .process(new LongKeyStatefulCounter())
+                .name("LongKeyStatefulCounter");
+            longResult.addSink(new MetricsSink(outputPath, parallelism, backend, numRecords))
+                .name("MetricsSink")
+                .setParallelism(1);
+            System.out.println("=== WordCount Benchmark (Long keys) ===");
+            System.out.println("workloadMode: " + workloadMode);
+            System.out.println("keyType: long");
+            System.out.println("numKeys: " + numKeys);
+            System.out.println("numRecords: " + numRecords);
+            System.out.println("parallelism: " + parallelism);
+            env.execute("Stateful WordCount Benchmark (Long keys)");
+            return;
+        }
+
         // Create skewed key source - outputs Tuple2<key, 1L>
         DataStream<Tuple2<String, Long>> source = env
             .addSource(new SkewedWordSource(numKeys, numRecords, skewFactor, arrivalRate))
             .name("SkewedKeySource");
         
-        DataStream<Tuple2<String, Long>> result;
         if ("sliding_window".equals(workloadMode)) {
             // Sliding processing-time window to match contract scenario.
             result = source
@@ -125,6 +154,7 @@ public class WordCountBenchmark {
         System.out.println("workloadMode: " + workloadMode);
         System.out.println("numKeys: " + numKeys);
         System.out.println("numRecords: " + numRecords);
+        System.out.println("keyType: " + keyType);
         System.out.println("skewFactor: " + skewFactor);
         System.out.println("arrivalRate: " + (arrivalRate > 0 ? arrivalRate + " records/s" : "unlimited"));
         if ("sliding_window".equals(workloadMode)) {
@@ -138,6 +168,65 @@ public class WordCountBenchmark {
         env.execute("Stateful WordCount Benchmark");
     }
     
+    /**
+     * Long-key stateful counter using ValueState<Long> with Long key.
+     *
+     * <p>Exercises ForL0's LONG_VOID + addAndGetLong fused JNI fast path.
+     * No String serialization, no GC from key objects.
+     */
+    public static class LongKeyStatefulCounter
+            extends KeyedProcessFunction<Long, Tuple2<Long, Long>, Tuple2<String, Long>> {
+
+        private static final long serialVersionUID = 1L;
+
+        private transient ValueState<Long> countState;
+        private transient LongAddAndGetFastPath countStateFastPath;
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            countState = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("count", Long.class));
+            countStateFastPath = resolveFastPath(countState);
+        }
+
+        @Override
+        public void processElement(
+            Tuple2<Long, Long> value,
+                Context ctx,
+            Collector<Tuple2<String, Long>> out) throws Exception {
+            long newCount;
+            if (countStateFastPath != null) {
+                newCount = countStateFastPath.addAndGet(value.f1);
+            } else {
+                Long currentCount = countState.value();
+                newCount = (currentCount == null) ? value.f1 : currentCount + value.f1;
+                countState.update(newCount);
+            }
+            out.collect(Tuple2.of(String.valueOf(value.f0), newCount));
+        }
+    }
+
+    @FunctionalInterface
+    interface LongAddAndGetFastPath {
+        long addAndGet(long delta) throws Exception;
+    }
+
+    private static LongAddAndGetFastPath resolveFastPath(ValueState<Long> state) {
+        try {
+            Method method = state.getClass().getMethod("addAndGetLong", long.class);
+            MethodHandle handle = MethodHandles.publicLookup().unreflect(method).bindTo(state);
+            return delta -> {
+                try {
+                    return (long) handle.invokeExact(delta);
+                } catch (Throwable throwable) {
+                    throw new RuntimeException("ForL0 addAndGetLong fast path failed", throwable);
+                }
+            };
+        } catch (NoSuchMethodException | IllegalAccessException ignored) {
+            return null;
+        }
+    }
+
     /**
          * Stateful counter using ValueState.
      * 
@@ -158,32 +247,11 @@ public class WordCountBenchmark {
         private transient ValueState<Long> countState;
         private transient LongAddAndGetFastPath countStateFastPath;
 
-        @FunctionalInterface
-        private interface LongAddAndGetFastPath {
-            long addAndGet(long delta) throws Exception;
-        }
-        
         @Override
         public void open(Configuration parameters) throws Exception {
             countState = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("count", Long.class));
             countStateFastPath = resolveFastPath(countState);
-        }
-
-        private static LongAddAndGetFastPath resolveFastPath(ValueState<Long> state) {
-            try {
-                Method method = state.getClass().getMethod("addAndGetLong", long.class);
-                MethodHandle handle = MethodHandles.publicLookup().unreflect(method).bindTo(state);
-                return delta -> {
-                    try {
-                        return (long) handle.invokeExact(delta);
-                    } catch (Throwable throwable) {
-                        throw new RuntimeException("ForL0 addAndGetLong fast path failed", throwable);
-                    }
-                };
-            } catch (NoSuchMethodException | IllegalAccessException ignored) {
-                return null;
-            }
         }
         
         @Override
