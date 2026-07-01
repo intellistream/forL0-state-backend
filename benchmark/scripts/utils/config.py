@@ -15,6 +15,11 @@ def get_benchmark_root():
     return Path(__file__).parent.parent.parent
 
 
+def get_project_root():
+    """Get the repository/install root directory."""
+    return get_benchmark_root().parent
+
+
 def load_config():
     """Load benchmark configuration."""
     config_path = get_benchmark_root() / "config" / "benchmark.yaml"
@@ -92,6 +97,10 @@ def find_jar(pattern, search_dir):
 
 def get_wordcount_jar():
     """Get path to WordCount benchmark JAR."""
+    env_jar = os.environ.get('WORDCOUNT_BENCHMARK_JAR', '')
+    if env_jar and Path(env_jar).is_file():
+        return env_jar
+
     wordcount_dir = get_benchmark_root() / "wordcount" / "target"
     jar = find_jar("wordcount-benchmark-*.jar", wordcount_dir)
     if jar and "original" not in jar:
@@ -101,17 +110,31 @@ def get_wordcount_jar():
     if shaded and "original" not in shaded:
         return shaded
     # Fallback: look in docker/deploy/ (pre-built JAR for air-gapped servers)
-    deploy_dir = get_benchmark_root() / "docker" / "deploy"
-    jar = find_jar("wordcount-benchmark-*.jar", deploy_dir)
-    if jar and "original" not in jar:
-        return jar
+    for deploy_dir in [
+        get_project_root() / "docker" / "deploy",
+        get_benchmark_root() / "docker" / "deploy",
+    ]:
+        jar = find_jar("wordcount-benchmark-*.jar", deploy_dir)
+        if jar and "original" not in jar:
+            return jar
     return None
 
 
 def get_nexmark_jar():
     """Get path to NexMark JAR."""
-    lib_dir = get_benchmark_root() / "lib"
-    return find_jar("nexmark-flink-*.jar", lib_dir)
+    env_jar = os.environ.get('NEXMARK_FLINK_JAR', '')
+    if env_jar and Path(env_jar).is_file():
+        return env_jar
+
+    for search_dir in [
+        get_benchmark_root() / "lib",
+        get_project_root() / "docker" / "deploy",
+        get_benchmark_root() / "docker" / "deploy",
+    ]:
+        jar = find_jar("nexmark-flink-*.jar", search_dir)
+        if jar and "original" not in jar:
+            return jar
+    return None
 
 
 def parse_json_from_output(output, start_marker="JSON_RESULT_START", end_marker="JSON_RESULT_END"):

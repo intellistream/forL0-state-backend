@@ -13,6 +13,7 @@
 #    ./docker/package_offline_bundle.sh --skip-tests
 #    ./docker/package_offline_bundle.sh --skip-docker-save
 #    ./docker/package_offline_bundle.sh --output-dir /tmp/offline-artifacts
+#    ./docker/package_offline_bundle.sh --skip-python-wheels
 ################################################################################
 
 set -euo pipefail
@@ -23,6 +24,7 @@ OUTPUT_DIR="${REPO_ROOT}/offline-artifacts"
 SKIP_TESTS=true
 SKIP_DOCKER_SAVE=false
 COPY_PROFILER=true
+DOWNLOAD_PYTHON_WHEELS=true
 DOCKER_IMAGE="eclipse-temurin:8-jre"
 ARCH=""
 DOCKER_PLATFORM=""
@@ -98,8 +100,9 @@ usage() {
   --with-tests           编译时执行测试（默认跳过）
   --skip-tests           编译时跳过测试（默认）
   --skip-docker-save     不导出 docker/images/eclipse-temurin-8-jre.tar
+  --skip-python-wheels   不下载 benchmark Python 依赖 wheels
   --no-profiler          不处理 async-profiler 离线包
-    --arch NAME            目标架构: arm64 或 x64（默认按当前机器自动判断）
+  --arch NAME            目标架构: arm64 或 x64（默认按当前机器自动判断）
   -h, --help             显示帮助
 EOF
 }
@@ -120,6 +123,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-docker-save)
             SKIP_DOCKER_SAVE=true
+            shift
+            ;;
+        --skip-python-wheels)
+            DOWNLOAD_PYTHON_WHEELS=false
             shift
             ;;
         --no-profiler)
@@ -168,31 +175,31 @@ echo "  OutputDir:  ${OUTPUT_DIR}"
 echo "  Arch:       ${ARCH} (${DOCKER_PLATFORM})"
 echo ""
 
-echo "[1/8] 编译 ForL0 backend"
+echo "[1/10] 编译 ForL0 backend"
 (cd "$REPO_ROOT" && mvn "${MVN_ARGS[@]}")
 
-echo "[2/8] 编译 native 库"
+echo "[2/10] 编译 native 库"
 (cd "$REPO_ROOT/src/main/native" && make clean && make && make install)
 
-echo "[3/8] 编译 WordCount benchmark"
+echo "[3/10] 编译 WordCount benchmark"
 (cd "$REPO_ROOT/benchmark/wordcount" && mvn "${MVN_ARGS[@]}")
 
 if [[ -d "$REPO_ROOT/benchmark/unit-test" ]]; then
-    echo "[4/8] 编译 unit-test benchmark"
+    echo "[4/10] 编译 unit-test benchmark"
     (cd "$REPO_ROOT/benchmark/unit-test" && mvn "${MVN_ARGS[@]}")
 fi
 
 if [[ -d "$REPO_ROOT/benchmark/nexmark-src" ]]; then
-    echo "[5/8] 编译 NexMark"
+    echo "[5/10] 编译 NexMark"
     (cd "$REPO_ROOT/benchmark/nexmark-src" && mvn "${MVN_ARGS[@]}")
 fi
 
 if [[ -d "$REPO_ROOT/client_usecase/XX_6000c_Demo" ]]; then
-    echo "[6/8] 编译 client_usecase"
+    echo "[6/10] 编译 client_usecase"
     (cd "$REPO_ROOT/client_usecase/XX_6000c_Demo" && mvn "${MVN_ARGS[@]}")
 fi
 
-echo "[7/8] 收集离线部署产物到 docker/deploy"
+echo "[7/10] 收集离线部署产物到 docker/deploy"
 cp -f "$REPO_ROOT/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
 
 if [[ -f "$REPO_ROOT/src/main/resources/native/libforl0_engine.so" ]]; then
@@ -233,8 +240,26 @@ if [[ "$COPY_PROFILER" == "true" ]]; then
     fi
 fi
 
+if [[ "$DOWNLOAD_PYTHON_WHEELS" == "true" ]]; then
+    echo "[8/10] 收集 benchmark Python 离线依赖"
+    if [[ -d "$REPO_ROOT/benchmark/offline-packages" ]]; then
+        cp -a "$REPO_ROOT/benchmark/offline-packages/." "$REPO_ROOT/offline-packages/" 2>/dev/null || true
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        if python3 -m pip download --only-binary=:all: -r "$REPO_ROOT/benchmark/requirements.txt" -d "$REPO_ROOT/offline-packages"; then
+            echo "      ✓ Python wheels 已保存到 offline-packages/"
+        else
+            echo "      ⚠ Python wheels 下载未完全成功；如目标机离线运行失败，请补齐 offline-packages/"
+        fi
+    else
+        echo "      ⚠ 未找到 python3，跳过 Python wheels 下载"
+    fi
+else
+    echo "[8/10] 跳过 benchmark Python 离线依赖收集"
+fi
+
 if [[ "$SKIP_DOCKER_SAVE" == "false" ]]; then
-    echo "[8/8] 导出 Docker 镜像 ${DOCKER_IMAGE} (${DOCKER_PLATFORM})"
+    echo "[9/10] 导出 Docker 镜像 ${DOCKER_IMAGE} (${DOCKER_PLATFORM})"
     if ensure_docker_image_for_platform "$DOCKER_IMAGE" "$DOCKER_PLATFORM"; then
         if docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
             docker save "$DOCKER_IMAGE" -o "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar"
@@ -245,14 +270,39 @@ if [[ "$SKIP_DOCKER_SAVE" == "false" ]]; then
         echo "      ⚠ 无法获取镜像 ${DOCKER_IMAGE} (${DOCKER_PLATFORM})，跳过导出"
     fi
 else
-    echo "[8/8] 跳过 Docker 镜像导出"
+    echo "[9/10] 跳过 Docker 镜像导出"
 fi
 
 cp -a "$REPO_ROOT/docker/deploy/." "$OUTPUT_DIR/"
 cp -a "$REPO_ROOT/docker/images/." "$OUTPUT_DIR/" 2>/dev/null || true
 cp -a "$REPO_ROOT/offline-packages/." "$OUTPUT_DIR/" 2>/dev/null || true
 
-echo "[9/9] 生成离线校验清单"
+mkdir -p "$OUTPUT_DIR/artifacts" \
+         "$OUTPUT_DIR/benchmark" \
+         "$OUTPUT_DIR/docker" \
+         "$OUTPUT_DIR/docker/images" \
+         "$OUTPUT_DIR/docs"
+
+cp -a "$REPO_ROOT/docker/deploy/." "$OUTPUT_DIR/artifacts/"
+cp -a "$REPO_ROOT/docker/images/." "$OUTPUT_DIR/docker/images/" 2>/dev/null || true
+cp -a "$REPO_ROOT/offline-packages" "$OUTPUT_DIR/benchmark/" 2>/dev/null || true
+cp -a "$REPO_ROOT/benchmark/config" "$OUTPUT_DIR/benchmark/"
+cp -a "$REPO_ROOT/benchmark/scripts" "$OUTPUT_DIR/benchmark/"
+rm -rf "$OUTPUT_DIR/benchmark/scripts/__pycache__"
+cp -f "$REPO_ROOT/benchmark/requirements.txt" "$OUTPUT_DIR/benchmark/"
+cp -a "$REPO_ROOT/docker/conf" "$OUTPUT_DIR/docker/"
+for script in docker_run.sh server_setup.sh run_all_apps.sh install_offline_bundle.sh start.sh stop.sh restart.sh; do
+    if [[ -f "$REPO_ROOT/docker/$script" ]]; then
+        cp -f "$REPO_ROOT/docker/$script" "$OUTPUT_DIR/docker/"
+    fi
+done
+if [[ -d "$REPO_ROOT/交付文档" ]]; then
+    cp -a "$REPO_ROOT/交付文档" "$OUTPUT_DIR/docs/"
+elif [[ -d "$REPO_ROOT/docs" ]]; then
+    cp -a "$REPO_ROOT/docs/." "$OUTPUT_DIR/docs/"
+fi
+
+echo "[10/10] 生成离线校验清单"
 MANIFEST_FILE="$OUTPUT_DIR/offline_bundle_manifest.txt"
 CHECKSUM_FILE="$OUTPUT_DIR/offline_bundle_sha256.txt"
 {

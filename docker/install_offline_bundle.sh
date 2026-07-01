@@ -10,7 +10,7 @@
 #  说明:
 #    1. 脚本默认在解压后的离线包目录内执行
 #    2. 不依赖网络，不会尝试下载任何内容
-#    3. 如需启动 Docker 集群，目标机必须已提前准备好本地 Docker 镜像
+#    3. 如需启动 Docker 集群，目标机必须已提前准备好本地 Docker 镜像或离线包内包含 docker/images/*.tar
 ################################################################################
 
 set -euo pipefail
@@ -72,10 +72,37 @@ if [[ -z "$FLINK_DIR" ]]; then
     exit 1
 fi
 
-BACKEND_JAR="${BUNDLE_ROOT}/artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
-NATIVE_LIB="${BUNDLE_ROOT}/artifacts/libforl0_engine.so"
-WORDCOUNT_JAR="${BUNDLE_ROOT}/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar"
-PROFILER_DIR="${BUNDLE_ROOT}/tools/async-profiler-4.4-linux-arm64"
+pick_first_file() {
+    for candidate in "$@"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+BACKEND_JAR="$(pick_first_file \
+    "${BUNDLE_ROOT}/artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
+    "${BUNDLE_ROOT}/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
+    "${BUNDLE_ROOT}/flink-statebackend-forl0-1.0-SNAPSHOT.jar")"
+NATIVE_LIB="$(pick_first_file \
+    "${BUNDLE_ROOT}/artifacts/libforl0_engine.so" \
+    "${BUNDLE_ROOT}/libforl0_engine.so")"
+WORDCOUNT_JAR="$(pick_first_file \
+    "${BUNDLE_ROOT}/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar" \
+    "${BUNDLE_ROOT}/wordcount-benchmark-1.0-SNAPSHOT.jar")"
+UNITTEST_JAR="$(pick_first_file \
+    "${BUNDLE_ROOT}/artifacts/unit-test-benchmark-1.0-SNAPSHOT.jar" \
+    "${BUNDLE_ROOT}/unit-test-benchmark-1.0-SNAPSHOT.jar" || true)"
+NEXMARK_JAR="$(pick_first_file \
+    "${BUNDLE_ROOT}/artifacts/nexmark-flink-0.3-SNAPSHOT.jar" \
+    "${BUNDLE_ROOT}/nexmark-flink-0.3-SNAPSHOT.jar" || true)"
+PROFILER_ARCHIVE="$(pick_first_file \
+    "${BUNDLE_ROOT}/benchmark/offline-packages/async-profiler-4.4-linux-arm64.tar.gz" \
+    "${BUNDLE_ROOT}/benchmark/offline-packages/async-profiler-4.4-linux-x64.tar.gz" \
+    "${BUNDLE_ROOT}/async-profiler-4.4-linux-arm64.tar.gz" \
+    "${BUNDLE_ROOT}/async-profiler-4.4-linux-x64.tar.gz" || true)"
 
 for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR"; do
     if [[ ! -f "$required" ]]; then
@@ -98,53 +125,103 @@ echo "  Install Dir:  ${INSTALL_DIR}"
 echo ""
 
 mkdir -p "${FLINK_DIR}/lib" "${FLINK_DIR}/native"
-mkdir -p "${INSTALL_DIR}/artifacts" "${INSTALL_DIR}/benchmark" "${INSTALL_DIR}/docker" "${INSTALL_DIR}/docs"
+mkdir -p "${INSTALL_DIR}/artifacts" "${INSTALL_DIR}/benchmark" "${INSTALL_DIR}/docker/deploy" "${INSTALL_DIR}/docs"
 
 echo "[1/5] 安装 backend JAR 到 Flink lib/"
 rm -f "${FLINK_DIR}/lib"/flink-statebackend-forl0-*.jar
 rm -f "${FLINK_DIR}/lib"/flink-statebackend-forL0-*.jar
 cp "$BACKEND_JAR" "${FLINK_DIR}/lib/"
+if [[ -n "$NEXMARK_JAR" && -f "$NEXMARK_JAR" ]]; then
+    cp "$NEXMARK_JAR" "${FLINK_DIR}/lib/"
+fi
 
 echo "[2/5] 安装 native 库到 Flink native/"
 cp "$NATIVE_LIB" "${FLINK_DIR}/native/"
 
 echo "[3/5] 同步 benchmark、docker、docs 到安装目录"
-cp "$WORDCOUNT_JAR" "${INSTALL_DIR}/artifacts/"
-rm -rf "${INSTALL_DIR}/benchmark/config" "${INSTALL_DIR}/benchmark/scripts"
-cp -r "${BUNDLE_ROOT}/benchmark/config" "${INSTALL_DIR}/benchmark/"
-cp -r "${BUNDLE_ROOT}/benchmark/scripts" "${INSTALL_DIR}/benchmark/"
+if [[ -d "${BUNDLE_ROOT}/artifacts" ]]; then
+    cp -a "${BUNDLE_ROOT}/artifacts/." "${INSTALL_DIR}/artifacts/"
+    cp -a "${BUNDLE_ROOT}/artifacts/." "${INSTALL_DIR}/docker/deploy/"
+else
+    cp "$WORDCOUNT_JAR" "${INSTALL_DIR}/artifacts/"
+    cp "$WORDCOUNT_JAR" "${INSTALL_DIR}/docker/deploy/"
+fi
+[[ -n "$UNITTEST_JAR" && -f "$UNITTEST_JAR" ]] && cp "$UNITTEST_JAR" "${INSTALL_DIR}/artifacts/"
+[[ -n "$NEXMARK_JAR" && -f "$NEXMARK_JAR" ]] && cp "$NEXMARK_JAR" "${INSTALL_DIR}/artifacts/"
+[[ -n "$UNITTEST_JAR" && -f "$UNITTEST_JAR" ]] && cp "$UNITTEST_JAR" "${INSTALL_DIR}/docker/deploy/"
+[[ -n "$NEXMARK_JAR" && -f "$NEXMARK_JAR" ]] && cp "$NEXMARK_JAR" "${INSTALL_DIR}/docker/deploy/"
+
+rm -rf "${INSTALL_DIR}/benchmark/config" "${INSTALL_DIR}/benchmark/scripts" "${INSTALL_DIR}/benchmark/offline-packages"
+if [[ -d "${BUNDLE_ROOT}/benchmark/config" ]]; then
+    cp -r "${BUNDLE_ROOT}/benchmark/config" "${INSTALL_DIR}/benchmark/"
+fi
+if [[ -d "${BUNDLE_ROOT}/benchmark/scripts" ]]; then
+    cp -r "${BUNDLE_ROOT}/benchmark/scripts" "${INSTALL_DIR}/benchmark/"
+fi
+if [[ -d "${BUNDLE_ROOT}/benchmark/offline-packages" ]]; then
+    cp -r "${BUNDLE_ROOT}/benchmark/offline-packages" "${INSTALL_DIR}/benchmark/"
+elif compgen -G "${BUNDLE_ROOT}/*.whl" >/dev/null || compgen -G "${BUNDLE_ROOT}/*.tar.gz" >/dev/null; then
+    mkdir -p "${INSTALL_DIR}/benchmark/offline-packages"
+    cp "${BUNDLE_ROOT}"/*.whl "${INSTALL_DIR}/benchmark/offline-packages/" 2>/dev/null || true
+    cp "${BUNDLE_ROOT}"/async-profiler-*.tar.gz "${INSTALL_DIR}/benchmark/offline-packages/" 2>/dev/null || true
+fi
+if [[ -f "${BUNDLE_ROOT}/benchmark/requirements.txt" ]]; then
+    cp "${BUNDLE_ROOT}/benchmark/requirements.txt" "${INSTALL_DIR}/benchmark/"
+fi
+
 rm -rf "${INSTALL_DIR}/docker/conf"
-cp -r "${BUNDLE_ROOT}/docker/conf" "${INSTALL_DIR}/docker/"
-cp "${BUNDLE_ROOT}/docker/docker_run.sh" "${INSTALL_DIR}/docker/"
-cp "${BUNDLE_ROOT}/docker/start.sh" "${INSTALL_DIR}/docker/"
-cp "${BUNDLE_ROOT}/docker/stop.sh" "${INSTALL_DIR}/docker/"
-cp "${BUNDLE_ROOT}/docker/restart.sh" "${INSTALL_DIR}/docker/"
-cp "${BUNDLE_ROOT}/docker/install_offline_bundle.sh" "${INSTALL_DIR}/docker/"
-cp -r "${BUNDLE_ROOT}/docs/." "${INSTALL_DIR}/docs/"
+if [[ -d "${BUNDLE_ROOT}/docker/conf" ]]; then
+    cp -r "${BUNDLE_ROOT}/docker/conf" "${INSTALL_DIR}/docker/"
+fi
+for script in docker_run.sh server_setup.sh run_all_apps.sh start.sh stop.sh restart.sh install_offline_bundle.sh; do
+    if [[ -f "${BUNDLE_ROOT}/docker/${script}" ]]; then
+        cp "${BUNDLE_ROOT}/docker/${script}" "${INSTALL_DIR}/docker/"
+    fi
+done
+if [[ -d "${BUNDLE_ROOT}/docker/images" ]]; then
+    rm -rf "${INSTALL_DIR}/docker/images"
+    cp -r "${BUNDLE_ROOT}/docker/images" "${INSTALL_DIR}/docker/"
+fi
+if [[ -d "${BUNDLE_ROOT}/docs" ]]; then
+    cp -r "${BUNDLE_ROOT}/docs/." "${INSTALL_DIR}/docs/" 2>/dev/null || true
+fi
 
 if [[ "$COPY_PROFILER" == "true" ]]; then
     echo "[4/5] 复制 async-profiler 到安装目录"
-    rm -rf "${INSTALL_DIR}/tools/async-profiler-4.4-linux-arm64"
     mkdir -p "${INSTALL_DIR}/tools"
-    cp -r "$PROFILER_DIR" "${INSTALL_DIR}/tools/"
+    if [[ -n "$PROFILER_ARCHIVE" && -f "$PROFILER_ARCHIVE" ]]; then
+        tar -xzf "$PROFILER_ARCHIVE" -C "${INSTALL_DIR}/tools"
+    else
+        echo "      ⚠ 离线包中未找到 async-profiler 压缩包"
+    fi
 else
     echo "[4/5] 跳过 profiler 复制（如需 flame graph，可加 --copy-profiler）"
 fi
 
-cat > "${INSTALL_DIR}/forl0-offline.env" <<EOF
+write_env_file() {
+    local env_file="$1"
+    cat > "$env_file" <<EOF
 export FLINK_HOME="${FLINK_DIR}"
 export FORL0_BUNDLE_ROOT="${INSTALL_DIR}"
 export FORL0_NATIVE_DIR="${FLINK_DIR}/native"
 export WORDCOUNT_BENCHMARK_JAR="${INSTALL_DIR}/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar"
+export UNITTEST_BENCHMARK_JAR="${INSTALL_DIR}/artifacts/unit-test-benchmark-1.0-SNAPSHOT.jar"
+export NEXMARK_FLINK_JAR="${INSTALL_DIR}/artifacts/nexmark-flink-0.3-SNAPSHOT.jar"
+export REPO_ROOT="${INSTALL_DIR}"
+export FORL0_OFFLINE=true
 EOF
+}
 
-echo "[5/5] 写出环境文件 ${INSTALL_DIR}/forl0-offline.env"
+write_env_file "${INSTALL_DIR}/forl0-offline.env"
+write_env_file "${INSTALL_DIR}/docker/forl0-local.env"
 
-chmod +x "${INSTALL_DIR}/docker/docker_run.sh" \
-         "${INSTALL_DIR}/docker/start.sh" \
-         "${INSTALL_DIR}/docker/stop.sh" \
-         "${INSTALL_DIR}/docker/restart.sh" \
-         "${INSTALL_DIR}/docker/install_offline_bundle.sh"
+echo "[5/5] 写出环境文件 ${INSTALL_DIR}/forl0-offline.env 与 docker/forl0-local.env"
+
+for script in docker_run.sh server_setup.sh run_all_apps.sh start.sh stop.sh restart.sh install_offline_bundle.sh; do
+    if [[ -f "${INSTALL_DIR}/docker/${script}" ]]; then
+        chmod +x "${INSTALL_DIR}/docker/${script}"
+    fi
+done
 
 echo ""
 echo "安装完成。"

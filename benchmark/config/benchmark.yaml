@@ -80,7 +80,6 @@ wordcount_scenarios:
     checkpoint_interval: 0
     parallelism: 8
 
-
 # NexMark benchmark settings
 nexmark:
   # NexMark queries to run (all stateful queries for full benchmark)
@@ -120,6 +119,129 @@ nexmark_scenarios:
       l0_cache_size: 128mb
       initial_table_capacity: 512
       max_table_capacity: 8192
+
+  - name: forl0_q5_tps_probe
+    description: "Non-contract probe: NexMark q5 steady-state TPS mode with sink backpressure"
+    queries: "q5"
+    checkpoint_interval: 0
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 49
+    bid_proportion: 50
+    # events.num=0 switches NexMark to TPS/monitor-duration mode.
+    tps: 50000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 10s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 60s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 1
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q5: 0
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_tps_probe
+    description: "Non-contract probe: per-query NexMark steady-state TPS mode with sink throughput"
+    queries: "q4,q5,q8,q9,q11,q18,q19,q20"
+    category: forl0
+    checkpoint_interval: 0
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 49
+    bid_proportion: 50
+    # Query-specific TPS values keep the standalone Flink cluster stable while
+    # still driving each query into steady backpressure.
+    tps: 2000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 10s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 60s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 1
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q4: 0
+      q5: 0
+      q8: 0
+      q9: 0
+      q11: 0
+      q18: 0
+      q19: 0
+      q20: 0
+    query_overrides:
+      q4:
+        tps: 500000
+        metric_monitor_delay: 20s
+      q5:
+        tps: 2000000
+        metric_monitor_delay: 20s
+      q8:
+        tps: 1000000
+        person_proportion: 25
+        auction_proportion: 25
+        bid_proportion: 50
+        metric_monitor_delay: 20s
+      q9:
+        tps: 50000
+        metric_monitor_delay: 20s
+      q11:
+        tps: 200000
+        person_proportion: 10
+        auction_proportion: 10
+        bid_proportion: 80
+        metric_monitor_delay: 30s
+        metric_monitor_duration: 90s
+      q18:
+        tps: 5000000
+        metric_monitor_delay: 10s
+      q19:
+        tps: 1000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        metric_monitor_delay: 50s
+        metric_monitor_duration: 60s
+      q20:
+        tps: 200000
+        metric_monitor_delay: 20s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
 
 # Unit test benchmark settings
 unittest:

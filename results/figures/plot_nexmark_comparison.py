@@ -26,11 +26,9 @@ KUNPENG = {
     "Baseline (prior eval.)":  [181, 104, NAN, 111, 85, 116, 167, 121],
 }
 
-# Intel 三档 TaskManager 内存
-# np.nan 用于占位"卡死"
+# Intel TaskManager memory sweep.  The formal report keeps only configurations
+# where every query has a completed timing result.
 INTEL = {
-    ("16G", "heap"):  [352, 63, 39, 232, 44, 53, NAN, NAN],
-    ("16G", "forl0"): [ 61, 56, 36,  46, 35, 34,  47,  40],
     ("18G", "heap"):  [156, 64, 36,  46, 53, 53, 279, 313],
     ("18G", "forl0"): [ 57, 52, 36,  46, 37, 38,  45,  38],
     ("20G", "heap"):  [ 57, 64, 38,  45, 37, 61, 123,  84],
@@ -65,10 +63,10 @@ C_FORL0    = "#1e406e"   # accent dark blue (matches doc accent)
 C_FORL0_2  = "#5a8fc7"   # lighter blue for the no-L0 variant
 C_BASELINE = "#e0a96d"   # warm orange for prior baseline (收益评估)
 C_BARS_INTEL = {
-    "heap":  ["#c9d2dd", "#a7b3c2", "#7d8da3"],   # gray family for 3 sizes
-    "forl0": ["#7fb0e0", "#3d78b8", "#1e406e"],   # blue family for 3 sizes
+    "heap":  ["#a7b3c2", "#7d8da3"],   # gray family for 2 sizes
+    "forl0": ["#3d78b8", "#1e406e"],   # blue family for 2 sizes
 }
-SIZE_ORDER = ["16G", "18G", "20G"]
+SIZE_ORDER = ["18G", "20G"]
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +120,11 @@ n_backends = 2
 group_w = 0.85
 sub_w = group_w / (n_sizes * n_backends)
 
-# inner offsets:  per query group we plot 6 bars: heap16, fl0_16, heap18, fl0_18, heap20, fl0_20
+# inner offsets: per query group we plot 4 bars: heap18, fl0_18, heap20, fl0_20
 offsets = []
 for i, sz in enumerate(SIZE_ORDER):
     for j, be in enumerate(["heap", "forl0"]):
         offsets.append((sz, be, (i * n_backends + j - (n_sizes * n_backends - 1) / 2) * sub_w))
-
-stuck_marker_y = 280  # marker height for卡死
 
 for sz, be, off in offsets:
     vals = list(INTEL[(sz, be)])
@@ -137,22 +133,14 @@ for sz, be, off in offsets:
     label = f"{be} {sz}"
     ax.bar(x + off, plot_vals, sub_w, color=color, edgecolor="white",
            linewidth=0.4, label=label)
-    # Mark "卡死" with a hatched segment + label
-    for i, v in enumerate(vals):
-        if np.isnan(v):
-            ax.bar(x[i] + off, stuck_marker_y, sub_w, color="none",
-                   edgecolor="#7a1f1f", linewidth=0.8, hatch="////")
-            ax.text(x[i] + off, stuck_marker_y + 6, "stuck",
-                    ha="center", va="bottom", fontsize=7,
-                    color="#7a1f1f", rotation=90)
 
 ax.set_xticks(x)
 ax.set_xticklabels(QUERIES)
 ax.set_ylabel("Execution time (s)")
-ax.set_title("(b) Intel x86_64 (TaskManager memory sweep: 16G / 18G / 20G)")
+ax.set_title("(b) Intel x86_64 (TaskManager memory sweep: 18G / 20G)")
 ax.set_ylim(0, 400)
 
-# Custom compact legend: two rows (heap/forl0) × (16G/18G/20G)
+# Custom compact legend: two rows (heap/forl0) × (18G/20G)
 from matplotlib.patches import Patch
 legend_handles = []
 for be, name in [("heap", "HashMap"), ("forl0", "ForL0")]:

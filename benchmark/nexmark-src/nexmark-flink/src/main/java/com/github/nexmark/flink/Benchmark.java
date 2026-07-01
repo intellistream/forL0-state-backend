@@ -75,7 +75,7 @@ public class Benchmark {
 		DefaultParser parser = new DefaultParser();
 		CommandLine line = parser.parse(options, args, true);
 		Path location = new File(line.getOptionValue(LOCATION.getOpt())).toPath();
-		String category = CATEGORY.getValue(CATEGORY_OA).toLowerCase();
+		String category = line.getOptionValue(CATEGORY.getOpt(), CATEGORY_OA).toLowerCase();
 		boolean isQueryOa = CATEGORY_OA.equals(category);
 		Path queryLocation = isQueryOa ? location.resolve("queries") : location.resolve("queries-" + category);
 		List<String> queries = getQueries(queryLocation, line.getOptionValue(QUERIES.getOpt()), isQueryOa);
@@ -103,6 +103,7 @@ public class Benchmark {
 		Duration monitorDelay = nexmarkConf.get(FlinkNexmarkOptions.METRIC_MONITOR_DELAY);
 		Duration monitorInterval = nexmarkConf.get(FlinkNexmarkOptions.METRIC_MONITOR_INTERVAL);
 		Duration monitorDuration = nexmarkConf.get(FlinkNexmarkOptions.METRIC_MONITOR_DURATION);
+		String tpsVertex = nexmarkConf.get(FlinkNexmarkOptions.METRIC_TPS_VERTEX);
 
 		WorkloadSuite workloadSuite = WorkloadSuite.fromConf(nexmarkConf, category);
 
@@ -117,6 +118,7 @@ public class Benchmark {
 					monitorDelay,
 					monitorInterval,
 					monitorDuration,
+					tpsVertex,
 					location,
 					flinkDist,
 					totalMetrics,
@@ -175,6 +177,7 @@ public class Benchmark {
 			Duration monitorDelay,
 			Duration monitorInterval,
 			Duration monitorDuration,
+			String tpsVertex,
 			Path location,
 			Path flinkDist,
 			LinkedHashMap<String, JobBenchmarkMetric> totalMetrics,
@@ -193,7 +196,8 @@ public class Benchmark {
 							cpuMetricReceiver,
 							monitorDelay,
 							monitorInterval,
-							monitorDuration);
+							monitorDuration,
+							tpsVertex);
 			QueryRunner runner =
 					new QueryRunner(
 							queryName,

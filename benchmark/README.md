@@ -42,6 +42,38 @@ benchmark/
 
 ## 快速开始
 
+### 离线一键运行完整实验并生成报告
+
+联网/构建机先生成离线包：
+
+```bash
+cd /path/to/forL0-state-backend
+./docker/package_offline_bundle.sh --arch arm64 --output-dir /tmp/forl0-offline
+```
+
+离线目标机安装并运行：
+
+```bash
+cd /path/to/forl0-offline/docker
+./install_offline_bundle.sh --flink-home /path/to/flink-1.20.3 --install-dir ~/forl0-runtime
+
+cd ~/forl0-runtime/docker
+./run_all_apps.sh --offline --test apps --backend all --no-profile
+```
+
+运行完成后，HTML 报告位于：
+
+```bash
+~/forl0-runtime/benchmark/results/reports/benchmark_report.html
+```
+
+如果只需要基于已有结果重新生成报告：
+
+```bash
+cd ~/forl0-runtime/docker
+./run_all_apps.sh --offline --report-only --no-profile
+```
+
 ### 1. 安装依赖
 
 ```bash
@@ -108,7 +140,8 @@ python scripts/run_benchmark.py [OPTIONS]
 | `--test` | `unittest`, `wordcount`, `nexmark`, `client_usecase`, `benchset`, `all` | `all` | 测试类型 |
 | `--backend` | `hashmap`, `forl0`, `all` | `all` | State Backend |
 | `--query` | `q4,q5,q8,...` | `all` | NexMark 查询 (仅 nexmark) |
-| `--profile` | 无参数 | 关闭 | 启用 Async Profiler 采集火焰图 |
+| `--scenario` | WordCount: `contract_baseline`, `stateful_counter`, `high_cardinality`; NexMark: `contract_baseline`, `forl0_optimized`, `forl0_tps_probe`, `forl0_q5_tps_probe` | 无 | 应用 WordCount 或 NexMark 场景配置 |
+| `--profile` | `cpu`, `cache`, `uarch`, `memory`, `hotspots` | 关闭 | 启用 profiling |
 
 ### Client usecase
 
@@ -143,8 +176,15 @@ python scripts/run_benchmark.py --test wordcount --backend forl0
 # 运行 NexMark Q5 和 Q8
 python scripts/run_benchmark.py --test nexmark --query q5,q8 --backend all
 
+# 非合同项：NexMark 逐查询稳态 TPS 模式，使用 sink 输入 TPS 观察端到端完成吞吐
+# 为避免 cancel 残留影响，建议 HashMap / ForL0 分开跑，并在两次之间重启 Flink。
+../docker/run_all_apps.sh --test nexmark --scenario forl0_tps_probe --backend hashmap --query q18 --no-profile
+../docker/run_all_apps.sh --test nexmark --scenario forl0_tps_probe --backend forl0 --query q18 --no-profile
+../docker/run_all_apps.sh --test nexmark --scenario forl0_tps_probe --backend hashmap --query q5 --no-profile
+../docker/run_all_apps.sh --test nexmark --scenario forl0_tps_probe --backend forl0 --query q5 --no-profile
+
 # 运行测试并采集火焰图
-python scripts/run_wordcount.py --backend all --profile
+python scripts/run_benchmark.py --test nexmark --scenario forl0_tps_probe --backend forl0 --query q18 --profile cpu
 ```
 
 ---

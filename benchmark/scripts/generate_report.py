@@ -372,7 +372,7 @@ def plot_wordcount_comparison(results, output_dir):
 
 
 def plot_nexmark_comparison(results, output_dir):
-    """Generate NexMark throughput comparison figure for all queries."""
+    """Generate a per-query NexMark throughput comparison figure."""
     nexmark_results = results.get('nexmark', {})
     
     # Dynamically collect available queries from results
@@ -427,14 +427,14 @@ def plot_nexmark_comparison(results, output_dir):
     ax.set_xticklabels([q.upper() for q in queries])
     ax.set_ylabel('Throughput per Core (records/s)')
     ax.set_xlabel('NexMark Query')
-    ax.set_title('NexMark Benchmark: Throughput Comparison')
+    ax.set_title('NexMark Benchmark: Per-Query Throughput Comparison')
     ax.legend(loc='upper right')
     
     # Add improvement labels
     for i, (h, f) in enumerate(zip(hashmap_vals, forl0_vals)):
         if h > 0 and f > 0:
             imp = ((f - h) / h) * 100
-            ax.text(i + width/2, f + max(forl0_vals)*0.02, f'+{imp:.0f}%',
+            ax.text(i + width/2, f + max(forl0_vals)*0.02, f'{imp:+.0f}%',
                    ha='center', fontsize=9, color='green', fontweight='bold')
     
     plt.tight_layout()

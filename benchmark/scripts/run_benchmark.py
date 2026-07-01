@@ -18,12 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from run_wordcount import run_wordcount, save_result
-from run_nexmark import NexmarkRunner
+from run_wordcount import run_wordcount, run_wordcount_scenario, save_result
+from run_nexmark import NexmarkRunner, apply_nexmark_scenario
 from run_unittest import run_unittest
 from run_client_usecase import run_client_usecase
-from run_benchset import run_benchset, print_benchset_summary, BENCHMARKS as BENCHSET_BENCHMARKS
-from generate_report import generate_benchset_paper_artifacts
 from utils.config import load_config
 
 
@@ -54,6 +52,13 @@ def run_all_benchmarks(config, backends, profile=False):
 
 def print_summary(results, backends):
     """Print summary of all benchmark results."""
+    def fmt_rate(value, width=15):
+        if value >= 1000000:
+            return f"{value/1000000:>{width - 4}.2f} M/s"
+        if value >= 1000:
+            return f"{value/1000:>{width - 4}.2f} K/s"
+        return f"{value:>{width - 3}.0f} /s"
+
     print("\n" + "=" * 70)
     print("                    BENCHMARK SUMMARY")
     print("=" * 70)
@@ -141,9 +146,10 @@ def print_summary(results, backends):
         
         if all_queries:
             # Print header
-            header = f"{'Query':<8}{'Time(s)':<10}"
+            header = f"{'Query':<8}{'Proc(s)':<10}"
             for backend in backends:
-                header += f"{backend + ' (eps)':>18}"
+                header += f"{backend + ' proc eps':>18}"
+                header += f"{'report eps':>15}"
                 if not is_macos:
                     header += f"{'(/core)':>12}"
             if len(backends) == 2:
@@ -157,6 +163,9 @@ def print_summary(results, backends):
                 for backend in backends:
                     if backend in nexmark_results:
                         qr = nexmark_results[backend].get('query_results', {}).get(query, {})
+                        if qr.get('process_elapsed_seconds'):
+                            time_str = f"{qr['process_elapsed_seconds']:.2f}"
+                            break
                         if qr.get('time_seconds'):
                             time_str = f"{qr['time_seconds']:.2f}"
                             break
@@ -168,26 +177,17 @@ def print_summary(results, backends):
                     if backend in nexmark_results:
                         qr = nexmark_results[backend].get('query_results', {}).get(query, {})
                         tput = qr.get('throughput', 0)
+                        process_tput = qr.get('process_throughput') or tput
                         tput_per_core = qr.get('throughput_per_core', 0)
-                        query_perfs[backend] = tput
+                        query_perfs[backend] = process_tput
                         
-                        # Format throughput (e.g., "1.65 M/s")
-                        if tput >= 1000000:
-                            line += f"{tput/1000000:>15.2f} M/s"
-                        elif tput >= 1000:
-                            line += f"{tput/1000:>15.2f} K/s"
-                        else:
-                            line += f"{tput:>15.0f} /s"
+                        line += fmt_rate(process_tput, 18)
+                        line += fmt_rate(tput, 15)
                         
                         if not is_macos:
-                            if tput_per_core >= 1000000:
-                                line += f"{tput_per_core/1000000:>9.2f} M/s"
-                            elif tput_per_core >= 1000:
-                                line += f"{tput_per_core/1000:>9.2f} K/s"
-                            else:
-                                line += f"{tput_per_core:>9.0f} /s"
+                            line += fmt_rate(tput_per_core, 12)
                     else:
-                        line += f"{'N/A':>18}"
+                        line += f"{'N/A':>18}{'N/A':>15}"
                         if not is_macos:
                             line += f"{'N/A':>12}"
                 
@@ -201,33 +201,6 @@ def print_summary(results, backends):
                 
                 print(line)
             
-            # Print total/average
-            print("-" * len(header))
-            total_line = f"{'Total':<8}{'':<10}"
-            total_perfs = {}
-            for backend in backends:
-                if backend in nexmark_results:
-                    qrs = nexmark_results[backend].get('query_results', {})
-                    total_tput = sum(qr.get('throughput', 0) for qr in qrs.values())
-                    total_perfs[backend] = total_tput
-                    if total_tput >= 1000000:
-                        total_line += f"{total_tput/1000000:>15.2f} M/s"
-                    else:
-                        total_line += f"{total_tput:>15.0f} /s"
-                    if not is_macos:
-                        total_line += f"{'N/A':>12}"
-                else:
-                    total_line += f"{'N/A':>18}"
-                    if not is_macos:
-                        total_line += f"{'N/A':>12}"
-            
-            if len(backends) == 2 and 'hashmap' in total_perfs and 'forl0' in total_perfs:
-                h = total_perfs['hashmap']
-                f = total_perfs['forl0']
-                if h > 0:
-                    imp = ((f - h) / h) * 100
-                    total_line += f"{imp:>9.1f}%"
-            print(total_line)
         else:
             print("No NexMark results available.")
     
@@ -269,6 +242,8 @@ Examples:
                        help='State backend to use (default: all)')
     parser.add_argument('--query', '--queries', dest='query', type=str, default=None,
                        help='NexMark queries to run (comma-separated, e.g., q5,q8). Default: from config')
+    parser.add_argument('--scenario', type=str, default=None,
+                       help='Named scenario to apply for scenario-aware benchmarks (NexMark or WordCount).')
     parser.add_argument('--profile', '-p', type=str, default=None, 
                        choices=['cpu', 'cache', 'uarch', 'memory', 'hotspots'],
                        help='Enable profiling: cpu (flame graphs), cache (cache stats), '
@@ -281,6 +256,18 @@ Examples:
     args = parser.parse_args()
     
     config = load_config()
+
+    if args.scenario:
+        if args.test in ['nexmark', 'apps', 'all']:
+            config = apply_nexmark_scenario(config, args.scenario)
+        elif args.test == 'wordcount':
+            if not any(s.get('name') == args.scenario for s in config.get('wordcount_scenarios', [])):
+                print(f"ERROR: WordCount scenario '{args.scenario}' not found.")
+                print(f"Available: {[s.get('name') for s in config.get('wordcount_scenarios', [])]}")
+                sys.exit(1)
+        else:
+            print(f"ERROR: --scenario is supported for NexMark and WordCount runs, got --test {args.test}")
+            sys.exit(1)
     
     # Determine backends
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
@@ -295,6 +282,10 @@ Examples:
     print(f"Backends: {', '.join(backends)}")
     if args.test in ['nexmark', 'apps', 'all']:
         print(f"NexMark Queries: {nexmark_queries}")
+        if args.scenario:
+            print(f"NexMark Scenario: {args.scenario}")
+    if args.test == 'wordcount' and args.scenario:
+        print(f"WordCount Scenario: {args.scenario}")
     if args.profile:
         profile_desc = {
             'cpu': 'CPU flame graphs (async-profiler)',
@@ -338,11 +329,20 @@ Examples:
         
         # Get mini-batch settings from config or CLI override
         wc_config = config.get('wordcount', {})
+        scenario = None
+        if args.scenario:
+            for candidate in config.get('wordcount_scenarios', []):
+                if candidate.get('name') == args.scenario:
+                    scenario = candidate
+                    break
         for backend in backends:
-            result = run_wordcount(
-                config, backend, 
-                profile_mode=args.profile
-            )
+            if scenario:
+                result = run_wordcount_scenario(config, scenario, backend, profile_mode=args.profile)
+            else:
+                result = run_wordcount(
+                    config, backend,
+                    profile_mode=args.profile
+                )
             if result:
                 results['wordcount'][backend] = result
                 save_result(result, 'wordcount', backend)
@@ -387,6 +387,9 @@ Examples:
     
     # Run Benchset (seven paper workloads)
     if args.test == 'benchset' or run_app_suite:
+        from run_benchset import run_benchset, print_benchset_summary, BENCHMARKS as BENCHSET_BENCHMARKS
+        from generate_report import generate_benchset_paper_artifacts
+
         print("\n" + "=" * 60)
         print("Running Benchset (Seven Paper Workloads)")
         print("=" * 60)

@@ -97,19 +97,16 @@ def cancel_job(rest_url: str, job_id: str) -> bool:
 
 def parse_nexmark_summary(output: str) -> Optional[dict]:
     """Parse the Total row from NexMark benchmark summary output."""
-    total_line = None
-    for line in output.splitlines():
-        if line.strip().startswith('|Total'):
-            total_line = line.strip()
-
-    if not total_line:
-        return None
-
-    parts = [part.strip() for part in total_line.split('|') if part.strip()]
+    summary_match = re.search(
+        r'Summary Average:\s+Throughput=([^,]+),\s+Cores=([^\s]+)',
+        output,
+    )
 
     def parse_float(value: str) -> float:
         cleaned = value.replace(',', '').replace('/s', '').strip()
         if cleaned in {'NaN', 'nan', 'N/A', ''}:
+            return 0.0
+        if cleaned == '-':
             return 0.0
         if cleaned == '�':
             return 0.0
@@ -129,6 +126,32 @@ def parse_nexmark_summary(output: str) -> Optional[dict]:
         if math.isnan(parsed):
             return 0.0
         return parsed * multiplier
+
+    if summary_match:
+        throughput = parse_float(summary_match.group(1))
+        cores = parse_float(summary_match.group(2))
+        return {
+            'cpu': cores,
+            'throughput': throughput,
+            'throughput_per_core': throughput / cores if cores > 0 else 0.0,
+        }
+
+    total_line = None
+    first_query_line = None
+    for line in output.splitlines():
+        if line.strip().startswith('|Total'):
+            total_line = line.strip()
+        elif re.match(r'^\|\s*q\d+', line.strip(), re.IGNORECASE):
+            first_query_line = line.strip()
+
+    if total_line and '|-' in total_line and first_query_line:
+        total_line = first_query_line
+    if not total_line:
+        total_line = first_query_line
+    if not total_line:
+        return None
+
+    parts = [part.strip() for part in total_line.split('|') if part.strip()]
 
     if len(parts) >= 7:
         try:
@@ -199,14 +222,14 @@ def clear_taskmanager_logs(flink_home: str):
             pass
 
 
-def get_forl0_config_args(config: dict, backend: str, query: Optional[str] = None) -> list:
-    """Get ForL0 StateBackend configuration as Flink -D arguments.
+def get_forl0_effective_config(config: dict, backend: str, query: Optional[str] = None) -> dict:
+    """Get the effective ForL0 StateBackend configuration for a workload/query.
 
     Supports optional per-query overrides under:
         backends[].config.query_overrides.<query_name>.*
     """
     if backend != 'forl0':
-        return []
+        return {}
     
     backend_config = None
     for b in config.get('backends', []):
@@ -215,7 +238,7 @@ def get_forl0_config_args(config: dict, backend: str, query: Optional[str] = Non
             break
     
     if not backend_config:
-        return []
+        return {}
     
     effective_config = dict(backend_config)
 
@@ -231,18 +254,26 @@ def get_forl0_config_args(config: dict, backend: str, query: Optional[str] = Non
         if isinstance(query_cfg, dict):
             effective_config.update(query_cfg)
 
+    return effective_config
+
+
+FORL0_CONFIG_MAPPING = {
+    'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
+    'max_table_capacity': 'state.backend.forl0.max-table-capacity',
+    'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
+    'l0_cache_size': 'state.backend.forl0.l0-cache.size',
+    'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
+    'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
+    'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
+}
+
+
+def get_forl0_config_args(config: dict, backend: str, query: Optional[str] = None) -> list:
+    """Get ForL0 StateBackend configuration as JVM -D arguments."""
+    effective_config = get_forl0_effective_config(config, backend, query)
     args = []
-    config_mapping = {
-        'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
-        'max_table_capacity': 'state.backend.forl0.max-table-capacity',
-        'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
-        'l0_cache_size': 'state.backend.forl0.l0-cache.size',
-        'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
-        'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
-        'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
-    }
     
-    for yaml_key, flink_key in config_mapping.items():
+    for yaml_key, flink_key in FORL0_CONFIG_MAPPING.items():
         if yaml_key in effective_config:
             value = effective_config[yaml_key]
             if isinstance(value, bool):
@@ -343,6 +374,8 @@ class NexmarkRunner:
         # Profiler
         self.profiler = None
         self.metric_sender_containers = ['flink-taskmanager-1', 'flink-taskmanager-2']
+        self.host_metric_sender: Optional[subprocess.Popen] = None
+        self.host_metric_conf_dir: Optional[Path] = None
         self.container_profiler_session: Optional[Dict[str, str]] = None
 
     def _resolve_metric_reporter_host(self) -> str:
@@ -364,7 +397,12 @@ class NexmarkRunner:
         return '127.0.0.1'
 
     def _start_metric_senders(self, env: dict) -> None:
-        """Start CpuMetricSender inside each taskmanager container for the current run."""
+        """Start CpuMetricSender for the current run.
+
+        Docker deployments monitor TaskManagers from inside the containers.  For
+        local standalone runs, fall back to a host-side sender that discovers
+        TaskManagerRunner via jps.
+        """
         if self.metric_reporter_port is None:
             return
 
@@ -373,23 +411,73 @@ class NexmarkRunner:
             f'nexmark.metric.reporter.port: {self.metric_reporter_port}\n'
             'nexmark.metric.monitor.interval: 5 s\n'
         )
+        started_container_sender = False
+        running_containers = self._running_metric_sender_containers()
+        for container in running_containers:
+            self._stop_metric_sender(container)
+            run_checked_command([
+                'sudo', '-n', 'docker', 'exec', container,
+                'sh', '-lc',
+                "mkdir -p /tmp/nexmark-metric-conf; "
+                "cat > /tmp/nexmark-metric-conf/nexmark.yaml <<'EOF'\n"
+                f"{metric_conf}"
+                "EOF\n"
+                'export FLINK_HOME=/opt/flink; export NEXMARK_CONF_DIR=/tmp/nexmark-metric-conf; '
+                '(nohup java -cp /opt/flink/lib/nexmark-flink-0.3-SNAPSHOT.jar:/opt/flink/lib/* '
+                'com.github.nexmark.flink.metric.cpu.CpuMetricSender '
+                '>/tmp/cpu-metric-sender.log 2>&1 </dev/null &)'
+            ])
+            started_container_sender = True
+
+        if not started_container_sender:
+            self._start_host_metric_sender(metric_conf, env)
+
+    def _running_metric_sender_containers(self) -> list[str]:
+        """Return configured TaskManager containers that are currently running."""
+        running = []
         for container in self.metric_sender_containers:
             try:
-                self._stop_metric_sender(container)
-                run_checked_command([
-                    'sudo', '-n', 'docker', 'exec', container,
-                    'sh', '-lc',
-                    "mkdir -p /tmp/nexmark-metric-conf; "
-                    "cat > /tmp/nexmark-metric-conf/nexmark.yaml <<'EOF'\n"
-                    f"{metric_conf}"
-                    "EOF\n"
-                    'export FLINK_HOME=/opt/flink; export NEXMARK_CONF_DIR=/tmp/nexmark-metric-conf; '
-                    '(nohup java -cp /opt/flink/lib/nexmark-flink-0.3-SNAPSHOT.jar:/opt/flink/lib/* '
-                    'com.github.nexmark.flink.metric.cpu.CpuMetricSender '
-                    '>/tmp/cpu-metric-sender.log 2>&1 </dev/null &)'
-                ])
-            except Exception as error:
-                print(f'  WARNING: Failed to start CpuMetricSender in {container}: {error}')
+                result = subprocess.run(
+                    ['sudo', '-n', 'docker', 'inspect', '-f', '{{.State.Running}}', container],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
+                )
+                if result.stdout.strip().lower() == 'true':
+                    running.append(container)
+            except Exception:
+                continue
+        return running
+
+    def _start_host_metric_sender(self, metric_conf: str, env: dict) -> None:
+        """Start CpuMetricSender on the host for non-Docker standalone runs."""
+        if self.host_metric_sender and self.host_metric_sender.poll() is None:
+            return
+
+        self.host_metric_conf_dir = Path(tempfile.mkdtemp(prefix='nexmark-metric-conf-'))
+        (self.host_metric_conf_dir / 'nexmark.yaml').write_text(metric_conf)
+        classpath = f"{self.nexmark_home / 'lib'}/*:{self.flink_home / 'lib'}/*"
+        sender_env = env.copy()
+        sender_env['FLINK_HOME'] = str(self.flink_home)
+        sender_env['NEXMARK_CONF_DIR'] = str(self.host_metric_conf_dir)
+        try:
+            self.host_metric_sender = subprocess.Popen(
+                [
+                    'java',
+                    '-cp',
+                    classpath,
+                    'com.github.nexmark.flink.metric.cpu.CpuMetricSender',
+                ],
+                env=sender_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            print(f'  Started host CpuMetricSender (pid={self.host_metric_sender.pid})')
+        except Exception as error:
+            print(f'  WARNING: Failed to start host CpuMetricSender: {error}')
+            shutil.rmtree(self.host_metric_conf_dir, ignore_errors=True)
+            self.host_metric_conf_dir = None
 
     def _stop_metric_sender(self, container: str) -> None:
         """Stop CpuMetricSender inside a single taskmanager container."""
@@ -406,6 +494,17 @@ class NexmarkRunner:
         """Stop CpuMetricSender inside each taskmanager container."""
         for container in self.metric_sender_containers:
             self._stop_metric_sender(container)
+        if self.host_metric_sender and self.host_metric_sender.poll() is None:
+            self.host_metric_sender.terminate()
+            try:
+                self.host_metric_sender.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.host_metric_sender.kill()
+                self.host_metric_sender.wait(timeout=5)
+        self.host_metric_sender = None
+        if self.host_metric_conf_dir:
+            shutil.rmtree(self.host_metric_conf_dir, ignore_errors=True)
+            self.host_metric_conf_dir = None
 
     def _list_running_jobs(self) -> list[dict]:
         """List running Flink jobs via REST API."""
@@ -599,6 +698,19 @@ class NexmarkRunner:
             return query_events
         
         return self.nexmark_config.get('events', 10000000)
+
+    def _get_query_override(self, query: str, key: str, default=None):
+        """Get a NexMark setting with optional per-query override."""
+        overrides = self.nexmark_config.get('query_overrides', {})
+        if isinstance(overrides, dict):
+            query_override = overrides.get(query, {})
+            if isinstance(query_override, dict) and key in query_override:
+                return query_override[key]
+        return self.nexmark_config.get(key, default)
+
+    def _get_query_category_suffix(self) -> str:
+        category = str(self.nexmark_config.get('category', 'oa')).strip().lower()
+        return '' if category == 'oa' else f'.{category}'
     
     def _copy_forl0_jar_if_needed(self):
         """Copy ForL0 JAR to Flink lib if not present."""
@@ -617,6 +729,7 @@ class NexmarkRunner:
     def _write_nexmark_conf(
         self,
         query: str,
+        backend: str,
         num_events: int,
         tps: int,
         warmup_duration: int,
@@ -628,14 +741,53 @@ class NexmarkRunner:
         shutil.copy(self.nexmark_home / 'conf' / 'log4j.properties', conf_dir / 'log4j.properties')
 
         config_yaml_path = conf_dir / 'config.yaml'
-        config_yaml = config_yaml_path.read_text()
-        config_yaml = re.sub(
-            r'^execution\.checkpointing\.interval:.*$',
-            f'execution.checkpointing.interval: {checkpoint_interval_ms}',
-            config_yaml,
-            flags=re.MULTILINE,
-        )
-        config_yaml_path.write_text(config_yaml)
+        config_lines = config_yaml_path.read_text().splitlines()
+
+        def format_yaml_value(value) -> str:
+            if isinstance(value, bool):
+                return 'true' if value else 'false'
+            return str(value)
+
+        def set_config_line(key: str, value) -> None:
+            rendered = f'{key}: {format_yaml_value(value)}'
+            for idx, line in enumerate(config_lines):
+                if re.match(rf'^{re.escape(key)}\s*:', line):
+                    config_lines[idx] = rendered
+                    return
+            config_lines.append(rendered)
+
+        def remove_config_line(key: str) -> None:
+            config_lines[:] = [
+                line for line in config_lines
+                if not re.match(rf'^{re.escape(key)}\s*:', line)
+            ]
+
+        backends_list = {b['name']: b['class'] for b in self.config.get('backends', [])}
+        backend_class = backends_list.get(backend, backend)
+        remove_config_line('state.backend')
+        set_config_line('state.backend.type', backend_class)
+        if checkpoint_interval_ms > 0:
+            set_config_line('execution.checkpointing.interval', checkpoint_interval_ms)
+        else:
+            remove_config_line('execution.checkpointing.interval')
+        state_dir = self.project_root / 'docker' / 'generated' / 'flink-state'
+        checkpoint_dir = state_dir / 'checkpoints'
+        savepoint_dir = state_dir / 'savepoints'
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        savepoint_dir.mkdir(parents=True, exist_ok=True)
+        set_config_line('state.checkpoints.dir', f'file://{checkpoint_dir}')
+        set_config_line('state.savepoints.dir', f'file://{savepoint_dir}')
+        set_config_line('parallelism.default', self.runtime_config.get('parallelism', 4))
+
+        for key, value in self.nexmark_config.get('flink_config_overrides', {}).items():
+            set_config_line(str(key), value)
+
+        effective_forl0 = get_forl0_effective_config(self.config, backend, query)
+        for yaml_key, flink_key in FORL0_CONFIG_MAPPING.items():
+            if yaml_key in effective_forl0:
+                set_config_line(flink_key, effective_forl0[yaml_key])
+
+        config_yaml_path.write_text('\n'.join(config_lines) + '\n')
 
         warmup_seconds = max(0, int(warmup_duration))
         warmup_events = num_events if warmup_seconds > 0 else 0
@@ -643,18 +795,37 @@ class NexmarkRunner:
         warmup_tps = workload_tps if warmup_seconds > 0 else 0
         self.metric_reporter_port = find_free_tcp_port()
 
+        person_proportion = self._get_query_override(query, 'person_proportion', 1)
+        auction_proportion = self._get_query_override(query, 'auction_proportion', 3)
+        bid_proportion = self._get_query_override(query, 'bid_proportion', 46)
+        metric_monitor_delay = self._get_query_override(query, 'metric_monitor_delay')
+        metric_monitor_interval = self._get_query_override(query, 'metric_monitor_interval')
+        metric_monitor_duration = self._get_query_override(query, 'metric_monitor_duration')
+        metric_tps_vertex = self._get_query_override(query, 'metric_tps_vertex')
+
         nexmark_yaml = (
             f'nexmark.metric.reporter.host: {self.metric_reporter_host}\n'
             f'nexmark.metric.reporter.port: {self.metric_reporter_port}\n'
             f'nexmark.workload.suite.run.events.num: {num_events}\n'
             f'nexmark.workload.suite.run.tps: {workload_tps}\n'
-            f'nexmark.workload.suite.run.queries: "{query}"\n'
+            f'nexmark.workload.suite.run.queries{self._get_query_category_suffix()}: "{query}"\n'
+            f'nexmark.workload.suite.run.percentage: "bid:{bid_proportion},'
+            f'auction:{auction_proportion},'
+            f'person:{person_proportion}"\n'
             f'nexmark.workload.suite.run.warmup.duration: {warmup_seconds}s\n'
             f'nexmark.workload.suite.run.warmup.events.num: {warmup_events}\n'
             f'nexmark.workload.suite.run.warmup.tps: {warmup_tps}\n'
             f'flink.rest.address: {self.rest_url.split("//", 1)[-1].split(":", 1)[0]}\n'
             f'flink.rest.port: {self.rest_url.rsplit(":", 1)[-1]}\n'
         )
+        if metric_monitor_delay:
+            nexmark_yaml += f'nexmark.metric.monitor.delay: {metric_monitor_delay}\n'
+        if metric_monitor_interval:
+            nexmark_yaml += f'nexmark.metric.monitor.interval: {metric_monitor_interval}\n'
+        if metric_monitor_duration:
+            nexmark_yaml += f'nexmark.metric.monitor.duration: {metric_monitor_duration}\n'
+        if metric_tps_vertex:
+            nexmark_yaml += f'nexmark.metric.tps.vertex: {metric_tps_vertex}\n'
         (conf_dir / 'nexmark.yaml').write_text(nexmark_yaml)
         return conf_dir
 
@@ -668,15 +839,19 @@ class NexmarkRunner:
         checkpoint_interval_ms: int,
     ) -> tuple[list[str], dict, Path]:
         """Build the NexMark benchmark-driver command and environment."""
-        conf_dir = self._write_nexmark_conf(query, num_events, tps, warmup_duration, checkpoint_interval_ms)
+        conf_dir = self._write_nexmark_conf(query, backend, num_events, tps, warmup_duration, checkpoint_interval_ms)
         classpath = f"{self.nexmark_home / 'lib'}/*:{self.flink_home / 'lib'}/*"
         forl0_args = get_forl0_config_args(self.config, backend, query)
+        backends_list = {b['name']: b['class'] for b in self.config.get('backends', [])}
+        backend_class = backends_list.get(backend, '')
         cmd = [
             'java',
             f'-Dlog.file={self.nexmark_home / "log" / "nexmark-flink.log"}',
             f'-Dlog4j.configuration=file:{conf_dir / "log4j.properties"}',
             f'-Dlog4j.configurationFile=file:{conf_dir / "log4j.properties"}',
         ]
+        if backend_class:
+            cmd.append(f'-Dstate.backend.type={backend_class}')
         cmd.extend(forl0_args)
         cmd.extend([
             '-cp',
@@ -687,12 +862,13 @@ class NexmarkRunner:
             '--queries',
             query,
             '--category',
-            'oa',
+            str(self.nexmark_config.get('category', 'oa')),
         ])
 
         env = os.environ.copy()
         env['FLINK_HOME'] = str(self.flink_home)
         env['NEXMARK_CONF_DIR'] = str(conf_dir)
+        env['FLINK_CONF_DIR'] = str(conf_dir)
 
         return cmd, env, conf_dir
     
@@ -719,13 +895,13 @@ class NexmarkRunner:
             self.runtime_config.get('checkpoint_interval', 0),
         )
         num_events = self._get_query_events(query)
-        tps = self.nexmark_config.get('tps', 0)
-        warmup_duration = self.nexmark_config.get('warmup_duration', 0)
+        tps = self._get_query_override(query, 'tps', 0)
+        warmup_duration = self._get_query_override(query, 'warmup_duration', 0)
         
         # Event proportions (Nexmark default: 1:3:46)
-        person_proportion = self.nexmark_config.get('person_proportion', 1)
-        auction_proportion = self.nexmark_config.get('auction_proportion', 3)
-        bid_proportion = self.nexmark_config.get('bid_proportion', 46)
+        person_proportion = self._get_query_override(query, 'person_proportion', 1)
+        auction_proportion = self._get_query_override(query, 'auction_proportion', 3)
+        bid_proportion = self._get_query_override(query, 'bid_proportion', 46)
         
         self._copy_nexmark_jar_if_needed()
 
@@ -749,6 +925,7 @@ class NexmarkRunner:
         max_attempts = max(1, int(self.nexmark_config.get('max_attempts_per_query', 3)))
         query_timeout = max(3600, int(self.nexmark_config.get('timeout_seconds', 7200)))
         retry_backoff_seconds = max(1, int(self.nexmark_config.get('retry_backoff_seconds', 4)))
+        min_cpu_cores = float(self.nexmark_config.get('min_cpu_cores', 0.0))
         min_profile_cpu_cores = float(self.nexmark_config.get('min_profile_cpu_cores', 0.05))
 
         try:
@@ -800,6 +977,7 @@ class NexmarkRunner:
                 should_retry = False
                 try:
                     self._start_metric_senders(env)
+                    process_start = time.perf_counter()
                     result = subprocess.run(
                         cmd,
                         env=env,
@@ -807,6 +985,7 @@ class NexmarkRunner:
                         text=True,
                         timeout=query_timeout,
                     )
+                    process_elapsed = time.perf_counter() - process_start
                     output = result.stdout + result.stderr
                     print(output)
 
@@ -818,16 +997,30 @@ class NexmarkRunner:
                         or 'profiler already started' in output_lower
                     )
 
-                    if result.returncode != 0:
+                    parsed = parse_nexmark_summary(output)
+                    if result.returncode != 0 and not parsed:
                         print('  ERROR: NexMark benchmark driver failed')
                         should_retry = retryable_error
                     else:
-                        parsed = parse_nexmark_summary(output)
+                        if result.returncode != 0 and parsed:
+                            print('  WARNING: NexMark driver failed after printing summary; keeping parsed sample')
                         if parsed:
+                            events_num = parsed.get('events_num') or num_events
+                            if process_elapsed > 0 and events_num:
+                                parsed['process_elapsed_seconds'] = process_elapsed
+                                parsed['process_throughput'] = float(events_num) / process_elapsed
+
                             # Filter clearly invalid samples from noisy metric reporter runs.
                             cpu = parsed.get('cpu', 0)
                             tpc = parsed.get('throughput_per_core', 0)
                             invalid_sample = cpu <= 0 or tpc <= 0
+
+                            if min_cpu_cores > 0 and cpu < min_cpu_cores:
+                                print(
+                                    f'  WARNING: Sample too idle (cpu={cpu:.3f} < '
+                                    f'min_cpu_cores={min_cpu_cores:.3f}), retrying'
+                                )
+                                invalid_sample = True
 
                             # For profiling runs, reject samples that are too idle to expose real hotspots.
                             if profile_mode and profile_mode in ['cpu', 'cache'] and cpu < min_profile_cpu_cores:
@@ -850,8 +1043,17 @@ class NexmarkRunner:
                                     'person_proportion': person_proportion,
                                     'auction_proportion': auction_proportion,
                                     'bid_proportion': bid_proportion,
+                                    'configured_tps': tps,
+                                    'metric_tps_vertex': self._get_query_override(query, 'metric_tps_vertex'),
+                                    'metric_monitor_duration': self._get_query_override(query, 'metric_monitor_duration'),
                                 })
                                 print(f"\n  Result: {parsed.get('throughput', 0):,.2f} events/sec")
+                                if parsed.get('process_throughput'):
+                                    print(
+                                        "  Process wall-clock: "
+                                        f"{parsed['process_elapsed_seconds']:.2f}s, "
+                                        f"{parsed['process_throughput']:,.2f} events/sec"
+                                    )
                                 return parsed
                         else:
                             print('  WARNING: Could not parse NexMark summary output')
@@ -919,6 +1121,8 @@ class NexmarkRunner:
             queries = self.nexmark_config.get('queries', 'q5')
         
         query_list = [q.strip() for q in queries.split(',')]
+        self.nexmark_config['queries'] = ','.join(query_list)
+        self.selected_queries = query_list
         repeat_runs = max(1, int(repeat if repeat is not None else self.nexmark_config.get('repeat_per_query', 1)))
         min_success_samples = int(self.nexmark_config.get('min_success_samples', repeat_runs))
         min_success_samples = max(1, min(min_success_samples, repeat_runs))
@@ -987,7 +1191,15 @@ class NexmarkRunner:
             for q, r in backend_results['query_results'].items():
                 throughput = r.get('throughput', 0)
                 throughput_per_core = r.get('throughput_per_core', 0)
-                print(f"  {q}: {throughput:,.0f} events/sec ({throughput_per_core:,.0f}/core)")
+                process_throughput = r.get('process_throughput', 0)
+                process_elapsed = r.get('process_elapsed_seconds', 0)
+                if process_throughput and process_elapsed:
+                    print(
+                        f"  {q}: {throughput:,.0f} events/sec ({throughput_per_core:,.0f}/core), "
+                        f"process {process_throughput:,.0f} events/sec in {process_elapsed:.2f}s"
+                    )
+                else:
+                    print(f"  {q}: {throughput:,.0f} events/sec ({throughput_per_core:,.0f}/core)")
             if backend_results['failed_queries']:
                 print(f"  Failed: {backend_results['failed_queries']}")
         
@@ -1009,6 +1221,8 @@ class NexmarkRunner:
             'cores_multiply_time_seconds',
             'throughput',
             'throughput_per_core',
+            'process_elapsed_seconds',
+            'process_throughput',
         ]
 
         for field in numeric_fields:
@@ -1030,6 +1244,9 @@ class NexmarkRunner:
         results_with_meta = {
             'timestamp': datetime.now().isoformat(),
             'mode': self.mode,
+            'scenario_name': self.nexmark_config.get('scenario_name'),
+            'selected_queries': getattr(self, 'selected_queries', []),
+            'cli_args': self.nexmark_config.get('cli_args', {}),
             'nexmark_config': self.nexmark_config,
             'results': results
         }
@@ -1061,13 +1278,16 @@ class NexmarkRunner:
             print(f"\n{backend} vs {base_backend}:")
             
             for query in sorted(set(base_queries.keys()) | set(comp_queries.keys())):
-                base_perf = base_queries.get(query, {}).get('throughput_per_core', 0)
-                comp_perf = comp_queries.get(query, {}).get('throughput_per_core', 0)
+                base_result = base_queries.get(query, {})
+                comp_result = comp_queries.get(query, {})
+                base_perf = base_result.get('process_throughput') or base_result.get('throughput', 0)
+                comp_perf = comp_result.get('process_throughput') or comp_result.get('throughput', 0)
                 
                 if base_perf > 0:
                     diff_pct = ((comp_perf - base_perf) / base_perf) * 100
                     symbol = "+" if diff_pct > 0 else ""
-                    print(f"  {query}: {comp_perf:,.0f} vs {base_perf:,.0f} ({symbol}{diff_pct:.1f}%)")
+                    metric = "process throughput" if base_result.get('process_throughput') else "throughput"
+                    print(f"  {query}: {comp_perf:,.0f} vs {base_perf:,.0f} ({symbol}{diff_pct:.1f}%, {metric})")
 
 
 def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
@@ -1094,6 +1314,45 @@ def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
     if 'checkpoint_interval' in scenario:
         config['runtime']['nexmark_checkpoint_interval'] = scenario['checkpoint_interval']
 
+    runtime_overrides = scenario.get('runtime_overrides', {})
+    if isinstance(runtime_overrides, dict):
+        config.setdefault('runtime', {}).update(runtime_overrides)
+
+    # Direct NexMark workload overrides.  These are intentionally scenario-scoped
+    # so the contract baseline remains untouched while pressure tests can push
+    # the source and metric filters hard enough to expose backend differences.
+    for key in (
+        'tps',
+        'warmup_duration',
+        'warmup_events',
+        'timeout_seconds',
+        'max_attempts_per_query',
+        'repeat_per_query',
+        'min_success_samples',
+        'min_cpu_cores',
+        'min_profile_cpu_cores',
+        'person_proportion',
+        'auction_proportion',
+        'bid_proportion',
+        'flink_config_overrides',
+        'metric_monitor_delay',
+        'metric_monitor_interval',
+        'metric_monitor_duration',
+        'metric_tps_vertex',
+        'query_overrides',
+        'category',
+    ):
+        if key in scenario:
+            config['nexmark'][key] = scenario[key]
+
+    # Per-query absolute event counts, e.g. {q19: 300000000}.  This is more
+    # useful than a blanket multiplier for NexMark because q9/q20 have different
+    # state growth profiles from q19.
+    query_events = scenario.get('query_events', {})
+    if isinstance(query_events, dict):
+        for query, events in query_events.items():
+            config['nexmark'][f'{query}_events'] = int(events)
+
     # Scale event counts
     mult = scenario.get('event_multiplier', 1)
     if mult != 1:
@@ -1104,11 +1363,24 @@ def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
     # ForL0 backend overrides
     forl0_overrides = scenario.get('forl0_overrides', {})
     if forl0_overrides:
+        scenario_queries = [
+            q.strip()
+            for q in str(config.get('nexmark', {}).get('queries', '')).split(',')
+            if q.strip()
+        ]
         for b in config.get('backends', []):
             if b.get('name') == 'forl0':
-                b.setdefault('config', {}).setdefault('workload_overrides', {}).setdefault('nexmark', {})
-                b['config']['workload_overrides']['nexmark'].update(forl0_overrides)
+                backend_cfg = b.setdefault('config', {})
+                backend_cfg.setdefault('workload_overrides', {}).setdefault('nexmark', {})
+                backend_cfg['workload_overrides']['nexmark'].update(forl0_overrides)
 
+                # Scenario overrides are intentionally stronger than the
+                # conservative per-query defaults used by the contract runs.
+                query_overrides = backend_cfg.setdefault('query_overrides', {})
+                for query in scenario_queries:
+                    query_overrides.setdefault(query, {}).update(forl0_overrides)
+
+    config['nexmark']['scenario_name'] = scenario_name
     print(f"[NexMark] Scenario: {scenario_name} — {scenario.get('description', '')}")
     return config
 
@@ -1139,6 +1411,16 @@ def main():
     # Apply scenario overrides if specified
     if args.scenario:
         config = apply_nexmark_scenario(config, args.scenario)
+
+    if args.queries:
+        config['nexmark']['queries'] = args.queries
+    config['nexmark']['cli_args'] = {
+        'backend': args.backend,
+        'queries': args.queries,
+        'profile': args.profile,
+        'repeat': args.repeat,
+        'scenario': args.scenario,
+    }
     
     # Determine backends
     if args.backend == "all":

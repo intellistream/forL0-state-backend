@@ -47,6 +47,11 @@ public class FlinkNexmarkOptions {
 		.defaultValue(Duration.ofSeconds(5))
 		.withDescription("The interval to request the metrics.");
 
+	public static final ConfigOption<String> METRIC_TPS_VERTEX = ConfigOptions
+		.key("nexmark.metric.tps.vertex")
+		.stringType()
+		.defaultValue("sink")
+		.withDescription("Which job vertex to monitor for TPS: source or sink. Sink uses numRecordsInPerSecond.");
 
 	public static final ConfigOption<String> METRIC_REPORTER_HOST = ConfigOptions
 		.key("nexmark.metric.reporter.host")

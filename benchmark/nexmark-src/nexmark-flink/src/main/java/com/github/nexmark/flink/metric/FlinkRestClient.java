@@ -157,29 +157,60 @@ public class FlinkRestClient {
 	}
 
 	public String getSourceVertexId(String jobId) {
+		return getMetricVertexId(jobId, "source");
+	}
+
+	public String getMetricVertexId(String jobId, String targetVertex) {
 		String url = String.format("http://%s/jobs/%s", jmEndpoint, jobId);
 		String response = executeAsString(url);
 		try {
 			JsonNode jsonNode = NexmarkUtils.MAPPER.readTree(response);
 			JsonNode vertices = jsonNode.get("vertices");
-			JsonNode sourceVertex = vertices.get(0);
-			checkArgument(
-				sourceVertex.get("name").asText().startsWith("Source:"),
-				"The first vertex is not a source.");
-			return sourceVertex.get("id").asText();
+			String target = targetVertex == null ? "sink" : targetVertex.trim().toLowerCase();
+			if ("source".equals(target)) {
+				for (JsonNode vertex : vertices) {
+					String name = vertex.get("name").asText();
+					if (name.startsWith("Source:")) {
+						return vertex.get("id").asText();
+					}
+				}
+				throw new IllegalArgumentException("Can't find source vertex from response:\n" + response);
+			}
+			if ("sink".equals(target)) {
+				for (int i = vertices.size() - 1; i >= 0; i--) {
+					JsonNode vertex = vertices.get(i);
+					String name = vertex.get("name").asText();
+					if (name.startsWith("Sink:") || name.contains("Sink")) {
+						return vertex.get("id").asText();
+					}
+				}
+				JsonNode lastVertex = vertices.get(vertices.size() - 1);
+				checkArgument(
+					!lastVertex.get("name").asText().startsWith("Source:"),
+					"The last vertex is a source; can't infer sink vertex.");
+				return lastVertex.get("id").asText();
+			}
+			throw new IllegalArgumentException("Unsupported TPS metric vertex target: " + targetVertex);
 		} catch (Exception e) {
 			throw new RuntimeException("The response is not a valid JSON string:\n" + response, e);
 		}
 	}
 
 	public String getTpsMetricName(String jobId, String vertexId) {
+		return getTpsMetricName(jobId, vertexId, "source");
+	}
+
+	public String getTpsMetricName(String jobId, String vertexId, String targetVertex) {
 		String url = String.format("http://%s/jobs/%s/vertices/%s/subtasks/metrics", jmEndpoint, jobId, vertexId);
 		String response = executeAsString(url);
 		try {
+			String target = targetVertex == null ? "sink" : targetVertex.trim().toLowerCase();
+			String metricSuffix = "source".equals(target) ? ".numRecordsOutPerSecond" : ".numRecordsInPerSecond";
+			String metricNameExact = "source".equals(target) ? "numRecordsOutPerSecond" : "numRecordsInPerSecond";
 			ArrayNode arrayNode = (ArrayNode) NexmarkUtils.MAPPER.readTree(response);
 			for (JsonNode node : arrayNode) {
 				String metricName = node.get("id").asText();
-				if (metricName.startsWith("Source_") && metricName.endsWith(".numRecordsOutPerSecond")) {
+				if (metricName.endsWith(metricSuffix) || metricName.equals(metricNameExact)) {
 					return metricName;
 				}
 			}
@@ -208,6 +239,9 @@ public class FlinkRestClient {
 			httpPatch.setHeader("Connection", "close");
 			response = httpClient.execute(httpPatch);
 			int httpCode = response.getStatusLine().getStatusCode();
+			if (httpCode == HttpStatus.SC_CONFLICT) {
+				return;
+			}
 			if (httpCode != HttpStatus.SC_ACCEPTED) {
 				String msg = String.format("http execute failed,status code is %d", httpCode);
 				throw new RuntimeException(msg);
@@ -215,6 +249,8 @@ public class FlinkRestClient {
 		} catch (Exception e) {
 			httpPatch.abort();
 			throw new RuntimeException(e);
+		} finally {
+			httpPatch.releaseConnection();
 		}
 	}
 
@@ -228,6 +264,8 @@ public class FlinkRestClient {
 			}
 		} catch (Exception e) {
 			throw new RuntimeException("Failed to request URL " + url, e);
+		} finally {
+			httpGet.releaseConnection();
 		}
 		throw new RuntimeException(String.format("Response of URL %s is null.", url));
 	}

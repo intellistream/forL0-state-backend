@@ -46,16 +46,18 @@ public class MetricReporter {
 	private final Duration monitorDelay;
 	private final Duration monitorInterval;
 	private final Duration monitorDuration;
+	private final String tpsVertex;
 	private final FlinkRestClient flinkRestClient;
 	private final CpuMetricReceiver cpuMetricReceiver;
 	private final List<BenchmarkMetric> metrics;
 	private final ScheduledExecutorService service = Executors.newScheduledThreadPool(1);
 	private volatile Throwable error;
 
-	public MetricReporter(FlinkRestClient flinkRestClient, CpuMetricReceiver cpuMetricReceiver, Duration monitorDelay, Duration monitorInterval, Duration monitorDuration) {
+	public MetricReporter(FlinkRestClient flinkRestClient, CpuMetricReceiver cpuMetricReceiver, Duration monitorDelay, Duration monitorInterval, Duration monitorDuration, String tpsVertex) {
 		this.monitorDelay = monitorDelay;
 		this.monitorInterval = monitorInterval;
 		this.monitorDuration = monitorDuration;
+		this.tpsVertex = tpsVertex;
 		this.flinkRestClient = flinkRestClient;
 		this.cpuMetricReceiver = cpuMetricReceiver;
 		this.metrics = new ArrayList<>();
@@ -71,6 +73,7 @@ public class MetricReporter {
 			if (jobInfo != null) {
 				vertexId = jobInfo.f0;
 				metricName = jobInfo.f1;
+				System.out.printf("Monitor TPS metric: vertex=%s, metric=%s%n", tpsVertex, metricName);
 				break;
 			} else {
 				// wait for the job startup
@@ -92,8 +95,8 @@ public class MetricReporter {
 
 	private Tuple2<String, String> getJobInformation(String jobId) {
 		try {
-			String vertexId = flinkRestClient.getSourceVertexId(jobId);
-			String metricName = flinkRestClient.getTpsMetricName(jobId, vertexId);
+			String vertexId = flinkRestClient.getMetricVertexId(jobId, tpsVertex);
+			String metricName = flinkRestClient.getTpsMetricName(jobId, vertexId, tpsVertex);
 			return Tuple2.of(vertexId, metricName);
 		} catch (Exception e) {
 			LOG.warn("Job metric is not ready yet.", e);
@@ -134,6 +137,20 @@ public class MetricReporter {
 		}
 	}
 
+	private void waitForActualJobFinish(Duration duration) {
+		Deadline deadline = Deadline.fromNow(duration);
+		while (isJobRunning() && deadline.hasTimeLeft()) {
+			try {
+				Thread.sleep(100L);
+			} catch (InterruptedException e) {
+				throw new RuntimeException(e);
+			}
+			if (error != null) {
+				throw new RuntimeException(error);
+			}
+		}
+	}
+
 	private boolean jobIsFinished() {
 		if (metrics.size() <= 5) {
 			return false;
@@ -161,8 +178,14 @@ public class MetricReporter {
 			System.out.println("Start to monitor metrics until job is finished.");
 		}
 		submitMonitorThread(jobId, eventsNum);
-		// monitorDuration is Long.MAX_VALUE in event number mode
-		waitForOrJobFinish(monitorDuration);
+		if (eventsNum == 0) {
+			waitFor(monitorDuration);
+		} else {
+			// In event-count mode, source/sink TPS can drop to zero before all
+			// downstream stateful operators have fully drained.  Wait for the
+			// Flink job state instead so the reported time is true end-to-end.
+			waitForActualJobFinish(monitorDuration);
+		}
 
 		long endTime = System.currentTimeMillis();
 
@@ -175,22 +198,6 @@ public class MetricReporter {
 		double sumTps = 0.0;
 		double sumCpu = 0.0;
 		int realMetricSize = metrics.size();
-
-		// Event-count mode reports useful CPU samples even when TPS stays at 0, so only
-		// trim trailing idle samples for throughput-mode runs.
-		if (eventsNum == 0) {
-			for (int i = metrics.size() - 1; i >= 0; i--) {
-				if (Double.compare(metrics.get(i).getTps(), 0.0) != 0) {
-					break;
-				} else {
-					realMetricSize--;
-				}
-			}
-		}
-
-		if (realMetricSize <= 0) {
-			realMetricSize = metrics.size();
-		}
 
 		List<BenchmarkMetric> realMetrics = metrics.subList(0, realMetricSize);
 		for (BenchmarkMetric metric : realMetrics) {

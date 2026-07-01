@@ -38,9 +38,39 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 
 ## 快速开始
 
-离线一键部署与运行（含一键打包）请见：
+### 离线环境一键跑完实验并生成报告
 
-- [一键离线部署与运行](docs/One_Click_Offline_Deploy_and_Run.md)
+推荐使用仓库自带的一键脚本完成“打包、安装、运行实验、生成报告”的闭环。联网/构建机先生成离线包：
+
+```bash
+cd forL0-state-backend
+./docker/package_offline_bundle.sh --arch arm64 --output-dir /tmp/forl0-offline
+```
+
+将 `/tmp/forl0-offline` 拷贝到离线目标机后执行：
+
+```bash
+cd /path/to/forl0-offline/docker
+./install_offline_bundle.sh --flink-home /path/to/flink-1.20.3 --install-dir ~/forl0-runtime
+
+cd ~/forl0-runtime/docker
+./run_all_apps.sh --offline --test apps --backend all --no-profile
+```
+
+脚本会自动复用离线 Python wheels、预编译 JAR、Docker 镜像和本地 Flink，跑完后生成：
+
+- 原始结果：`benchmark/results/raw/` 与 `benchmark/results/nexmark_*/`
+- 图表：`benchmark/results/figures/`
+- HTML 报告：`benchmark/results/reports/benchmark_report.html`
+
+只基于已有结果重新生成报告：
+
+```bash
+cd ~/forl0-runtime/docker
+./run_all_apps.sh --offline --report-only --no-profile
+```
+
+更详细的离线打包说明见：[一键离线部署与运行](docs/One_Click_Offline_Deploy_and_Run.md)。
 
 ### 环境要求
 
