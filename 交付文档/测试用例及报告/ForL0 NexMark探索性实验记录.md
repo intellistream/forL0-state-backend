@@ -2,9 +2,9 @@
 
 本文档记录为寻找 ForL0 在 NexMark 中的优势区而做过的非合同项探索。正式测试报告仅保留最终可采用结果；本文档中的中间结果不作为合同验收结论。
 
-## 最终采用结果
+## 历史 TPS/backpressure 探索样本
 
-最终保留到主报告的是修复监控、修复 `--category` 生效问题，并补齐所有查询后的 `forl0_tps_probe`：
+本节记录修复监控、修复 `--category` 生效问题，并补齐所有查询后的 `forl0_tps_probe` 历史样本。该组结果用于定位后续 no-Full-GC 复跑方向，已从正式测试报告中移除。
 
 - 查询：NexMark `q4/q5/q8/q9/q11/q18/q19/q20`。
 - 模式：TPS / monitor-duration 模式，`events.num=0`，监控 sink 侧 `numRecordsInPerSecond`。
@@ -13,7 +13,19 @@
 - 配置：parallelism = 4，关闭 checkpoint、mini-batch、distinct-agg split，启用 object reuse；本轮 standalone fallback 为 TaskManager `8 GB`、`32 slots`、heartbeat timeout `300s`。
 - q5 使用 `queries-forl0/q5.sql` 稳态窗口输出变体，合同 `queries/q5.sql` 未修改。
 - 口径：监控窗口内 sink 侧实际输入 TPS，主表提升率不使用 `/core` 归一化。
-- 最终结果：q4 HashMap `31.49 K/s`、ForL0 `75.67 K/s`，提升 `+140.3%`；q18 HashMap `130.38 K/s`、ForL0 `206.84 K/s`，提升 `+58.6%`；q19 HashMap `716.46 K/s`、ForL0 `1.14 M/s`，提升 `+59.1%`。q5/q8/q11 在当前 SQL 形态下不作为优势区，完整逐 Q 表见主报告表 3。
+- 结果定位：q4/q18/q19 曾呈现较高提升，但该轮未施加 no-Full-GC 约束，因此仅作为探索记录；正式测试报告以后续 no-Full-GC 复跑结果为准。
+
+| Q | TPS | 事件比例 | HashMap | ForL0 | 提升 | CPU 核数 HashMap / ForL0 | 配置目的 |
+|---|---:|---|---:|---:|---:|---:|---|
+| q4 | 600 K/s | 1:49:50 | 31.49 K/s | 75.67 K/s | +140.3% | 73.56 / 29.53 | 提高 auction 高基数窗口聚合状态压力 |
+| q5 | 2 M/s | 1:49:50 | 151.24 K/s | 142.54 K/s | -5.8% | 50.97 / 17.55 | 使用稳态输出 SQL，保留 HOP 窗口状态压力 |
+| q8 | 1 M/s | 25:25:50 | 11.05 K/s | 10.06 K/s | -9.0% | 28.64 / 15.01 | 提高 Person/Auction 匹配概率 |
+| q9 | 50 K/s | 1:49:50 | 12.31 K/s | 12.33 K/s | +0.2% | 10.79 / 4.63 | 控制双流 Join 输入压力 |
+| q11 | 200 K/s | 10:10:80 | 12.23 K/s | 12.13 K/s | -0.8% | 2.39 / 3.40 | 延长监控窗口覆盖 Session 输出 |
+| q18 | 5 M/s | 1:49:50 | 130.38 K/s | 206.84 K/s | +58.6% | 52.21 / 5.68 | 放大 `(bidder, auction)` 高基数去重状态 |
+| q19 | 1 M/s | 1:1:98 | 716.46 K/s | 1.14 M/s | +59.1% | 57.50 / 7.53 | 构造 bid 密集 TopN 状态 |
+| q20 | 200 K/s | 1:49:50 | 11.97 K/s | 13.26 K/s | +10.8% | 42.34 / 3.29 | 保持分组聚合稳定输出 |
+
 - 原始结果：
   - q4：`benchmark/results/nexmark_20260701_164021/nexmark_results.json` 与 `benchmark/results/nexmark_20260701_170353/nexmark_results.json`。
   - q5：`benchmark/results/nexmark_20260701_164226/nexmark_results.json` 与 `benchmark/results/nexmark_20260701_170557/nexmark_results.json`。
@@ -85,7 +97,7 @@
 - `q5`：将目标 TPS 从 `2 M/s` 提高到 `5 M/s` 后，1:49:50 下 HashMap / ForL0 仅为 `24.14 K/s` / `25.27 K/s`；改为 1:1:98 后为 `3.38 K/s` / `5.33 K/s`。两组都说明 q5 sink 输出受 HOP 窗口触发和背压波动主导，虽然部分点相对提升为正，但绝对吞吐显著低于主表 q5，不采用。
 - `q8`：25:25:50、`2 M/s` 下 HashMap / ForL0 为 `1.55 K/s` / `2.95 K/s`；45:45:10 下 sink TPS 为 0。q8 窗口 Join 对 Person/Auction 匹配和窗口闭合敏感，调高输入压力会牺牲有效输出，不采用。
 - `q11`：1:1:98、`1 M/s`、120s 监控配置触发 Flink 作业失败，driver 未干净返回；保留主表中 10:10:80、`200 K/s` 的稳定样本。q11 session 输出由会话闭合节奏主导，不作为优势区。
-- `q19`：初始 1:49:50、`200 K/s` 下基本持平；改为 1:1:98、`1 M/s` 后 20s delay 样本提升 `+16.5%`，50s delay 稳态样本提升 `+59.1%`。该配置已合并进主报告。
+- `q19`：初始 1:49:50、`200 K/s` 下基本持平；改为 1:1:98、`1 M/s` 后 20s delay 样本提升 `+16.5%`，50s delay 稳态样本提升 `+59.1%`。该配置仅保留为探索记录，正式报告以后续 no-Full-GC 复跑口径为准。
 
 ### NexMark q23/q24/q25 自定义聚合
 
@@ -100,3 +112,14 @@
 - event-count 模式下，NexMark reporter 以 source 侧 TPS 归零作为结束信号，容易形成固定 monitor 窗口，不能充分反映 q5 下游状态算子的稳态 backpressure。
 - true-FINISHED 口径对部分 unbounded SQL 聚合不适用，作业长时间不自然结束。
 - 最终改用 TPS / monitor-duration 模式，使 source 实际输出 TPS 受下游 backpressure 约束，得到可比较的 q5 稳态端到端输入吞吐。
+
+### Client Usecase hotspot-drift 探索
+
+- 配置：新增 `benchmark/client-drift` driver，保留客户 `HuaweiTestFunction` 双流 Join + MapState / ValueState 逻辑，仅替换 source，使 80% 流量落在随输入进度迁移的热点 join key 窗口。
+- `hotspot_drift_300k`，`right_delay_ms=2`：HashMap `889 rec/s/core`，ForL0 `935 rec/s/core`，提升 `+5.2%`。原始结果：`client_usecase_hashmap_20260702_173244.json` 与 `client_usecase_forl0_20260702_173412.json`。
+- `hotspot_drift_1m`，`right_delay_ms=2`：HashMap `930 rec/s/core`，ForL0 `945 rec/s/core`，提升 `+1.6%`。原始结果：`client_usecase_hashmap_20260702_174101.json` 与 `client_usecase_forl0_20260702_174533.json`。
+- 无右流延迟的 300K 快速复测：HashMap `9266 rec/s/core`，ForL0 `6217 rec/s/core`，提升 `-32.9%`。该口径作业仅 8--12 秒，启动、对象构造、序列化和 bounded 自动取消收尾占比较高，不作为默认配置。
+- bytecode 复查：客户函数内部主要状态为 `LeftCache(Long -> List<PVMVLogType>)`、`RightCache(Long -> PVMVLogType)`、`LeftDuplicateRcd(String -> Long)`、`RightDuplicateRcd(String -> Long)` 和若干 `ValueState<Long>`；其中 `LeftCache/RightCache` 的内部 MapState key 来自 `eventTimeStamp`，不是 join key。
+- `hotspot_state_left_2m`：新增轻量 payload、100% 左流、`eventTimeStamp` 热桶漂移，直接打 `LeftCache` 与 duplicate map。HashMap `41,303 rec/s/core`，ForL0 `41,543 rec/s/core`，提升 `+0.6%`。原始结果：`client_usecase_hashmap_20260702_175355.json` 与 `client_usecase_forl0_20260702_175414.json`。
+- `hotspot_state_join_2m`：轻量 payload、90% 左流 / 10% 右流、`eventTimeStamp` 热桶漂移，保留少量右流 drain。HashMap `8,885 rec/s/core`，ForL0 `8,902 rec/s/core`，提升 `+0.2%`。原始结果：`client_usecase_hashmap_20260702_175539.json` 与 `client_usecase_forl0_20260702_175643.json`。
+- 未采用原因：该方向验证了热点漂移 source 和一键脚本可运行，但端到端收益未达到 30% 门槛。更重要的是，客户 operator 的核心状态是 `MapState<Long, List<PVMVLogType>>` 与 POJO value，收益由 list value 序列化、iterator/drain、Join 业务逻辑和 bounded 自动停止共同主导；这类状态形态不是 ForL0 当前最强的 primitive / scalar 状态访问路径。正式汇报继续把 Client Usecase 作为真实业务形态无回退验证，不作为 ForL0 强优势区。

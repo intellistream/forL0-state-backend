@@ -222,6 +222,62 @@ def clear_taskmanager_logs(flink_home: str):
             pass
 
 
+FULL_GC_PATTERNS = (
+    re.compile(r'\bFull GC\b', re.IGNORECASE),
+    re.compile(r'\bPause Full\b', re.IGNORECASE),
+)
+
+
+def _taskmanager_gc_log_files(flink_home: str) -> list[Path]:
+    """Return TaskManager log/out files that may contain JVM GC lines."""
+    log_dir = Path(flink_home) / 'log'
+    if not log_dir.exists():
+        return []
+
+    files: list[Path] = []
+    for pattern in ('*taskexecutor*.log', '*taskexecutor*.out', '*taskmanager*.log', '*taskmanager*.out'):
+        files.extend(log_dir.glob(pattern))
+    return sorted(set(files))
+
+
+def _count_full_gc_in_text(content: str) -> int:
+    count = 0
+    for line in content.splitlines():
+        if any(pattern.search(line) for pattern in FULL_GC_PATTERNS):
+            count += 1
+    return count
+
+
+def snapshot_taskmanager_full_gc(flink_home: str) -> dict[str, dict[str, int]]:
+    """Snapshot current Full GC counters per TaskManager log file.
+
+    The benchmark uses the difference between two snapshots to enforce
+    no-Full-GC scenarios without truncating user-visible logs.
+    """
+    snapshot: dict[str, dict[str, int]] = {}
+    for log_file in _taskmanager_gc_log_files(flink_home):
+        try:
+            content = log_file.read_text(errors='ignore')
+        except Exception:
+            continue
+        snapshot[str(log_file)] = {
+            'size': log_file.stat().st_size,
+            'full_gc_count': _count_full_gc_in_text(content),
+        }
+    return snapshot
+
+
+def full_gc_delta(before: dict[str, dict[str, int]], after: dict[str, dict[str, int]]) -> int:
+    """Return total Full GC count increase between two snapshots."""
+    total = 0
+    for path, after_info in after.items():
+        before_count = before.get(path, {}).get('full_gc_count', 0)
+        delta = int(after_info.get('full_gc_count', 0)) - int(before_count)
+        if delta > 0:
+            total += delta
+    return total
+
+
 def get_forl0_effective_config(config: dict, backend: str, query: Optional[str] = None) -> dict:
     """Get the effective ForL0 StateBackend configuration for a workload/query.
 
@@ -802,6 +858,9 @@ class NexmarkRunner:
         metric_monitor_interval = self._get_query_override(query, 'metric_monitor_interval')
         metric_monitor_duration = self._get_query_override(query, 'metric_monitor_duration')
         metric_tps_vertex = self._get_query_override(query, 'metric_tps_vertex')
+        bid_hot_ratio_auctions = self._get_query_override(query, 'bid_hot_ratio_auctions')
+        bid_hot_ratio_bidders = self._get_query_override(query, 'bid_hot_ratio_bidders')
+        auction_hot_ratio_sellers = self._get_query_override(query, 'auction_hot_ratio_sellers')
 
         nexmark_yaml = (
             f'nexmark.metric.reporter.host: {self.metric_reporter_host}\n'
@@ -826,6 +885,12 @@ class NexmarkRunner:
             nexmark_yaml += f'nexmark.metric.monitor.duration: {metric_monitor_duration}\n'
         if metric_tps_vertex:
             nexmark_yaml += f'nexmark.metric.tps.vertex: {metric_tps_vertex}\n'
+        if bid_hot_ratio_auctions is not None:
+            nexmark_yaml += f'bid.hot-ratio.auctions: {int(bid_hot_ratio_auctions)}\n'
+        if bid_hot_ratio_bidders is not None:
+            nexmark_yaml += f'bid.hot-ratio.bidders: {int(bid_hot_ratio_bidders)}\n'
+        if auction_hot_ratio_sellers is not None:
+            nexmark_yaml += f'auction.hot-ratio.sellers: {int(auction_hot_ratio_sellers)}\n'
         (conf_dir / 'nexmark.yaml').write_text(nexmark_yaml)
         return conf_dir
 
@@ -902,6 +967,8 @@ class NexmarkRunner:
         person_proportion = self._get_query_override(query, 'person_proportion', 1)
         auction_proportion = self._get_query_override(query, 'auction_proportion', 3)
         bid_proportion = self._get_query_override(query, 'bid_proportion', 46)
+        bid_hot_ratio_auctions = self._get_query_override(query, 'bid_hot_ratio_auctions')
+        bid_hot_ratio_bidders = self._get_query_override(query, 'bid_hot_ratio_bidders')
         
         self._copy_nexmark_jar_if_needed()
 
@@ -920,6 +987,12 @@ class NexmarkRunner:
         print(f"\n=== Running Nexmark {query.upper()} ({backend} backend) ===")
         print(f"Events: {num_events:,}, TPS: {tps if tps > 0 else 'unlimited'}")
         print(f"Proportions: Person({person_proportion}):Auction({auction_proportion}):Bid({bid_proportion})")
+        if bid_hot_ratio_auctions is not None or bid_hot_ratio_bidders is not None:
+            print(
+                "Hot ratios: "
+                f"bid.auctions={bid_hot_ratio_auctions if bid_hot_ratio_auctions is not None else 'default'}, "
+                f"bid.bidders={bid_hot_ratio_bidders if bid_hot_ratio_bidders is not None else 'default'}"
+            )
         print(f"Command: {' '.join(cmd)}\n")
         
         max_attempts = max(1, int(self.nexmark_config.get('max_attempts_per_query', 3)))
@@ -927,6 +1000,8 @@ class NexmarkRunner:
         retry_backoff_seconds = max(1, int(self.nexmark_config.get('retry_backoff_seconds', 4)))
         min_cpu_cores = float(self.nexmark_config.get('min_cpu_cores', 0.0))
         min_profile_cpu_cores = float(self.nexmark_config.get('min_profile_cpu_cores', 0.05))
+        reject_full_gc = bool(self.nexmark_config.get('reject_full_gc', False))
+        max_full_gc_delta = int(self.nexmark_config.get('max_full_gc_delta', 0))
 
         try:
             for attempt in range(1, max_attempts + 1):
@@ -976,6 +1051,7 @@ class NexmarkRunner:
 
                 should_retry = False
                 try:
+                    gc_before = snapshot_taskmanager_full_gc(str(self.flink_home)) if reject_full_gc else {}
                     self._start_metric_senders(env)
                     process_start = time.perf_counter()
                     result = subprocess.run(
@@ -988,6 +1064,8 @@ class NexmarkRunner:
                     process_elapsed = time.perf_counter() - process_start
                     output = result.stdout + result.stderr
                     print(output)
+                    gc_after = snapshot_taskmanager_full_gc(str(self.flink_home)) if reject_full_gc else {}
+                    run_full_gc_delta = full_gc_delta(gc_before, gc_after) if reject_full_gc else 0
 
                     output_lower = output.lower()
                     retryable_error = (
@@ -1033,6 +1111,13 @@ class NexmarkRunner:
                             if invalid_sample:
                                 print('  WARNING: Invalid sample detected (cpu/throughput too low), retrying')
                                 should_retry = True
+                            elif reject_full_gc and run_full_gc_delta > max_full_gc_delta:
+                                print(
+                                    f'  WARNING: Full GC detected during sample '
+                                    f'(delta={run_full_gc_delta}, max={max_full_gc_delta}), rejecting sample'
+                                )
+                                invalid_sample = True
+                                should_retry = True
                             else:
                                 parsed.update({
                                     'benchmark': 'nexmark',
@@ -1043,9 +1128,15 @@ class NexmarkRunner:
                                     'person_proportion': person_proportion,
                                     'auction_proportion': auction_proportion,
                                     'bid_proportion': bid_proportion,
+                                    'bid_hot_ratio_auctions': bid_hot_ratio_auctions,
+                                    'bid_hot_ratio_bidders': bid_hot_ratio_bidders,
+                                    'auction_hot_ratio_sellers': self._get_query_override(query, 'auction_hot_ratio_sellers'),
                                     'configured_tps': tps,
                                     'metric_tps_vertex': self._get_query_override(query, 'metric_tps_vertex'),
                                     'metric_monitor_duration': self._get_query_override(query, 'metric_monitor_duration'),
+                                    'reject_full_gc': reject_full_gc,
+                                    'max_full_gc_delta': max_full_gc_delta,
+                                    'full_gc_delta': run_full_gc_delta,
                                 })
                                 print(f"\n  Result: {parsed.get('throughput', 0):,.2f} events/sec")
                                 if parsed.get('process_throughput'):
@@ -1339,6 +1430,8 @@ def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
         'metric_monitor_interval',
         'metric_monitor_duration',
         'metric_tps_vertex',
+        'reject_full_gc',
+        'max_full_gc_delta',
         'query_overrides',
         'category',
     ):

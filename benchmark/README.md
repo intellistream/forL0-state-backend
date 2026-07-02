@@ -42,36 +42,120 @@ benchmark/
 
 ## 快速开始
 
-### 离线一键运行完整实验并生成报告
+### 离线服务器：scp 仓库后一键运行
 
-联网/构建机先生成离线包：
+推荐直接把整个仓库目录拷贝到离线服务器，然后在仓库内运行一键脚本。仓库需要随包携带以下内容：
+
+- `docker/deploy/`：ForL0 backend JAR、native 依赖可从源码目录安装、WordCount / NexMark / Client usecase 预编译 JAR。
+- `benchmark/offline-packages/`：Python 离线 wheels。
+- `docker/run_all_apps.sh` 与 `docker/server_setup.sh`：部署与运行入口。
+- `docker/images/eclipse-temurin-8-jre.tar.gz`：可选。若目标机已存在 `eclipse-temurin:8-jre` 镜像，或运行时切换到本机 Flink standalone，可不依赖该镜像包。
+
+**1. 拷贝仓库**
+
+```bash
+scp -r /path/to/forL0-state-backend user@server:/path/to/
+ssh user@server
+cd /path/to/forL0-state-backend
+```
+
+**2. 指定 Flink**
+
+```bash
+export FLINK_HOME=/path/to/flink-1.20.3
+```
+
+也可以不设置环境变量，让脚本自动查找 `~/flink-1.20.3`、`~/flink`、`/opt/flink` 或 `/usr/local/flink`。
+
+**3. 一键安装并检查**
+
+```bash
+cd /path/to/forL0-state-backend/docker
+./server_setup.sh --flink-home "$FLINK_HOME" --no-start
+./run_all_apps.sh --offline --preflight-only --test apps --backend all
+```
+
+`server_setup.sh --no-start` 会把 ForL0 backend JAR 安装到 `$FLINK_HOME/lib/`，把 native 库安装到 `$FLINK_HOME/native/`，并写出 `docker/forl0-local.env`。`preflight-only` 只检查依赖、JAR、native 库、Python 离线包和配置，不运行长实验。
+
+**4. Smoke test**
+
+```bash
+cd /path/to/forL0-state-backend/docker
+./run_all_apps.sh \
+  --offline \
+  --test client_usecase \
+  --scenario contract_baseline \
+  --backend all \
+  --no-profile \
+  --no-report
+```
+
+smoke test 用于确认 Flink 提交、StateBackend 加载和 raw 结果写入路径正常。
+
+**5. 正式复跑**
+
+完整应用套件：
+
+```bash
+cd /path/to/forL0-state-backend/docker
+./run_all_apps.sh --offline --test apps --backend all --no-profile
+```
+
+NexMark 无 Full GC 压力复跑重点场景：
+
+```bash
+cd /path/to/forL0-state-backend/docker
+./run_all_apps.sh \
+  --offline \
+  --test nexmark \
+  --scenario forl0_no_full_gc_allq_pressure \
+  --backend all \
+  --query q4,q5,q8,q9,q11,q18,q19,q20 \
+  --no-profile
+```
+
+合同 Base 用例带 Full GC 阈值保护：
+
+```bash
+cd /path/to/forL0-state-backend/docker
+./run_all_apps.sh \
+  --offline \
+  --test nexmark \
+  --scenario contract_baseline_gc_guard \
+  --backend all \
+  --query q4,q5,q8,q9,q11,q18,q19,q20 \
+  --no-profile
+```
+
+运行完成后，HTML 报告位于：
+
+```bash
+/path/to/forL0-state-backend/benchmark/results/reports/benchmark_report.html
+```
+
+只基于已有结果重新生成报告：
+
+```bash
+cd /path/to/forL0-state-backend/docker
+./run_all_apps.sh --offline --report-only --no-profile
+```
+
+### 可选：生成独立离线包
+
+如果不想拷贝整个仓库，也可以在联网/构建机生成独立目录：
 
 ```bash
 cd /path/to/forL0-state-backend
 ./docker/package_offline_bundle.sh --arch arm64 --output-dir /tmp/forl0-offline
 ```
 
-离线目标机安装并运行：
+然后将 `/tmp/forl0-offline/` 拷贝到离线服务器并执行：
 
 ```bash
 cd /path/to/forl0-offline/docker
 ./install_offline_bundle.sh --flink-home /path/to/flink-1.20.3 --install-dir ~/forl0-runtime
-
 cd ~/forl0-runtime/docker
-./run_all_apps.sh --offline --test apps --backend all --no-profile
-```
-
-运行完成后，HTML 报告位于：
-
-```bash
-~/forl0-runtime/benchmark/results/reports/benchmark_report.html
-```
-
-如果只需要基于已有结果重新生成报告：
-
-```bash
-cd ~/forl0-runtime/docker
-./run_all_apps.sh --offline --report-only --no-profile
+./run_all_apps.sh --offline --preflight-only --test apps --backend all
 ```
 
 ### 1. 安装依赖
@@ -140,7 +224,7 @@ python scripts/run_benchmark.py [OPTIONS]
 | `--test` | `unittest`, `wordcount`, `nexmark`, `client_usecase`, `benchset`, `all` | `all` | 测试类型 |
 | `--backend` | `hashmap`, `forl0`, `all` | `all` | State Backend |
 | `--query` | `q4,q5,q8,...` | `all` | NexMark 查询 (仅 nexmark) |
-| `--scenario` | WordCount: `contract_baseline`, `stateful_counter`, `high_cardinality`; NexMark: `contract_baseline`, `forl0_optimized`, `forl0_tps_probe`, `forl0_q5_tps_probe` | 无 | 应用 WordCount 或 NexMark 场景配置 |
+| `--scenario` | WordCount: `contract_baseline`, `stateful_counter`, `high_cardinality`; NexMark: `contract_baseline`, `contract_baseline_gc_guard`, `forl0_optimized`, `forl0_tps_probe`, `forl0_q5_tps_probe`, `forl0_no_full_gc_promising`, `forl0_q4_no_full_gc_auction_heavy`, `forl0_no_full_gc_pressure`, `forl0_no_full_gc_allq_pressure`, `forl0_no_full_gc_q8_q11_tuned`, `forl0_no_full_gc_q8_q11_deep`, `forl0_no_full_gc_lateq_deep`, `forl0_no_full_gc_extra_sql`; Client: `contract_baseline`, `forl0_optimized`, `state_pressure_300k`, `state_pressure_1m`, `hotspot_drift_300k`, `hotspot_drift_1m`, `hotspot_state_left_2m`, `hotspot_state_join_2m` | 无 | 应用场景配置 |
 | `--profile` | `cpu`, `cache`, `uarch`, `memory`, `hotspots` | 关闭 | 启用 profiling |
 
 ### Client usecase
@@ -151,6 +235,22 @@ python scripts/run_benchmark.py --test client_usecase --backend all
 
 # 单独运行 client usecase runner
 python scripts/run_client_usecase.py --backend forl0
+
+# 非合同项：30 万记录状态压力场景
+../docker/run_all_apps.sh --test client_usecase --scenario state_pressure_300k --backend all --no-profile
+
+# 非合同项：100 万记录状态压力场景
+../docker/run_all_apps.sh --test client_usecase --scenario state_pressure_1m --backend all --no-profile
+
+# 非合同项：30 万记录热点漂移状态压力场景
+../docker/run_all_apps.sh --test client_usecase --scenario hotspot_drift_300k --backend all --no-profile
+
+# 非合同项：100 万记录热点漂移状态压力场景
+../docker/run_all_apps.sh --test client_usecase --scenario hotspot_drift_1m --backend all --no-profile
+
+# 探索诊断项：轻量 payload + eventTimeStamp 热桶，直接观察客户 MapState 状态路径
+../docker/run_all_apps.sh --test client_usecase --scenario hotspot_state_left_2m --backend all --no-profile
+../docker/run_all_apps.sh --test client_usecase --scenario hotspot_state_join_2m --backend all --no-profile
 ```
 
 在首次运行前需要先打包该 usecase：
@@ -166,6 +266,9 @@ mvn clean package -DskipTests
 
 `client_usecase` 只需要在 `benchmark.yaml` 里配置 `num_records`。
 并行度和 checkpoint 继续复用全局 `runtime.parallelism` 与 `runtime.checkpoint_interval`。
+`hotspot_drift_*` 场景会使用 `benchmark/client-drift` 中的非合同 driver，保留客户原有
+`HuaweiTestFunction` 状态逻辑，只把 CSV 回放 source 替换为漂移热点 key 生成器；离线一键打包脚本会自动编译并携带
+`client-drift-benchmark-*.jar`。
 
 **示例**：
 
@@ -182,6 +285,37 @@ python scripts/run_benchmark.py --test nexmark --query q5,q8 --backend all
 ../docker/run_all_apps.sh --test nexmark --scenario forl0_tps_probe --backend forl0 --query q18 --no-profile
 ../docker/run_all_apps.sh --test nexmark --scenario forl0_tps_probe --backend hashmap --query q5 --no-profile
 ../docker/run_all_apps.sh --test nexmark --scenario forl0_tps_probe --backend forl0 --query q5 --no-profile
+
+# 非合同项：NexMark Q18 漂移热点场景，用于观察 HotCache 指标与 sink TPS
+../docker/run_all_apps.sh --test nexmark --scenario forl0_q18_l0_hotspot --backend hashmap --query q18 --no-profile
+../docker/run_all_apps.sh --test nexmark --scenario forl0_q18_l0_hotspot --backend forl0 --query q18 --profile cpu
+
+# 非合同项：NexMark promising 查询无 Full GC 复跑
+../docker/run_all_apps.sh --test nexmark --scenario forl0_no_full_gc_promising --backend all --query q4,q18,q19,q20 --no-profile
+
+# 非合同项：NexMark Q4 auction-heavy，无 Full GC 接受规则
+../docker/run_all_apps.sh --test nexmark --scenario forl0_q4_no_full_gc_auction_heavy --backend all --query q4 --no-profile
+
+# 非合同项：NexMark 无 Full GC 压力档，保持高状态压力并拒收 Full GC 样本
+../docker/run_all_apps.sh --test nexmark --scenario forl0_no_full_gc_pressure --backend all --query q4,q18,q19 --no-profile
+
+# 非合同项：NexMark 全查询无 Full GC 压力扫描
+../docker/run_all_apps.sh --test nexmark --scenario forl0_no_full_gc_allq_pressure --backend all --query q4,q5,q8,q9,q11,q18,q19,q20 --no-profile
+
+# 非合同项：NexMark q8/q11 边界查询重试配置
+../docker/run_all_apps.sh --test nexmark --scenario forl0_no_full_gc_q8_q11_tuned --backend all --query q8,q11 --no-profile
+
+# 非合同项：NexMark q8/q11 深调配置（最终 no-Full-GC 表使用 q8/q11 样本）
+../docker/run_all_apps.sh --test nexmark --scenario forl0_no_full_gc_q8_q11_deep --backend all --query q8,q11 --no-profile
+
+# 非合同项：NexMark q18/q19/q20 深调配置（最终 no-Full-GC 表使用 q18/q19/q20 样本）
+../docker/run_all_apps.sh --test nexmark --scenario forl0_no_full_gc_lateq_deep --backend all --query q18,q19,q20 --no-profile
+
+# 合同 Base 用例：带 Full GC 阈值保护，样本 Full GC delta 需 <= 5
+../docker/run_all_apps.sh --test nexmark --scenario contract_baseline_gc_guard --backend all --query q4,q5,q8,q9,q11,q18,q19,q20 --no-profile
+
+# 非合同项：NexMark 其他 SQL 扫描，严格拒收 Full GC 样本
+../docker/run_all_apps.sh --test nexmark --scenario forl0_no_full_gc_extra_sql --backend all --query q0,q1,q2,q3,q6,q7,q10,q12,q13,q14,q15,q16,q17,q21,q22 --no-profile
 
 # 运行测试并采集火焰图
 python scripts/run_benchmark.py --test nexmark --scenario forl0_tps_probe --backend forl0 --query q18 --profile cpu
@@ -375,6 +509,15 @@ NexMark 是流处理系统的标准基准测试，模拟在线拍卖场景。
 | Q19 | 8000万 | Auction Statistics | Multiple Aggregations |
 | Q20 | 6000万 | Expand Bid | Flatmap + State |
 
+Q18 的非合同项 L0 热点场景使用 `forl0_q18_l0_hotspot`。该场景将事件比例调为
+Person:Auction:Bid = 1:9:90，并设置 `bid.hot-ratio.auctions=16`、
+`bid.hot-ratio.bidders=16`、`auction.hot-ratio.sellers=8`。NexMark 生成器会把热
+bidder/auction 绑定到最近一批 id，因此 Q18 的 `(bidder, auction)` 去重状态会形成
+短期高复用、长期随时间漂移的热工作集，适合在目标 L0 服务器上观察
+`forl0.hotcache.active/lookups/hits` 与端到端吞吐提升。验收时需要同时确认
+`active=1` 且 `hits/lookups` 非零；如果命中为 0，说明该 SQL 的物理状态没有落到
+当前 HotCache 支持的标量 `ValueState` 路径，应改用 Q18 的标量 last-bid 变体继续验证。
+
 ---
 
 ## 输出结果
@@ -464,8 +607,8 @@ python scripts/generate_report.py
 | 测试完成 | 无报错，无 OOM |
 | Checkpoint | 正常完成 |
 
-> ⚠️ **注意**：在 Mac 本地运行时，ForL0 使用模拟模式（无真实 L0 硬件），
-> 性能提升不明显甚至可能略低。60% 提升目标仅适用于鲲鹏服务器 + L0 Cache 环境。
+> ⚠️ **注意**：在 Mac 本地运行时主要用于验证流程和报告生成；
+> 性能结果请以鲲鹏服务器 + L0 Cache 环境为准。
 
 ---
 

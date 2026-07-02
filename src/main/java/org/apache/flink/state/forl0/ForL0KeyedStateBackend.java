@@ -47,6 +47,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.RunnableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -103,7 +104,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     private final long engineHandle;
 
     /** Whether this backend has been disposed. */
-    private boolean disposed = false;
+    private final AtomicBoolean disposed = new AtomicBoolean(false);
 
     /** Map of state name → native state handle (long). */
     private final Map<String, Long> nativeStateHandles;
@@ -513,10 +514,9 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     @Override
     public void dispose() {
-        if (disposed) {
+        if (!disposed.compareAndSet(false, true)) {
             return;
         }
-        disposed = true;
         super.dispose();
         NativeEngine.destroyEngine(engineHandle);
         LOG.info("[ForL0] C++ engine destroyed (handle={})", engineHandle);

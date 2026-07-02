@@ -40,24 +40,23 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 
 ### 离线环境一键跑完实验并生成报告
 
-推荐使用仓库自带的一键脚本完成“打包、安装、运行实验、生成报告”的闭环。联网/构建机先生成离线包：
+推荐把整个仓库目录通过 `scp` 拷贝到目标服务器，然后直接在仓库内运行一键脚本。仓库内已携带 benchmark 配置、运行脚本、离线 Python wheels 与预编译 benchmark JAR。
 
 ```bash
-cd forL0-state-backend
-./docker/package_offline_bundle.sh --arch arm64 --output-dir /tmp/forl0-offline
-```
+scp -r /path/to/forL0-state-backend user@server:/path/to/
+ssh user@server
 
-将 `/tmp/forl0-offline` 拷贝到离线目标机后执行：
+cd /path/to/forL0-state-backend
+export FLINK_HOME=/path/to/flink-1.20.3
 
-```bash
-cd /path/to/forl0-offline/docker
-./install_offline_bundle.sh --flink-home /path/to/flink-1.20.3 --install-dir ~/forl0-runtime
-
-cd ~/forl0-runtime/docker
+cd docker
+./server_setup.sh --flink-home "$FLINK_HOME" --no-start
+./run_all_apps.sh --offline --preflight-only --test apps --backend all
+./run_all_apps.sh --offline --test client_usecase --scenario contract_baseline --backend all --no-profile --no-report
 ./run_all_apps.sh --offline --test apps --backend all --no-profile
 ```
 
-脚本会自动复用离线 Python wheels、预编译 JAR、Docker 镜像和本地 Flink，跑完后生成：
+脚本会自动复用离线 Python wheels、预编译 JAR 和本地 Flink；如 Docker 镜像不可用，会回退到 Flink standalone。跑完后生成：
 
 - 原始结果：`benchmark/results/raw/` 与 `benchmark/results/nexmark_*/`
 - 图表：`benchmark/results/figures/`
@@ -70,7 +69,7 @@ cd ~/forl0-runtime/docker
 ./run_all_apps.sh --offline --report-only --no-profile
 ```
 
-更详细的离线打包说明见：[一键离线部署与运行](docs/One_Click_Offline_Deploy_and_Run.md)。
+更详细的复现命令见：[benchmark/README.md](benchmark/README.md)。
 
 ### 环境要求
 

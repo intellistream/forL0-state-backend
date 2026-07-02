@@ -99,7 +99,7 @@ usage() {
   --output-dir PATH      产物输出目录，默认 offline-artifacts/
   --with-tests           编译时执行测试（默认跳过）
   --skip-tests           编译时跳过测试（默认）
-  --skip-docker-save     不导出 docker/images/eclipse-temurin-8-jre.tar
+  --skip-docker-save     不导出 docker/images/eclipse-temurin-8-jre.tar.gz
   --skip-python-wheels   不下载 benchmark Python 依赖 wheels
   --no-profiler          不处理 async-profiler 离线包
   --arch NAME            目标架构: arm64 或 x64（默认按当前机器自动判断）
@@ -199,6 +199,19 @@ if [[ -d "$REPO_ROOT/client_usecase/XX_6000c_Demo" ]]; then
     (cd "$REPO_ROOT/client_usecase/XX_6000c_Demo" && mvn "${MVN_ARGS[@]}")
 fi
 
+if [[ -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
+    cp -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" "$REPO_ROOT/docker/deploy/"
+fi
+
+if [[ -d "$REPO_ROOT/benchmark/client-drift" ]]; then
+    if [[ -f "$REPO_ROOT/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
+        echo "[6/10] 编译 client hotspot-drift benchmark"
+        (cd "$REPO_ROOT/benchmark/client-drift" && mvn "${MVN_ARGS[@]}")
+    else
+        echo "[6/10] 跳过 client hotspot-drift benchmark（缺少客户 usecase jar）"
+    fi
+fi
+
 echo "[7/10] 收集离线部署产物到 docker/deploy"
 cp -f "$REPO_ROOT/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
 
@@ -220,6 +233,10 @@ fi
 
 if [[ -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
     cp -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" "$REPO_ROOT/docker/deploy/"
+fi
+
+if [[ -f "$REPO_ROOT/benchmark/client-drift/target/client-drift-benchmark-1.0-SNAPSHOT.jar" ]]; then
+    cp -f "$REPO_ROOT/benchmark/client-drift/target/client-drift-benchmark-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
 fi
 
 if [[ "$COPY_PROFILER" == "true" ]]; then
@@ -262,9 +279,9 @@ if [[ "$SKIP_DOCKER_SAVE" == "false" ]]; then
     echo "[9/10] 导出 Docker 镜像 ${DOCKER_IMAGE} (${DOCKER_PLATFORM})"
     if ensure_docker_image_for_platform "$DOCKER_IMAGE" "$DOCKER_PLATFORM"; then
         if docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
-            docker save "$DOCKER_IMAGE" -o "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar"
+            docker save "$DOCKER_IMAGE" | gzip -9 > "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar.gz"
         elif sudo -n docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
-            sudo -n docker save "$DOCKER_IMAGE" -o "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar"
+            sudo -n docker save "$DOCKER_IMAGE" | gzip -9 > "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar.gz"
         fi
     else
         echo "      ⚠ 无法获取镜像 ${DOCKER_IMAGE} (${DOCKER_PLATFORM})，跳过导出"
@@ -290,6 +307,7 @@ cp -a "$REPO_ROOT/benchmark/config" "$OUTPUT_DIR/benchmark/"
 cp -a "$REPO_ROOT/benchmark/scripts" "$OUTPUT_DIR/benchmark/"
 rm -rf "$OUTPUT_DIR/benchmark/scripts/__pycache__"
 cp -f "$REPO_ROOT/benchmark/requirements.txt" "$OUTPUT_DIR/benchmark/"
+cp -f "$REPO_ROOT/benchmark/README.md" "$OUTPUT_DIR/benchmark/"
 cp -a "$REPO_ROOT/docker/conf" "$OUTPUT_DIR/docker/"
 for script in docker_run.sh server_setup.sh run_all_apps.sh install_offline_bundle.sh start.sh stop.sh restart.sh; do
     if [[ -f "$REPO_ROOT/docker/$script" ]]; then
@@ -311,14 +329,17 @@ CHECKSUM_FILE="$OUTPUT_DIR/offline_bundle_sha256.txt"
     echo "Arch: ${ARCH}"
     echo "DockerPlatform: ${DOCKER_PLATFORM}"
     echo ""
-    find "$OUTPUT_DIR" -maxdepth 1 -type f ! -name "offline_bundle_manifest.txt" ! -name "offline_bundle_sha256.txt" -printf '%f\n' | sort
+    (
+        cd "$OUTPUT_DIR"
+        find . -type f ! -name "offline_bundle_manifest.txt" ! -name "offline_bundle_sha256.txt" -printf '%P\n' | sort
+    )
 } > "$MANIFEST_FILE"
 
 SHA_CMD="$(detect_sha_cmd || true)"
 if [[ -n "$SHA_CMD" ]]; then
     (
         cd "$OUTPUT_DIR"
-        find . -maxdepth 1 -type f ! -name "offline_bundle_sha256.txt" -print0 | sort -z | xargs -0 $SHA_CMD
+        find . -type f ! -name "offline_bundle_sha256.txt" -print0 | sort -z | xargs -0 $SHA_CMD
     ) > "$CHECKSUM_FILE"
     echo "      ✓ 清单: ${MANIFEST_FILE}"
     echo "      ✓ 校验: ${CHECKSUM_FILE}"

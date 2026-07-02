@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from run_wordcount import run_wordcount, run_wordcount_scenario, save_result
 from run_nexmark import NexmarkRunner, apply_nexmark_scenario
 from run_unittest import run_unittest
-from run_client_usecase import run_client_usecase
+from run_client_usecase import run_client_usecase, apply_client_usecase_scenario
 from utils.config import load_config
 
 
@@ -265,8 +265,10 @@ Examples:
                 print(f"ERROR: WordCount scenario '{args.scenario}' not found.")
                 print(f"Available: {[s.get('name') for s in config.get('wordcount_scenarios', [])]}")
                 sys.exit(1)
+        elif args.test == 'client_usecase':
+            config = apply_client_usecase_scenario(config, args.scenario)
         else:
-            print(f"ERROR: --scenario is supported for NexMark and WordCount runs, got --test {args.test}")
+            print(f"ERROR: --scenario is supported for NexMark, WordCount, and Client Usecase runs, got --test {args.test}")
             sys.exit(1)
     
     # Determine backends
@@ -286,6 +288,8 @@ Examples:
             print(f"NexMark Scenario: {args.scenario}")
     if args.test == 'wordcount' and args.scenario:
         print(f"WordCount Scenario: {args.scenario}")
+    if args.test == 'client_usecase' and args.scenario:
+        print(f"Client Usecase Scenario: {args.scenario}")
     if args.profile:
         profile_desc = {
             'cpu': 'CPU flame graphs (async-profiler)',

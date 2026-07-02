@@ -182,10 +182,13 @@ if [[ -z "$FLINK_DIR" || ! -d "$FLINK_DIR" ]]; then
 fi
 
 DOCKER_BIN="$(detect_docker_bin || true)"
-if [[ -z "$DOCKER_BIN" ]]; then
+if [[ -z "$DOCKER_BIN" && "$START_DOCKER" == "true" ]]; then
     echo "✗ 当前用户无法访问 Docker。"
-    echo "  请确认当前用户可直接执行 docker，或可执行 sudo -n docker。"
+    echo "  请确认当前用户可直接执行 docker，或可执行 sudo -n docker；如只需安装环境，可加 --no-start。"
     exit 1
+fi
+if [[ -z "$DOCKER_BIN" ]]; then
+    DOCKER_BIN="docker"
 fi
 
 BACKEND_JAR="$(pick_first_file \
@@ -208,6 +211,10 @@ UNITTEST_JAR="$(pick_first_file \
 NEXMARK_JAR="$(pick_first_file \
     "${REPO_ROOT}/benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink/lib/nexmark-flink-0.3-SNAPSHOT.jar" \
     "${REPO_ROOT}/docker/deploy/nexmark-flink-0.3-SNAPSHOT.jar" || true)"
+
+CLIENT_JAR="$(pick_first_file \
+    "${REPO_ROOT}/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" \
+    "${REPO_ROOT}/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" || true)"
 
 ASYNC_PROFILER_DIR=""
 ASYNC_PROFILER_ARCHIVE="$(pick_first_file \
@@ -237,7 +244,7 @@ echo "  FLINK_HOME: ${FLINK_DIR}"
 echo "  Docker:     ${DOCKER_BIN}"
 echo ""
 
-for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR"; do
+for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR" "$NEXMARK_JAR" "$CLIENT_JAR"; do
     if [[ ! -f "$required" ]]; then
         echo "✗ 缺少预编译产物: $required"
         exit 1
@@ -246,39 +253,28 @@ done
 
 if [[ -z "$UNITTEST_JAR" || ! -f "$UNITTEST_JAR" ]]; then
     if [[ -d "${REPO_ROOT}/benchmark/unit-test" ]]; then
-        echo "[预处理] 未找到 unit-test JAR，尝试现场构建..."
-        (
-            cd "${REPO_ROOT}/benchmark/unit-test"
-            mvn -DskipTests package
-        )
-        UNITTEST_JAR="$(pick_first_file \
-            "${REPO_ROOT}/benchmark/unit-test/target/unit-test-benchmark-1.0-SNAPSHOT.jar" \
-            "${REPO_ROOT}/docker/deploy/unit-test-benchmark-1.0-SNAPSHOT.jar" || true)"
+        echo "      ⚠ 未找到 unit-test benchmark JAR；apps/nexmark/wordcount/client_usecase 运行不依赖该产物"
     fi
 fi
 
-if [[ -z "$UNITTEST_JAR" || ! -f "$UNITTEST_JAR" ]]; then
-    echo "✗ 缺少 unit-test benchmark 产物，且现场构建失败。"
-    echo "  请执行: cd ${REPO_ROOT}/benchmark/unit-test && mvn -DskipTests package"
-    exit 1
-fi
-
-if [[ -z "$NEXMARK_JAR" || ! -f "$NEXMARK_JAR" ]]; then
-    echo "✗ 缺少 NexMark JAR。"
-    echo "  请确认 benchmark/nexmark-src 或 docker/deploy 中存在 nexmark-flink-0.3-SNAPSHOT.jar"
-    exit 1
-fi
-
-if [[ "$SKIP_DOCKER_LOAD" == "false" ]]; then
+if [[ "$SKIP_DOCKER_LOAD" == "false" && "$START_DOCKER" == "true" ]]; then
     echo "[1/4] 检查 Docker 镜像..."
-    IMAGE_FILE="${REPO_ROOT}/docker/images/eclipse-temurin-8-jre.tar"
+    IMAGE_FILE=""
+    for candidate in \
+        "${REPO_ROOT}/docker/images/eclipse-temurin-8-jre.tar.gz" \
+        "${REPO_ROOT}/docker/images/eclipse-temurin-8-jre.tar"; do
+        if [[ -f "$candidate" ]]; then
+            IMAGE_FILE="$candidate"
+            break
+        fi
+    done
     if ${DOCKER_BIN} image inspect eclipse-temurin:8-jre >/dev/null 2>&1; then
         echo "      ✓ Docker 镜像已存在"
-    elif [[ -f "$IMAGE_FILE" ]]; then
+    elif [[ -n "$IMAGE_FILE" ]]; then
         echo "      加载本地镜像 ${IMAGE_FILE}"
         ${DOCKER_BIN} load -i "$IMAGE_FILE"
     else
-        echo "      ✗ 缺少本地镜像文件: ${IMAGE_FILE}"
+        echo "      ✗ 缺少本地镜像文件: docker/images/eclipse-temurin-8-jre.tar.gz 或 .tar"
         exit 1
     fi
 else
@@ -304,6 +300,7 @@ export FORL0_NATIVE_DIR="${FLINK_DIR}/native"
 export WORDCOUNT_BENCHMARK_JAR="${WORDCOUNT_JAR}"
 export UNITTEST_BENCHMARK_JAR="${UNITTEST_JAR}"
 export NEXMARK_FLINK_JAR="${NEXMARK_JAR}"
+export CLIENT_USECASE_JAR="${CLIENT_JAR}"
 export REPO_ROOT="${REPO_ROOT}"
 export DOCKER_BIN="${DOCKER_BIN}"
 export ASYNC_PROFILER_HOME="${ASYNC_PROFILER_DIR}"
@@ -313,7 +310,11 @@ EOF
 echo "      ✓ backend JAR 已安装到 ${FLINK_DIR}/lib/"
 echo "      ✓ NexMark JAR 已安装到 ${FLINK_DIR}/lib/"
 echo "      ✓ native 库已安装到 ${FLINK_DIR}/native/"
-echo "      ✓ unit-test benchmark 已就绪"
+echo "      ✓ WordCount benchmark 已就绪"
+echo "      ✓ Client usecase benchmark 已就绪"
+if [[ -n "$UNITTEST_JAR" && -f "$UNITTEST_JAR" ]]; then
+    echo "      ✓ unit-test benchmark 已就绪"
+fi
 echo "      ✓ 环境文件已写入 ${REPO_ROOT}/docker/forl0-local.env"
 if [[ -n "${ASYNC_PROFILER_DIR}" && -x "${ASYNC_PROFILER_DIR}/bin/asprof" ]]; then
     echo "      ✓ async-profiler 已就绪: ${ASYNC_PROFILER_DIR}"

@@ -126,7 +126,7 @@ do_start() {
         exit 1
     fi
     if ! ${DOCKER_BIN} image inspect "$IMAGE" >/dev/null 2>&1; then
-        echo "✗ Docker 镜像 ${IMAGE} 不存在，请先: docker load -i images/eclipse-temurin-8-jre.tar"
+        echo "✗ Docker 镜像 ${IMAGE} 不存在，请先: docker load -i images/eclipse-temurin-8-jre.tar.gz"
         exit 1
     fi
     if [[ -z "$NUMA_HOST_PATH" ]]; then

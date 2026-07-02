@@ -110,6 +110,15 @@ nexmark_scenarios:
     checkpoint_interval: 10000     # contract: 10 s
     # event counts use the defaults from the nexmark section above
 
+  - name: contract_baseline_gc_guard
+    description: "Contract rule with Full-GC guard: accept samples only when Full GC delta is at most 5"
+    queries: "q4,q5,q8,q9,q11,q18,q19,q20"
+    checkpoint_interval: 10000
+    reject_full_gc: true
+    max_full_gc_delta: 5
+    max_attempts_per_query: 2
+    timeout_seconds: 21600
+
   - name: forl0_optimized
     description: "ForL0-tuned: higher event volume, no checkpoint, larger L0 cache"
     queries: "q4,q5,q8,q9,q11,q18,q19,q20"
@@ -243,6 +252,707 @@ nexmark_scenarios:
       max_table_capacity: 65536
       main_table_load_factor_threshold: 0.80
 
+  - name: forl0_q18_l0_hotspot
+    description: "Non-contract probe: Q18 drifting hot bidder-auction keys for target L0 hardware"
+    queries: "q18"
+    category: forl0
+    checkpoint_interval: 0
+    runtime_overrides:
+      parallelism: 4
+    # Q18 keeps the latest bid per (bidder, auction).  NexMark's generator
+    # moves the hot bidder/auction to the most recent id batch, so these
+    # ratios create a small, drifting hot working set that should remain in
+    # L0 on target hardware while still changing over time.
+    person_proportion: 1
+    auction_proportion: 9
+    bid_proportion: 90
+    tps: 8000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 15s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 90s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 1
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q18: 0
+    query_overrides:
+      q18:
+        tps: 8000000
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 16
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 15s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_no_full_gc_promising
+    description: "Non-contract probe: promising NexMark queries under no-Full-GC acceptance rule"
+    queries: "q4,q18,q19,q20"
+    category: forl0
+    checkpoint_interval: 0
+    reject_full_gc: true
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 9
+    bid_proportion: 90
+    tps: 1000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 20s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 90s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q4: 0
+      q18: 0
+      q19: 0
+      q20: 0
+    query_overrides:
+      q4:
+        tps: 600000
+        person_proportion: 1
+        auction_proportion: 19
+        bid_proportion: 80
+        bid_hot_ratio_auctions: 8
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+      q18:
+        tps: 8000000
+        person_proportion: 1
+        auction_proportion: 9
+        bid_proportion: 90
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 16
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 15s
+        metric_monitor_duration: 90s
+      q19:
+        tps: 1200000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 8
+        metric_monitor_delay: 50s
+        metric_monitor_duration: 90s
+      q20:
+        tps: 250000
+        person_proportion: 1
+        auction_proportion: 19
+        bid_proportion: 80
+        bid_hot_ratio_auctions: 8
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_q4_no_full_gc_auction_heavy
+    description: "Non-contract probe: Q4 auction-heavy steady state under no-Full-GC acceptance rule"
+    queries: "q4"
+    category: forl0
+    checkpoint_interval: 0
+    reject_full_gc: true
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 49
+    bid_proportion: 50
+    tps: 500000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 20s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 90s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q4: 0
+    query_overrides:
+      q4:
+        tps: 500000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 8
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_no_full_gc_pressure
+    description: "Non-contract pressure probe: keep no-Full-GC acceptance while preserving high NexMark state pressure"
+    queries: "q4,q18,q19"
+    category: forl0
+    checkpoint_interval: 0
+    reject_full_gc: true
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 49
+    bid_proportion: 50
+    tps: 600000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 20s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 90s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q4: 0
+      q18: 0
+      q19: 0
+    query_overrides:
+      q4:
+        tps: 600000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 8
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 90s
+      q18:
+        tps: 5000000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 16
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 15s
+        metric_monitor_duration: 90s
+      q19:
+        tps: 1600000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 8
+        metric_monitor_delay: 45s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_no_full_gc_allq_pressure
+    description: "Non-contract pressure sweep: tune every stateful NexMark query under no-Full-GC acceptance"
+    queries: "q4,q5,q8,q9,q11,q18,q19,q20"
+    category: forl0
+    checkpoint_interval: 0
+    reject_full_gc: true
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 49
+    bid_proportion: 50
+    tps: 600000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 20s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 90s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q4: 0
+      q5: 0
+      q8: 0
+      q9: 0
+      q11: 0
+      q18: 0
+      q19: 0
+      q20: 0
+    query_overrides:
+      q4:
+        tps: 600000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 8
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 90s
+      q5:
+        tps: 5000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 8
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 90s
+      q8:
+        tps: 2000000
+        person_proportion: 25
+        auction_proportion: 25
+        bid_proportion: 50
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 90s
+      q9:
+        tps: 200000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 16
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+      q11:
+        tps: 1000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_bidders: 16
+        metric_monitor_delay: 45s
+        metric_monitor_duration: 90s
+      q18:
+        tps: 5000000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 16
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 15s
+        metric_monitor_duration: 90s
+      q19:
+        tps: 1600000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 8
+        metric_monitor_delay: 45s
+        metric_monitor_duration: 90s
+      q20:
+        tps: 400000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 16
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_no_full_gc_q8_q11_tuned
+    description: "Non-contract retry: q8/q11 boundary tuning under no-Full-GC acceptance"
+    queries: "q8,q11"
+    category: forl0
+    checkpoint_interval: 0
+    reject_full_gc: true
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 25
+    auction_proportion: 25
+    bid_proportion: 50
+    tps: 1000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 20s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 60s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q8: 0
+      q11: 0
+    query_overrides:
+      q8:
+        tps: 2000000
+        person_proportion: 25
+        auction_proportion: 25
+        bid_proportion: 50
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 60s
+      q11:
+        tps: 200000
+        person_proportion: 10
+        auction_proportion: 10
+        bid_proportion: 80
+        metric_monitor_delay: 30s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_no_full_gc_q8_q11_deep
+    description: "Non-contract retry: q8/q11 query-specific hotspot shaping under no-Full-GC acceptance"
+    queries: "q8,q11"
+    category: forl0
+    checkpoint_interval: 0
+    reject_full_gc: true
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 25
+    auction_proportion: 25
+    bid_proportion: 50
+    tps: 1000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 25s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 90s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q8: 0
+      q11: 0
+    query_overrides:
+      q8:
+        tps: 1000000
+        person_proportion: 50
+        auction_proportion: 50
+        bid_proportion: 0
+        auction_hot_ratio_sellers: 16
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+      q11:
+        tps: 500000
+        person_proportion: 5
+        auction_proportion: 5
+        bid_proportion: 90
+        bid_hot_ratio_bidders: 24
+        metric_monitor_delay: 45s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_no_full_gc_lateq_deep
+    description: "Non-contract retry: q18/q19/q20 deeper state-pressure shaping under no-Full-GC acceptance"
+    queries: "q18,q19,q20"
+    category: forl0
+    checkpoint_interval: 0
+    reject_full_gc: true
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 9
+    bid_proportion: 90
+    tps: 1000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 20s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 90s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q18: 0
+      q19: 0
+      q20: 0
+    query_overrides:
+      q18:
+        tps: 12000000
+        person_proportion: 1
+        auction_proportion: 9
+        bid_proportion: 90
+        bid_hot_ratio_auctions: 24
+        bid_hot_ratio_bidders: 24
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 15s
+        metric_monitor_duration: 90s
+      q19:
+        tps: 2400000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 24
+        bid_hot_ratio_bidders: 12
+        metric_monitor_delay: 45s
+        metric_monitor_duration: 90s
+      q20:
+        tps: 700000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 24
+        auction_hot_ratio_sellers: 12
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: forl0_no_full_gc_extra_sql
+    description: "Non-contract sweep: additional NexMark SQL queries under no-Full-GC acceptance"
+    queries: "q0,q1,q2,q3,q6,q7,q10,q12,q13,q14,q15,q16,q17,q21,q22"
+    category: oa
+    checkpoint_interval: 0
+    reject_full_gc: true
+    max_full_gc_delta: 0
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 3
+    bid_proportion: 46
+    tps: 1000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 15s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 60s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 2
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q0: 0
+      q1: 0
+      q2: 0
+      q3: 0
+      q6: 0
+      q7: 0
+      q10: 0
+      q12: 0
+      q13: 0
+      q14: 0
+      q15: 0
+      q16: 0
+      q17: 0
+      q21: 0
+      q22: 0
+    query_overrides:
+      q0:
+        tps: 5000000
+        metric_monitor_delay: 10s
+      q1:
+        tps: 5000000
+        metric_monitor_delay: 10s
+      q2:
+        tps: 5000000
+        metric_monitor_delay: 10s
+      q3:
+        tps: 1000000
+        person_proportion: 50
+        auction_proportion: 50
+        bid_proportion: 0
+        auction_hot_ratio_sellers: 12
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 60s
+      q6:
+        tps: 600000
+        person_proportion: 1
+        auction_proportion: 49
+        bid_proportion: 50
+        bid_hot_ratio_auctions: 16
+        auction_hot_ratio_sellers: 12
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+      q7:
+        tps: 2000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 8
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 60s
+      q10:
+        tps: 5000000
+        metric_monitor_delay: 10s
+      q12:
+        tps: 1000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_bidders: 16
+        metric_monitor_delay: 25s
+        metric_monitor_duration: 90s
+      q13:
+        tps: 2000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 60s
+      q14:
+        tps: 5000000
+        metric_monitor_delay: 10s
+      q15:
+        tps: 1000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 16
+        metric_monitor_delay: 30s
+        metric_monitor_duration: 90s
+      q16:
+        tps: 1000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        bid_hot_ratio_bidders: 16
+        metric_monitor_delay: 30s
+        metric_monitor_duration: 90s
+      q17:
+        tps: 1000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 16
+        metric_monitor_delay: 30s
+        metric_monitor_duration: 90s
+      q21:
+        tps: 5000000
+        metric_monitor_delay: 10s
+      q22:
+        tps: 5000000
+        metric_monitor_delay: 10s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
 # Unit test benchmark settings
 unittest:
   num_keys: 100000               # Ultra-quick full-suite validation scale
@@ -272,6 +982,138 @@ client_usecase_scenarios:
       l0_cache_size: 128mb
       initial_table_capacity: 512
       max_table_capacity: 8192
+
+  - name: state_pressure_300k
+    description: "Non-contract: 300k records, no checkpoint, high state pressure for MapState/ValueState paths"
+    num_records: 300000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: state_pressure_1m
+    description: "Non-contract: 1M records, no checkpoint, higher state pressure for MapState/ValueState paths"
+    num_records: 1000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: hotspot_drift_300k
+    description: "Non-contract: 300k records with drifting hot join keys for Client MapState/ValueState paths"
+    driver: hotspot_drift
+    num_records: 300000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    hot_key_count: 2048
+    cold_key_count: 200000
+    hot_traffic_percent: 80
+    drift_interval_records: 20000
+    drift_step: 1024
+    right_delay_ms: 2
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: hotspot_drift_1m
+    description: "Non-contract: 1M records with a larger drifting hot working set"
+    driver: hotspot_drift
+    num_records: 1000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 2
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: hotspot_state_left_2m
+    description: "Non-contract: 2M lightweight left-stream state pressure with drifting hot join keys and timestamp buckets"
+    driver: hotspot_drift
+    num_records: 2000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 100
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 0
+    payload_mode: lightweight
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
+
+  - name: hotspot_state_join_2m
+    description: "Non-contract: 2M lightweight mostly-left dual-stream state pressure with controlled right-side drain"
+    driver: hotspot_drift
+    num_records: 2000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 1
+    payload_mode: lightweight
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
 
 
 benchset:

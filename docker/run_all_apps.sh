@@ -32,6 +32,114 @@ BENCH_PYTHON=""
 OFFLINE_MODE="${FORL0_OFFLINE:-auto}"
 GENERATE_REPORT=true
 REPORT_ONLY=false
+PREFLIGHT_ONLY=false
+
+print_provenance() {
+    echo "============================================================"
+    echo "  ForL0 benchmark run context"
+    echo "============================================================"
+    echo "  Repo:        ${REPO_ROOT}"
+    echo "  Test:        ${TEST_NAME}"
+    echo "  Backend:     ${BACKEND}"
+    echo "  Profile:     ${PROFILE_MODE:-disabled}"
+    echo "  Offline:     ${OFFLINE_MODE}"
+    if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "  GitCommit:   $(git -C "${REPO_ROOT}" rev-parse HEAD)"
+    else
+        echo "  GitCommit:   unavailable"
+    fi
+    echo "  Date:        $(date '+%Y-%m-%d %H:%M:%S %z')"
+    echo ""
+}
+
+check_file() {
+    local label="$1"
+    local path="$2"
+    if [[ -f "$path" ]]; then
+        echo "      ✓ ${label}: ${path}"
+        return 0
+    fi
+    echo "      ✗ ${label}: ${path}"
+    return 1
+}
+
+check_glob() {
+    local label="$1"
+    local pattern="$2"
+    local match
+    match="$(compgen -G "$pattern" | head -n 1 || true)"
+    if [[ -n "$match" && -f "$match" ]]; then
+        echo "      ✓ ${label}: ${match}"
+        return 0
+    fi
+    echo "      ✗ ${label}: ${pattern}"
+    return 1
+}
+
+preflight_check() {
+    local failed=0
+
+    echo "[preflight] 检查 Flink 与 benchmark 产物"
+    if [[ -z "${FLINK_HOME:-}" || ! -x "${FLINK_HOME}/bin/flink" ]]; then
+        echo "      ✗ FLINK_HOME 无效或缺少 bin/flink: ${FLINK_HOME:-unset}"
+        failed=1
+    else
+        echo "      ✓ FLINK_HOME: ${FLINK_HOME}"
+    fi
+
+    check_file "benchmark config" "${REPO_ROOT}/benchmark/config/benchmark.yaml" || failed=1
+    check_file "benchmark entry" "${REPO_ROOT}/benchmark/scripts/run_benchmark.py" || failed=1
+    check_file "requirements" "${REPO_ROOT}/benchmark/requirements.txt" || failed=1
+
+    if [[ "$TEST_NAME" == "wordcount" || "$TEST_NAME" == "apps" || "$TEST_NAME" == "all" ]]; then
+        check_glob "WordCount JAR" "${REPO_ROOT}/docker/deploy/wordcount-benchmark-*.jar" || failed=1
+    fi
+    if [[ "$TEST_NAME" == "nexmark" || "$TEST_NAME" == "apps" || "$TEST_NAME" == "all" ]]; then
+        check_glob "NexMark JAR" "${REPO_ROOT}/docker/deploy/nexmark-flink-*.jar" || failed=1
+    fi
+    if [[ "$TEST_NAME" == "client_usecase" || "$TEST_NAME" == "apps" || "$TEST_NAME" == "all" ]]; then
+        check_glob "Client usecase JAR" "${REPO_ROOT}/docker/deploy/flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar" || failed=1
+    fi
+    if [[ "$TEST_NAME" == "client_usecase" || "$TEST_NAME" == "apps" || "$TEST_NAME" == "all" ]]; then
+        if compgen -G "${REPO_ROOT}/docker/deploy/client-drift-benchmark-*.jar" >/dev/null; then
+            check_glob "Client hotspot-drift JAR" "${REPO_ROOT}/docker/deploy/client-drift-benchmark-*.jar" || failed=1
+        else
+            echo "      - Client hotspot-drift JAR: not required unless hotspot_drift_* scenarios are selected"
+        fi
+    fi
+
+    if [[ -n "${FLINK_HOME:-}" ]]; then
+        check_glob "ForL0 backend JAR in Flink lib" "${FLINK_HOME}/lib/flink-statebackend-for[Ll]0-*.jar" || failed=1
+        if [[ -f "${FLINK_HOME}/native/libforl0_engine.so" ]]; then
+            echo "      ✓ native library: ${FLINK_HOME}/native/libforl0_engine.so"
+        elif [[ -f "${REPO_ROOT}/docker/deploy/libforl0_engine.so" ]]; then
+            echo "      ✓ native library: ${REPO_ROOT}/docker/deploy/libforl0_engine.so"
+        else
+            echo "      ✗ native library: missing libforl0_engine.so"
+            failed=1
+        fi
+    fi
+
+    bootstrap_benchmark_python
+    "${BENCH_PYTHON}" - <<'PY'
+import os
+import sys
+from pathlib import Path
+repo_root = Path(os.environ["REPO_ROOT"]).resolve()
+sys.path.insert(0, str(repo_root / "benchmark" / "scripts"))
+from utils.config import load_config
+cfg = load_config()
+print("      ✓ config loaded")
+print("      ✓ nexmark queries:", cfg.get("nexmark", {}).get("queries", ""))
+print("      ✓ client scenarios:", ",".join(s.get("name", "") for s in cfg.get("client_usecase_scenarios", [])))
+PY
+
+    if [[ "$failed" -ne 0 ]]; then
+        echo "[preflight] 检查失败，请补齐上述缺失项后再运行实验。"
+        exit 1
+    fi
+    echo "[preflight] 检查通过。"
+}
 
 bootstrap_async_profiler() {
     local discovered_home="${ASYNC_PROFILER_HOME:-}"
@@ -234,6 +342,7 @@ usage() {
   --online              允许离线包失败后回退在线安装（默认 auto）
   --no-report           只跑实验，不生成 benchmark HTML 报告
   --report-only         不跑实验，只基于已有结果生成 benchmark HTML 报告
+  --preflight-only      只检查离线运行依赖、JAR、配置与 Python 环境，不启动实验
   -h, --help            显示帮助
 EOF
 }
@@ -276,6 +385,12 @@ while [[ $# -gt 0 ]]; do
             REPORT_ONLY=true
             shift
             ;;
+        --preflight-only)
+            PREFLIGHT_ONLY=true
+            GENERATE_REPORT=false
+            ENABLE_PROFILE=false
+            shift
+            ;;
         --test)
             TEST_NAME="$2"
             shift 2
@@ -304,6 +419,8 @@ if [[ "$ENABLE_PROFILE" == "true" && -z "$PROFILE_MODE" ]]; then
     PROFILE_MODE="cpu"
 fi
 
+print_provenance
+
 if [[ "$REPORT_ONLY" == "true" ]]; then
     bootstrap_benchmark_python
     generate_benchmark_report
@@ -313,12 +430,17 @@ fi
 if [[ ! -f "${REPO_ROOT}/docker/forl0-local.env" ]]; then
     echo "[1/5] 未发现部署环境，先执行 server_setup.sh"
     if [[ -n "${FLINK_HOME:-}" ]]; then
-        bash "${REPO_ROOT}/docker/server_setup.sh" --flink-home "$FLINK_HOME"
+        bash "${REPO_ROOT}/docker/server_setup.sh" --flink-home "$FLINK_HOME" --no-start
     else
-        bash "${REPO_ROOT}/docker/server_setup.sh"
+        bash "${REPO_ROOT}/docker/server_setup.sh" --no-start
     fi
     # shellcheck disable=SC1091
     source "${REPO_ROOT}/docker/forl0-local.env"
+fi
+
+if [[ "$PREFLIGHT_ONLY" == "true" ]]; then
+    preflight_check
+    exit 0
 fi
 
 if ! curl -sf http://localhost:8081/overview >/dev/null 2>&1; then

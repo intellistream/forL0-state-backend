@@ -9,6 +9,7 @@ configured like WordCount.
 
 import argparse
 import math
+import os
 import re
 import subprocess
 import sys
@@ -66,19 +67,38 @@ def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'clien
     return args
 
 
-def get_client_usecase_jar() -> Optional[str]:
+def get_client_usecase_jar(driver: str = 'csv_replay') -> Optional[str]:
     """Get path to the packaged client usecase JAR."""
+    if driver != 'hotspot_drift':
+        env_jar = os.environ.get('CLIENT_USECASE_JAR', '')
+        if env_jar and Path(env_jar).is_file():
+            return env_jar
+
     project_root = Path(__file__).parent.parent.parent
     target_dir = project_root / 'client_usecase' / 'XX_6000c_Demo' / 'target'
+    drift_target_dir = project_root / 'benchmark' / 'client-drift' / 'target'
     deploy_dir = project_root / 'docker' / 'deploy'
 
-    preferred_patterns = [
-        'flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar',
-        '*-jar-with-dependencies.jar',
-        '*.jar',
-    ]
+    if driver == 'hotspot_drift':
+        search_plan = [
+            (drift_target_dir, ['client-drift-benchmark-*-shaded.jar', 'client-drift-benchmark-*.jar']),
+            (deploy_dir, ['client-drift-benchmark-*.jar']),
+        ]
+    else:
+        search_plan = [
+            (target_dir, [
+                'flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar',
+                '*-jar-with-dependencies.jar',
+                '*.jar',
+            ]),
+            (deploy_dir, [
+                'flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar',
+                '*-jar-with-dependencies.jar',
+                '*.jar',
+            ]),
+        ]
 
-    for search_dir in [target_dir, deploy_dir]:
+    for search_dir, preferred_patterns in search_plan:
         for pattern in preferred_patterns:
             for jar in sorted(search_dir.glob(pattern)):
                 if 'original' not in jar.name and 'sources' not in jar.name and 'javadoc' not in jar.name:
@@ -226,10 +246,11 @@ def wait_for_job_completion(rest_url: str, job_id: str, timeout: int) -> tuple[s
     return 'TIMEOUT', auto_stopped, effective_end - start_time
 
 
-def split_total_records(total_records: int) -> tuple[int, int]:
+def split_total_records(total_records: int, left_record_percent: int = 50) -> tuple[int, int]:
     """Split total input records across the two input streams."""
-    left_records = (total_records + 1) // 2
-    right_records = total_records // 2
+    left_record_percent = max(0, min(100, left_record_percent))
+    left_records = math.ceil(total_records * left_record_percent / 100)
+    right_records = total_records - left_records
     return left_records, right_records
 
 
@@ -243,6 +264,8 @@ def records_per_source_subtask(total_records: int, parallelism: int) -> int:
     """
     if parallelism <= 0:
         raise ValueError('parallelism must be > 0')
+    if total_records <= 0:
+        return 0
     return max(1, math.ceil(total_records / parallelism))
 
 
@@ -274,14 +297,19 @@ def run_client_usecase(
 
     cleanup_running_jobs(rest_url, f'client_usecase:{backend}')
 
-    jar_path = get_client_usecase_jar()
+    driver = client_config.get('driver', 'csv_replay')
+    jar_path = get_client_usecase_jar(driver)
     if not jar_path:
-        print('ERROR: Client usecase JAR not found.')
-        print('  Build locally and commit/copy one of these JARs into docker/deploy/:')
-        print('    flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar')
+        print(f"ERROR: Client usecase JAR not found for driver '{driver}'.")
+        if driver == 'hotspot_drift':
+            print('  Build benchmark/client-drift or copy client-drift-benchmark-*.jar into docker/deploy/.')
+        else:
+            print('  Build locally and commit/copy one of these JARs into docker/deploy/:')
+            print('    flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar')
         return None
 
-    left_records, right_records = split_total_records(total_input_records)
+    left_record_percent = int(client_config.get('left_record_percent', 50))
+    left_records, right_records = split_total_records(total_input_records, left_record_percent)
     parallelism = int(runtime_config.get('parallelism', 1))
     left_records_per_subtask = records_per_source_subtask(left_records, parallelism)
     right_records_per_subtask = records_per_source_subtask(right_records, parallelism)
@@ -296,31 +324,65 @@ def run_client_usecase(
         cmd.append(f'-Dstate.backend.type={backend_class}')
     cmd.extend(get_forl0_config_args(config, backend, workload_key='client_usecase'))
 
+    if driver == 'hotspot_drift':
+        customer_jar = get_client_usecase_jar('csv_replay')
+        if customer_jar:
+            cmd.extend(['-C', Path(customer_jar).resolve().as_uri()])
+        else:
+            print('WARNING: customer usecase JAR not found; hotspot_drift driver may fail to load org.example classes.')
+
+    checkpoint_interval = client_config.get(
+        'checkpoint_interval',
+        runtime_config.get('checkpoint_interval', 0),
+    )
+
     cmd.extend([
         jar_path,
         '--leftNumRecords', str(left_records_per_subtask),
         '--rightNumRecords', str(right_records_per_subtask),
         '--parallelism', str(parallelism),
-        '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 0)),
+        '--checkpointInterval', str(checkpoint_interval),
     ])
+    if driver == 'hotspot_drift':
+        drift_keys = (
+            'hotKeyCount',
+            'coldKeyCount',
+            'hotTrafficPercent',
+            'driftIntervalRecords',
+            'driftStep',
+            'rightDelayMs',
+            'payloadMode',
+            'timestampMode',
+            'timestampHotBuckets',
+            'timestampKeySpace',
+            'timestampDriftIntervalRecords',
+            'timestampDriftStep',
+        )
+        for key in drift_keys:
+            snake_key = re.sub(r'(?<!^)(?=[A-Z])', '_', key).lower()
+            if snake_key in client_config:
+                cmd.extend([f'--{key}', str(client_config[snake_key])])
 
     print(f"\n=== Running Client Usecase Benchmark ({backend} backend) ===\n")
     print(f"Flink cluster: {rest_url}")
     print(
         'Parameters: '
+        f'driver={driver}, '
         f'desiredTotalInputRecords={total_input_records}, '
         f'parallelism={parallelism}, '
         f'leftStreamTarget={left_records}, '
         f'rightStreamTarget={right_records}, '
         f'leftPerSubtask={left_records_per_subtask}, '
         f'rightPerSubtask={right_records_per_subtask}, '
-        f'estimatedActualTotal={estimated_total_records}'
+        f'estimatedActualTotal={estimated_total_records}, '
+        f'checkpointInterval={checkpoint_interval}'
     )
-    print(
-        'Warning: customer source applies env parallelism to each source instance and uses event-time timers '
-        'without watermark emission. This runner compensates the record count at submission time, but long-running '
-        'jobs can still accumulate state faster than expected.'
-    )
+    if driver == 'csv_replay':
+        print(
+            'Warning: customer source applies env parallelism to each source instance and uses event-time timers '
+            'without watermark emission. This runner compensates the record count at submission time, but long-running '
+            'jobs can still accumulate state faster than expected.'
+        )
     supported_profile_modes = {'cpu', 'cache'}
     if profile_mode and profile_mode not in supported_profile_modes:
         print(f"WARNING: Unsupported profile mode '{profile_mode}' for client_usecase; supported: cpu, cache")
@@ -396,9 +458,23 @@ def run_client_usecase(
                 'right_num_records_target': right_records,
                 'left_num_records_per_subtask': left_records_per_subtask,
                 'right_num_records_per_subtask': right_records_per_subtask,
+                'left_record_percent': left_record_percent,
                 'estimated_actual_total_records': estimated_total_records,
                 'parallelism': parallelism,
-                'checkpoint_interval': runtime_config.get('checkpoint_interval', 0),
+                'checkpoint_interval': checkpoint_interval,
+                'driver': driver,
+                'hot_key_count': client_config.get('hot_key_count'),
+                'cold_key_count': client_config.get('cold_key_count'),
+                'hot_traffic_percent': client_config.get('hot_traffic_percent'),
+                'drift_interval_records': client_config.get('drift_interval_records'),
+                'drift_step': client_config.get('drift_step'),
+                'right_delay_ms': client_config.get('right_delay_ms'),
+                'payload_mode': client_config.get('payload_mode'),
+                'timestamp_mode': client_config.get('timestamp_mode'),
+                'timestamp_hot_buckets': client_config.get('timestamp_hot_buckets'),
+                'timestamp_key_space': client_config.get('timestamp_key_space'),
+                'timestamp_drift_interval_records': client_config.get('timestamp_drift_interval_records'),
+                'timestamp_drift_step': client_config.get('timestamp_drift_step'),
             },
             'total_input_records': estimated_total_records,
             'desired_total_input_records': total_input_records,
@@ -433,9 +509,31 @@ def apply_client_usecase_scenario(config: dict, scenario_name: str) -> dict:
     config = copy.deepcopy(config)
 
     # Override client_usecase settings
-    for key in ('num_records', 'timeout_seconds', 'checkpoint_interval'):
+    for key in (
+        'num_records',
+        'timeout_seconds',
+        'checkpoint_interval',
+        'driver',
+        'hot_key_count',
+        'cold_key_count',
+        'hot_traffic_percent',
+        'drift_interval_records',
+        'drift_step',
+        'right_delay_ms',
+        'left_record_percent',
+        'payload_mode',
+        'timestamp_mode',
+        'timestamp_hot_buckets',
+        'timestamp_key_space',
+        'timestamp_drift_interval_records',
+        'timestamp_drift_step',
+    ):
         if key in scenario:
             config['client_usecase'][key] = scenario[key]
+
+    runtime_overrides = scenario.get('runtime_overrides', {})
+    if isinstance(runtime_overrides, dict):
+        config.setdefault('runtime', {}).update(runtime_overrides)
 
     # ForL0 backend overrides
     forl0_overrides = scenario.get('forl0_overrides', {})

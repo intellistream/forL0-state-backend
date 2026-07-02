@@ -154,9 +154,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         // Register HotCache gauges on the provided MetricGroup (design §8).
         // Always register so users can see whether the cache actually came up.
         if (metricGroup != null) {
-            // Temporary isolation check: disable custom hot-cache gauges and verify
-            // whether Flink's standard operator metrics reappear for ForL0 jobs.
-            // registerHotCacheMetrics(metricGroup, engineHandle);
+            registerHotCacheMetrics(metricGroup, engineHandle);
         }
 
         // Native state handles (populated lazily by backend on first state registration)

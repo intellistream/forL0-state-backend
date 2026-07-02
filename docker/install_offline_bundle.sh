@@ -10,7 +10,7 @@
 #  说明:
 #    1. 脚本默认在解压后的离线包目录内执行
 #    2. 不依赖网络，不会尝试下载任何内容
-#    3. 如需启动 Docker 集群，目标机必须已提前准备好本地 Docker 镜像或离线包内包含 docker/images/*.tar
+#    3. 如需启动 Docker 集群，目标机必须已提前准备好本地 Docker 镜像或离线包内包含 docker/images/*.tar.gz 或 *.tar
 ################################################################################
 
 set -euo pipefail
@@ -167,6 +167,9 @@ elif compgen -G "${BUNDLE_ROOT}/*.whl" >/dev/null || compgen -G "${BUNDLE_ROOT}/
 fi
 if [[ -f "${BUNDLE_ROOT}/benchmark/requirements.txt" ]]; then
     cp "${BUNDLE_ROOT}/benchmark/requirements.txt" "${INSTALL_DIR}/benchmark/"
+fi
+if [[ -f "${BUNDLE_ROOT}/benchmark/README.md" ]]; then
+    cp "${BUNDLE_ROOT}/benchmark/README.md" "${INSTALL_DIR}/benchmark/"
 fi
 
 rm -rf "${INSTALL_DIR}/docker/conf"
