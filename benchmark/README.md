@@ -67,7 +67,35 @@ export FLINK_HOME=/path/to/flink-1.20.3
 
 也可以不设置环境变量，让脚本自动查找 `~/flink-1.20.3`、`~/flink`、`/opt/flink` 或 `/usr/local/flink`。
 
-**3. 一键安装并检查**
+**3. 离线目标机一键完整实验**
+
+默认入口是面向离线 L0 服务器的一键脚本。它会先安装并 preflight，然后完整运行两遍 `apps`：第一遍关闭 profiling 且不生成报告，第二遍开启 CPU profiling 并生成 HTML 报告，最后校验报告确实引用最新 profiled raw/profile 产物。脚本结束后不会停止 Flink 集群，便于继续查看 Web UI 和容器日志。
+
+```bash
+cd /path/to/forL0-state-backend/docker
+./run_offline_l0_experiment.sh --flink-home "$FLINK_HOME"
+```
+
+注意：默认 `apps` 是合同级全量实验，包含 100M WordCount、8 个 NexMark stateful query（每个 40M--100M events）和 Client Usecase，并且会跑无 profile 与有 profile 两遍；在非真实 L0 硬件或 Docker fallback 环境中可能需要数小时。若目标机缺少 `/dev/l0`、`/dev/hisi_l0` 或 `libl0mempool.so`，结果只能用于离线链路/脚本验收，不应作为 L0 性能目标验收。若只做离线链路验收，可显式缩小范围，例如：
+
+```bash
+# 只验收 Client Usecase 两遍 + profile + report
+./run_offline_l0_experiment.sh --flink-home "$FLINK_HOME" \
+  --test client_usecase --scenario contract_baseline
+
+# 只验收 NexMark q4 两遍 + profile + report
+./run_offline_l0_experiment.sh --flink-home "$FLINK_HOME" \
+  --test nexmark --query q4
+```
+
+完整实验产物包括：
+
+- `benchmark/results/raw/`：两遍实验的 raw JSON。
+- `benchmark/results/profiles/`：第二遍 CPU profiling flame graph。
+- `benchmark/results/reports/benchmark_report.html`：重新生成并校验过的 HTML 报告。
+- `benchmark/results/run_logs/`：一键脚本日志。
+
+如只想先做依赖检查，可运行：
 
 ```bash
 cd /path/to/forL0-state-backend/docker
@@ -193,9 +221,12 @@ curl http://localhost:8081/overview
 # 运行完整对比测试 (WordCount: hashmap vs forl0)
 python scripts/run_benchmark.py --test wordcount --backend all
 
-# 运行测试并采集火焰图 (需要 Async Profiler)
-export ASYNC_PROFILER_HOME=$PWD/tools/async-profiler-4.2.1-macos  # 或 linux-x64/arm64
-python scripts/run_wordcount.py --backend all --profile
+# 运行测试并采集火焰图。离线目标机推荐使用 docker/run_offline_l0_experiment.sh；
+# 若手工运行，可使用随仓库携带的 async-profiler 4.4 Linux arm64 离线包。
+mkdir -p tools
+tar -xzf offline-packages/async-profiler-4.4-linux-arm64.tar.gz -C tools
+export ASYNC_PROFILER_HOME=$PWD/tools/async-profiler-4.4-linux-arm64
+python scripts/run_wordcount.py --backend all --profile cpu
 
 # 生成报告和图表
 python scripts/generate_report.py
@@ -325,30 +356,24 @@ python scripts/run_benchmark.py --test nexmark --scenario forl0_tps_probe --back
 
 ## 火焰图与 CPU Cache 统计
 
-### 安装 Async Profiler
+### Async Profiler 离线配置
+
+离线目标机默认不需要联网安装 profiler。仓库随包携带：
 
 ```bash
-cd benchmark/tools
-
-# macOS (Apple Silicon / Intel)
-curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-macos.zip
-unzip async-profiler-4.2.1-macos.zip
-
-# Linux x64
-curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-linux-x64.tar.gz
-tar xzf async-profiler-4.2.1-linux-x64.tar.gz
-
-# Linux arm64 (鲲鹏)
-curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-linux-arm64.tar.gz
-tar xzf async-profiler-4.2.1-linux-arm64.tar.gz
+benchmark/offline-packages/async-profiler-4.4-linux-arm64.tar.gz
 ```
 
-### 配置环境变量
+`docker/run_offline_l0_experiment.sh` 会在 profile pass 前自动解压到 `tools/` 并设置 `ASYNC_PROFILER_HOME`。如果需要手工运行，可执行：
 
 ```bash
-# 添加到 ~/.zshrc 或 ~/.bashrc
-export ASYNC_PROFILER_HOME=/path/to/benchmark/tools/async-profiler-4.2.1-<platform>
+cd benchmark
+mkdir -p ../tools
+tar -xzf offline-packages/async-profiler-4.4-linux-arm64.tar.gz -C ../tools
+export ASYNC_PROFILER_HOME=$(readlink -f ../tools/async-profiler-4.4-linux-arm64)
 ```
+
+容器化 Flink 场景下，host attach 可能因权限失败；runner 会把 profiler 复制到 TaskManager 容器内并用容器 fallback 采集 flame graph。
 
 ### 平台支持
 

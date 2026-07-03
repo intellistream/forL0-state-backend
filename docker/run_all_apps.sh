@@ -149,6 +149,7 @@ bootstrap_async_profiler() {
     fi
 
     if [[ -n "$discovered_home" && -x "$discovered_home/bin/asprof" ]]; then
+        discovered_home="$(readlink -f "$discovered_home")"
         export ASYNC_PROFILER_HOME="$discovered_home"
         echo "      ✓ 使用 ASYNC_PROFILER_HOME=$ASYNC_PROFILER_HOME"
         return 0
@@ -171,6 +172,7 @@ bootstrap_async_profiler() {
     fi
 
     if [[ -n "$discovered_home" && -x "$discovered_home/bin/asprof" ]]; then
+        discovered_home="$(readlink -f "$discovered_home")"
         export ASYNC_PROFILER_HOME="$discovered_home"
         echo "      ✓ 自动发现 async-profiler: $ASYNC_PROFILER_HOME"
     else

@@ -102,7 +102,8 @@ def load_results():
     benchmark_results_dir = get_results_dir('')  # Parent results directory
     results = {
         'wordcount': {'hashmap': None, 'forl0': None},
-        'nexmark': {'hashmap': {}, 'forl0': {}}
+        'nexmark': {'hashmap': {}, 'forl0': {}},
+        'client_usecase': {'hashmap': None, 'forl0': None}
     }
     
     # Load WordCount results from raw directory
@@ -125,6 +126,14 @@ def load_results():
                         new_ts = metadata.get('timestamp', '')
                         if new_ts > existing_ts:
                             results['wordcount'][backend] = data
+
+            if test_name == 'client_usecase' or data.get('benchmark') == 'client-usecase':
+                if backend in results['client_usecase']:
+                    current = results['client_usecase'][backend]
+                    current_ts = '' if current is None else current.get('_metadata', {}).get('timestamp', '')
+                    new_ts = metadata.get('timestamp', '')
+                    if current is None or new_ts > current_ts:
+                        results['client_usecase'][backend] = data
         
         except Exception as e:
             print(f"Warning: Could not load {filepath}: {e}")
@@ -1550,6 +1559,52 @@ def generate_report(results, output_dir):
             </div>
         </div>
         
+        <!-- Client Usecase Section -->
+        {% if client_rows %}
+        <div class="section">
+            <h2>Client Usecase Benchmark</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                Latest contract_baseline run for the customer dual-stream join workload. The table uses the most recent raw result per backend, including the profiled run when available.
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Backend</th>
+                        <th>Timestamp</th>
+                        <th>Records</th>
+                        <th>Throughput</th>
+                        <th>Throughput/Core</th>
+                        <th>Wall Time</th>
+                        <th>Profile</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in client_rows %}
+                    <tr>
+                        <td><strong>{{ row.backend }}</strong></td>
+                        <td>{{ row.timestamp }}</td>
+                        <td class="value-cell">{{ row.records }}</td>
+                        <td class="value-cell">{{ row.throughput }}</td>
+                        <td class="value-cell">{{ row.throughput_per_core }}</td>
+                        <td class="value-cell">{{ row.wall_time }}</td>
+                        <td>{{ row.profile }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if client_improvement != 'N/A' %}
+            <div style="text-align: center; margin: 1rem 0;">
+                <span class="improvement-badge {{ client_badge_class }}">
+                    {{ client_imp_sign }}{{ client_improvement }}% Client Usecase Improvement
+                </span>
+            </div>
+            <p style="color: var(--text-secondary);">
+                Analysis: ForL0 and HashMap both completed the bounded customer workload and wrote raw results. The latest profiled run shows {{ client_analysis }}. Flame graph links below correspond to the same latest profiled run.
+            </p>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <!-- NexMark Section -->
         <div class="section">
             <h2>🏆 NexMark Benchmark</h2>
@@ -2060,6 +2115,58 @@ def generate_report(results, output_dir):
                     'samples': len(l0_samples)
                 })
     
+    # Client Usecase latest result summary
+    client_results = results.get('client_usecase', {})
+    client_rows = []
+    client_tpc = {}
+    for backend in ['hashmap', 'forl0']:
+        data = client_results.get(backend)
+        if not data:
+            continue
+        meta = data.get('_metadata', {})
+        tpc = get_throughput(data, data.get('config', {}).get('parallelism'))
+        client_tpc[backend] = tpc
+        profiles = data.get('profiler_files') or {}
+        profile_links = []
+        for event, path in profiles.items():
+            name = Path(path).name
+            profile_links.append(f'<a href="../profiles/{name}" target="_blank">{event}</a>')
+        client_rows.append({
+            'backend': BACKEND_LABELS.get(backend, backend),
+            'timestamp': meta.get('timestamp', 'N/A'),
+            'records': f"{data.get('total_input_records', data.get('desired_total_input_records', 0)):,}",
+            'throughput': f"{data.get('throughput', 0):,.2f}",
+            'throughput_per_core': f"{tpc:,.2f}" if tpc else 'N/A',
+            'wall_time': f"{data.get('wall_time_seconds', 0):.2f}s",
+            'profile': ', '.join(profile_links) if profile_links else 'not collected',
+        })
+
+    client_improvement = 'N/A'
+    client_badge_class = 'neutral'
+    client_imp_sign = ''
+    client_analysis = 'no complete HashMap/ForL0 pair is available'
+    if client_tpc.get('hashmap') and client_tpc.get('forl0'):
+        client_imp_value = (client_tpc['forl0'] - client_tpc['hashmap']) / client_tpc['hashmap'] * 100
+        client_improvement = f'{client_imp_value:.1f}'
+        client_badge_class = 'positive' if client_imp_value >= 0 else 'negative'
+        client_imp_sign = '+' if client_imp_value >= 0 else ''
+        client_analysis = (
+            f"ForL0 reached {client_tpc['forl0']:.2f} records/s/core versus "
+            f"HashMap at {client_tpc['hashmap']:.2f} records/s/core, "
+            f"a {client_imp_sign}{client_improvement}% delta on this small contract baseline"
+        )
+
+    if client_rows:
+        total_benchmarks += 1
+        summary += (
+            f" Latest Client Usecase contract_baseline profile run completed for both backends; "
+            f"ForL0 vs HashMap delta was {client_imp_sign}{client_improvement}%."
+        )
+        conclusion += (
+            f" The Client Usecase section reports the latest profiled run and links the matching CPU flame graphs; "
+            f"{client_analysis}."
+        )
+
     # [BENCHMARK_TEST] Load hardware metrics for report
     hw_metrics = load_hardware_metrics(str(get_results_dir('hardware')))
     hw_cache_data = hw_metrics.get('cache', {})
@@ -2160,6 +2267,11 @@ def generate_report(results, output_dir):
         wc_imp_sign=wc_imp_sign,
         wc_negative_class=wc_negative_class,
         nexmark_rows=nexmark_rows,
+        client_rows=client_rows,
+        client_improvement=client_improvement,
+        client_badge_class=client_badge_class,
+        client_imp_sign=client_imp_sign,
+        client_analysis=client_analysis,
         verification_rows=verification_rows,
         conclusion=conclusion,
         # [BENCHMARK_TEST] L0Table metrics variables

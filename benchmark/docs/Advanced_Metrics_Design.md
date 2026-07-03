@@ -45,29 +45,27 @@ macOS 上 Async Profiler **支持**的模式：
 
 ## Async Profiler 安装
 
-### 下载安装
+### 离线目标机
+
+离线目标机推荐使用仓库内置的一键入口：
 
 ```bash
-# macOS
-cd benchmark/tools
-curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-macos.zip
-unzip async-profiler-4.2.1-macos.zip
-
-# Linux x64
-curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-linux-x64.tar.gz
-tar xzf async-profiler-4.2.1-linux-x64.tar.gz
-
-# Linux arm64 (鲲鹏)
-curl -LO https://github.com/async-profiler/async-profiler/releases/download/v4.2.1/async-profiler-4.2.1-linux-arm64.tar.gz
-tar xzf async-profiler-4.2.1-linux-arm64.tar.gz
+cd docker
+./run_offline_l0_experiment.sh --flink-home "$FLINK_HOME"
 ```
 
-### 配置环境变量
+脚本会使用 `benchmark/offline-packages/async-profiler-4.4-linux-arm64.tar.gz`，自动解压到 `tools/` 并设置 `ASYNC_PROFILER_HOME`。
+
+### 手工配置
 
 ```bash
-# 添加到 ~/.zshrc 或 ~/.bashrc
-export ASYNC_PROFILER_HOME=/path/to/async-profiler-4.2.1-<platform>
+cd /path/to/forL0-state-backend
+mkdir -p tools
+tar -xzf benchmark/offline-packages/async-profiler-4.4-linux-arm64.tar.gz -C tools
+export ASYNC_PROFILER_HOME=$(readlink -f tools/async-profiler-4.4-linux-arm64)
 ```
+
+如需其他平台，可从 async-profiler GitHub Releases 下载对应的 4.4 包，并将 `ASYNC_PROFILER_HOME` 指向解压后的真实目录。
 
 ### 验证安装
 

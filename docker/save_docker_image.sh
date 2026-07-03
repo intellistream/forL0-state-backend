@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd .. && pwd)"
 IMAGE="eclipse-temurin:8-jre"
 OUTPUT_DIR="images"
-OUTPUT_FILE="${OUTPUT_DIR}/eclipse-temurin-8-jre.tar"
+OUTPUT_FILE="${OUTPUT_DIR}/eclipse-temurin-8-jre.tar.gz"
 DEPLOY_DIR="deploy"
 
 echo "=== 准备离线部署文件 ==="
@@ -32,7 +32,7 @@ fi
 
 echo "      导出镜像到 ${OUTPUT_FILE} ..."
 mkdir -p "$OUTPUT_DIR"
-docker save "$IMAGE" -o "$OUTPUT_FILE"
+docker save "$IMAGE" | gzip -9 > "$OUTPUT_FILE"
 SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
 echo "      ✓ 镜像已保存 (${SIZE})"
 
@@ -52,8 +52,6 @@ echo ""
 echo "=== 完成 ==="
 echo ""
 echo "接下来提交到仓库:"
-echo "  git lfs install"
-echo "  git lfs track 'docker/images/*.tar'"
-echo "  git add .gitattributes docker/images/ docker/deploy/"
+echo "  git add docker/images/eclipse-temurin-8-jre.tar.gz docker/deploy/"
 echo "  git commit -m 'Add offline deployment files'"
 echo "  git push"
