@@ -1085,7 +1085,7 @@ q20 稳态复现实验 & 11.97\,K/s，CPU 42.34 核 & 13.26\,K/s，CPU 3.29 核 
 \begin{itemize}
   \item \textbf{在堆预算紧张的场景下收益最大}。鲲鹏平台 TaskManager Heap 限制 11.7\,GB、TM 限 4 核条件下，HashMapStateBackend 在 q4 / q9 / q19 / q20 等状态密集查询上发生频繁 Full GC，最长单查询耗时 716\,s；\project{} 在同一配置下分别缩短到 147\,s / 105\,s / 119\,s / 91\,s，q19、q20 的端到端时间降低约 81\% 以上。
   \item \textbf{Intel 平台在可完成内存配置下收益清晰}。当 TaskManager 内存配置为 18--20\,GB，HashMap 的 GC 压力得到缓解但在 q19 / q20 仍明显慢于 \project{}：18\,GB 下 q19 / q20 从 279\,s / 313\,s 缩短到 45\,s / 38\,s，20\,GB 下从 123\,s / 84\,s 缩短到 43\,s / 38\,s。
-  \item \textbf{L0 Cache 是 ForL0 的硬件增强层}。结合设计说明书，NexMark 的端到端收益首先来自权威状态路径从 JVM 堆上对象图迁移到堆外 \texttt{StateTable}/\texttt{SwissTable}；HotCache 主要进一步加速白名单内热点标量 \texttt{ValueState}，对窗口、TopN、Join 中的 RowData、聚合器和内部状态结构不改变语义边界。
+  \item \textbf{L0 Cache 是 ForL0 的硬件增强层}。从状态访问路径看，NexMark 的端到端收益首先来自权威状态路径从 JVM 堆上对象图迁移到堆外 \texttt{StateTable}/\texttt{SwissTable}；HotCache 主要进一步加速白名单内热点标量 \texttt{ValueState}，对窗口、TopN、Join 中的 RowData、聚合器和内部状态结构不改变语义边界。
   \item \textbf{q19/q20 已补充可完成结果}。一键脚本复核中，q19 / q20 在 HashMap 与 \project{} 下均产生完整结果；该复核用于确认结果完整性，性能优势仍以可完成内存扫描和 TPS/backpressure 稳态表为主。
 \end{itemize}
 
@@ -1275,11 +1275,11 @@ q20 & 1:49:50  & 700\,K/s & 28.78\,K/s  & 52.69\,K/s  & \textbf{$+$83.1\%} & 77.
   \item \textbf{无 Full GC 口径下的稳定优势区}。20\,GB standalone 可完成配置下，q4/q5/q9/q18/q20 分别达到 \textbf{$+$56.7\% / $+$57.3\% / $+$48.1\% / $+$34.8\% / $+$83.1\%}，是当前 NexMark 中可交付的无 Full GC 强优势点；q19 主要体现 CPU 核数下降；q8/q11 不作为强优势场景。
 \end{itemize}
 
-\textbf{结合设计说明书的机制解释}：ForL0 的设计不是在 Flink 原生 HeapStateBackend 外侧增加一层缓存，而是将权威状态路径收敛到 \texttt{StateEngine -> StateTable -> KeyGroup -> Namespace -> SwissTable}。Java 层负责 Flink 接口与生命周期控制，底层 \texttt{StateTable}/\texttt{SwissTable} 承担权威 KV 存储。与 HashMapStateBackend 相比，该路径减少 \texttt{CopyOnWriteStateMap}、\texttt{HashMap.Node}、装箱对象、复合 key 对象和 GC promotion 成本，因此 q4/q5/q9/q18/q20 在无 Full GC 放大效应的复跑口径下仍能形成端到端收益。
+\textbf{机制层面的解释}：ForL0 不是在 Flink 原生 HeapStateBackend 外侧增加一层缓存，而是将权威状态路径收敛到 \texttt{StateEngine -> StateTable -> KeyGroup -> Namespace -> SwissTable}。Java 层负责 Flink 接口与生命周期控制，底层 \texttt{StateTable}/\texttt{SwissTable} 承担权威 KV 存储。与 HashMapStateBackend 相比，该路径减少 \texttt{CopyOnWriteStateMap}、\texttt{HashMap.Node}、装箱对象、复合 key 对象和 GC promotion 成本，因此 q4/q5/q9/q18/q20 在无 Full GC 放大效应的复跑口径下仍能形成端到端收益。
 
-\textbf{SwissTable 与类型快路径}：设计说明书中的 \texttt{SwissTable} 使用 ctrl/tag 数组与紧凑 slot 布局，value 直接落在 slot 内，避免额外 value-store 间接访问；Long / Int / FixedRow、TimeWindow namespace 与 RowData 固定宽度路径进入窄 JNI 和类型特化访问。q4/q5/q9/q20 的 auction/window/join/rank 状态、q18 的 \texttt{(bidder, auction)} 复合 key 去重状态，都具备高基数、重复更新和短期局部性，能够把紧凑哈希定位、对象分配下降和 GC 压力下降转化为 sink 侧吞吐提升。q8/q11/q15/q16/q17 则更多受窗口闭合相位、session 触发、多维 distinct 聚合或输出节奏控制，因此 ForL0 的 CPU 效率改善未必同步表现为端到端 TPS 提升。
+\textbf{SwissTable 与类型快路径}：\texttt{SwissTable} 使用 ctrl/tag 数组与紧凑 slot 布局，value 直接落在 slot 内，避免额外 value-store 间接访问；Long / Int / FixedRow、TimeWindow namespace 与 RowData 固定宽度路径进入窄 JNI 和类型特化访问。q4/q5/q9/q20 的 auction/window/join/rank 状态、q18 的 \texttt{(bidder, auction)} 复合 key 去重状态，都具备高基数、重复更新和短期局部性，能够把紧凑哈希定位、对象分配下降和 GC 压力下降转化为 sink 侧吞吐提升。q8/q11/q15/q16/q17 则更多受窗口闭合相位、session 触发、多维 distinct 聚合或输出节奏控制，因此 ForL0 的 CPU 效率改善未必同步表现为端到端 TPS 提升。
 
-\textbf{L0 HotCache 口径}：按照设计说明书，L0 HotCache 位于 \texttt{SwissTable} 之上，是读写穿透的热点快路径，不是 checkpoint/savepoint 的权威数据源。当前白名单覆盖热点标量 \texttt{ValueState}，key 为 \texttt{INT64}/\texttt{INT32}/\texttt{FIXED\_ROW}、value 为 \texttt{INT64}/\texttt{INT32}/\texttt{FLOAT64}；MapState、ListState、ReducingState、AggregatingState 以及完整 RowData / bytes value 不直接进入 HotCache，但仍由堆外 \texttt{SwissTable} 承担权威存储。当前实现采用 miss 回填和写穿透机制，尚未引入显式热点识别；在 q18/q20 这类冷热 key 混合、热点持续漂移但短期复用强的负载中，增加轻量热点识别后预计可减少 L0 容量污染和多 state 竞争，提高热点访问命中与端到端吞吐的一致性。
+\textbf{L0 HotCache 口径}：L0 HotCache 位于 \texttt{SwissTable} 之上，是读写穿透的热点快路径，不是 checkpoint/savepoint 的权威数据源。当前白名单覆盖热点标量 \texttt{ValueState}，key 为 \texttt{INT64}/\texttt{INT32}/\texttt{FIXED\_ROW}、value 为 \texttt{INT64}/\texttt{INT32}/\texttt{FLOAT64}；MapState、ListState、ReducingState、AggregatingState 以及完整 RowData / bytes value 不直接进入 HotCache，但仍由堆外 \texttt{SwissTable} 承担权威存储。当前实现采用 miss 回填和写穿透机制，尚未引入显式热点识别；在 q18/q20 这类冷热 key 混合、热点持续漂移但短期复用强的负载中，增加轻量热点识别后预计可减少 L0 容量污染和多 state 竞争，提高热点访问命中与端到端吞吐的一致性。
 
 \paragraph{其他 NexMark SQL 扫描}
 按相同 no-Full-GC 规则补充扫描合同集合之外的有状态 SQL。该组使用 \texttt{forl0\_no\_full\_gc\_extra\_sql} 场景，样本目录为 \texttt{benchmark/results/nexmark\_20260702\_153114/}，所有样本的 \texttt{full\_gc\_delta=0}。
