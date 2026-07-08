@@ -14,10 +14,12 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd .. && pwd)"
 FLINK_DIR="${FLINK_HOME:-/home/user/flink}"
 NATIVE_DIR="${FORL0_NATIVE_DIR:-}"
-CONF_DIR="$(pwd)/conf"
+CONF_DIR="${FORL0_FLINK_CONF_DIR:-$(pwd)/conf}"
 NETWORK="flink-net"
 IMAGE="eclipse-temurin:8-jre"
 DOCKER_BIN="${DOCKER_BIN:-}"
+JM_DOCKER_MEMORY="${FORL0_JM_DOCKER_MEMORY:-8g}"
+TM_DOCKER_MEMORY="${FORL0_TM_DOCKER_MEMORY:-16g}"
 
 detect_docker_bin() {
     if [[ -n "$DOCKER_BIN" ]]; then
@@ -106,7 +108,10 @@ do_start() {
     echo "=== 启动 BriskState Flink Docker 集群 ==="
     echo "  FLINK_HOME: ${FLINK_DIR}"
     echo "  NATIVE:     ${NATIVE_DIR}"
+    echo "  CONF:       ${CONF_DIR}"
     echo "  Docker:     ${DOCKER_BIN}"
+    echo "  JM memory:  ${JM_DOCKER_MEMORY}"
+    echo "  TM memory:  ${TM_DOCKER_MEMORY}"
     if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
         echo "  libnuma:    ${NUMA_HOST_PATH} -> ${NUMA_CONTAINER_PATH}"
     else
@@ -153,6 +158,7 @@ do_start() {
         -v "${CONF_DIR}:/opt/flink/conf:ro" \
         -v "${NATIVE_DIR}:/opt/flink/native:ro" \
         -e FLINK_HOME=/opt/flink \
+        --memory "${JM_DOCKER_MEMORY}" \
         "$IMAGE" \
         /opt/flink/bin/jobmanager.sh start-foreground
 
@@ -177,7 +183,7 @@ do_start() {
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
         -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
-        --memory 32g \
+        --memory "${TM_DOCKER_MEMORY}" \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
 
@@ -198,7 +204,7 @@ do_start() {
         ${L0_OPTS[@]+"${L0_OPTS[@]}"} \
         -e FLINK_HOME=/opt/flink \
         -e LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu \
-        --memory 32g \
+        --memory "${TM_DOCKER_MEMORY}" \
         "$IMAGE" \
         /opt/flink/bin/taskmanager.sh start-foreground
 

@@ -1078,14 +1078,14 @@ q20 稳态复现实验 & 11.97\,K/s，CPU 42.34 核 & 13.26\,K/s，CPU 3.29 核 
 \end{tabularx}
 \end{center}
 
-因此，q19/q20 的配置选择需要区分两个目标：合同完成性复核用于给出完整端到端结果；TPS/backpressure 稳态复现实验用于解释状态后端差异。ForL0 的优势不是把 q19/q20 改写成更轻的 SQL，而是改变状态驻留与访问路径，使同一查询在状态压力更高时避开 HashMap 的堆压力退化区间。
+因此，q19/q20 的配置选择需要区分两个目标：合同完成性复核用于给出完整端到端结果；TPS/backpressure 稳态复现实验用于观察状态后端在持续压力下的资源效率差异。ForL0 的优势并非来自更轻量的查询定义，而是来自状态驻留与访问路径的改变；在状态压力升高时，同一查询可以避开 HashMapStateBackend 的堆上对象膨胀和 GC 退化区间。
 
 \subsubsection{数据解读}
 
 \begin{itemize}
   \item \textbf{在堆预算紧张的场景下收益最大}。鲲鹏平台 TaskManager Heap 限制 11.7\,GB、TM 限 4 核条件下，HashMapStateBackend 在 q4 / q9 / q19 / q20 等状态密集查询上发生频繁 Full GC，最长单查询耗时 716\,s；\project{} 在同一配置下分别缩短到 147\,s / 105\,s / 119\,s / 91\,s，q19、q20 的端到端时间降低约 81\% 以上。
   \item \textbf{Intel 平台在可完成内存配置下收益清晰}。当 TaskManager 内存配置为 18--20\,GB，HashMap 的 GC 压力得到缓解但在 q19 / q20 仍明显慢于 \project{}：18\,GB 下 q19 / q20 从 279\,s / 313\,s 缩短到 45\,s / 38\,s，20\,GB 下从 123\,s / 84\,s 缩短到 43\,s / 38\,s。
-  \item \textbf{L0 Cache 是 ForL0 的硬件增强层}。从状态访问路径看，NexMark 的端到端收益首先来自权威状态路径从 JVM 堆上对象图迁移到堆外 \texttt{StateTable}/\texttt{SwissTable}；HotCache 主要进一步加速白名单内热点标量 \texttt{ValueState}，对窗口、TopN、Join 中的 RowData、聚合器和内部状态结构不改变语义边界。
+  \item \textbf{L0 Cache 提供热点访问增强}。从状态访问路径看，NexMark 的端到端收益主要来自权威状态路径从 JVM 堆上对象图迁移到堆外 \texttt{StateTable}/\texttt{SwissTable}；HotCache 进一步加速白名单内热点标量 \texttt{ValueState}，但不改变窗口、TopN、Join 中 RowData、聚合器和内部状态结构的语义边界。
   \item \textbf{q19/q20 已补充可完成结果}。一键脚本复核中，q19 / q20 在 HashMap 与 \project{} 下均产生完整结果；该复核用于确认结果完整性，性能优势仍以可完成内存扫描和 TPS/backpressure 稳态表为主。
 \end{itemize}
 
@@ -1264,22 +1264,22 @@ q20 & 1:49:50  & 700\,K/s & 28.78\,K/s  & 52.69\,K/s  & \textbf{$+$83.1\%} & 77.
 \textbf{结果分析}：
 
 \begin{itemize}
-  \item \textbf{q4 窗口聚合}：600\,K/s、1:49:50 提高 auction 高基数窗口状态压力。无 Full GC 口径下 HashMap 为 65.64\,K/s，ForL0 为 102.88\,K/s，提升 \textbf{$+$56.7\%}。该查询持续更新按 category / window 组织的聚合状态，是当前 NexMark 中最稳的无 Full GC 端到端优势区。
+  \item \textbf{q4 窗口聚合}：600\,K/s、1:49:50 提高 auction 高基数窗口状态压力。无 Full GC 口径下 HashMap 为 65.64\,K/s，ForL0 为 102.88\,K/s，提升 \textbf{$+$56.7\%}。该查询持续更新按 category / window 组织的聚合状态，是当前 NexMark 中最稳定的无 Full GC 端到端优势场景。
   \item \textbf{q5 HOP 滑动窗口}：5\,M/s、1:1:98 构造 bid-heavy 滑动窗口状态，并使用非合同 q5 稳态输出 SQL。HashMap 为 9.84\,K/s，ForL0 为 15.48\,K/s，提升 \textbf{$+$57.3\%}。该配置减少 auction 维度分散度，放大单 auction 多窗口重复更新，ForL0 的 native 状态路径可转化为端到端收益。
   \item \textbf{q8 窗口 Join}：1\,M/s、50:50:0 将输入集中到 Person/Auction 两类事件，并用 seller 热点提高 join 命中概率。HashMap 为 19.22\,K/s，ForL0 为 18.31\,K/s，低于 HashMap $-$4.7\%。q8 的有效输出受两个 tumble window 的闭合相位与 Person/Auction 匹配率影响；ForL0 CPU 从 26.00 核降至 16.92 核，但端到端吞吐仍未形成优势。
-  \item \textbf{q9 winning bid Top1}：200\,K/s、1:49:50 提高 auction join 与按 auction 排名状态压力。HashMap 为 45.76\,K/s，ForL0 为 67.77\,K/s，提升 \textbf{$+$48.1\%}，同时 CPU 从 61.76 核降至 23.01 核。该查询与 q4 一样具备 auction 高基数 join / rank 状态，是新增的无 Full GC 强优势点。
-  \item \textbf{q11 Session Window}：500\,K/s、5:5:90 在保持 session 可闭合的前提下提高 bid 输入占比与 bidder 复用。HashMap 为 21.26\,K/s，ForL0 为 21.57\,K/s，提升 $+$1.5\%。q11 端到端输出主要受 session 闭合节奏与窗口触发控制，调参后可回到持平略优，但不构成强优势区。
-  \item \textbf{q18 去重 / ROW\_NUMBER}：12\,M/s、1:9:90 放大 \texttt{(bidder, auction)} 漂移热点复合 key 更新，并将 bid.hot-ratio.auctions / bidders 提高到 24。HashMap 为 446.12\,K/s，ForL0 为 601.20\,K/s，提升 \textbf{$+$34.8\%}，CPU 从 50.56 核降至 6.56 核。该查询符合“热点不断变化但短期复用强”的 L0 友好形态，同时也能放大 \texttt{StateTable}/\texttt{SwissTable} 主数据面的结构性收益。
+  \item \textbf{q9 winning bid Top1}：200\,K/s、1:49:50 提高 auction join 与按 auction 排名状态压力。HashMap 为 45.76\,K/s，ForL0 为 67.77\,K/s，提升 \textbf{$+$48.1\%}，同时 CPU 从 61.76 核降至 23.01 核。该查询与 q4 一样具备 auction 高基数 join / rank 状态，是新增的无 Full GC 明确收益场景。
+  \item \textbf{q11 Session Window}：500\,K/s、5:5:90 在保持 session 可闭合的前提下提高 bid 输入占比与 bidder 复用。HashMap 为 21.26\,K/s，ForL0 为 21.57\,K/s，提升 $+$1.5\%。q11 端到端输出主要受 session 闭合节奏与窗口触发控制，调参后可回到持平略优，但不构成主要收益场景。
+  \item \textbf{q18 去重 / ROW\_NUMBER}：12\,M/s、1:9:90 放大 \texttt{(bidder, auction)} 漂移热点复合 key 更新，并将 bid.hot-ratio.auctions / bidders 提高到 24。HashMap 为 446.12\,K/s，ForL0 为 601.20\,K/s，提升 \textbf{$+$34.8\%}，CPU 从 50.56 核降至 6.56 核。该查询具备“热点不断变化但短期复用强”的访问特征，同时也能放大 \texttt{StateTable}/\texttt{SwissTable} 主数据面的结构性收益。
   \item \textbf{q19 TopN}：2.4\,M/s、1:1:98 构造 bid-dominant 排名状态，并提高 auction / bidder 热点比例。HashMap 为 998.10\,K/s，ForL0 为 1.02\,M/s，提升 $+$2.2\%，CPU 从 18.96 核降至 7.46 核。q19 在无 Full GC 口径下吞吐接近，但 ForL0 以更低 CPU 维持同等 sink TPS。
-  \item \textbf{q20 filter join}：700\,K/s、1:49:50 提高 auction/bid join 状态压力，并将 auction 热点比例提高到 24、seller 热点比例提高到 12。HashMap 为 28.78\,K/s，ForL0 为 52.69\,K/s，提升 \textbf{$+$83.1\%}，CPU 从 77.92 核降至 13.27 核。该查询在更高 join/backpressure 压力下进入 ForL0 舒适区，是新增的无 Full GC 强优势点。
-  \item \textbf{无 Full GC 口径下的稳定优势区}。20\,GB standalone 可完成配置下，q4/q5/q9/q18/q20 分别达到 \textbf{$+$56.7\% / $+$57.3\% / $+$48.1\% / $+$34.8\% / $+$83.1\%}，是当前 NexMark 中可交付的无 Full GC 强优势点；q19 主要体现 CPU 核数下降；q8/q11 不作为强优势场景。
+  \item \textbf{q20 filter join}：700\,K/s、1:49:50 提高 auction/bid join 状态压力，并将 auction 热点比例提高到 24、seller 热点比例提高到 12。HashMap 为 28.78\,K/s，ForL0 为 52.69\,K/s，提升 \textbf{$+$83.1\%}，CPU 从 77.92 核降至 13.27 核。该查询在更高 join/backpressure 压力下清晰呈现状态访问路径差异，是新增的无 Full GC 明确收益场景。
+  \item \textbf{无 Full GC 口径下的稳定收益范围}。20\,GB standalone 可完成配置下，q4/q5/q9/q18/q20 分别达到 \textbf{$+$56.7\% / $+$57.3\% / $+$48.1\% / $+$34.8\% / $+$83.1\%}，构成当前 NexMark 中可交付的无 Full GC 端到端收益集合；q19 主要体现 CPU 核数下降；q8/q11 不纳入主要收益场景。
 \end{itemize}
 
-\textbf{机制层面的解释}：ForL0 不是在 Flink 原生 HeapStateBackend 外侧增加一层缓存，而是将权威状态路径收敛到 \texttt{StateEngine -> StateTable -> KeyGroup -> Namespace -> SwissTable}。Java 层负责 Flink 接口与生命周期控制，底层 \texttt{StateTable}/\texttt{SwissTable} 承担权威 KV 存储。与 HashMapStateBackend 相比，该路径减少 \texttt{CopyOnWriteStateMap}、\texttt{HashMap.Node}、装箱对象、复合 key 对象和 GC promotion 成本，因此 q4/q5/q9/q18/q20 在无 Full GC 放大效应的复跑口径下仍能形成端到端收益。
+\textbf{机制解释}：ForL0 不是在 Flink 原生 HeapStateBackend 外侧增加一层缓存，而是将权威状态路径收敛到 \texttt{StateEngine -> StateTable -> KeyGroup -> Namespace -> SwissTable}。Java 层负责 Flink 接口与生命周期控制，底层 \texttt{StateTable}/\texttt{SwissTable} 承担权威 KV 存储。与 HashMapStateBackend 相比，该路径减少 \texttt{CopyOnWriteStateMap}、\texttt{HashMap.Node}、装箱对象、复合 key 对象和 GC promotion 成本；因此，即使排除 Full GC 放大效应，q4/q5/q9/q18/q20 仍能形成端到端吞吐收益。
 
-\textbf{SwissTable 与类型快路径}：\texttt{SwissTable} 使用 ctrl/tag 数组与紧凑 slot 布局，value 直接落在 slot 内，避免额外 value-store 间接访问；Long / Int / FixedRow、TimeWindow namespace 与 RowData 固定宽度路径进入窄 JNI 和类型特化访问。q4/q5/q9/q20 的 auction/window/join/rank 状态、q18 的 \texttt{(bidder, auction)} 复合 key 去重状态，都具备高基数、重复更新和短期局部性，能够把紧凑哈希定位、对象分配下降和 GC 压力下降转化为 sink 侧吞吐提升。q8/q11/q15/q16/q17 则更多受窗口闭合相位、session 触发、多维 distinct 聚合或输出节奏控制，因此 ForL0 的 CPU 效率改善未必同步表现为端到端 TPS 提升。
+\textbf{SwissTable 与类型快路径}：\texttt{SwissTable} 使用 ctrl/tag 数组与紧凑 slot 布局，value 直接落在 slot 内，避免额外 value-store 间接访问；Long / Int / FixedRow、TimeWindow namespace 与 RowData 固定宽度路径进入窄 JNI 和类型特化访问。q4/q5/q9/q20 的 auction/window/join/rank 状态、q18 的 \texttt{(bidder, auction)} 复合 key 去重状态，均具备高基数、重复更新和短期局部性，能够把紧凑哈希定位、对象分配下降和 GC 压力下降转化为 sink 侧吞吐提升。q8/q11/q15/q16/q17 则更多受窗口闭合相位、session 触发、多维 distinct 聚合或输出节奏控制，因此 ForL0 的 CPU 效率改善未必同步表现为端到端 TPS 提升。
 
-\textbf{L0 HotCache 口径}：L0 HotCache 位于 \texttt{SwissTable} 之上，是读写穿透的热点快路径，不是 checkpoint/savepoint 的权威数据源。当前白名单覆盖热点标量 \texttt{ValueState}，key 为 \texttt{INT64}/\texttt{INT32}/\texttt{FIXED\_ROW}、value 为 \texttt{INT64}/\texttt{INT32}/\texttt{FLOAT64}；MapState、ListState、ReducingState、AggregatingState 以及完整 RowData / bytes value 不直接进入 HotCache，但仍由堆外 \texttt{SwissTable} 承担权威存储。当前实现采用 miss 回填和写穿透机制，尚未引入显式热点识别；在 q18/q20 这类冷热 key 混合、热点持续漂移但短期复用强的负载中，增加轻量热点识别后预计可减少 L0 容量污染和多 state 竞争，提高热点访问命中与端到端吞吐的一致性。
+\textbf{L0 HotCache 口径}：L0 HotCache 位于 \texttt{SwissTable} 之上，是读写穿透的热点快路径，不是 checkpoint/savepoint 的权威数据源。当前白名单覆盖热点标量 \texttt{ValueState}，key 为 \texttt{INT64}/\texttt{INT32}/\texttt{FIXED\_ROW}、value 为 \texttt{INT64}/\texttt{INT32}/\texttt{FLOAT64}；MapState、ListState、ReducingState、AggregatingState 以及完整 RowData / bytes value 不直接进入 HotCache，但仍由堆外 \texttt{SwissTable} 承担权威存储。当前实现采用 miss 回填和写穿透机制，尚未引入显式热点识别；在 q18/q20 这类冷热 key 混合、热点持续漂移但短期复用强的负载中，后续可通过轻量热点识别减少 L0 容量污染和多 state 竞争，提高热点访问命中与端到端吞吐的一致性。
 
 \paragraph{其他 NexMark SQL 扫描}
 按相同 no-Full-GC 规则补充扫描合同集合之外的有状态 SQL。该组使用 \texttt{forl0\_no\_full\_gc\_extra\_sql} 场景，样本目录为 \texttt{benchmark/results/nexmark\_20260702\_153114/}，所有样本的 \texttt{full\_gc\_delta=0}。
@@ -1309,10 +1309,10 @@ q6 在当前 NexMark workload suite 下未被 driver 选中；q7 在本 TPS/监�
 \begin{itemize}
   \item \textbf{合同基线按具体查询逐项对齐}。q4/q5/q8/q9/q11/q18/q19/q20 中，除 q9 因低时长统计窗口出现 $+$0.9\% 外，其余查询均为 $+$0.0\%。该结果说明在合同 event-count 口径下，ForL0 不引入端到端性能回退。
   \item \textbf{Base Full GC guard 已进入脚本配置}。\texttt{contract\_baseline\_gc\_guard} 保持合同 event-count 与 10\,s checkpoint，只新增 \texttt{reject\_full\_gc=true} 与 \texttt{max\_full\_gc\_delta=5}。该配置用于验收复跑时过滤 Full GC 过多的样本；本报告正式结果表仍以已完成且原始记录完整的合同基线与无 Full GC 压力复跑样本为准。
-  \item \textbf{NexMark 结果按查询逐项展示}。不同查询的状态形态差异很大，窗口聚合、Join、TopN、去重对状态后端的压力并不等价，因此报告按 q4/q5/q8/q9/q11/q18/q19/q20 分别呈现。
-  \item \textbf{最终交付口径定位到 q4/q5/q9/q18/q20 强优势区}。无 Full GC 压力复跑使用 sink 侧实际输入 TPS 作为端到端吞吐指标，并要求样本 \texttt{full\_gc\_delta=0}；该口径下 q4/q5/q9/q18/q20 分别达到 \textbf{$+$56.7\% / $+$57.3\% / $+$48.1\% / $+$34.8\% / $+$83.1\%}，均超过 30\% 显著收益门槛。
+  \item \textbf{NexMark 结果按查询逐项展示}。不同查询的状态形态差异显著，窗口聚合、Join、TopN、去重对状态后端的压力并不等价，因此报告按 q4/q5/q8/q9/q11/q18/q19/q20 分别呈现。
+  \item \textbf{最终交付口径定位到 q4/q5/q9/q18/q20 主要收益范围}。无 Full GC 压力复跑使用 sink 侧实际输入 TPS 作为端到端吞吐指标，并要求样本 \texttt{full\_gc\_delta=0}；该口径下 q4/q5/q9/q18/q20 分别达到 \textbf{$+$56.7\% / $+$57.3\% / $+$48.1\% / $+$34.8\% / $+$83.1\%}，均超过 30\% 显著收益门槛。
   \item \textbf{收益边界查询的原因}。q8 的窗口 Join 对 Person/Auction 匹配比例和窗口闭合相位敏感，90\,s 稳态窗口下为 $-$4.7\%；q11 的 Session Window 由会话闭合节奏主导，调参后为 $+$1.5\% 的持平略优区间；q19 在无 Full GC 规则下端到端提升为 $+$2.2\%，主要体现 CPU 核数下降与热点访问潜力。
-  \item \textbf{与 micro profile 证据一致}。micro profile 中 HashMap 的 GC worker/promotion 占比为 12.5\%，ForL0 降至 3.5\%；JMH 中 \texttt{value.Add}、\texttt{value.Update}、\texttt{map.Add} 等状态访问操作也呈现显著提升。q4/q5/q9/q18/q20 的强收益来自相同机制：降低堆上对象与 GC 成本，并把高频状态更新集中到 native 状态路径。
+  \item \textbf{与 micro profile 证据一致}。micro profile 中 HashMap 的 GC worker/promotion 占比为 12.5\%，ForL0 降至 3.5\%；JMH 中 \texttt{value.Add}、\texttt{value.Update}、\texttt{map.Add} 等状态访问操作也呈现显著提升。q4/q5/q9/q18/q20 的端到端收益来自相同机制：降低堆上对象与 GC 成本，并把高频状态更新集中到 native 状态路径。
 \end{itemize}
 
 \subsection{Client Usecase 双场景测试}
@@ -1343,8 +1343,8 @@ Client Usecase 模拟真实业务负载（双流 Join + MapState），配置了�
   \item \textbf{新增非合同热点漂移配置}。\texttt{hotspot\_drift\_300k} 使用 300\,K records、4 并行、关闭 checkpoint、\texttt{hot\_key\_count=2048}、\texttt{cold\_key\_count=200000}、\texttt{hot\_traffic\_percent=80}、\texttt{drift\_interval\_records=20000}、\texttt{drift\_step=1024}；\texttt{hotspot\_drift\_1m} 使用 1\,M records、4 并行、关闭 checkpoint、\texttt{hot\_key\_count=4096}、\texttt{cold\_key\_count=500000}、\texttt{hot\_traffic\_percent=80}、\texttt{drift\_interval\_records=50000}、\texttt{drift\_step=2048}。两组配置保留客户 \texttt{HuaweiTestFunction} 状态逻辑，仅替换 source，使短期热点可复用、长期热点随输入批次迁移。
   \item \textbf{小规模场景两种后端完全对齐}。合同基线（300 条）与扩展压力场景（3000 条）下，HashMap 与 ForL0 的吞吐量分别为 74.75 vs 74.79\,rec/s 和 748.35 vs 748.25\,rec/s，差异均在测量噪声范围内（$\leq 0.1\%$）。
   \item \textbf{30 万记录场景出现小幅正向收益}。状态压力场景下，HashMap 用时 84.27\,s，ForL0 用时 80.19\,s，吞吐从 3\,560.07 rec/s 提升到 3\,741.26 rec/s，提升 $+$5.1\%。该结果说明放大输入规模后 MapState/ValueState 路径开始体现 ForL0 的堆外状态收益，但客户 jar 的 source replay、7\,KB 对象构造、POJO 序列化、Join 输出和自动取消收尾仍占较大比例。
-  \item \textbf{100 万记录场景保持持平}。进一步放大到 1\,M records 后，HashMap 为 944 rec/s/core，ForL0 为 945 rec/s/core，差异约 $+$0.0\%。该结果说明客户用例在更大输入下仍未进入 ForL0 的强吞吐优势区，主要瓶颈仍在 source replay、对象构造、业务 Join 和 bounded job 自动停止路径。
-  \item \textbf{收益边界}。Client Usecase 不是当前最强优势场景；其主要价值是验证真实双流 Join + MapState 业务形态下不存在性能回退，并在 30 万记录下呈现小幅正向收益。核心端到端优势仍来自 NexMark q4/q5/q9/q18/q20 与 WordCount 高基数状态场景。
+  \item \textbf{100 万记录场景保持持平}。进一步放大到 1\,M records 后，HashMap 为 944 rec/s/core，ForL0 为 945 rec/s/core，差异约 $+$0.0\%。该结果说明客户用例在更大输入下仍未进入 ForL0 的主要吞吐收益区间，主要瓶颈仍在 source replay、对象构造、业务 Join 和 bounded job 自动停止路径。
+  \item \textbf{收益边界}。Client Usecase 不属于当前主要收益场景；其主要价值是验证真实双流 Join + MapState 业务形态下不存在性能回退，并在 30 万记录下呈现小幅正向收益。核心端到端优势仍来自 NexMark q4/q5/q9/q18/q20 与 WordCount 高基数状态场景。
 \end{itemize}
 
 完整的双场景测试由一键部署运行脚本 \texttt{docker/run\_all\_apps.sh} 执行，结果写入本交付文档目录。
@@ -1357,7 +1357,7 @@ Client Usecase 模拟真实业务负载（双流 Join + MapState），配置了�
   \item \textbf{接口兼容性}：\project{} 通过 SPI 被 Flink 自动发现并加载，与 Flink 1.20.3 的 StateBackend 接口、Checkpoint/Savepoint 协议完全兼容，用户作业无需修改。
   \item \textbf{原生引擎稳定性}：SwissTable、CoW 快照、Checkpoint 序列化往返、TypedInnerMap 等底层结构通过 CTest 验证，序列化与恢复路径在大规模 key 和混合状态类型下均保持一致性。
   \item \textbf{性能特征（Intel 平台收益显著）}：在 Intel x86\_64 参考平台，\project{} 在 WordCount 全部 36 组网格扫描点上一致领先于 HashMapStateBackend，平均吞吐量比值 \textbf{1.270}、最高 1.414；这一加速与 VTune 微架构剖析高度吻合——Memory Bound 从 48.1\% 降至 15.3\%、DRAM Bound 从 30.8\% 降至 2.2\%、CPI 从 0.615 降至 0.375。NexMark 端到端查询在 Intel 18\,/\,20\,GB 可完成配置下，q19 / q20 分别由 HashMap 的 279\,s / 313\,s 和 123\,s / 84\,s 降至 \project{} 的 45\,s / 38\,s 和 43\,s / 38\,s。\textbf{Flink 状态算子级 JMH 基准} 进一步佐证：14 个操作点中 13 个正向提升，\texttt{value.Add} +87.2\%、\texttt{map.Add} +110.0\%、\texttt{list.GetAndIterate} +131.5\%。鲲鹏 micro profile 也显示，ForL0 将状态访问集中到 \texttt{NativeEngine.valueGet/Put}（22.8\%），并将 GC worker/promotion 热点从 12.5\% 降至 3.5\%。
-  \item \textbf{鲲鹏平台收益边界}：在合同基线与默认 NexMark event-count SQL 场景下，鲲鹏平台的 NexMark 逐查询差异整体接近 0；在无 Full GC 非合同压力复跑口径下，q4/q5/q9/q18/q20 分别领先 \textbf{56.7\% / 57.3\% / 48.1\% / 34.8\% / 83.1\%}，构成当前 NexMark 的强优势区。q8/q11/q19 分别为 $-$4.7\% / $+$1.5\% / $+$2.2\%，属于收益边界或 CPU 效率改善场景；其他 NexMark SQL 中 q3 为 $+$11.6\%、q12 为 $+$2.7\%，q15/q16/q17 不构成吞吐优势。Client Usecase 在 300/3000 条与 100 万条下持平，30 万记录状态压力场景下小幅领先 $+$5.1\%，用于说明真实业务形态下无性能回退。综合来看，ForL0 的核心优势集中在原生/高基数状态、状态密集更新和可形成 backpressure 的端到端稳态负载；在窗口 Join 匹配相位、Session 闭合、短作业或业务对象构造主导的场景中收益有限。
+  \item \textbf{鲲鹏平台收益边界}：在合同基线与默认 NexMark event-count SQL 场景下，鲲鹏平台的 NexMark 逐查询差异整体接近 0；在无 Full GC 非合同压力复跑口径下，q4/q5/q9/q18/q20 分别领先 \textbf{56.7\% / 57.3\% / 48.1\% / 34.8\% / 83.1\%}，构成当前 NexMark 的主要收益场景。q8/q11/q19 分别为 $-$4.7\% / $+$1.5\% / $+$2.2\%，属于收益边界或 CPU 效率改善场景；其他 NexMark SQL 中 q3 为 $+$11.6\%、q12 为 $+$2.7\%，q15/q16/q17 不构成吞吐优势。Client Usecase 在 300/3000 条与 100 万条下持平，30 万记录状态压力场景下小幅领先 $+$5.1\%，用于说明真实业务形态下无性能回退。综合来看，ForL0 的核心优势集中在原生/高基数状态、状态密集更新和可形成 backpressure 的端到端稳态负载；在窗口 Join 匹配相位、Session 闭合、短作业或业务对象构造主导的场景中收益有限。
 \end{enumerate}
 
 \end{document}

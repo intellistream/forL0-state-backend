@@ -953,6 +953,78 @@ nexmark_scenarios:
       max_table_capacity: 65536
       main_table_load_factor_threshold: 0.80
 
+  - name: heap_squeeze_gc_probe
+    description: "Non-contract: tight-heap NexMark probe that records, rather than rejects, Full GC drag"
+    queries: "q18,q19,q20"
+    category: oa
+    checkpoint_interval: 0
+    collect_full_gc: true
+    reject_full_gc: false
+    runtime_overrides:
+      parallelism: 4
+    person_proportion: 1
+    auction_proportion: 5
+    bid_proportion: 94
+    tps: 1000000
+    metric_tps_vertex: sink
+    metric_monitor_delay: 20s
+    metric_monitor_interval: 5s
+    metric_monitor_duration: 120s
+    warmup_duration: 0
+    repeat_per_query: 1
+    min_success_samples: 1
+    max_attempts_per_query: 1
+    min_cpu_cores: 0.0
+    min_profile_cpu_cores: 0.0
+    timeout_seconds: 21600
+    query_events:
+      q18: 0
+      q19: 0
+      q20: 0
+    query_overrides:
+      q18:
+        tps: 12000000
+        person_proportion: 1
+        auction_proportion: 5
+        bid_proportion: 94
+        bid_hot_ratio_auctions: 32
+        bid_hot_ratio_bidders: 32
+        auction_hot_ratio_sellers: 8
+        metric_monitor_delay: 15s
+        metric_monitor_duration: 120s
+      q19:
+        tps: 3000000
+        person_proportion: 1
+        auction_proportion: 1
+        bid_proportion: 98
+        bid_hot_ratio_auctions: 32
+        bid_hot_ratio_bidders: 16
+        metric_monitor_delay: 45s
+        metric_monitor_duration: 120s
+      q20:
+        tps: 600000
+        person_proportion: 1
+        auction_proportion: 15
+        bid_proportion: 84
+        bid_hot_ratio_auctions: 32
+        auction_hot_ratio_sellers: 16
+        metric_monitor_delay: 30s
+        metric_monitor_duration: 120s
+    flink_config_overrides:
+      parallelism.default: 4
+      taskmanager.numberOfTaskSlots: 4
+      table.exec.mini-batch.enabled: false
+      table.optimizer.distinct-agg.split.enabled: false
+      execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+      pipeline.object-reuse: true
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 384mb
+      l0_memory_max_size: 768mb
+      initial_table_capacity: 4096
+      max_table_capacity: 131072
+      main_table_load_factor_threshold: 0.80
+
 # Unit test benchmark settings
 unittest:
   num_keys: 100000               # Ultra-quick full-suite validation scale

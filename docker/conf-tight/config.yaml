@@ -1,0 +1,49 @@
+################################################################################
+# BriskState - tight-heap Docker Flink configuration
+# Purpose: NexMark pressure probes where HashMapStateBackend should reveal
+# heap residency / Full GC costs more clearly than the default 16g TM setup.
+################################################################################
+
+jobmanager:
+  bind-host: 0.0.0.0
+  rpc:
+    address: jobmanager
+    port: 6123
+  memory:
+    process:
+      size: 4g
+  execution:
+    failover-strategy: region
+
+taskmanager:
+  bind-host: 0.0.0.0
+  numberOfTaskSlots: 4
+  memory:
+    process:
+      size: 8g
+    managed:
+      size: 128mb
+
+parallelism:
+  default: 4
+
+state:
+  backend:
+    type: org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory
+    forl0:
+      l0-cache:
+        enabled: false
+        size: 20mb
+        max-per-alloc: 128kb
+  checkpoints:
+    dir: file:///opt/flink-data/checkpoints
+  checkpoint-storage: filesystem
+
+rest:
+  address: jobmanager
+  bind-address: 0.0.0.0
+
+env:
+  java:
+    opts:
+      all: -Djava.library.path=/opt/flink/native -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=4 -XX:GCLogFileSize=256M

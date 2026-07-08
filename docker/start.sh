@@ -17,8 +17,9 @@ else
 fi
 
 echo "=== 启动 ForL0 Flink Docker 测试集群 ==="
-echo "  JM:  1 × (2核 8G)"
-echo "  TM:  2 × (4核 20G, 4 slots, heap 16G)"
+echo "  配置目录: ${FORL0_FLINK_CONF_DIR:-./conf}"
+echo "  JM:  1 × (2核 ${FORL0_JM_DOCKER_MEMORY:-8G})"
+echo "  TM:  2 × (4核 ${FORL0_TM_DOCKER_MEMORY:-16G}, 4 slots)"
 echo "  并行度: 8"
 echo ""
 

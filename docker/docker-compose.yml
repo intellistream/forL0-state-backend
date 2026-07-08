@@ -3,7 +3,7 @@
 #
 #  规格:
 #    - JobManager:    1 容器, 8G
-#    - TaskManager:   2 容器, 4核 32G, 每个 TM 并行度 4
+#    - TaskManager:   2 容器, 4核 16G, 每个 TM 并行度 4
 #    - 总并行度:      8
 #
 #  启动:  docker compose up -d
@@ -28,7 +28,7 @@ services:
       - ${FLINK_HOME:-/home/user/flink}/lib:/opt/flink/lib:ro
       - ${FLINK_HOME:-/home/user/flink}/plugins:/opt/flink/plugins:ro
       - ${FLINK_HOME:-/home/user/flink}/opt:/opt/flink/opt:ro
-      - ./conf:/opt/flink/conf:ro
+      - ${FORL0_FLINK_CONF_DIR:-./conf}:/opt/flink/conf:ro
       - ../src/main/resources/native:/opt/flink/native:ro
       - flink-checkpoints:/opt/flink-data/checkpoints
       - jm-logs:/opt/flink/log
@@ -40,7 +40,7 @@ services:
       resources:
         limits:
           cpus: "2"
-          memory: 8G
+          memory: ${FORL0_JM_DOCKER_MEMORY:-8G}
     networks:
       - flink-net
 
@@ -55,7 +55,7 @@ services:
       - ${FLINK_HOME:-/home/user/flink}/lib:/opt/flink/lib:ro
       - ${FLINK_HOME:-/home/user/flink}/plugins:/opt/flink/plugins:ro
       - ${FLINK_HOME:-/home/user/flink}/opt:/opt/flink/opt:ro
-      - ./conf:/opt/flink/conf:ro
+      - ${FORL0_FLINK_CONF_DIR:-./conf}:/opt/flink/conf:ro
       - ../src/main/resources/native:/opt/flink/native:ro
       - flink-checkpoints:/opt/flink-data/checkpoints
       - tm1-logs:/opt/flink/log
@@ -72,7 +72,7 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 16G
+          memory: ${FORL0_TM_DOCKER_MEMORY:-16G}
     networks:
       - flink-net
 
@@ -87,7 +87,7 @@ services:
       - ${FLINK_HOME:-/home/user/flink}/lib:/opt/flink/lib:ro
       - ${FLINK_HOME:-/home/user/flink}/plugins:/opt/flink/plugins:ro
       - ${FLINK_HOME:-/home/user/flink}/opt:/opt/flink/opt:ro
-      - ./conf:/opt/flink/conf:ro
+      - ${FORL0_FLINK_CONF_DIR:-./conf}:/opt/flink/conf:ro
       - ../src/main/resources/native:/opt/flink/native:ro
       - flink-checkpoints:/opt/flink-data/checkpoints
       - tm2-logs:/opt/flink/log
@@ -104,7 +104,7 @@ services:
       resources:
         limits:
           cpus: "4"
-          memory: 16G
+          memory: ${FORL0_TM_DOCKER_MEMORY:-16G}
     networks:
       - flink-net
 

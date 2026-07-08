@@ -1001,6 +1001,7 @@ class NexmarkRunner:
         min_cpu_cores = float(self.nexmark_config.get('min_cpu_cores', 0.0))
         min_profile_cpu_cores = float(self.nexmark_config.get('min_profile_cpu_cores', 0.05))
         reject_full_gc = bool(self.nexmark_config.get('reject_full_gc', False))
+        collect_full_gc = reject_full_gc or bool(self.nexmark_config.get('collect_full_gc', False))
         max_full_gc_delta = int(self.nexmark_config.get('max_full_gc_delta', 0))
 
         try:
@@ -1051,7 +1052,7 @@ class NexmarkRunner:
 
                 should_retry = False
                 try:
-                    gc_before = snapshot_taskmanager_full_gc(str(self.flink_home)) if reject_full_gc else {}
+                    gc_before = snapshot_taskmanager_full_gc(str(self.flink_home)) if collect_full_gc else {}
                     self._start_metric_senders(env)
                     process_start = time.perf_counter()
                     result = subprocess.run(
@@ -1064,8 +1065,8 @@ class NexmarkRunner:
                     process_elapsed = time.perf_counter() - process_start
                     output = result.stdout + result.stderr
                     print(output)
-                    gc_after = snapshot_taskmanager_full_gc(str(self.flink_home)) if reject_full_gc else {}
-                    run_full_gc_delta = full_gc_delta(gc_before, gc_after) if reject_full_gc else 0
+                    gc_after = snapshot_taskmanager_full_gc(str(self.flink_home)) if collect_full_gc else {}
+                    run_full_gc_delta = full_gc_delta(gc_before, gc_after) if collect_full_gc else 0
 
                     output_lower = output.lower()
                     retryable_error = (
@@ -1134,6 +1135,7 @@ class NexmarkRunner:
                                     'configured_tps': tps,
                                     'metric_tps_vertex': self._get_query_override(query, 'metric_tps_vertex'),
                                     'metric_monitor_duration': self._get_query_override(query, 'metric_monitor_duration'),
+                                    'collect_full_gc': collect_full_gc,
                                     'reject_full_gc': reject_full_gc,
                                     'max_full_gc_delta': max_full_gc_delta,
                                     'full_gc_delta': run_full_gc_delta,
@@ -1430,6 +1432,7 @@ def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
         'metric_monitor_interval',
         'metric_monitor_duration',
         'metric_tps_vertex',
+        'collect_full_gc',
         'reject_full_gc',
         'max_full_gc_delta',
         'query_overrides',
