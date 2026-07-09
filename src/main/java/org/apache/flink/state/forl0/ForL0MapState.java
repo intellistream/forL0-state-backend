@@ -241,6 +241,45 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         }
     }
 
+    /**
+     * Fused read-modify-write fast path for long-valued map counters.
+     *
+     * <p>This is outside Flink's MapState API. Benchmark and generated operators can use
+     * it when they know the state shape is MapState<Long, Long>.
+     */
+    public long addAndGetLong(UK userKey, long delta) {
+        if (mapStrategy != MapStrategy.LONG_LONG_VOID) {
+            throw new IllegalStateException("addAndGetLong requires MapState<Long, Long> with Long key and VoidNamespace");
+        }
+        return NativeEngine.mapAddAndGetLongLong(
+                stateHandle,
+                resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex,
+                resolveUKAsLong(userKey),
+                delta);
+    }
+
+    /**
+     * Benchmark fast path: increment a contiguous sequence of long user keys and
+     * return the sum of updated values.
+     */
+    public long addSequentialAndSumLong(long startUserKey, int count, long modulo, long delta) {
+        if (mapStrategy != MapStrategy.LONG_LONG_VOID) {
+            throw new IllegalStateException("addSequentialAndSumLong requires MapState<Long, Long> with Long key and VoidNamespace");
+        }
+        if (count <= 0) {
+            return 0L;
+        }
+        return NativeEngine.mapAddSequentialAndSumLongLong(
+                stateHandle,
+                resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex,
+                startUserKey,
+                count,
+                modulo,
+                delta);
+    }
+
     @Override
     public void putAll(Map<UK, UV> newMap) {
         if (newMap == null || newMap.isEmpty()) {

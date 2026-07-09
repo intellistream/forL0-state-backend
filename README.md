@@ -38,38 +38,115 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 
 ## 快速开始
 
-### 离线环境一键跑完实验并生成报告
+### 离线机器一键 App（推荐）
 
-推荐把整个仓库目录通过 `scp` 拷贝到目标服务器，然后直接在仓库内运行一键脚本。仓库内已携带 benchmark 配置、运行脚本、离线 Python wheels 与预编译 benchmark JAR。
+推荐把**整个仓库目录**拷到离线服务器。仓库内应已经包含：
+
+- `docker/deploy/`：ForL0 backend JAR、WordCount / NexMark / Client benchmark JAR；native 库可在 `docker/deploy/libforl0_engine.so` 或 `src/main/resources/native/libforl0_engine.so`
+- `offline-packages/` 或 `benchmark/offline-packages/`：benchmark Python wheels，可选 async-profiler 压缩包
+- `docker/images/eclipse-temurin-8-jre.tar.gz`：可选 Docker 镜像；如果目标机已经有 `eclipse-temurin:8-jre`，可不带
+
+离线机器上只需要进入目录，执行顶层启动器：
 
 ```bash
-scp -r /path/to/forL0-state-backend user@server:/path/to/
-ssh user@server
+set -euo pipefail
 
+REPO_DIR="$HOME/forL0-state-backend"
+FLINK_HOME="$HOME/flink-1.20.3"
+
+cd "$REPO_DIR"
+chmod +x ./forl0-offline-app.sh
+./forl0-offline-app.sh --flink-home "$FLINK_HOME"
+```
+
+默认会依次完成：安装 ForL0 到 Flink、导入离线 Docker 镜像（如存在）、preflight、Client Usecase 冒烟、合同口径 apps 测试、HTML 报告生成。需要更完整的 NexMark no-Full-GC 压力复跑时执行：
+
+```bash
+cd "$REPO_DIR"
+./forl0-offline-app.sh --flink-home "$FLINK_HOME" --full
+```
+
+常用模式：
+
+```bash
+# 只做安装 + preflight + 最短冒烟，适合刚到离线机器时先验链路
+./forl0-offline-app.sh --flink-home "$FLINK_HOME" --smoke-only
+
+# 只跑合同口径 apps，不跑冒烟
+./forl0-offline-app.sh --flink-home "$FLINK_HOME" --apps-only
+
+# 只基于已有结果重新生成 HTML 报告
+./forl0-offline-app.sh --flink-home "$FLINK_HOME" --report-only
+
+# 只跑 ForL0 或只跑 HashMap
+./forl0-offline-app.sh --flink-home "$FLINK_HOME" --backend forl0 --apps-only
+./forl0-offline-app.sh --flink-home "$FLINK_HOME" --backend hashmap --apps-only
+```
+
+运行完成后查看：
+
+```bash
+cd "$REPO_DIR"
+ls -lh benchmark/results/reports/benchmark_report.html
+find benchmark/results/raw -maxdepth 1 -type f | sort | tail
+find benchmark/results -maxdepth 1 -type d -name 'nexmark_*' | sort | tail
+```
+
+结果目录说明：
+
+- `benchmark/results/raw/`：WordCount、Client Usecase、NexMark 汇总 JSON
+- `benchmark/results/nexmark_*/`：NexMark 每次运行的原始 summary、日志与监控数据
+- `benchmark/results/figures/`：报告图表
+- `benchmark/results/reports/benchmark_report.html`：HTML 汇总报告
+
+#### 离线包安装路径（不拷整个仓库时使用）
+
+如果你在联网/构建机器上先生成独立离线包，打包脚本会把 `forl0-offline-app.sh` 一起放到离线包根目录：
+
+```bash
 cd /path/to/forL0-state-backend
-export FLINK_HOME=/path/to/flink-1.20.3
-
-cd docker
-./server_setup.sh --flink-home "$FLINK_HOME" --no-start
-./run_all_apps.sh --offline --preflight-only --test apps --backend all
-./run_all_apps.sh --offline --test client_usecase --scenario contract_baseline --backend all --no-profile --no-report
-./run_all_apps.sh --offline --test apps --backend all --no-profile
+./docker/package_offline_bundle.sh --arch arm64 --output-dir /tmp/forl0-offline
+tar -C /tmp -czf /tmp/forl0-offline.tar.gz forl0-offline
+scp /tmp/forl0-offline.tar.gz user@server:/tmp/
 ```
 
-脚本会自动复用离线 Python wheels、预编译 JAR 和本地 Flink；如 Docker 镜像不可用，会回退到 Flink standalone。跑完后生成：
-
-- 原始结果：`benchmark/results/raw/` 与 `benchmark/results/nexmark_*/`
-- 图表：`benchmark/results/figures/`
-- HTML 报告：`benchmark/results/reports/benchmark_report.html`
-
-只基于已有结果重新生成报告：
+在离线服务器上执行：
 
 ```bash
-cd ~/forl0-runtime/docker
-./run_all_apps.sh --offline --report-only --no-profile
+set -euo pipefail
+
+FLINK_HOME="$HOME/flink-1.20.3"
+
+cd /tmp
+tar -xzf forl0-offline.tar.gz
+cd /tmp/forl0-offline
+
+chmod +x ./forl0-offline-app.sh
+./forl0-offline-app.sh --flink-home "$FLINK_HOME" --install-dir "$HOME/forl0-runtime"
 ```
 
-更详细的复现命令见：[benchmark/README.md](benchmark/README.md)。
+#### 常见问题快速定位
+
+```bash
+# 查看 ForL0 是否装入 Flink
+ls -lh "$FLINK_HOME/lib"/flink-statebackend-forL0-*.jar "$FLINK_HOME/native"/libforl0_engine.so
+
+# 查看 Flink/Docker 是否已经起来
+curl -sf http://localhost:8081/overview || true
+cd "$REPO_DIR/docker" 2>/dev/null || cd "$INSTALL_DIR/docker"
+./docker_run.sh status || true
+
+# 查看 L0 / 模拟模式日志
+grep -R "ForL0\\|HotCache\\|SIMULATION\\|L0 MODE" "$FLINK_HOME/log" docker/*.log benchmark/results 2>/dev/null | tail -80
+```
+
+说明：
+
+- 没有 `/dev/l0`、`/dev/hisi_l0` 或 `libl0mempool.so` 时，ForL0 会自动进入模拟模式；功能测试仍可完成，但不能作为真实 L0 性能验收。
+- `run_all_apps.sh --offline` 不会联网安装依赖；如果 preflight 提示缺 wheel，需要在联网机器重新执行 `docker/package_offline_bundle.sh` 并把 `offline-packages/` 带到离线机。
+- Docker 不可用时，`run_all_apps.sh` 会尝试回退到本机 Flink standalone；若你只想安装不启动集群，使用 `server_setup.sh --no-start`。
+
+更详细的 benchmark 参数和场景说明见：[benchmark/README.md](benchmark/README.md)。
 
 ### 环境要求
 

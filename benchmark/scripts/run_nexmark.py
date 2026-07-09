@@ -593,6 +593,89 @@ class NexmarkRunner:
         # Give the cluster a brief settling window after cancellation.
         time.sleep(2)
 
+    def _cluster_health_issue(self) -> Optional[str]:
+        """Return a fail-fast reason if the Flink cluster or active jobs are unhealthy."""
+        try:
+            overview_resp = requests.get(f"{self.rest_url}/overview", timeout=5)
+            if overview_resp.status_code != 200:
+                return f"Flink overview returned HTTP {overview_resp.status_code}"
+            overview = overview_resp.json()
+        except Exception as exc:
+            return f"Cannot query Flink overview: {exc}"
+
+        expected_tms = int(os.environ.get('FORL0_EXPECTED_TASKMANAGERS', '2'))
+        expected_slots = int(os.environ.get('FORL0_EXPECTED_SLOTS', '8'))
+        tm_count = int(overview.get('taskmanagers', 0) or 0)
+        slots_total = int(overview.get('slots-total', 0) or 0)
+        if tm_count < expected_tms:
+            return f"TaskManager count dropped below expected: {tm_count} < {expected_tms}"
+        if slots_total < expected_slots:
+            return f"Slot count dropped below expected: {slots_total} < {expected_slots}"
+
+        try:
+            jobs_resp = requests.get(f"{self.rest_url}/jobs/overview", timeout=5)
+            if jobs_resp.status_code != 200:
+                return f"Flink jobs overview returned HTTP {jobs_resp.status_code}"
+            for job in jobs_resp.json().get('jobs', []):
+                if job.get('state') == 'FAILED':
+                    return (
+                        "Flink job failed during NexMark run: "
+                        f"{job.get('jid')} {job.get('name', 'unknown')}"
+                    )
+        except Exception as exc:
+            return f"Cannot query Flink jobs overview: {exc}"
+
+        return None
+
+    def _run_nexmark_driver(self, cmd: list[str], env: dict, timeout_seconds: int) -> tuple[int, str, float]:
+        """Run the Java NexMark driver while monitoring Flink health.
+
+        The NexMark driver can get stuck repeatedly stopping an already FAILED job.  In
+        that case a large subprocess timeout wastes the offline experiment window, so
+        fail fast as soon as REST reports a failed job or a degraded cluster.
+        """
+        process_start = time.perf_counter()
+        with tempfile.TemporaryFile(mode='w+', encoding='utf-8', errors='replace') as output_file:
+            proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=output_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            fail_reason: Optional[str] = None
+
+            while True:
+                returncode = proc.poll()
+                if returncode is not None:
+                    break
+
+                elapsed = time.perf_counter() - process_start
+                if elapsed > timeout_seconds:
+                    fail_reason = f"NexMark driver timed out after {timeout_seconds}s"
+                    break
+
+                fail_reason = self._cluster_health_issue()
+                if fail_reason:
+                    break
+
+                time.sleep(5)
+
+            if fail_reason:
+                print(f"  ERROR: {fail_reason}")
+                proc.terminate()
+                try:
+                    proc.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=20)
+                output_file.write(f"\n[NexMark fail-fast] {fail_reason}\n")
+
+            elapsed = time.perf_counter() - process_start
+            output_file.seek(0)
+            output = output_file.read()
+            return proc.returncode if proc.returncode is not None else 124, output, elapsed
+
     def _start_container_profiler(self, backend: str, query: str, profile_mode: str) -> bool:
         """Start async-profiler inside taskmanager container and return whether startup succeeded."""
         profiler_home = os.environ.get('ASYNC_PROFILER_HOME')
@@ -1054,16 +1137,7 @@ class NexmarkRunner:
                 try:
                     gc_before = snapshot_taskmanager_full_gc(str(self.flink_home)) if collect_full_gc else {}
                     self._start_metric_senders(env)
-                    process_start = time.perf_counter()
-                    result = subprocess.run(
-                        cmd,
-                        env=env,
-                        capture_output=True,
-                        text=True,
-                        timeout=query_timeout,
-                    )
-                    process_elapsed = time.perf_counter() - process_start
-                    output = result.stdout + result.stderr
+                    returncode, output, process_elapsed = self._run_nexmark_driver(cmd, env, query_timeout)
                     print(output)
                     gc_after = snapshot_taskmanager_full_gc(str(self.flink_home)) if collect_full_gc else {}
                     run_full_gc_delta = full_gc_delta(gc_before, gc_after) if collect_full_gc else 0
@@ -1077,11 +1151,11 @@ class NexmarkRunner:
                     )
 
                     parsed = parse_nexmark_summary(output)
-                    if result.returncode != 0 and not parsed:
+                    if returncode != 0 and not parsed:
                         print('  ERROR: NexMark benchmark driver failed')
                         should_retry = retryable_error
                     else:
-                        if result.returncode != 0 and parsed:
+                        if returncode != 0 and parsed:
                             print('  WARNING: NexMark driver failed after printing summary; keeping parsed sample')
                         if parsed:
                             events_num = parsed.get('events_num') or num_events

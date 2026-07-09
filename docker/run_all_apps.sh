@@ -33,6 +33,10 @@ OFFLINE_MODE="${FORL0_OFFLINE:-auto}"
 GENERATE_REPORT=true
 REPORT_ONLY=false
 PREFLIGHT_ONLY=false
+EXPECTED_TASKMANAGERS="${FORL0_EXPECTED_TASKMANAGERS:-2}"
+EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
+RESTART_CLUSTER=false
+CLEANUP_ON_EXIT=false
 
 print_provenance() {
     echo "============================================================"
@@ -43,6 +47,8 @@ print_provenance() {
     echo "  Backend:     ${BACKEND}"
     echo "  Profile:     ${PROFILE_MODE:-disabled}"
     echo "  Offline:     ${OFFLINE_MODE}"
+    echo "  Expect TMs:  ${EXPECTED_TASKMANAGERS}"
+    echo "  Expect slots:${EXPECTED_SLOTS}"
     if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         echo "  GitCommit:   $(git -C "${REPO_ROOT}" rev-parse HEAD)"
     else
@@ -105,6 +111,13 @@ preflight_check() {
             check_glob "Client hotspot-drift JAR" "${REPO_ROOT}/docker/deploy/client-drift-benchmark-*.jar" || failed=1
         else
             echo "      - Client hotspot-drift JAR: not required unless hotspot_drift_* scenarios are selected"
+        fi
+    fi
+    if [[ "$TEST_NAME" == "benchset" || "$TEST_NAME" == "all" ]]; then
+        if [[ -f "${REPO_ROOT}/benchmark/benchset/target/benchset-1.0-SNAPSHOT.jar" ]]; then
+            echo "      ✓ Benchset JAR: ${REPO_ROOT}/benchmark/benchset/target/benchset-1.0-SNAPSHOT.jar"
+        else
+            check_glob "Benchset JAR" "${REPO_ROOT}/docker/deploy/benchset-*.jar" || failed=1
         fi
     fi
 
@@ -282,6 +295,155 @@ wait_for_flink_rest() {
     return 1
 }
 
+flink_cluster_summary() {
+    python3 - <<'PY'
+import json
+import urllib.request
+
+try:
+    overview = json.load(urllib.request.urlopen("http://localhost:8081/overview", timeout=5))
+    taskmanagers = json.load(urllib.request.urlopen("http://localhost:8081/taskmanagers", timeout=5))
+except Exception as exc:
+    print(f"REST_ERROR {exc}")
+    raise SystemExit(1)
+
+tm_count = int(overview.get("taskmanagers", 0) or 0)
+slots_total = int(overview.get("slots-total", 0) or 0)
+slots_available = int(overview.get("slots-available", 0) or 0)
+jobs_running = int(overview.get("jobs-running", 0) or 0)
+print(f"TASKMANAGERS={tm_count}")
+print(f"SLOTS_TOTAL={slots_total}")
+print(f"SLOTS_AVAILABLE={slots_available}")
+print(f"JOBS_RUNNING={jobs_running}")
+for tm in taskmanagers.get("taskmanagers", []):
+    print(f"TM {tm.get('id')} slots={tm.get('slotsNumber')} free={tm.get('freeSlots')} heartbeatMs={tm.get('timeSinceLastHeartbeat')}")
+PY
+}
+
+cluster_is_healthy() {
+    local summary tm_count slots_total jobs_running
+    summary="$(flink_cluster_summary 2>/dev/null)" || return 1
+    tm_count="$(printf '%s\n' "$summary" | awk -F= '/^TASKMANAGERS=/{print $2}')"
+    slots_total="$(printf '%s\n' "$summary" | awk -F= '/^SLOTS_TOTAL=/{print $2}')"
+    jobs_running="$(printf '%s\n' "$summary" | awk -F= '/^JOBS_RUNNING=/{print $2}')"
+    [[ "${tm_count:-0}" -ge "$EXPECTED_TASKMANAGERS" ]] || return 1
+    [[ "${slots_total:-0}" -ge "$EXPECTED_SLOTS" ]] || return 1
+    [[ "${jobs_running:-0}" -eq 0 ]] || return 1
+}
+
+cancel_running_jobs() {
+    python3 - <<'PY' || true
+import json
+import urllib.request
+
+try:
+    jobs = json.load(urllib.request.urlopen("http://localhost:8081/jobs/overview", timeout=5)).get("jobs", [])
+except Exception as exc:
+    print(f"[cleanup] Cannot query jobs: {exc}")
+    raise SystemExit(0)
+
+for job in jobs:
+    state = job.get("state")
+    if state in {"CREATED", "RUNNING", "RESTARTING", "FAILING", "CANCELLING"}:
+        jid = job.get("jid")
+        name = job.get("name")
+        print(f"[cleanup] Canceling {jid} {name} ({state})")
+        req = urllib.request.Request(f"http://localhost:8081/jobs/{jid}?mode=cancel", method="PATCH")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                print(f"[cleanup] cancel status={resp.status}")
+        except Exception as exc:
+            print(f"[cleanup] cancel failed for {jid}: {exc}")
+PY
+}
+
+write_failed_marker() {
+    local status="$1"
+    local log_dir="${REPO_ROOT}/benchmark/results/run_logs"
+    mkdir -p "$log_dir"
+    local marker="${log_dir}/FAILED_${TEST_NAME}_${BACKEND}_$(date '+%Y%m%d_%H%M%S').txt"
+    {
+        echo "ForL0 benchmark failed"
+        echo "date=$(date '+%Y-%m-%d %H:%M:%S %z')"
+        echo "repo=${REPO_ROOT}"
+        echo "test=${TEST_NAME}"
+        echo "backend=${BACKEND}"
+        echo "status=${status}"
+        echo "profile=${PROFILE_MODE:-disabled}"
+        echo "expected_taskmanagers=${EXPECTED_TASKMANAGERS}"
+        echo "expected_slots=${EXPECTED_SLOTS}"
+        echo "extra_args=${EXTRA_ARGS[*]:-}"
+        echo ""
+        echo "cluster_summary:"
+        flink_cluster_summary || true
+        echo ""
+        echo "running_or_recent_jobs:"
+        python3 - <<'PY' || true
+import json
+import urllib.request
+
+try:
+    jobs = json.load(urllib.request.urlopen("http://localhost:8081/jobs/overview", timeout=5)).get("jobs", [])
+    for job in jobs[:20]:
+        print(job)
+except Exception as exc:
+    print(f"cannot query jobs: {exc}")
+PY
+    } > "$marker"
+    echo "[cleanup] Wrote failure marker: $marker"
+}
+
+on_exit() {
+    local status=$?
+    if [[ "$CLEANUP_ON_EXIT" == "true" && "$status" -ne 0 ]]; then
+        echo "[cleanup] Benchmark command exited with status ${status}; canceling orphan Flink jobs."
+        write_failed_marker "$status"
+        cancel_running_jobs
+    fi
+    return "$status"
+}
+trap on_exit EXIT INT TERM
+
+ensure_healthy_cluster() {
+    if ! curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
+        echo "[2/5] Flink 集群未运行，启动 docker_run.sh"
+        # shellcheck disable=SC1091
+        source "${REPO_ROOT}/docker/forl0-local.env"
+        if ! bash "${REPO_ROOT}/docker/docker_run.sh" start; then
+            start_local_flink_cluster || {
+                echo "✗ Docker 与本机 standalone Flink 均启动失败"
+                exit 1
+            }
+        fi
+    elif [[ "$RESTART_CLUSTER" == "true" ]]; then
+        echo "[2/5] 按要求重启 Flink 集群"
+        # shellcheck disable=SC1091
+        source "${REPO_ROOT}/docker/forl0-local.env"
+        if bash "${REPO_ROOT}/docker/docker_run.sh" stop && bash "${REPO_ROOT}/docker/docker_run.sh" start; then
+            :
+        else
+            echo "✗ Docker 集群重启失败；为避免离线实验污染，停止运行。"
+            exit 1
+        fi
+    else
+        echo "[2/5] Flink REST 已就绪，检查 TaskManager/slot 健康状态"
+    fi
+
+    if ! cluster_is_healthy; then
+        echo "✗ Flink 集群不满足实验健康条件。"
+        echo "  期望 TaskManagers >= ${EXPECTED_TASKMANAGERS}, slots >= ${EXPECTED_SLOTS}, running jobs = 0"
+        echo "  当前状态:"
+        flink_cluster_summary || true
+        echo ""
+        echo "  建议在离线实验前执行："
+        echo "    ./docker/run_all_apps.sh --flink-home \"$FLINK_HOME\" --offline --restart-cluster --preflight-only"
+        exit 1
+    fi
+
+    echo "      ✓ Flink 集群健康:"
+    flink_cluster_summary
+}
+
 start_local_flink_cluster() {
     if [[ -z "${FLINK_HOME:-}" || ! -x "${FLINK_HOME}/bin/start-cluster.sh" ]]; then
         return 1
@@ -345,6 +507,10 @@ usage() {
   --no-report           只跑实验，不生成 benchmark HTML 报告
   --report-only         不跑实验，只基于已有结果生成 benchmark HTML 报告
   --preflight-only      只检查离线运行依赖、JAR、配置与 Python 环境，不启动实验
+  --restart-cluster     实验前重启 Flink Docker 集群，避免复用退化/脏集群
+  --expected-taskmanagers N
+                        实验前要求至少 N 个 TaskManager 注册，默认 2
+  --expected-slots N    实验前要求至少 N 个 slot，默认 8
   -h, --help            显示帮助
 EOF
 }
@@ -391,6 +557,18 @@ while [[ $# -gt 0 ]]; do
             PREFLIGHT_ONLY=true
             GENERATE_REPORT=false
             ENABLE_PROFILE=false
+            shift
+            ;;
+        --expected-taskmanagers)
+            EXPECTED_TASKMANAGERS="$2"
+            shift 2
+            ;;
+        --expected-slots)
+            EXPECTED_SLOTS="$2"
+            shift 2
+            ;;
+        --restart-cluster)
+            RESTART_CLUSTER=true
             shift
             ;;
         --test)
@@ -442,22 +620,13 @@ fi
 
 if [[ "$PREFLIGHT_ONLY" == "true" ]]; then
     preflight_check
+    if curl -sf http://localhost:8081/overview >/dev/null 2>&1 || [[ "$RESTART_CLUSTER" == "true" ]]; then
+        ensure_healthy_cluster
+    fi
     exit 0
 fi
 
-if ! curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
-    echo "[2/5] Flink 集群未运行，启动 docker_run.sh"
-    # shellcheck disable=SC1091
-    source "${REPO_ROOT}/docker/forl0-local.env"
-    if ! bash "${REPO_ROOT}/docker/docker_run.sh" start; then
-        start_local_flink_cluster || {
-            echo "✗ Docker 与本机 standalone Flink 均启动失败"
-            exit 1
-        }
-    fi
-else
-    echo "[2/5] Flink 集群已就绪"
-fi
+ensure_healthy_cluster
 
 bootstrap_benchmark_python
 bootstrap_async_profiler
@@ -473,7 +642,11 @@ if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
 fi
 
 export REPO_ROOT
+export FORL0_EXPECTED_TASKMANAGERS="$EXPECTED_TASKMANAGERS"
+export FORL0_EXPECTED_SLOTS="$EXPECTED_SLOTS"
 echo "Command: ${cmd[*]}"
+CLEANUP_ON_EXIT=true
 "${cmd[@]}"
+CLEANUP_ON_EXIT=false
 
 generate_benchmark_report

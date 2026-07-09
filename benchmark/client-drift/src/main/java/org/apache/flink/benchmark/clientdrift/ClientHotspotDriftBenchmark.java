@@ -1,16 +1,26 @@
 package org.apache.flink.benchmark.clientdrift;
 
 import org.apache.flink.api.common.time.Time;
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
 import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
+import org.apache.flink.state.forl0.ForL0MapState;
+import org.apache.flink.util.Collector;
 
 import org.example.HuaweiMT6000c;
 import org.example.HuaweiTestFunction;
 import org.example.PVMVLogType;
+
+import java.lang.reflect.Field;
 
 /**
  * Non-contract client-usecase variant that keeps the customer's join/state logic but
@@ -21,10 +31,22 @@ public final class ClientHotspotDriftBenchmark {
     private ClientHotspotDriftBenchmark() {
     }
 
+    private static long mix64(long z) {
+        z = (z ^ (z >>> 33)) * 0xff51afd7ed558ccdL;
+        z = (z ^ (z >>> 33)) * 0xc4ceb9fe1a85ec53L;
+        return z ^ (z >>> 33);
+    }
+
+    private static int positiveMod(long value, int modulo) {
+        int result = (int) (value % modulo);
+        return result < 0 ? result + modulo : result;
+    }
+
     public static void main(String[] args) throws Exception {
         ParameterTool params = ParameterTool.fromArgs(args);
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
+        String mode = params.get("mode", "customer");
         int parallelism = params.getInt("parallelism", env.getParallelism());
         long checkpointInterval = params.getLong("checkpointInterval", 0L);
         long leftNumRecords = params.getLong("leftNumRecords", 0L);
@@ -45,6 +67,52 @@ public final class ClientHotspotDriftBenchmark {
         env.setParallelism(parallelism);
         if (checkpointInterval > 0L) {
             env.enableCheckpointing(checkpointInterval);
+        }
+
+        if ("scalar_state".equalsIgnoreCase(mode)) {
+            int scalarOpsPerRecord = params.getInt("scalarOpsPerRecord", 8);
+            int mapKeyModulo = params.getInt("mapKeyModulo", 65536);
+            String scalarShape = params.get("scalarShape", "map");
+
+            DataStreamSource<ScalarEvent> left = env.addSource(
+                    new ScalarHotKeySource(
+                            0,
+                            leftNumRecords,
+                            hotKeyCount,
+                            coldKeyCount,
+                            hotTrafficPercent,
+                            driftIntervalRecords,
+                            driftStep,
+                            timestampMode,
+                            timestampHotBuckets,
+                            timestampKeySpace,
+                            timestampDriftIntervalRecords,
+                            timestampDriftStep));
+
+            DataStreamSource<ScalarEvent> right = env.addSource(
+                    new ScalarHotKeySource(
+                            rightDelayMs,
+                            rightNumRecords,
+                            hotKeyCount,
+                            coldKeyCount,
+                            hotTrafficPercent,
+                            driftIntervalRecords,
+                            driftStep,
+                            timestampMode,
+                            timestampHotBuckets,
+                            timestampKeySpace,
+                            timestampDriftIntervalRecords,
+                            timestampDriftStep));
+
+            SingleOutputStreamOperator<?> joined = left
+                    .keyBy(ScalarEvent::joinKey)
+                    .connect(right.keyBy(ScalarEvent::joinKey))
+                    .process(new ScalarStateJoinFunction(scalarOpsPerRecord, mapKeyModulo, scalarShape))
+                    .disableChaining();
+
+            joined.addSink(new DiscardingSink<>()).disableChaining();
+            env.execute("client-usecase-scalar-state-probe");
+            return;
         }
 
         DataStreamSource<PVMVLogType> left = env.addSource(
@@ -90,6 +158,292 @@ public final class ClientHotspotDriftBenchmark {
         joined.addSink(new DiscardingSink<>()).disableChaining();
 
         env.execute("client-usecase-hotspot-drift");
+    }
+
+    public static final class ScalarEvent {
+        public long joinKey;
+        public long eventTime;
+        public long sequence;
+
+        public ScalarEvent() {
+        }
+
+        ScalarEvent(long joinKey, long eventTime, long sequence) {
+            this.joinKey = joinKey;
+            this.eventTime = eventTime;
+            this.sequence = sequence;
+        }
+
+        public Long joinKey() {
+            return joinKey;
+        }
+    }
+
+    private static final class ScalarStateJoinFunction
+            extends KeyedCoProcessFunction<Long, ScalarEvent, ScalarEvent, Long> {
+        private static final long serialVersionUID = 1L;
+
+        private final int scalarOpsPerRecord;
+        private final int mapKeyModulo;
+        private final boolean valueOnly;
+        private final boolean fusedMap;
+        private final boolean batchMap;
+
+        private transient ValueState<Long> leftCount;
+        private transient ValueState<Long> rightCount;
+        private transient MapState<Long, Long> leftBuckets;
+        private transient MapState<Long, Long> rightBuckets;
+        private transient ForL0MapState<?, ?, Long, Long> leftForL0Buckets;
+        private transient ForL0MapState<?, ?, Long, Long> rightForL0Buckets;
+
+        ScalarStateJoinFunction(int scalarOpsPerRecord, int mapKeyModulo, String scalarShape) {
+            this.scalarOpsPerRecord = Math.max(1, scalarOpsPerRecord);
+            this.mapKeyModulo = Math.max(1, mapKeyModulo);
+            this.valueOnly = "value_only".equalsIgnoreCase(scalarShape);
+            this.fusedMap = "map_fused".equalsIgnoreCase(scalarShape);
+            this.batchMap = "map_batch".equalsIgnoreCase(scalarShape);
+        }
+
+        @Override
+        public void open(Configuration parameters) {
+            leftCount = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("ScalarLeftCount", Long.class));
+            rightCount = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("ScalarRightCount", Long.class));
+            leftBuckets = getRuntimeContext().getMapState(
+                    new MapStateDescriptor<>("ScalarLeftBuckets", Long.class, Long.class));
+            rightBuckets = getRuntimeContext().getMapState(
+                    new MapStateDescriptor<>("ScalarRightBuckets", Long.class, Long.class));
+            if (fusedMap || batchMap) {
+                leftForL0Buckets = asForL0MapState(leftBuckets);
+                rightForL0Buckets = asForL0MapState(rightBuckets);
+                System.err.println("[ScalarState] scalar fast path: shape="
+                        + (batchMap ? "map_batch" : "map_fused")
+                        + ", leftStateClass=" + leftBuckets.getClass().getName()
+                        + ", rightStateClass=" + rightBuckets.getClass().getName()
+                        + ", leftForL0=" + (leftForL0Buckets != null)
+                        + ", rightForL0=" + (rightForL0Buckets != null));
+            }
+        }
+
+        @Override
+        public void processElement1(ScalarEvent value, Context ctx, Collector<Long> out) throws Exception {
+            long count = valueOrZero(leftCount.value()) + 1L;
+            long checksum = count;
+            if (valueOnly) {
+                long local = count;
+                for (int i = 0; i < scalarOpsPerRecord; i++) {
+                    local += (value.eventTime + i) & 7L;
+                    leftCount.update(local);
+                    Long current = leftCount.value();
+                    checksum += valueOrZero(current);
+                }
+                Long right = rightCount.value();
+                if (right != null) {
+                    checksum += right;
+                }
+                out.collect(checksum);
+                return;
+            }
+            long base = value.eventTime;
+            if (batchMap && leftForL0Buckets != null) {
+                checksum += leftForL0Buckets.addSequentialAndSumLong(base, scalarOpsPerRecord, mapKeyModulo, 1L);
+                Long right = rightCount.value();
+                if (right != null) {
+                    checksum += right;
+                }
+                leftCount.update(count);
+                out.collect(checksum);
+                return;
+            }
+            for (int i = 0; i < scalarOpsPerRecord; i++) {
+                long bucket = positiveMod(base + i, mapKeyModulo);
+                long next = addAndGet(leftBuckets, leftForL0Buckets, bucket, 1L);
+                checksum += next;
+            }
+            Long right = rightCount.value();
+            if (right != null) {
+                checksum += right;
+            }
+            leftCount.update(count);
+            out.collect(checksum);
+        }
+
+        @Override
+        public void processElement2(ScalarEvent value, Context ctx, Collector<Long> out) throws Exception {
+            long count = valueOrZero(rightCount.value()) + 1L;
+            long checksum = count;
+            if (valueOnly) {
+                long local = count;
+                for (int i = 0; i < scalarOpsPerRecord; i++) {
+                    local += (value.eventTime + i) & 7L;
+                    rightCount.update(local);
+                    Long current = rightCount.value();
+                    checksum += valueOrZero(current);
+                    Long left = leftCount.value();
+                    if (left != null) {
+                        checksum += left;
+                    }
+                }
+                out.collect(checksum);
+                return;
+            }
+            long base = value.eventTime;
+            if (batchMap && rightForL0Buckets != null) {
+                checksum += rightForL0Buckets.addSequentialAndSumLong(base, scalarOpsPerRecord, mapKeyModulo, 1L);
+                for (int i = 0; i < scalarOpsPerRecord; i++) {
+                    long bucket = positiveMod(base + i, mapKeyModulo);
+                    Long left = leftBuckets.get(bucket);
+                    if (left != null) {
+                        checksum += left;
+                    }
+                }
+                rightCount.update(count);
+                out.collect(checksum);
+                return;
+            }
+            for (int i = 0; i < scalarOpsPerRecord; i++) {
+                long bucket = positiveMod(base + i, mapKeyModulo);
+                long next = addAndGet(rightBuckets, rightForL0Buckets, bucket, 1L);
+                Long left = leftBuckets.get(bucket);
+                if (left != null) {
+                    checksum += left;
+                }
+                checksum += next;
+            }
+            rightCount.update(count);
+            out.collect(checksum);
+        }
+
+        private static long valueOrZero(Long value) {
+            return value == null ? 0L : value.longValue();
+        }
+
+        @SuppressWarnings("unchecked")
+        private static ForL0MapState<?, ?, Long, Long> asForL0MapState(MapState<Long, Long> state) {
+            if (state instanceof ForL0MapState) {
+                return (ForL0MapState<?, ?, Long, Long>) state;
+            }
+            try {
+                Field originalState = state.getClass().getDeclaredField("originalState");
+                originalState.setAccessible(true);
+                Object unwrapped = originalState.get(state);
+                return unwrapped instanceof ForL0MapState
+                        ? (ForL0MapState<?, ?, Long, Long>) unwrapped
+                        : null;
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                return null;
+            }
+        }
+
+        private static long addAndGet(
+                MapState<Long, Long> state,
+                ForL0MapState<?, ?, Long, Long> forl0State,
+                long bucket,
+                long delta) throws Exception {
+            if (forl0State != null) {
+                return forl0State.addAndGetLong(bucket, delta);
+            }
+            Long previous = state.get(bucket);
+            long next = valueOrZero(previous) + delta;
+            state.put(bucket, next);
+            return next;
+        }
+    }
+
+    private static final class ScalarHotKeySource extends RichParallelSourceFunction<ScalarEvent> {
+        private static final long serialVersionUID = 1L;
+
+        private final int perRecordDelayMs;
+        private final long maxRecords;
+        private final int hotKeyCount;
+        private final int coldKeyCount;
+        private final int hotTrafficPercent;
+        private final long driftIntervalRecords;
+        private final int driftStep;
+        private final String timestampMode;
+        private final int timestampHotBuckets;
+        private final int timestampKeySpace;
+        private final long timestampDriftIntervalRecords;
+        private final int timestampDriftStep;
+
+        private volatile boolean running = true;
+
+        ScalarHotKeySource(
+                int perRecordDelayMs,
+                long maxRecords,
+                int hotKeyCount,
+                int coldKeyCount,
+                int hotTrafficPercent,
+                long driftIntervalRecords,
+                int driftStep,
+                String timestampMode,
+                int timestampHotBuckets,
+                int timestampKeySpace,
+                long timestampDriftIntervalRecords,
+                int timestampDriftStep) {
+            this.perRecordDelayMs = perRecordDelayMs;
+            this.maxRecords = maxRecords;
+            this.hotKeyCount = Math.max(1, hotKeyCount);
+            this.coldKeyCount = Math.max(this.hotKeyCount, coldKeyCount);
+            this.hotTrafficPercent = Math.max(0, Math.min(100, hotTrafficPercent));
+            this.driftIntervalRecords = Math.max(1L, driftIntervalRecords);
+            this.driftStep = Math.max(1, driftStep);
+            this.timestampMode = timestampMode == null ? "monotonic" : timestampMode;
+            this.timestampHotBuckets = Math.max(0, timestampHotBuckets);
+            this.timestampKeySpace = Math.max(1, timestampKeySpace);
+            this.timestampDriftIntervalRecords = Math.max(1L, timestampDriftIntervalRecords);
+            this.timestampDriftStep = Math.max(1, timestampDriftStep);
+        }
+
+        @Override
+        public void run(SourceContext<ScalarEvent> ctx) throws Exception {
+            if (maxRecords == 0L) {
+                return;
+            }
+            int subtask = getRuntimeContext().getIndexOfThisSubtask();
+            long emitted = 0L;
+            while (running && (maxRecords <= 0L || emitted < maxRecords)) {
+                long globalIndex = emitted + ((long) subtask * 1_000_000_000L);
+                long joinKey = chooseKey(globalIndex);
+                long eventTime = chooseEventTime(globalIndex);
+                ScalarEvent event = new ScalarEvent(joinKey, eventTime, globalIndex);
+                synchronized (ctx.getCheckpointLock()) {
+                    ctx.collect(event);
+                    emitted++;
+                }
+                if (perRecordDelayMs > 0) {
+                    Thread.sleep(perRecordDelayMs);
+                }
+            }
+        }
+
+        private int chooseKey(long index) {
+            long phase = index / driftIntervalRecords;
+            int hotBase = (int) ((phase * driftStep) % coldKeyCount);
+            long mixed = mix64(index);
+            int bucket = positiveMod(mixed, 100);
+            if (bucket < hotTrafficPercent) {
+                int offset = positiveMod(mix64(index ^ 0x9E3779B97F4A7C15L), hotKeyCount);
+                return positiveMod((long) hotBase + offset, coldKeyCount);
+            }
+            return positiveMod(mix64(index ^ 0xD1B54A32D192ED03L), coldKeyCount);
+        }
+
+        private long chooseEventTime(long index) {
+            if (!"hot_bucket".equalsIgnoreCase(timestampMode) || timestampHotBuckets <= 0) {
+                return index;
+            }
+            long phase = index / timestampDriftIntervalRecords;
+            int base = (int) ((phase * timestampDriftStep) % timestampKeySpace);
+            int offset = positiveMod(mix64(index ^ 0x94D049BB133111EBL), timestampHotBuckets);
+            return positiveMod((long) base + offset, timestampKeySpace);
+        }
+
+        @Override
+        public void cancel() {
+            running = false;
+        }
     }
 
     private static final class DriftingHotKeySource extends RichParallelSourceFunction<PVMVLogType> {
@@ -185,12 +539,12 @@ public final class ClientHotspotDriftBenchmark {
             long phase = index / driftIntervalRecords;
             int hotBase = (int) ((phase * driftStep) % coldKeyCount);
             long mixed = mix64(index);
-            int bucket = (int) Math.floorMod(mixed, 100);
+            int bucket = positiveMod(mixed, 100);
             if (bucket < hotTrafficPercent) {
-                int offset = (int) Math.floorMod(mix64(index ^ 0x9E3779B97F4A7C15L), hotKeyCount);
-                return Math.floorMod(hotBase + offset, coldKeyCount);
+                int offset = positiveMod(mix64(index ^ 0x9E3779B97F4A7C15L), hotKeyCount);
+                return positiveMod((long) hotBase + offset, coldKeyCount);
             }
-            return (int) Math.floorMod(mix64(index ^ 0xD1B54A32D192ED03L), coldKeyCount);
+            return positiveMod(mix64(index ^ 0xD1B54A32D192ED03L), coldKeyCount);
         }
 
         private long chooseEventTime(long index) {
@@ -199,8 +553,8 @@ public final class ClientHotspotDriftBenchmark {
             }
             long phase = index / timestampDriftIntervalRecords;
             int base = (int) ((phase * timestampDriftStep) % timestampKeySpace);
-            int offset = (int) Math.floorMod(mix64(index ^ 0x94D049BB133111EBL), timestampHotBuckets);
-            return Math.floorMod(base + offset, timestampKeySpace);
+            int offset = positiveMod(mix64(index ^ 0x94D049BB133111EBL), timestampHotBuckets);
+            return positiveMod((long) base + offset, timestampKeySpace);
         }
 
         private static void applyJoinKey(PVMVLogType event, int keyId) {
@@ -209,12 +563,6 @@ public final class ClientHotspotDriftBenchmark {
             event.setPartitionApp("app" + key);
             event.setSessionKey("session" + key);
             event.setRequestKey("request" + key);
-        }
-
-        private static long mix64(long z) {
-            z = (z ^ (z >>> 33)) * 0xff51afd7ed558ccdL;
-            z = (z ^ (z >>> 33)) * 0xc4ceb9fe1a85ec53L;
-            return z ^ (z >>> 33);
         }
 
         @Override

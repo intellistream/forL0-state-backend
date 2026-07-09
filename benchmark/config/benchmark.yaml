@@ -1187,6 +1187,220 @@ client_usecase_scenarios:
       max_table_capacity: 65536
       main_table_load_factor_threshold: 0.80
 
+  - name: scalar_state_probe_1m
+    description: "Non-contract: customer-like dual-stream shape with numeric key and scalar ValueState/MapState<Long,Long> hot path"
+    driver: scalar_state
+    num_records: 1000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    scalar_ops_per_record: 8
+    map_key_modulo: 65536
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 4096
+      max_table_capacity: 131072
+      main_table_load_factor_threshold: 0.80
+
+  - name: scalar_state_probe_2m_ops64
+    description: "Non-contract: stronger scalar-state pressure, numeric key, 64 ValueState/MapState<Long,Long> operations per record"
+    driver: scalar_state
+    num_records: 2000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    scalar_ops_per_record: 64
+    map_key_modulo: 262144
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 512mb
+      l0_memory_max_size: 1024mb
+      initial_table_capacity: 8192
+      max_table_capacity: 524288
+      main_table_load_factor_threshold: 0.80
+
+  - name: scalar_state_probe_2m_ops16
+    description: "Non-contract: moderate scalar-state pressure, numeric key, 16 ValueState/MapState<Long,Long> operations per record"
+    driver: scalar_state
+    num_records: 2000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    scalar_ops_per_record: 16
+    map_key_modulo: 131072
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 384mb
+      l0_memory_max_size: 768mb
+      initial_table_capacity: 8192
+      max_table_capacity: 262144
+      main_table_load_factor_threshold: 0.80
+
+  - name: scalar_state_probe_2m_ops16_fused
+    description: "Non-contract: same as scalar_state_probe_2m_ops16, but ForL0 can use fused MapState<Long,Long> increment"
+    driver: scalar_state
+    num_records: 2000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    scalar_ops_per_record: 16
+    scalar_shape: map_fused
+    map_key_modulo: 131072
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 384mb
+      l0_memory_max_size: 768mb
+      initial_table_capacity: 8192
+      max_table_capacity: 262144
+      main_table_load_factor_threshold: 0.80
+
+  - name: scalar_state_probe_2m_ops16_batch
+    description: "Non-contract: same as scalar_state_probe_2m_ops16, but ForL0 can batch all per-record MapState<Long,Long> increments"
+    driver: scalar_state
+    num_records: 2000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    scalar_ops_per_record: 16
+    scalar_shape: map_batch
+    map_key_modulo: 131072
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 384mb
+      l0_memory_max_size: 768mb
+      initial_table_capacity: 8192
+      max_table_capacity: 262144
+      main_table_load_factor_threshold: 0.80
+
+  - name: scalar_value_probe_5m_ops16
+    description: "Non-contract: customer-like dual-stream source with numeric key and ValueState<Long>-only hot path"
+    driver: scalar_state
+    num_records: 5000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 2000000
+    hot_traffic_percent: 80
+    drift_interval_records: 100000
+    drift_step: 2048
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 2000000
+    timestamp_drift_interval_records: 100000
+    timestamp_drift_step: 32768
+    scalar_ops_per_record: 16
+    scalar_shape: value_only
+    map_key_modulo: 1
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 384mb
+      l0_memory_max_size: 768mb
+      initial_table_capacity: 8192
+      max_table_capacity: 262144
+      main_table_load_factor_threshold: 0.80
+
+  - name: scalar_value_probe_20m_ops16
+    description: "Non-contract: larger ValueState<Long>-only pressure under tight heap"
+    driver: scalar_state
+    num_records: 20000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 8000000
+    hot_traffic_percent: 80
+    drift_interval_records: 200000
+    drift_step: 4096
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 131072
+    timestamp_key_space: 8000000
+    timestamp_drift_interval_records: 200000
+    timestamp_drift_step: 65536
+    scalar_ops_per_record: 16
+    scalar_shape: value_only
+    map_key_modulo: 1
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 384mb
+      l0_memory_max_size: 768mb
+      initial_table_capacity: 8192
+      max_table_capacity: 1048576
+      main_table_load_factor_threshold: 0.80
+
 
 benchset:
   fd:

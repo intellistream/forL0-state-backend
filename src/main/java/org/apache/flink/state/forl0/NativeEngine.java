@@ -350,6 +350,11 @@ public final class NativeEngine {
     public static native boolean mapGetBytesLongSafe(long stateHandle, long key, int keyGroup, byte[] userKey, long[] buf);
     /** Put Long UK + Long UV. */
     public static native void mapPutLongLong(long stateHandle, long key, int keyGroup, long userKey, long userValue);
+    /** Fused increment for Long key + Long UK/UV. Returns the updated value. */
+    public static native long mapAddAndGetLongLong(long stateHandle, long key, int keyGroup, long userKey, long delta);
+    /** Batch fused increment for sequential Long UKs. Returns the sum of updated values. */
+    public static native long mapAddSequentialAndSumLongLong(
+            long stateHandle, long key, int keyGroup, long startUserKey, int count, long modulo, long delta);
     /** Remove by Long UK. */
     public static native void mapRemoveLongLong(long stateHandle, long key, int keyGroup, long userKey);
     /** Get all entries as interleaved long[] [uk0,uv0,uk1,uv1,...]. Returns null if empty. */

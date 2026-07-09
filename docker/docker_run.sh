@@ -213,14 +213,32 @@ do_start() {
     echo "等待 JobManager 就绪..."
     for i in $(seq 1 30); do
         if curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
-            sleep 3
+            for _ in $(seq 1 30); do
+                local overview
+                overview="$(curl -sf http://localhost:8081/overview || true)"
+                local tm_count slots_total
+                tm_count="$(printf '%s' "$overview" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("taskmanagers", 0))' 2>/dev/null || echo 0)"
+                slots_total="$(printf '%s' "$overview" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("slots-total", 0))' 2>/dev/null || echo 0)"
+                if [[ "${tm_count:-0}" -ge 2 && "${slots_total:-0}" -ge 8 ]]; then
+                    echo ""
+                    echo "=== 集群启动成功! ==="
+                    echo "  Web UI: http://localhost:8081"
+                    echo "  TaskManagers: ${tm_count}"
+                    echo "  Slots:        ${slots_total}"
+                    echo ""
+                    echo "  查看 TaskManager 日志: $0 logs tm1"
+                    echo "  提交作业:     ${FLINK_DIR}/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
+                    return 0
+                fi
+                sleep 2
+                printf "."
+            done
             echo ""
-            echo "=== 集群启动成功! ==="
-            echo "  Web UI: http://localhost:8081"
+            echo "✗ JobManager 已就绪，但 TaskManager/slot 数不足。"
+            curl -sf http://localhost:8081/overview || true
             echo ""
-            echo "  查看 TaskManager 日志: $0 logs tm1"
-            echo "  提交作业:     ${FLINK_DIR}/bin/flink run -m localhost:8081 -c <MainClass> <jar>"
-            return 0
+            echo "  查看日志: $0 logs all"
+            return 1
         fi
         sleep 2
         printf "."

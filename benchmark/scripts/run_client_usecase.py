@@ -69,7 +69,8 @@ def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'clien
 
 def get_client_usecase_jar(driver: str = 'csv_replay') -> Optional[str]:
     """Get path to the packaged client usecase JAR."""
-    if driver != 'hotspot_drift':
+    drift_drivers = {'hotspot_drift', 'scalar_state'}
+    if driver not in drift_drivers:
         env_jar = os.environ.get('CLIENT_USECASE_JAR', '')
         if env_jar and Path(env_jar).is_file():
             return env_jar
@@ -79,7 +80,7 @@ def get_client_usecase_jar(driver: str = 'csv_replay') -> Optional[str]:
     drift_target_dir = project_root / 'benchmark' / 'client-drift' / 'target'
     deploy_dir = project_root / 'docker' / 'deploy'
 
-    if driver == 'hotspot_drift':
+    if driver in drift_drivers:
         search_plan = [
             (drift_target_dir, ['client-drift-benchmark-*-shaded.jar', 'client-drift-benchmark-*.jar']),
             (deploy_dir, ['client-drift-benchmark-*.jar']),
@@ -324,12 +325,12 @@ def run_client_usecase(
         cmd.append(f'-Dstate.backend.type={backend_class}')
     cmd.extend(get_forl0_config_args(config, backend, workload_key='client_usecase'))
 
-    if driver == 'hotspot_drift':
+    if driver in ('hotspot_drift', 'scalar_state'):
         customer_jar = get_client_usecase_jar('csv_replay')
         if customer_jar:
             cmd.extend(['-C', Path(customer_jar).resolve().as_uri()])
         else:
-            print('WARNING: customer usecase JAR not found; hotspot_drift driver may fail to load org.example classes.')
+            print(f"WARNING: customer usecase JAR not found; {driver} driver may fail to load org.example classes.")
 
     checkpoint_interval = client_config.get(
         'checkpoint_interval',
@@ -343,7 +344,7 @@ def run_client_usecase(
         '--parallelism', str(parallelism),
         '--checkpointInterval', str(checkpoint_interval),
     ])
-    if driver == 'hotspot_drift':
+    if driver in ('hotspot_drift', 'scalar_state'):
         drift_keys = (
             'hotKeyCount',
             'coldKeyCount',
@@ -357,7 +358,12 @@ def run_client_usecase(
             'timestampKeySpace',
             'timestampDriftIntervalRecords',
             'timestampDriftStep',
+            'scalarOpsPerRecord',
+            'mapKeyModulo',
+            'scalarShape',
         )
+        if driver == 'scalar_state':
+            cmd.extend(['--mode', 'scalar_state'])
         for key in drift_keys:
             snake_key = re.sub(r'(?<!^)(?=[A-Z])', '_', key).lower()
             if snake_key in client_config:
@@ -475,6 +481,9 @@ def run_client_usecase(
                 'timestamp_key_space': client_config.get('timestamp_key_space'),
                 'timestamp_drift_interval_records': client_config.get('timestamp_drift_interval_records'),
                 'timestamp_drift_step': client_config.get('timestamp_drift_step'),
+                'scalar_ops_per_record': client_config.get('scalar_ops_per_record'),
+                'map_key_modulo': client_config.get('map_key_modulo'),
+                'scalar_shape': client_config.get('scalar_shape'),
             },
             'total_input_records': estimated_total_records,
             'desired_total_input_records': total_input_records,
@@ -527,6 +536,9 @@ def apply_client_usecase_scenario(config: dict, scenario_name: str) -> dict:
         'timestamp_key_space',
         'timestamp_drift_interval_records',
         'timestamp_drift_step',
+        'scalar_ops_per_record',
+        'map_key_modulo',
+        'scalar_shape',
     ):
         if key in scenario:
             config['client_usecase'][key] = scenario[key]
