@@ -410,6 +410,10 @@ ensure_healthy_cluster() {
         # shellcheck disable=SC1091
         source "${REPO_ROOT}/docker/forl0-local.env"
         if ! bash "${REPO_ROOT}/docker/docker_run.sh" start; then
+            if [[ "$OFFLINE_MODE" == "true" ]]; then
+                echo "✗ Docker 集群启动失败；离线复现实验不切换 standalone，避免污染对比环境。"
+                exit 1
+            fi
             start_local_flink_cluster || {
                 echo "✗ Docker 与本机 standalone Flink 均启动失败"
                 exit 1

@@ -1340,6 +1340,37 @@ client_usecase_scenarios:
       max_table_capacity: 262144
       main_table_load_factor_threshold: 0.80
 
+  - name: scalar_state_probe_2m_ops64_batch
+    description: "Non-contract: stronger scalar-state pressure with 64 MapState<Long,Long> updates batched by ForL0"
+    driver: scalar_state
+    num_records: 2000000
+    timeout_seconds: 21600
+    checkpoint_interval: 0
+    left_record_percent: 90
+    hot_key_count: 4096
+    cold_key_count: 500000
+    hot_traffic_percent: 80
+    drift_interval_records: 50000
+    drift_step: 2048
+    right_delay_ms: 0
+    timestamp_mode: hot_bucket
+    timestamp_hot_buckets: 65536
+    timestamp_key_space: 1000000
+    timestamp_drift_interval_records: 50000
+    timestamp_drift_step: 32768
+    scalar_ops_per_record: 64
+    scalar_shape: map_batch
+    map_key_modulo: 262144
+    runtime_overrides:
+      parallelism: 4
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 512mb
+      l0_memory_max_size: 1024mb
+      initial_table_capacity: 8192
+      max_table_capacity: 524288
+      main_table_load_factor_threshold: 0.80
+
   - name: scalar_value_probe_5m_ops16
     description: "Non-contract: customer-like dual-stream source with numeric key and ValueState<Long>-only hot path"
     driver: scalar_state

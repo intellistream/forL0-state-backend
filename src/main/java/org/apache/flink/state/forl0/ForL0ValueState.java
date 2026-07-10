@@ -24,7 +24,8 @@ import java.io.IOException;
  * @param <N> The type of namespace
  * @param <V> The type of value
  */
-public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
+public class ForL0ValueState<K, N, V>
+        implements InternalValueState<K, N, V>, LongValueStateAddAndGet {
 
     private final long stateHandle;
     private final ForL0KeyContext<K> keyContext;

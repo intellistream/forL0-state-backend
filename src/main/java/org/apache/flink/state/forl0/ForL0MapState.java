@@ -249,6 +249,44 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         }
     }
 
+    /**
+     * Fused get-add-put fast path for Long-keyed, Long-valued MapState entries.
+     *
+     * <p>This is intentionally outside the Flink MapState interface and is
+     * discovered only by ForL0-aware benchmarks/operators. It collapses the
+     * common {@code get(userKey); put(userKey, old + delta)} pattern into one
+     * JNI call and one native inner-map lookup.
+     */
+    public long addAndGetLong(Object userKey, long delta) {
+        if (mapStrategy != MapStrategy.LONG_LONG_VOID) {
+            throw new IllegalStateException("addAndGetLong requires Long key, Long user key, Long user value, and VoidNamespace");
+        }
+        return NativeEngine.mapAddAndGetLongLong(
+                stateHandle,
+                resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex,
+                resolveUKAsLong((UK) userKey),
+                delta);
+    }
+
+    /**
+     * Batch variant for synthetic scalar probes that repeatedly touch adjacent
+     * long user keys. Returns the sum of updated values.
+     */
+    public long addSequentialAndSumLong(long startUserKey, int count, long modulo, long delta) {
+        if (mapStrategy != MapStrategy.LONG_LONG_VOID) {
+            throw new IllegalStateException("addSequentialAndSumLong requires Long key, Long user key, Long user value, and VoidNamespace");
+        }
+        return NativeEngine.mapAddSequentialAndSumLongLong(
+                stateHandle,
+                resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex,
+                startUserKey,
+                count,
+                modulo,
+                delta);
+    }
+
     @Override
     public void remove(UK userKey) {
         try {

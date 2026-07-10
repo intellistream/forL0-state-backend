@@ -61,10 +61,10 @@ ASCEND_REPRO_WORKLOADS=(
     "C06|client_state_pressure_300k_forl0|Client usecase state_pressure_300k, ForL0 tuned config, isolated cluster"
     "C07|client_state_pressure_1m_hashmap|Client usecase state_pressure_1m, HashMap baseline, isolated cluster"
     "C08|client_state_pressure_1m_forl0|Client usecase state_pressure_1m, ForL0 tuned config, isolated cluster"
-    "C09|client_scalar_probe_1m_hashmap|Client usecase scalar_state_probe_1m, HashMap baseline, isolated cluster"
-    "C10|client_scalar_probe_1m_forl0|Client usecase scalar_state_probe_1m, ForL0 tuned config, isolated cluster"
-    "C11|client_scalar_probe_2m_ops64_hashmap|Client usecase scalar_state_probe_2m_ops64, HashMap baseline, isolated cluster"
-    "C12|client_scalar_probe_2m_ops64_forl0|Client usecase scalar_state_probe_2m_ops64, ForL0 tuned config, isolated cluster"
+    "C09|client_scalar_ops16_batch_hashmap|Client usecase scalar_state_probe_2m_ops16_batch, HashMap baseline, isolated cluster"
+    "C10|client_scalar_ops16_batch_forl0|Client usecase scalar_state_probe_2m_ops16_batch, ForL0 batched MapState config, isolated cluster"
+    "C11|client_scalar_ops64_batch_hashmap|Client usecase scalar_state_probe_2m_ops64_batch, HashMap baseline, isolated cluster"
+    "C12|client_scalar_ops64_batch_forl0|Client usecase scalar_state_probe_2m_ops64_batch, ForL0 batched MapState config, isolated cluster"
 )
 
 usage() {
@@ -219,10 +219,10 @@ run_ascend_workload() {
         C06) args=(--test client_usecase --scenario state_pressure_300k --backend forl0) ;;
         C07) args=(--test client_usecase --scenario state_pressure_1m --backend hashmap) ;;
         C08) args=(--test client_usecase --scenario state_pressure_1m --backend forl0) ;;
-        C09) args=(--test client_usecase --scenario scalar_state_probe_1m --backend hashmap) ;;
-        C10) args=(--test client_usecase --scenario scalar_state_probe_1m --backend forl0) ;;
-        C11) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64 --backend hashmap) ;;
-        C12) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64 --backend forl0) ;;
+        C09) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16_batch --backend hashmap) ;;
+        C10) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16_batch --backend forl0) ;;
+        C11) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend hashmap) ;;
+        C12) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend forl0) ;;
         *) die "unknown Ascend reproduction workload id: $id" ;;
     esac
 

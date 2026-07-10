@@ -195,6 +195,10 @@ public final class ClientHotspotDriftBenchmark {
         private transient MapState<Long, Long> rightBuckets;
         private transient Object leftForL0Buckets;
         private transient Object rightForL0Buckets;
+        private transient Method leftAddAndGetLong;
+        private transient Method rightAddAndGetLong;
+        private transient Method leftAddSequentialAndSumLong;
+        private transient Method rightAddSequentialAndSumLong;
 
         ScalarStateJoinFunction(int scalarOpsPerRecord, int mapKeyModulo, String scalarShape) {
             this.scalarOpsPerRecord = Math.max(1, scalarOpsPerRecord);
@@ -217,6 +221,10 @@ public final class ClientHotspotDriftBenchmark {
             if (fusedMap || batchMap) {
                 leftForL0Buckets = asForL0MapState(leftBuckets);
                 rightForL0Buckets = asForL0MapState(rightBuckets);
+                leftAddAndGetLong = resolveAddAndGetLong(leftForL0Buckets);
+                rightAddAndGetLong = resolveAddAndGetLong(rightForL0Buckets);
+                leftAddSequentialAndSumLong = resolveAddSequentialAndSumLong(leftForL0Buckets);
+                rightAddSequentialAndSumLong = resolveAddSequentialAndSumLong(rightForL0Buckets);
                 System.err.println("[ScalarState] scalar fast path: shape="
                         + (batchMap ? "map_batch" : "map_fused")
                         + ", leftStateClass=" + leftBuckets.getClass().getName()
@@ -246,8 +254,9 @@ public final class ClientHotspotDriftBenchmark {
                 return;
             }
             long base = value.eventTime;
-            if (batchMap && leftForL0Buckets != null) {
-                Long batchSum = addSequentialAndSum(leftForL0Buckets, base, scalarOpsPerRecord, mapKeyModulo, 1L);
+            if (batchMap && leftAddSequentialAndSumLong != null) {
+                Long batchSum = addSequentialAndSum(
+                        leftForL0Buckets, leftAddSequentialAndSumLong, base, scalarOpsPerRecord, mapKeyModulo, 1L);
                 if (batchSum != null) {
                     checksum += batchSum;
                     Long right = rightCount.value();
@@ -261,7 +270,7 @@ public final class ClientHotspotDriftBenchmark {
             }
             for (int i = 0; i < scalarOpsPerRecord; i++) {
                 long bucket = positiveMod(base + i, mapKeyModulo);
-                long next = addAndGet(leftBuckets, leftForL0Buckets, bucket, 1L);
+                long next = addAndGet(leftBuckets, leftForL0Buckets, leftAddAndGetLong, bucket, 1L);
                 checksum += next;
             }
             Long right = rightCount.value();
@@ -292,8 +301,9 @@ public final class ClientHotspotDriftBenchmark {
                 return;
             }
             long base = value.eventTime;
-            if (batchMap && rightForL0Buckets != null) {
-                Long batchSum = addSequentialAndSum(rightForL0Buckets, base, scalarOpsPerRecord, mapKeyModulo, 1L);
+            if (batchMap && rightAddSequentialAndSumLong != null) {
+                Long batchSum = addSequentialAndSum(
+                        rightForL0Buckets, rightAddSequentialAndSumLong, base, scalarOpsPerRecord, mapKeyModulo, 1L);
                 if (batchSum != null) {
                     checksum += batchSum;
                     for (int i = 0; i < scalarOpsPerRecord; i++) {
@@ -310,7 +320,7 @@ public final class ClientHotspotDriftBenchmark {
             }
             for (int i = 0; i < scalarOpsPerRecord; i++) {
                 long bucket = positiveMod(base + i, mapKeyModulo);
-                long next = addAndGet(rightBuckets, rightForL0Buckets, bucket, 1L);
+                long next = addAndGet(rightBuckets, rightForL0Buckets, rightAddAndGetLong, bucket, 1L);
                 Long left = leftBuckets.get(bucket);
                 if (left != null) {
                     checksum += left;
@@ -347,12 +357,12 @@ public final class ClientHotspotDriftBenchmark {
         private static long addAndGet(
                 MapState<Long, Long> state,
                 Object forl0State,
+                Method addAndGetLong,
                 long bucket,
                 long delta) throws Exception {
-            if (forl0State != null) {
+            if (forl0State != null && addAndGetLong != null) {
                 try {
-                    Method method = forl0State.getClass().getMethod("addAndGetLong", Object.class, long.class);
-                    return (Long) method.invoke(forl0State, bucket, delta);
+                    return (Long) addAndGetLong.invoke(forl0State, bucket, delta);
                 } catch (ReflectiveOperationException | RuntimeException ignored) {
                     // Historical stable ForL0 JARs do not expose the map fused helper.
                 }
@@ -365,18 +375,43 @@ public final class ClientHotspotDriftBenchmark {
 
         private static Long addSequentialAndSum(
                 Object forl0State,
+                Method addSequentialAndSumLong,
                 long startUserKey,
                 int count,
                 long modulo,
                 long delta) {
+            if (forl0State == null || addSequentialAndSumLong == null) {
+                return null;
+            }
             try {
-                Method method = forl0State.getClass().getMethod(
+                return (Long) addSequentialAndSumLong.invoke(forl0State, startUserKey, count, modulo, delta);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return null;
+            }
+        }
+
+        private static Method resolveAddAndGetLong(Object forl0State) {
+            if (forl0State == null) {
+                return null;
+            }
+            try {
+                return forl0State.getClass().getMethod("addAndGetLong", Object.class, long.class);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return null;
+            }
+        }
+
+        private static Method resolveAddSequentialAndSumLong(Object forl0State) {
+            if (forl0State == null) {
+                return null;
+            }
+            try {
+                return forl0State.getClass().getMethod(
                         "addSequentialAndSumLong",
                         long.class,
                         int.class,
                         long.class,
                         long.class);
-                return (Long) method.invoke(forl0State, startUserKey, count, modulo, delta);
             } catch (ReflectiveOperationException | RuntimeException ignored) {
                 return null;
             }
