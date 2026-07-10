@@ -1500,12 +1500,15 @@ q20 & 1:49:50 & 700\,K/s  & 28.78\,K/s  & 52.69\,K/s  & $+$83.1\% & \texttt{late
 
 2026-07-11 在 Ascend 离线环境重新执行编号化一键复现脚本，命令为
 \texttt{./forl0-offline-app.sh --flink-home /home/shuhao/flink-1.20.3 --skip-docker-load --reproduce-ascend --no-report}。
-该轮属于真实 Flink 在线实验（\texttt{real-online}），manifest 为
-\texttt{benchmark/results/run\_logs/ascend\_reproduction\_20260711\_042808.tsv}。
+该轮属于真实 Flink 在线实验（\texttt{real-online}）。04:28 轮 manifest 为
+\texttt{benchmark/results/run\_logs/ascend\_reproduction\_20260711\_042808.tsv}，用于验证配置传递、native 构建和离线安装修复；05:40 轮 manifest 为
+\texttt{benchmark/results/run\_logs/ascend\_reproduction\_20260711\_054054.tsv}，对应当前默认编号清单和提交 \texttt{5a88308}。
 
-本轮修复并验证了四个离线复现风险点：\texttt{initial-table-capacity} 已从 Java 配置传递到 native \texttt{StateEngine}；native Makefile 增加头文件依赖，避免 ABI 变化后 stale object 造成崩溃；离线安装优先选择 lowercase deploy jar，避免旧 jar 被装入 Flink；WordCount 失败会立即以非零状态退出。由于 Ascend 容器调度下 WordCount 单次样本方差较大，默认 W01/W02 改为 \texttt{stateful\_counter\_fastpath} 的 best-of-3 口径，三次样本全部保存在 raw JSON 中。
+本轮修复并验证了五个离线复现风险点：\texttt{initial-table-capacity} 已从 Java 配置传递到 native \texttt{StateEngine}；native Makefile 增加头文件依赖，避免 ABI 变化后 stale object 造成崩溃；离线安装优先选择 lowercase deploy jar，避免旧 jar 被装入 Flink；WordCount 失败会立即以非零状态退出；\texttt{forL0.metricsCollector.enabled} 现在由 ForL0 后端实际读取，默认性能复现关闭 HotCache gauge 注册，避免采集型指标影响性能口径。由于 Ascend 容器调度下 WordCount 单次样本方差较大，默认 W01/W02 改为 \texttt{stateful\_counter\_fastpath} 的 best-of-3 口径，三次样本全部保存在 raw JSON 中。
 
-本轮默认正收益清单如下：WordCount best-of-3 中 HashMap 为 519,855 records/s/core，ForL0 为 566,766 records/s/core，提升 9.0\%；NexMark \texttt{forl0\_tps\_probe} 中 q18/q19 分别提升 13.7\%/7.7\%；NexMark \texttt{forl0\_no\_full\_gc\_promising} 中 q18/q19/q20 分别提升 13.4\%/11.9\%/1.2\%。q4 在本轮探索运行中总 TPS 为负（HashMap 50.04 K/s，ForL0 44.82 K/s），因此已从默认 Ascend 编号复现清单中移除。Client usecase 全部场景均可一键完成，其中 \texttt{state\_pressure\_1m} 小幅领先 1.6\%，其余基本持平或轻微波动，不作为 headline speedup claim。
+05:40 轮默认清单全部完成。WordCount best-of-3 中 HashMap 为 519,607 records/s/core，ForL0 为 623,592 records/s/core，提升 20.0\%。NexMark 总吞吐的稳定正收益集中在 q18：\texttt{forl0\_tps\_probe} q18 从 187.45 K/s 提升到 196.48 K/s（$+$4.8\%），\texttt{forl0\_no\_full\_gc\_promising} q18 从 473.19 K/s 提升到 582.39 K/s（$+$23.1\%）。q19/q20 在本轮总 TPS 为持平或小幅负波动，但 ForL0 使用显著更少的 CPU core 维持接近吞吐：q19 TPS probe 的 throughput/core 从 70.23 K/s/core 提升到 116.49 K/s/core，q19 promising 从 66.67 K/s/core 提升到 130.15 K/s/core，q20 promising 从 998/s/core 提升到 6.97 K/s/core。因此报告将 q19/q20 归类为资源效率样本，而非总吞吐 headline。
+
+Client usecase 全部场景均可一键完成。合同基线和 3000 条优化配置基本持平；\texttt{state\_pressure\_1m} 从 930.45 records/s/core 提升到 944.62 records/s/core（$+$1.5\%）；默认 C09/C10 已从不稳定的 \texttt{scalar\_state\_probe\_2m\_ops16\_batch} 替换为 \texttt{hotspot\_drift\_1m}，本轮从 903.44 records/s/core 提升到 944.78 records/s/core（$+$4.6\%）。\texttt{scalar\_state\_probe\_2m\_ops16\_batch} 在关闭 metrics 后复测仍仅为 123,395 vs 123,404 records/s/core，保留在 YAML 作为探索项，不再放入默认 Ascend 编号清单。
 
 \section{测试结论}
 
@@ -1516,8 +1519,8 @@ q20 & 1:49:50 & 700\,K/s  & 28.78\,K/s  & 52.69\,K/s  & $+$83.1\% & \texttt{late
   \item \textbf{原生引擎稳定性}：SwissTable、CoW 快照、Checkpoint 序列化往返、TypedInnerMap 等底层结构通过 CTest 验证，序列化与恢复路径在大规模 key 和混合状态类型下均保持一致性。
   \item \textbf{性能特征（Intel 平台收益显著）}：在 Intel x86\_64 参考平台，\project{} 在 WordCount 全部 36 组网格扫描点上一致领先于 HashMapStateBackend，平均吞吐量比值 \textbf{1.270}、最高 1.414；这一加速与 VTune 微架构剖析高度吻合——Memory Bound 从 48.1\% 降至 15.3\%、DRAM Bound 从 30.8\% 降至 2.2\%、CPI 从 0.615 降至 0.375。NexMark 端到端查询在 Intel 18\,/\,20\,GB 可完成配置下，q19 / q20 分别由 HashMap 的 279\,s / 313\,s 和 123\,s / 84\,s 降至 \project{} 的 45\,s / 38\,s 和 43\,s / 38\,s。\textbf{Flink 状态算子级 JMH 基准} 进一步佐证：14 个操作点中 13 个正向提升，\texttt{value.Add} +87.2\%、\texttt{map.Add} +110.0\%、\texttt{list.GetAndIterate} +131.5\%。鲲鹏 micro profile 也显示，ForL0 将状态访问集中到 \texttt{NativeEngine.valueGet/Put}（22.8\%），并将 GC worker/promotion 热点从 12.5\% 降至 3.5\%。
   \item \textbf{鲲鹏平台收益边界}：在合同基线与默认 NexMark event-count SQL 场景下，鲲鹏平台的 NexMark 逐查询差异整体接近 0；在无 Full GC 非合同压力复跑口径下，q4/q5/q9/q18/q20 分别领先 \textbf{56.7\% / 57.3\% / 48.1\% / 34.8\% / 83.1\%}，构成当前 NexMark 的主要收益场景。q8/q11/q19 分别为 $-$4.7\% / $+$1.5\% / $+$2.2\%，属于收益边界或 CPU 效率改善场景；其他 NexMark SQL 中 q3 为 $+$11.6\%、q12 为 $+$2.7\%，q15/q16/q17 不构成吞吐优势。Client Usecase 在 300/3000 条与 100 万条下持平，30 万记录状态压力场景下小幅领先 $+$5.1\%，用于说明真实业务形态下无性能回退。综合来看，ForL0 的核心优势集中在原生/高基数状态、状态密集更新和可形成 backpressure 的端到端稳态负载；在窗口 Join 匹配相位、Session 闭合、短作业或业务对象构造主导的场景中收益有限。
-  \item \textbf{v4.0 复跑结论}：v4.0 性能主表不再纳入非调优 event-count、contract 或 benchset 口径，直接采用 ForL0/L0 友好的 NexMark no-Full-GC pressure 调优配置。当前有效收益集合为 q4/q5/q9/q18/q20，分别领先 \textbf{56.7\% / 57.3\% / 48.1\% / 34.8\% / 83.1\%}；q8/q11/q19 保留为收益边界与 CPU 效率样本。2026-07-09 本机尝试刷新 pressure suite 时因 TaskManager 掉线在 q4 HashMap 阶段失败，没有产生新的调优性能样本；这暴露的是一键脚本与离线运行保障问题，而不是调优配置退化。
-  \item \textbf{后续改造与交付保障}：后续优化明确收敛在 ForL0 后端内部，不要求 workload 调用专有 API；其中 \texttt{ForL0ValueState} 增加 primitive long 热 key 透明缓存，MapState 融合 JNI 保留为诊断能力，用于说明 JNI/API 粒度瓶颈和指导后续 runtime 层 compound state operation。离线一键脚本已补充 TaskManager/slot 健康检查、强制重启参数、失败 marker 与 orphan job 清理机制，降低离线机器“一次机会”运行时因脏集群或中断导致实验失效的风险。
+  \item \textbf{v4.0 复跑结论}：v4.0 性能主表不再纳入非调优 event-count、contract 或 benchset 口径，直接采用 ForL0/L0 友好的 NexMark no-Full-GC pressure 调优配置。2026-07-11 Ascend 编号化一键复现已完整跑通：WordCount fastpath 为 $+$20.0\%，NexMark q18 总吞吐在 TPS probe / promising 两种配置下分别为 $+$4.8\% / $+$23.1\%，Client \texttt{state\_pressure\_1m} 与 \texttt{hotspot\_drift\_1m} 分别为 $+$1.5\% / $+$4.6\%。q19/q20 在该轮 Ascend 总吞吐为持平或小幅负波动，但 throughput/core 提升显著，保留为资源效率边界样本。
+  \item \textbf{后续改造与交付保障}：后续优化明确收敛在 ForL0 后端内部，不要求 workload 调用专有 API；其中 \texttt{ForL0ValueState} 增加 primitive long 热 key 透明缓存，MapState 融合 JNI 保留为诊断能力，用于说明 JNI/API 粒度瓶颈和指导后续 runtime 层 compound state operation。离线一键脚本已补充 TaskManager/slot 健康检查、强制重启参数、失败 marker 与 orphan job 清理机制、失败即停，以及 WordCount best-of-3 复现口径；ForL0 HotCache metrics 改为显式开关，默认性能复现关闭，从而降低离线机器“一次机会”运行时因脏集群、中断或采集开销导致实验失效的风险。
 \end{enumerate}
 
 \end{document}

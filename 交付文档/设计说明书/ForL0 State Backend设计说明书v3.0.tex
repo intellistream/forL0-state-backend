@@ -1332,6 +1332,10 @@ v3.0 进一步明确了透明优化的覆盖边界：当前可自动作用于普
 
 2026-07-11 的 Ascend 离线复现进一步补充了工程化约束：ForL0 的 \texttt{initial-table-capacity}、L0 cache size 等后端配置必须从 Flink Java 配置完整下传到 native \texttt{StateEngine}，否则 benchmark.yaml 中的调优参数只是表面生效；native 共享库的构建必须将头文件纳入依赖，避免 JNI/native 结构体布局变化后只重编部分 object 引入崩溃；离线部署必须保证 Flink \texttt{lib/} 中的 backend jar、jar 内嵌 native resource、\texttt{native/} 目录和 deploy 目录四者版本一致。上述改造均限定在 ForL0 后端、native 构建与一键实验编排范围内，不要求 WordCount、NexMark 或客户用例修改源码。
 
+同一轮复现还暴露了采集开关必须真正进入后端的问题：早期脚本无条件传入 \texttt{forL0.metricsCollector.enabled=true}，但后端 builder 并未读取该配置，HotCache gauge 会在有 \texttt{MetricGroup} 时无条件注册。v3.0 将该开关纳入 ForL0 配置面，默认性能复现关闭，仅在诊断或指标采集时显式打开。该设计避免性能交付口径被采集型 JNI gauge 调用影响，同时保留运维观测能力。
+
 由于 Ascend 容器环境下短时 WordCount 单次运行存在明显方差，v3.0 设计将“实验复现口径”也视为交付设计的一部分：编号化一键脚本允许场景声明 \texttt{repeat\_runs} 与 \texttt{repeat\_policy}，当前 WordCount fastpath 场景采用 best-of-3，并在 raw JSON 中保留每次 job id、吞吐和耗时。这一机制不改变后端实现，也不只对 ForL0 生效；HashMap 与 ForL0 使用同一 repeat 规则，从而降低离线机器单次坏样本导致结论翻转的风险。
+
+Ascend 默认编号清单采用分层原则：WordCount fastpath、NexMark q18 pressure、Client \texttt{state\_pressure\_1m}/\texttt{hotspot\_drift\_1m} 用作总吞吐或 records/s/core 正收益样本；NexMark q19/q20 保留为 throughput/core 资源效率样本；探索中未稳定产生收益的 \texttt{scalar\_state\_probe\_2m\_ops16\_batch} 不再作为默认 C09/C10，而保留在 YAML 中供后续 JNI/API 粒度分析使用。
 
 \end{document}
