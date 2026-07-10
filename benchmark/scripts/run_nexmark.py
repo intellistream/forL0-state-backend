@@ -433,6 +433,7 @@ class NexmarkRunner:
         self.host_metric_sender: Optional[subprocess.Popen] = None
         self.host_metric_conf_dir: Optional[Path] = None
         self.container_profiler_session: Optional[Dict[str, str]] = None
+        self.baseline_failed_job_ids: set[str] = set()
 
     def _resolve_metric_reporter_host(self) -> str:
         """Use the Docker bridge gateway so taskmanagers can report CPU metrics back to the host."""
@@ -593,6 +594,20 @@ class NexmarkRunner:
         # Give the cluster a brief settling window after cancellation.
         time.sleep(2)
 
+    def _failed_job_ids(self) -> set[str]:
+        """Return FAILED job IDs currently reported by Flink REST."""
+        try:
+            jobs_resp = requests.get(f"{self.rest_url}/jobs/overview", timeout=5)
+            if jobs_resp.status_code != 200:
+                return set()
+            return {
+                str(job.get('jid'))
+                for job in jobs_resp.json().get('jobs', [])
+                if job.get('state') == 'FAILED' and job.get('jid')
+            }
+        except Exception:
+            return set()
+
     def _cluster_health_issue(self) -> Optional[str]:
         """Return a fail-fast reason if the Flink cluster or active jobs are unhealthy."""
         try:
@@ -617,7 +632,8 @@ class NexmarkRunner:
             if jobs_resp.status_code != 200:
                 return f"Flink jobs overview returned HTTP {jobs_resp.status_code}"
             for job in jobs_resp.json().get('jobs', []):
-                if job.get('state') == 'FAILED':
+                jid = str(job.get('jid')) if job.get('jid') else ''
+                if job.get('state') == 'FAILED' and jid not in self.baseline_failed_job_ids:
                     return (
                         "Flink job failed during NexMark run: "
                         f"{job.get('jid')} {job.get('name', 'unknown')}"
@@ -635,6 +651,7 @@ class NexmarkRunner:
         fail fast as soon as REST reports a failed job or a degraded cluster.
         """
         process_start = time.perf_counter()
+        self.baseline_failed_job_ids = self._failed_job_ids()
         with tempfile.TemporaryFile(mode='w+', encoding='utf-8', errors='replace') as output_file:
             proc = subprocess.Popen(
                 cmd,
@@ -1529,6 +1546,28 @@ def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
         for key in list(config['nexmark'].keys()):
             if key.endswith('_events'):
                 config['nexmark'][key] = int(config['nexmark'][key] * mult)
+
+    # Some historical probe results were collected with the ForL0 backend's
+    # built-in defaults, not with the benchmark-wide tuning block below.
+    if scenario.get('forl0_config_mode') == 'backend_defaults':
+        scenario_queries = [
+            q.strip()
+            for q in str(config.get('nexmark', {}).get('queries', '')).split(',')
+            if q.strip()
+        ]
+        for b in config.get('backends', []):
+            if b.get('name') != 'forl0':
+                continue
+            backend_cfg = b.setdefault('config', {})
+            for yaml_key in FORL0_CONFIG_MAPPING:
+                backend_cfg.pop(yaml_key, None)
+            workload_overrides = backend_cfg.get('workload_overrides')
+            if isinstance(workload_overrides, dict):
+                workload_overrides.pop('nexmark', None)
+            query_overrides = backend_cfg.get('query_overrides')
+            if isinstance(query_overrides, dict):
+                for query in scenario_queries:
+                    query_overrides.pop(query, None)
 
     # ForL0 backend overrides
     forl0_overrides = scenario.get('forl0_overrides', {})

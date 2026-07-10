@@ -18,7 +18,7 @@ INSTALL_DIR="${HOME}/forl0-runtime"
 BACKEND="all"
 QUERIES="q4,q5,q8,q9,q11,q18,q19,q20"
 QUERIES_EXPLICIT=false
-PRESSURE_SCENARIOS="forl0_no_full_gc_allq_pressure,forl0_no_full_gc_q8_q11_deep,forl0_no_full_gc_lateq_deep"
+PRESSURE_SCENARIOS="forl0_tps_probe"
 REPRO_WORKLOADS="all"
 RUN_SMOKE=true
 RUN_APPS=true
@@ -35,21 +35,10 @@ EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
 RUNNER_EXTRA_ARGS=()
 
 ASCEND_REPRO_WORKLOADS=(
-    "W01|wordcount_contract_baseline|WordCount contract baseline, sliding-window String key"
-    "W02|wordcount_stateful_counter|WordCount stateful_counter, ValueState<Long> hot path"
-    "W03|wordcount_high_cardinality|WordCount high_cardinality, 10M Long keys"
-    "N01|nexmark_contract_baseline|NexMark contract baseline, q4/q5/q8/q9/q11/q18/q19/q20"
-    "N02|nexmark_pressure_allq|NexMark no-Full-GC allq pressure, q4/q5/q8/q9/q11/q18/q19/q20"
-    "N03|nexmark_pressure_q8_q11_deep|NexMark no-Full-GC q8/q11 deep pressure"
-    "N04|nexmark_pressure_lateq_deep|NexMark no-Full-GC q18/q19/q20 late-query pressure"
-    "N05|nexmark_extra_sql|NexMark extra stateful SQL, q3/q12/q15/q16/q17"
-    "C01|client_contract_baseline|Client Usecase contract baseline, 300 records"
-    "C02|client_forl0_optimized|Client Usecase optimized pressure, 3000 records"
-    "C03|client_state_pressure_300k|Client Usecase state pressure, 300K records"
-    "C04|client_state_pressure_1m|Client Usecase state pressure, 1M records"
-    "D01|diagnostic_scalar_ops16|Diagnostic scalar_state_probe_2m_ops16"
-    "D02|diagnostic_scalar_ops16_batch|Diagnostic scalar_state_probe_2m_ops16_batch"
-    "D03|diagnostic_scalar_ops16_fused|Diagnostic scalar_state_probe_2m_ops16_fused"
+    "N01|nexmark_q18_hashmap_isolated|NexMark q18 TPS probe, HashMap baseline, isolated cluster"
+    "N02|nexmark_q18_forl0_isolated|NexMark q18 TPS probe, ForL0 stable winner, isolated cluster"
+    "N03|nexmark_q19_hashmap_isolated|NexMark q19 TPS probe, HashMap baseline, isolated cluster"
+    "N04|nexmark_q19_forl0_isolated|NexMark q19 TPS probe, ForL0 stable winner, isolated cluster"
 )
 
 usage() {
@@ -69,18 +58,17 @@ Common options:
                           query list from benchmark.yaml; allq uses q4,q5,q8,q9,q11,q18,q19,q20.
   --pressure-scenarios LIST
                           Comma-separated NexMark pressure scenarios for --full.
-                          Default: forl0_no_full_gc_allq_pressure,
-                          forl0_no_full_gc_q8_q11_deep,
-                          forl0_no_full_gc_lateq_deep
+                          Default: forl0_tps_probe. Deep no-Full-GC pressure
+                          scenarios are opt-in because they can OOM 16GB TMs.
   --workloads LIST        Run selected numbered Ascend reproduction workloads.
-                          Example: --workloads W01,N02,C03
+                          Example: --workloads N01,N02
   --list-workloads        Print numbered Ascend reproduction workloads and exit.
 
 Run modes:
   --smoke-only            Install + preflight + short client smoke test only.
   --apps-only             Install + preflight + contract apps only.
-  --full                  Also run NexMark no-Full-GC pressure sweep after apps.
-  --pressure-only         Install + preflight + tuned NexMark pressure suite only.
+  --full                  Also run the stable NexMark TPS probe after apps.
+  --pressure-only         Install + preflight + stable NexMark TPS probe only.
   --reproduce-ascend      Run the numbered Ascend reproduction suite.
   --report-only           Do not run experiments; regenerate HTML report only.
   --no-report             Do not generate the final HTML report.
@@ -179,21 +167,10 @@ run_ascend_workload() {
     local args=()
 
     case "$id" in
-        W01) args=(--test wordcount --scenario contract_baseline --backend "$BACKEND") ;;
-        W02) args=(--test wordcount --scenario stateful_counter --backend "$BACKEND") ;;
-        W03) args=(--test wordcount --scenario high_cardinality --backend "$BACKEND") ;;
-        N01) args=(--test nexmark --scenario contract_baseline --query q4,q5,q8,q9,q11,q18,q19,q20 --backend "$BACKEND") ;;
-        N02) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q4,q5,q8,q9,q11,q18,q19,q20 --backend "$BACKEND") ;;
-        N03) args=(--test nexmark --scenario forl0_no_full_gc_q8_q11_deep --query q8,q11 --backend "$BACKEND") ;;
-        N04) args=(--test nexmark --scenario forl0_no_full_gc_lateq_deep --query q18,q19,q20 --backend "$BACKEND") ;;
-        N05) args=(--test nexmark --scenario forl0_no_full_gc_extra_sql --query q3,q12,q15,q16,q17 --backend "$BACKEND") ;;
-        C01) args=(--test client_usecase --scenario contract_baseline --backend "$BACKEND") ;;
-        C02) args=(--test client_usecase --scenario forl0_optimized --backend "$BACKEND") ;;
-        C03) args=(--test client_usecase --scenario state_pressure_300k --backend "$BACKEND") ;;
-        C04) args=(--test client_usecase --scenario state_pressure_1m --backend "$BACKEND") ;;
-        D01) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16 --backend "$BACKEND") ;;
-        D02) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16_batch --backend "$BACKEND") ;;
-        D03) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16_fused --backend "$BACKEND") ;;
+        N01) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend hashmap) ;;
+        N02) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend forl0) ;;
+        N03) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend hashmap) ;;
+        N04) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend forl0) ;;
         *) die "unknown Ascend reproduction workload id: $id" ;;
     esac
 
@@ -323,6 +300,10 @@ if [[ "$LIST_WORKLOADS" == "true" ]]; then
 fi
 
 validate_repro_workloads
+
+if [[ "$RUN_ASCEND_REPRO" == "true" ]]; then
+    RESTART_CLUSTER=true
+fi
 
 case "$BACKEND" in
     all|forl0|hashmap) ;;

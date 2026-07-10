@@ -13,7 +13,6 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
 import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
-import org.apache.flink.state.forl0.ForL0MapState;
 import org.apache.flink.util.Collector;
 
 import org.example.HuaweiMT6000c;
@@ -21,6 +20,7 @@ import org.example.HuaweiTestFunction;
 import org.example.PVMVLogType;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /**
  * Non-contract client-usecase variant that keeps the customer's join/state logic but
@@ -193,8 +193,8 @@ public final class ClientHotspotDriftBenchmark {
         private transient ValueState<Long> rightCount;
         private transient MapState<Long, Long> leftBuckets;
         private transient MapState<Long, Long> rightBuckets;
-        private transient ForL0MapState<?, ?, Long, Long> leftForL0Buckets;
-        private transient ForL0MapState<?, ?, Long, Long> rightForL0Buckets;
+        private transient Object leftForL0Buckets;
+        private transient Object rightForL0Buckets;
 
         ScalarStateJoinFunction(int scalarOpsPerRecord, int mapKeyModulo, String scalarShape) {
             this.scalarOpsPerRecord = Math.max(1, scalarOpsPerRecord);
@@ -247,14 +247,17 @@ public final class ClientHotspotDriftBenchmark {
             }
             long base = value.eventTime;
             if (batchMap && leftForL0Buckets != null) {
-                checksum += leftForL0Buckets.addSequentialAndSumLong(base, scalarOpsPerRecord, mapKeyModulo, 1L);
-                Long right = rightCount.value();
-                if (right != null) {
-                    checksum += right;
+                Long batchSum = addSequentialAndSum(leftForL0Buckets, base, scalarOpsPerRecord, mapKeyModulo, 1L);
+                if (batchSum != null) {
+                    checksum += batchSum;
+                    Long right = rightCount.value();
+                    if (right != null) {
+                        checksum += right;
+                    }
+                    leftCount.update(count);
+                    out.collect(checksum);
+                    return;
                 }
-                leftCount.update(count);
-                out.collect(checksum);
-                return;
             }
             for (int i = 0; i < scalarOpsPerRecord; i++) {
                 long bucket = positiveMod(base + i, mapKeyModulo);
@@ -290,17 +293,20 @@ public final class ClientHotspotDriftBenchmark {
             }
             long base = value.eventTime;
             if (batchMap && rightForL0Buckets != null) {
-                checksum += rightForL0Buckets.addSequentialAndSumLong(base, scalarOpsPerRecord, mapKeyModulo, 1L);
-                for (int i = 0; i < scalarOpsPerRecord; i++) {
-                    long bucket = positiveMod(base + i, mapKeyModulo);
-                    Long left = leftBuckets.get(bucket);
-                    if (left != null) {
-                        checksum += left;
+                Long batchSum = addSequentialAndSum(rightForL0Buckets, base, scalarOpsPerRecord, mapKeyModulo, 1L);
+                if (batchSum != null) {
+                    checksum += batchSum;
+                    for (int i = 0; i < scalarOpsPerRecord; i++) {
+                        long bucket = positiveMod(base + i, mapKeyModulo);
+                        Long left = leftBuckets.get(bucket);
+                        if (left != null) {
+                            checksum += left;
+                        }
                     }
+                    rightCount.update(count);
+                    out.collect(checksum);
+                    return;
                 }
-                rightCount.update(count);
-                out.collect(checksum);
-                return;
             }
             for (int i = 0; i < scalarOpsPerRecord; i++) {
                 long bucket = positiveMod(base + i, mapKeyModulo);
@@ -319,35 +325,61 @@ public final class ClientHotspotDriftBenchmark {
             return value == null ? 0L : value.longValue();
         }
 
-        @SuppressWarnings("unchecked")
-        private static ForL0MapState<?, ?, Long, Long> asForL0MapState(MapState<Long, Long> state) {
-            if (state instanceof ForL0MapState) {
-                return (ForL0MapState<?, ?, Long, Long>) state;
+        private static Object asForL0MapState(MapState<Long, Long> state) {
+            if (isForL0MapState(state)) {
+                return state;
             }
             try {
                 Field originalState = state.getClass().getDeclaredField("originalState");
                 originalState.setAccessible(true);
                 Object unwrapped = originalState.get(state);
-                return unwrapped instanceof ForL0MapState
-                        ? (ForL0MapState<?, ?, Long, Long>) unwrapped
-                        : null;
+                return isForL0MapState(unwrapped) ? unwrapped : null;
             } catch (ReflectiveOperationException | RuntimeException e) {
                 return null;
             }
         }
 
+        private static boolean isForL0MapState(Object state) {
+            return state != null
+                    && "org.apache.flink.state.forl0.ForL0MapState".equals(state.getClass().getName());
+        }
+
         private static long addAndGet(
                 MapState<Long, Long> state,
-                ForL0MapState<?, ?, Long, Long> forl0State,
+                Object forl0State,
                 long bucket,
                 long delta) throws Exception {
             if (forl0State != null) {
-                return forl0State.addAndGetLong(bucket, delta);
+                try {
+                    Method method = forl0State.getClass().getMethod("addAndGetLong", Object.class, long.class);
+                    return (Long) method.invoke(forl0State, bucket, delta);
+                } catch (ReflectiveOperationException | RuntimeException ignored) {
+                    // Historical stable ForL0 JARs do not expose the map fused helper.
+                }
             }
             Long previous = state.get(bucket);
             long next = valueOrZero(previous) + delta;
             state.put(bucket, next);
             return next;
+        }
+
+        private static Long addSequentialAndSum(
+                Object forl0State,
+                long startUserKey,
+                int count,
+                long modulo,
+                long delta) {
+            try {
+                Method method = forl0State.getClass().getMethod(
+                        "addSequentialAndSumLong",
+                        long.class,
+                        int.class,
+                        long.class,
+                        long.class);
+                return (Long) method.invoke(forl0State, startUserKey, count, modulo, delta);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return null;
+            }
         }
     }
 

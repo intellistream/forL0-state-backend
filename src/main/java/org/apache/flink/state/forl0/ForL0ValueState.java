@@ -66,14 +66,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
     /** Arity of RowData value (for BinaryRowData reconstruction). */
     private final int rowDataValueArity;
 
-    /** Single-entry transparent cache for primitive long ValueState hot keys. */
-    private boolean cachedLongValueValid;
-    private long cachedLongKey;
-    private int cachedLongKeyGroup;
-    private long cachedLongNsStart;
-    private long cachedLongNsEnd;
-    private long cachedLongValue;
-
     /** Pre-computed dispatch strategy — eliminates multi-level if chains on hot path. */
     private enum KeyNsStrategy {
         LONG_VOID,           // voidNamespace, key=Long
@@ -175,15 +167,8 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
      *
      * <p>Used by benchmarks and counter-like operators to avoid a separate get + put JNI roundtrip.
      */
-    public boolean supportsAddAndGetLong() {
-        return valueTypeId == TypeAnalyzer.TYPE_INT64
-                && !isRowDataValue
-                && keyNsStrategy != KeyNsStrategy.GENERIC
-                && keyNsStrategy != KeyNsStrategy.ROWDATA_FIXED_VOID;
-    }
-
     public long addAndGetLong(long delta) {
-        if (!supportsAddAndGetLong()) {
+        if (valueTypeId != TypeAnalyzer.TYPE_INT64 || isRowDataValue) {
             throw new IllegalStateException("addAndGetLong requires non-RowData long ValueState");
         }
 
@@ -191,50 +176,31 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
         int keyGroup = keyContext.currentKeyGroupIndex;
 
         switch (keyNsStrategy) {
-            case LONG_VOID: {
-                long rawKey = (Long) key;
-                long updated = NativeEngine.valueAddAndGetLongLong(stateHandle, rawKey, keyGroup, delta);
-                cacheLongValue(rawKey, keyGroup, 0L, 0L, updated);
-                return updated;
-            }
-            case INT_VOID: {
-                int rawKey = (Integer) key;
-                long updated = NativeEngine.valueAddAndGetIntLong(stateHandle, rawKey, keyGroup, delta);
-                cacheLongValue(rawKey, keyGroup, 0L, 0L, updated);
-                return updated;
-            }
-            case ROWDATA_LONG_VOID: {
-                long rawKey = rowDataKeyAccessor.extractSingleLong(key);
-                long updated = NativeEngine.valueAddAndGetLongLong(
+            case LONG_VOID:
+                return NativeEngine.valueAddAndGetLongLong(stateHandle, (Long) key, keyGroup, delta);
+            case INT_VOID:
+                return NativeEngine.valueAddAndGetIntLong(stateHandle, (Integer) key, keyGroup, delta);
+            case ROWDATA_LONG_VOID:
+                return NativeEngine.valueAddAndGetLongLong(
                         stateHandle,
-                        rawKey,
+                        rowDataKeyAccessor.extractSingleLong(key),
                         keyGroup,
                         delta);
-                cacheLongValue(rawKey, keyGroup, 0L, 0L, updated);
-                return updated;
-            }
-            case ROWDATA_INT_VOID: {
-                int rawKey = rowDataKeyAccessor.extractSingleInt(key);
-                long updated = NativeEngine.valueAddAndGetIntLong(
+            case ROWDATA_INT_VOID:
+                return NativeEngine.valueAddAndGetIntLong(
                         stateHandle,
-                        rawKey,
+                        rowDataKeyAccessor.extractSingleInt(key),
                         keyGroup,
                         delta);
-                cacheLongValue(rawKey, keyGroup, 0L, 0L, updated);
-                return updated;
-            }
             case LONG_TW: {
                 TimeWindow tw = (TimeWindow) currentNamespace;
-                long rawKey = (Long) key;
-                long updated = NativeEngine.valueAddAndGetLongLongWithTW(
+                return NativeEngine.valueAddAndGetLongLongWithTW(
                         stateHandle,
-                        rawKey,
+                        (Long) key,
                         keyGroup,
                         tw.getStart(),
                         tw.getEnd(),
                         delta);
-                cacheLongValue(rawKey, keyGroup, tw.getStart(), tw.getEnd(), updated);
-                return updated;
             }
             default:
                 throw new IllegalStateException("addAndGetLong is only supported for primitive long/int key fast paths");
@@ -245,17 +211,12 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
     @SuppressWarnings("unchecked")
     private V valueForLongKey(long k, int keyGroup) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (isCachedLongValue(k, keyGroup, 0L, 0L)) {
-                return cachedLongValue();
-            }
             if (!NativeEngine.valueGetLongLongSafe(stateHandle, k, keyGroup, primitiveBuf)) {
-                invalidateCachedLongValue(k, keyGroup, 0L, 0L);
                 return getDefaultValue();
             }
             if (isRowDataValue) {
                 return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
             }
-            cacheLongValue(k, keyGroup, 0L, 0L, primitiveBuf[0]);
             return (V) Long.valueOf(primitiveBuf[0]);
         }
         if (valueTypeId == TypeAnalyzer.TYPE_INT32) {
@@ -288,17 +249,12 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
     @SuppressWarnings("unchecked")
     private V valueForIntKey(int k, int keyGroup) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (isCachedLongValue(k, keyGroup, 0L, 0L)) {
-                return cachedLongValue();
-            }
             if (!NativeEngine.valueGetIntLongSafe(stateHandle, k, keyGroup, primitiveBuf)) {
-                invalidateCachedLongValue(k, keyGroup, 0L, 0L);
                 return getDefaultValue();
             }
             if (isRowDataValue) {
                 return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
             }
-            cacheLongValue(k, keyGroup, 0L, 0L, primitiveBuf[0]);
             return (V) Long.valueOf(primitiveBuf[0]);
         }
         if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
@@ -357,17 +313,12 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
     @SuppressWarnings("unchecked")
     private V valueWithTimeWindow(long k, int keyGroup, long nsStart, long nsEnd) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (isCachedLongValue(k, keyGroup, nsStart, nsEnd)) {
-                return cachedLongValue();
-            }
             if (!NativeEngine.valueGetLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, primitiveBuf)) {
-                invalidateCachedLongValue(k, keyGroup, nsStart, nsEnd);
                 return getDefaultValue();
             }
             if (isRowDataValue) {
                 return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
             }
-            cacheLongValue(k, keyGroup, nsStart, nsEnd, primitiveBuf[0]);
             return (V) Long.valueOf(primitiveBuf[0]);
         }
         if (valueTypeId == TypeAnalyzer.TYPE_INT32) {
@@ -403,9 +354,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
             long raw = isRowDataValue ? rowDataValueAccessor.extractSingleLong(value) : (Long) value;
             NativeEngine.valuePutLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, raw);
-            if (!isRowDataValue) {
-                cacheLongValue(k, keyGroup, nsStart, nsEnd, raw);
-            }
             return;
         }
         if (valueTypeId == TypeAnalyzer.TYPE_INT32) {
@@ -473,9 +421,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
                     ? rowDataValueAccessor.extractSingleLong(value)
                     : (Long) value;
             NativeEngine.valuePutLongLong(stateHandle, k, keyGroup, raw);
-            if (!isRowDataValue) {
-                cacheLongValue(k, keyGroup, 0L, 0L, raw);
-            }
             return;
         }
         if (valueTypeId == TypeAnalyzer.TYPE_INT32) {
@@ -500,9 +445,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
                     ? rowDataValueAccessor.extractSingleLong(value)
                     : (Long) value;
             NativeEngine.valuePutIntLong(stateHandle, k, keyGroup, raw);
-            if (!isRowDataValue) {
-                cacheLongValue(k, keyGroup, 0L, 0L, raw);
-            }
             return;
         }
         if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
@@ -545,21 +487,15 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
             switch (keyNsStrategy) {
                 case LONG_VOID:
                     NativeEngine.valueClearLong(stateHandle, (Long) key, keyGroup);
-                    invalidateCachedLongValue((Long) key, keyGroup, 0L, 0L);
                     return;
                 case INT_VOID:
                     NativeEngine.valueClearInt(stateHandle, (Integer) key, keyGroup);
-                    invalidateCachedLongValue((Integer) key, keyGroup, 0L, 0L);
                     return;
                 case ROWDATA_LONG_VOID:
-                    long rowLongKey = rowDataKeyAccessor.extractSingleLong(key);
-                    NativeEngine.valueClearLong(stateHandle, rowLongKey, keyGroup);
-                    invalidateCachedLongValue(rowLongKey, keyGroup, 0L, 0L);
+                    NativeEngine.valueClearLong(stateHandle, rowDataKeyAccessor.extractSingleLong(key), keyGroup);
                     return;
                 case ROWDATA_INT_VOID:
-                    int rowIntKey = rowDataKeyAccessor.extractSingleInt(key);
-                    NativeEngine.valueClearInt(stateHandle, rowIntKey, keyGroup);
-                    invalidateCachedLongValue(rowIntKey, keyGroup, 0L, 0L);
+                    NativeEngine.valueClearInt(stateHandle, rowDataKeyAccessor.extractSingleInt(key), keyGroup);
                     return;
                 case ROWDATA_FIXED_VOID:
                     NativeEngine.valueClearFixedRow(stateHandle, rowDataKeyAccessor.extractFixedFields(key), keyGroup);
@@ -567,7 +503,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
                 case LONG_TW: {
                     TimeWindow tw = (TimeWindow) currentNamespace;
                     NativeEngine.valueClearWithTW(stateHandle, (Long) key, keyGroup, tw.getStart(), tw.getEnd());
-                    invalidateCachedLongValue((Long) key, keyGroup, tw.getStart(), tw.getEnd());
                     return;
                 }
                 default: {
@@ -613,34 +548,6 @@ public class ForL0ValueState<K, N, V> implements InternalValueState<K, N, V> {
     public StateIncrementalVisitor<K, N, V> getStateIncrementalVisitor(
             int recommendedMaxNumberOfReturnedRecords) {
         throw new UnsupportedOperationException("State incremental visitor not supported by ForL0StateBackend");
-    }
-
-    @SuppressWarnings("unchecked")
-    private V cachedLongValue() {
-        return (V) Long.valueOf(cachedLongValue);
-    }
-
-    private boolean isCachedLongValue(long key, int keyGroup, long nsStart, long nsEnd) {
-        return cachedLongValueValid
-                && cachedLongKey == key
-                && cachedLongKeyGroup == keyGroup
-                && cachedLongNsStart == nsStart
-                && cachedLongNsEnd == nsEnd;
-    }
-
-    private void cacheLongValue(long key, int keyGroup, long nsStart, long nsEnd, long value) {
-        cachedLongValueValid = true;
-        cachedLongKey = key;
-        cachedLongKeyGroup = keyGroup;
-        cachedLongNsStart = nsStart;
-        cachedLongNsEnd = nsEnd;
-        cachedLongValue = value;
-    }
-
-    private void invalidateCachedLongValue(long key, int keyGroup, long nsStart, long nsEnd) {
-        if (isCachedLongValue(key, keyGroup, nsStart, nsEnd)) {
-            cachedLongValueValid = false;
-        }
     }
 
     // ========== Zero-copy read helpers (BinaryRowData → native pointer) ==========

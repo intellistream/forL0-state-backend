@@ -192,6 +192,9 @@ nexmark_scenarios:
     min_cpu_cores: 0.0
     min_profile_cpu_cores: 0.0
     timeout_seconds: 21600
+    # Historical stable probe: use ForL0 backend defaults instead of the
+    # global/workload/query tuning block at the bottom of this file.
+    forl0_config_mode: backend_defaults
     query_events:
       q4: 0
       q5: 0
@@ -244,13 +247,9 @@ nexmark_scenarios:
       table.optimizer.distinct-agg.split.enabled: false
       execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
       pipeline.object-reuse: true
-    forl0_overrides:
-      l0_cache_enabled: true
-      l0_cache_size: 256mb
-      l0_memory_max_size: 512mb
-      initial_table_capacity: 2048
-      max_table_capacity: 65536
-      main_table_load_factor_threshold: 0.80
+    # Keep this stable probe on the backend defaults. Larger L0/table overrides
+    # belong to the opt-in hotspot/deep pressure scenarios below; applying them
+    # here can make Q18/Q19 over-allocate native state on 16GB Ascend TMs.
 
   - name: forl0_q18_l0_hotspot
     description: "Non-contract probe: Q18 drifting hot bidder-auction keys for target L0 hardware"
