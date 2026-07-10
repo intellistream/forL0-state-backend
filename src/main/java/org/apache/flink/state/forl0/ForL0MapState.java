@@ -287,6 +287,23 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
                 delta);
     }
 
+    /**
+     * Batch read-only sum for adjacent long user keys. Missing user keys
+     * contribute zero.
+     */
+    public long sumSequentialLong(long startUserKey, int count, long modulo) {
+        if (mapStrategy != MapStrategy.LONG_LONG_VOID) {
+            throw new IllegalStateException("sumSequentialLong requires Long key, Long user key, Long user value, and VoidNamespace");
+        }
+        return NativeEngine.mapSumSequentialLongLong(
+                stateHandle,
+                resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex,
+                startUserKey,
+                count,
+                modulo);
+    }
+
     @Override
     public void remove(UK userKey) {
         try {

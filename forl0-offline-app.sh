@@ -65,6 +65,8 @@ ASCEND_REPRO_WORKLOADS=(
     "C10|client_scalar_ops16_batch_forl0|Client usecase scalar_state_probe_2m_ops16_batch, ForL0 batched MapState config, isolated cluster"
     "C11|client_scalar_ops64_batch_hashmap|Client usecase scalar_state_probe_2m_ops64_batch, HashMap baseline, isolated cluster"
     "C12|client_scalar_ops64_batch_forl0|Client usecase scalar_state_probe_2m_ops64_batch, ForL0 batched MapState config, isolated cluster"
+    "C13|client_scalar_ops128_batch_hashmap|Client usecase scalar_state_probe_1m_ops128_batch, HashMap baseline, isolated cluster"
+    "C14|client_scalar_ops128_batch_forl0|Client usecase scalar_state_probe_1m_ops128_batch, ForL0 batched MapState config, isolated cluster"
 )
 
 usage() {
@@ -223,6 +225,8 @@ run_ascend_workload() {
         C10) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16_batch --backend forl0) ;;
         C11) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend hashmap) ;;
         C12) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend forl0) ;;
+        C13) args=(--test client_usecase --scenario scalar_state_probe_1m_ops128_batch --backend hashmap) ;;
+        C14) args=(--test client_usecase --scenario scalar_state_probe_1m_ops128_batch --backend forl0) ;;
         *) die "unknown Ascend reproduction workload id: $id" ;;
     esac
 

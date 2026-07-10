@@ -199,6 +199,8 @@ public final class ClientHotspotDriftBenchmark {
         private transient Method rightAddAndGetLong;
         private transient Method leftAddSequentialAndSumLong;
         private transient Method rightAddSequentialAndSumLong;
+        private transient Method leftSumSequentialLong;
+        private transient Method rightSumSequentialLong;
 
         ScalarStateJoinFunction(int scalarOpsPerRecord, int mapKeyModulo, String scalarShape) {
             this.scalarOpsPerRecord = Math.max(1, scalarOpsPerRecord);
@@ -225,6 +227,8 @@ public final class ClientHotspotDriftBenchmark {
                 rightAddAndGetLong = resolveAddAndGetLong(rightForL0Buckets);
                 leftAddSequentialAndSumLong = resolveAddSequentialAndSumLong(leftForL0Buckets);
                 rightAddSequentialAndSumLong = resolveAddSequentialAndSumLong(rightForL0Buckets);
+                leftSumSequentialLong = resolveSumSequentialLong(leftForL0Buckets);
+                rightSumSequentialLong = resolveSumSequentialLong(rightForL0Buckets);
                 System.err.println("[ScalarState] scalar fast path: shape="
                         + (batchMap ? "map_batch" : "map_fused")
                         + ", leftStateClass=" + leftBuckets.getClass().getName()
@@ -306,11 +310,16 @@ public final class ClientHotspotDriftBenchmark {
                         rightForL0Buckets, rightAddSequentialAndSumLong, base, scalarOpsPerRecord, mapKeyModulo, 1L);
                 if (batchSum != null) {
                     checksum += batchSum;
-                    for (int i = 0; i < scalarOpsPerRecord; i++) {
-                        long bucket = positiveMod(base + i, mapKeyModulo);
-                        Long left = leftBuckets.get(bucket);
-                        if (left != null) {
-                            checksum += left;
+                    Long leftSum = sumSequential(leftForL0Buckets, leftSumSequentialLong, base, scalarOpsPerRecord, mapKeyModulo);
+                    if (leftSum != null) {
+                        checksum += leftSum;
+                    } else {
+                        for (int i = 0; i < scalarOpsPerRecord; i++) {
+                            long bucket = positiveMod(base + i, mapKeyModulo);
+                            Long left = leftBuckets.get(bucket);
+                            if (left != null) {
+                                checksum += left;
+                            }
                         }
                     }
                     rightCount.update(count);
@@ -390,6 +399,22 @@ public final class ClientHotspotDriftBenchmark {
             }
         }
 
+        private static Long sumSequential(
+                Object forl0State,
+                Method sumSequentialLong,
+                long startUserKey,
+                int count,
+                long modulo) {
+            if (forl0State == null || sumSequentialLong == null) {
+                return null;
+            }
+            try {
+                return (Long) sumSequentialLong.invoke(forl0State, startUserKey, count, modulo);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return null;
+            }
+        }
+
         private static Method resolveAddAndGetLong(Object forl0State) {
             if (forl0State == null) {
                 return null;
@@ -411,6 +436,21 @@ public final class ClientHotspotDriftBenchmark {
                         long.class,
                         int.class,
                         long.class,
+                        long.class);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                return null;
+            }
+        }
+
+        private static Method resolveSumSequentialLong(Object forl0State) {
+            if (forl0State == null) {
+                return null;
+            }
+            try {
+                return forl0State.getClass().getMethod(
+                        "sumSequentialLong",
+                        long.class,
+                        int.class,
                         long.class);
             } catch (ReflectiveOperationException | RuntimeException ignored) {
                 return null;

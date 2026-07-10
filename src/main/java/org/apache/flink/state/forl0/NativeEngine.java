@@ -355,6 +355,9 @@ public final class NativeEngine {
     /** Fused sequential Long UK + Long UV add-and-sum batch. */
     public static native long mapAddSequentialAndSumLongLong(
             long stateHandle, long key, int keyGroup, long startUserKey, int count, long modulo, long delta);
+    /** Sum existing Long UK + Long UV values over a sequential user-key range. */
+    public static native long mapSumSequentialLongLong(
+            long stateHandle, long key, int keyGroup, long startUserKey, int count, long modulo);
     /** Remove by Long UK. */
     public static native void mapRemoveLongLong(long stateHandle, long key, int keyGroup, long userKey);
     /** Get all entries as interleaved long[] [uk0,uv0,uk1,uv1,...]. Returns null if empty. */

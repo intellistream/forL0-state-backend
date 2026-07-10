@@ -487,8 +487,39 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapAddSequentialAndSumLongLong(
         };
         if (!table->modify_in_place(keyGroup, k, add_sequence)) {
             InnerMapLongLong new_map;
+            new_map.reserve(static_cast<size_t>(n));
             add_sequence(new_map);
             table->put(keyGroup, k, std::move(new_map));
+        }
+        return static_cast<jlong>(sum);
+    })
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_mapSumSequentialLongLong(
+        JNIEnv* env, jclass,
+        jlong stateHandle, jlong key, jint keyGroup,
+        jlong startUserKey, jint count, jlong modulo) {
+    JNI_ENTRY_RETURN(jlong, 0, {
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        InnerMapLongLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
+        if (!inner) return static_cast<jlong>(0);
+        int64_t start = static_cast<int64_t>(startUserKey);
+        int64_t mod = static_cast<int64_t>(modulo);
+        int n = static_cast<int>(count);
+        if (n <= 0) return static_cast<jlong>(0);
+        int64_t sum = 0;
+        for (int i = 0; i < n; ++i) {
+            int64_t uk = start + static_cast<int64_t>(i);
+            if (mod > 0) {
+                uk %= mod;
+                if (uk < 0) uk += mod;
+            }
+            auto it = inner->find(uk);
+            if (it != inner->end()) {
+                sum += it->second;
+            }
         }
         return static_cast<jlong>(sum);
     })

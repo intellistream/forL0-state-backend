@@ -52,10 +52,36 @@ Recent Ascend/Docker reruns:
   - ForL0: `31,069 records/s/core` (`client_usecase_forl0_20260710_195718.json`)
   - Conclusion: larger batch pressure produces a small positive ForL0 delta, but the gain is not yet large.
 
+## Continued Attempts After 20:00
+
+- Added read-only native batch sum for `MapState<Long,Long>`:
+  - `NativeEngine.mapSumSequentialLongLong`
+  - `ForL0MapState.sumSequentialLong`
+  - client scalar batch right-stream path now tries one ForL0 JNI sum over the left buckets before falling back to the Java `MapState.get` loop.
+  - `scalar_state_probe_2m_ops64_batch` stayed essentially unchanged:
+    - HashMap: `30,998 records/s/core` (`client_usecase_hashmap_20260710_200659.json`)
+    - ForL0: `31,069 records/s/core` (`client_usecase_forl0_20260710_200738.json`)
+  - Interpretation: the remaining right-stream left-bucket read loop is not the dominant cost at this workload mix; most records are left-stream updates.
+
+- Tried a more aggressive `2m x ops256` batch scenario to amplify per-record state density.
+  - Both HashMap and ForL0 failed with TaskManager heartbeat timeout, not a user-code exception.
+  - Root cause from Flink REST: `Heartbeat of TaskManager ... timed out`.
+  - Fix: do not put `2m x ops256` in the default one-key list; add conservative Docker heartbeat settings (`interval=10000`, `timeout=300000`) so high-pressure runs are less likely to be misclassified as TM loss.
+
+- Replaced the failed high-pressure scenario with stable `scalar_state_probe_1m_ops128_batch`:
+  - HashMap: `15,517 records/s/core` (`client_usecase_hashmap_20260710_202406.json`)
+  - ForL0 before the native modulo experiment: `15,540 records/s/core` (`client_usecase_forl0_20260710_202445.json`)
+  - ForL0 after the native modulo experiment: `15,522 records/s/core` (`client_usecase_forl0_20260710_202828.json`)
+  - Conclusion: `1m x ops128` is stable but still only a tiny ForL0 win; it is useful as an additional reproduction point, not as a strong headline claim.
+
+- Tried and rejected a native "no modulo in the common contiguous range" fast path.
+  - Result regressed within noise (`15,522` vs prior `15,540` records/s/core).
+  - Action: reverted the no-modulo branch before finalizing; retained only a low-risk `reserve(n)` when constructing a brand-new inner map for a batch.
+
 ## Next Optimization Hypotheses
 
 1. Replace reflective invocation with a real public interface for MapState fused/batch calls, analogous to `LongValueStateAddAndGet`. This removes `Method.invoke` boxing/varargs overhead from the hot path.
-2. Add a native batch API that combines both sides of the scalar join pattern: update right-side buckets and read left-side buckets in one JNI call. Current `processElement2` still performs a Java loop of `leftBuckets.get(...)`, which caps the benefit.
+2. Move the client scalar batch harness to call the ForL0 interface directly when the unwrapped state is ForL0. The latest attempts show native loop micro-optimizations are not enough; the hot path still pays Java reflective invocation and wrapper checks per record.
 3. Add direct `long`/presence encoding APIs for known counter states only. Do not change general `ValueState.value()` null semantics; instead expose a ForL0-specific counter interface.
 4. Stabilize client-usecase timing: several bounded runs differ depending on whether the harness observes `FINISHED` or cancels after source completion. The report should prefer repeated samples or a fixed post-source drain policy.
 5. Install/package async-profiler in the offline bundle. Current run reported async-profiler missing, so the latest online reruns could not produce fresh flame graphs.
