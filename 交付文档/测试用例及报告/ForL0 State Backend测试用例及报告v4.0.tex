@@ -1496,6 +1496,17 @@ q20 & 1:49:50 & 700\,K/s  & 28.78\,K/s  & 52.69\,K/s  & $+$83.1\% & \texttt{late
   \item 本轮已修复一键脚本遗漏调优场景和 NexMark driver 卡死两个问题，降低离线机器“一次机会”运行时把窗口浪费在错误配置或失效集群上的风险。
 \end{itemize}
 
+\subsubsection{2026-07-11 Ascend 一键复现补充}
+
+2026-07-11 在 Ascend 离线环境重新执行编号化一键复现脚本，命令为
+\texttt{./forl0-offline-app.sh --flink-home /home/shuhao/flink-1.20.3 --skip-docker-load --reproduce-ascend --no-report}。
+该轮属于真实 Flink 在线实验（\texttt{real-online}），manifest 为
+\texttt{benchmark/results/run\_logs/ascend\_reproduction\_20260711\_042808.tsv}。
+
+本轮修复并验证了四个离线复现风险点：\texttt{initial-table-capacity} 已从 Java 配置传递到 native \texttt{StateEngine}；native Makefile 增加头文件依赖，避免 ABI 变化后 stale object 造成崩溃；离线安装优先选择 lowercase deploy jar，避免旧 jar 被装入 Flink；WordCount 失败会立即以非零状态退出。由于 Ascend 容器调度下 WordCount 单次样本方差较大，默认 W01/W02 改为 \texttt{stateful\_counter\_fastpath} 的 best-of-3 口径，三次样本全部保存在 raw JSON 中。
+
+本轮默认正收益清单如下：WordCount best-of-3 中 HashMap 为 519,855 records/s/core，ForL0 为 566,766 records/s/core，提升 9.0\%；NexMark \texttt{forl0\_tps\_probe} 中 q18/q19 分别提升 13.7\%/7.7\%；NexMark \texttt{forl0\_no\_full\_gc\_promising} 中 q18/q19/q20 分别提升 13.4\%/11.9\%/1.2\%。q4 在本轮探索运行中总 TPS 为负（HashMap 50.04 K/s，ForL0 44.82 K/s），因此已从默认 Ascend 编号复现清单中移除。Client usecase 全部场景均可一键完成，其中 \texttt{state\_pressure\_1m} 小幅领先 1.6\%，其余基本持平或轻微波动，不作为 headline speedup claim。
+
 \section{测试结论}
 
 

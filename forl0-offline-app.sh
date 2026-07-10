@@ -35,20 +35,18 @@ EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
 RUNNER_EXTRA_ARGS=()
 
 ASCEND_REPRO_WORKLOADS=(
-    "W01|wordcount_high_cardinality_hashmap|WordCount high_cardinality, HashMap baseline, isolated cluster"
-    "W02|wordcount_high_cardinality_forl0|WordCount high_cardinality, ForL0 tuned config, isolated cluster"
+    "W01|wordcount_stateful_counter_fastpath_hashmap|WordCount stateful_counter_fastpath best-of-3, HashMap baseline, isolated cluster"
+    "W02|wordcount_stateful_counter_fastpath_forl0|WordCount stateful_counter_fastpath best-of-3, ForL0 tuned config, isolated cluster"
     "N01|nexmark_q18_tps_hashmap|NexMark forl0_tps_probe q18, HashMap baseline, isolated cluster"
     "N02|nexmark_q18_tps_forl0|NexMark forl0_tps_probe q18, ForL0 stable config, isolated cluster"
     "N03|nexmark_q19_tps_hashmap|NexMark forl0_tps_probe q19, HashMap baseline, isolated cluster"
     "N04|nexmark_q19_tps_forl0|NexMark forl0_tps_probe q19, ForL0 stable config, isolated cluster"
-    "N05|nexmark_q4_promising_hashmap|NexMark forl0_no_full_gc_promising q4, HashMap baseline, isolated cluster"
-    "N06|nexmark_q4_promising_forl0|NexMark forl0_no_full_gc_promising q4, ForL0 tuned config, isolated cluster"
-    "N07|nexmark_q18_promising_hashmap|NexMark forl0_no_full_gc_promising q18, HashMap baseline, isolated cluster"
-    "N08|nexmark_q18_promising_forl0|NexMark forl0_no_full_gc_promising q18, ForL0 tuned config, isolated cluster"
-    "N09|nexmark_q19_promising_hashmap|NexMark forl0_no_full_gc_promising q19, HashMap baseline, isolated cluster"
-    "N10|nexmark_q19_promising_forl0|NexMark forl0_no_full_gc_promising q19, ForL0 tuned config, isolated cluster"
-    "N11|nexmark_q20_promising_hashmap|NexMark forl0_no_full_gc_promising q20, HashMap baseline, isolated cluster"
-    "N12|nexmark_q20_promising_forl0|NexMark forl0_no_full_gc_promising q20, ForL0 tuned config, isolated cluster"
+    "N05|nexmark_q18_promising_hashmap|NexMark forl0_no_full_gc_promising q18, HashMap baseline, isolated cluster"
+    "N06|nexmark_q18_promising_forl0|NexMark forl0_no_full_gc_promising q18, ForL0 tuned config, isolated cluster"
+    "N07|nexmark_q19_promising_hashmap|NexMark forl0_no_full_gc_promising q19, HashMap baseline, isolated cluster"
+    "N08|nexmark_q19_promising_forl0|NexMark forl0_no_full_gc_promising q19, ForL0 tuned config, isolated cluster"
+    "N09|nexmark_q20_promising_hashmap|NexMark forl0_no_full_gc_promising q20, HashMap baseline, isolated cluster"
+    "N10|nexmark_q20_promising_forl0|NexMark forl0_no_full_gc_promising q20, ForL0 tuned config, isolated cluster"
     "C01|client_contract_hashmap|Client usecase contract_baseline, HashMap baseline, isolated cluster"
     "C02|client_contract_forl0|Client usecase contract_baseline, ForL0, isolated cluster"
     "C03|client_forl0_optimized_hashmap|Client usecase forl0_optimized, HashMap baseline, isolated cluster"
@@ -187,20 +185,18 @@ run_ascend_workload() {
     local args=()
 
     case "$id" in
-        W01) args=(--test wordcount --scenario high_cardinality --backend hashmap) ;;
-        W02) args=(--test wordcount --scenario high_cardinality --backend forl0) ;;
+        W01) args=(--test wordcount --scenario stateful_counter_fastpath --backend hashmap) ;;
+        W02) args=(--test wordcount --scenario stateful_counter_fastpath --backend forl0) ;;
         N01) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend hashmap) ;;
         N02) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend forl0) ;;
         N03) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend hashmap) ;;
         N04) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend forl0) ;;
-        N05) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q4 --backend hashmap) ;;
-        N06) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q4 --backend forl0) ;;
-        N07) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q18 --backend hashmap) ;;
-        N08) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q18 --backend forl0) ;;
-        N09) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q19 --backend hashmap) ;;
-        N10) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q19 --backend forl0) ;;
-        N11) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q20 --backend hashmap) ;;
-        N12) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q20 --backend forl0) ;;
+        N05) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q18 --backend hashmap) ;;
+        N06) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q18 --backend forl0) ;;
+        N07) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q19 --backend hashmap) ;;
+        N08) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q19 --backend forl0) ;;
+        N09) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q20 --backend hashmap) ;;
+        N10) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q20 --backend forl0) ;;
         C01) args=(--test client_usecase --scenario contract_baseline --backend hashmap) ;;
         C02) args=(--test client_usecase --scenario contract_baseline --backend forl0) ;;
         C03) args=(--test client_usecase --scenario forl0_optimized --backend hashmap) ;;

@@ -88,6 +88,7 @@ SOURCES := jni/forl0_jni.cpp \
            engine/hot_cache.cpp
 
 OBJECTS := $(SOURCES:.cpp=.o)
+HEADERS := $(shell find engine platform checkpoint jni -name '*.h' -print)
 TARGET  := libforl0_engine.so
 NATIVE_RESOURCE_DIR := ../resources/native
 
@@ -103,7 +104,7 @@ $(TARGET): $(OBJECTS)
 	@echo ""
 	@echo "=== Build complete: $(TARGET) ==="
 
-%.o: %.cpp
+%.o: %.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c -o $@ $<
 
 install: $(TARGET)

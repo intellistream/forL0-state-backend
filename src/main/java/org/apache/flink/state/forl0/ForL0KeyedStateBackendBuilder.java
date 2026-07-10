@@ -72,8 +72,33 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     /** L0 Cache configuration. */
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
+    private final int initialTableCapacity;
     /** Optional metric group for registering HotCache gauges. May be null in tests. */
     private final MetricGroup metricGroup;
+
+    public ForL0KeyedStateBackendBuilder(
+            TaskKvStateRegistry kvStateRegistry,
+            TypeSerializer<K> keySerializer,
+            ClassLoader userCodeClassLoader,
+            int numberOfKeyGroups,
+            KeyGroupRange keyGroupRange,
+            ExecutionConfig executionConfig,
+            TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
+            @Nonnull Collection<KeyedStateHandle> stateHandles,
+            StreamCompressionDecorator keyGroupCompressionDecorator,
+            HeapPriorityQueueSetFactory priorityQueueSetFactory,
+            boolean asynchronousSnapshots,
+            boolean l0CacheEnabled,
+            long l0CacheSize,
+            int initialTableCapacity,
+            CloseableRegistry cancelStreamRegistry) {
+        this(kvStateRegistry, keySerializer, userCodeClassLoader, numberOfKeyGroups,
+                keyGroupRange, executionConfig, ttlTimeProvider, latencyTrackingStateConfig,
+                stateHandles, keyGroupCompressionDecorator, priorityQueueSetFactory,
+                asynchronousSnapshots, l0CacheEnabled, l0CacheSize, initialTableCapacity, cancelStreamRegistry,
+                /* metricGroup */ null);
+    }
 
     public ForL0KeyedStateBackendBuilder(
             TaskKvStateRegistry kvStateRegistry,
@@ -94,8 +119,47 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this(kvStateRegistry, keySerializer, userCodeClassLoader, numberOfKeyGroups,
                 keyGroupRange, executionConfig, ttlTimeProvider, latencyTrackingStateConfig,
                 stateHandles, keyGroupCompressionDecorator, priorityQueueSetFactory,
-                asynchronousSnapshots, l0CacheEnabled, l0CacheSize, cancelStreamRegistry,
-                /* metricGroup */ null);
+                asynchronousSnapshots, l0CacheEnabled, l0CacheSize,
+                ForL0Options.INITIAL_TABLE_CAPACITY.defaultValue(),
+                cancelStreamRegistry);
+    }
+
+    public ForL0KeyedStateBackendBuilder(
+            TaskKvStateRegistry kvStateRegistry,
+            TypeSerializer<K> keySerializer,
+            ClassLoader userCodeClassLoader,
+            int numberOfKeyGroups,
+            KeyGroupRange keyGroupRange,
+            ExecutionConfig executionConfig,
+            TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
+            @Nonnull Collection<KeyedStateHandle> stateHandles,
+            StreamCompressionDecorator keyGroupCompressionDecorator,
+            HeapPriorityQueueSetFactory priorityQueueSetFactory,
+            boolean asynchronousSnapshots,
+            boolean l0CacheEnabled,
+            long l0CacheSize,
+            int initialTableCapacity,
+            CloseableRegistry cancelStreamRegistry,
+            MetricGroup metricGroup) {
+        super(
+                kvStateRegistry,
+                keySerializer,
+                userCodeClassLoader,
+                numberOfKeyGroups,
+                keyGroupRange,
+                executionConfig,
+                ttlTimeProvider,
+                latencyTrackingStateConfig,
+                stateHandles,
+                keyGroupCompressionDecorator,
+                cancelStreamRegistry);
+        this.priorityQueueSetFactory = priorityQueueSetFactory;
+        this.asynchronousSnapshots = asynchronousSnapshots;
+        this.l0CacheEnabled = l0CacheEnabled;
+        this.l0CacheSize = l0CacheSize;
+        this.initialTableCapacity = initialTableCapacity;
+        this.metricGroup = metricGroup;
     }
 
     public ForL0KeyedStateBackendBuilder(
@@ -115,23 +179,13 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             long l0CacheSize,
             CloseableRegistry cancelStreamRegistry,
             MetricGroup metricGroup) {
-        super(
-                kvStateRegistry,
-                keySerializer,
-                userCodeClassLoader,
-                numberOfKeyGroups,
-                keyGroupRange,
-                executionConfig,
-                ttlTimeProvider,
-                latencyTrackingStateConfig,
-                stateHandles,
-                keyGroupCompressionDecorator,
-                cancelStreamRegistry);
-        this.priorityQueueSetFactory = priorityQueueSetFactory;
-        this.asynchronousSnapshots = asynchronousSnapshots;
-        this.l0CacheEnabled = l0CacheEnabled;
-        this.l0CacheSize = l0CacheSize;
-        this.metricGroup = metricGroup;
+        this(kvStateRegistry, keySerializer, userCodeClassLoader, numberOfKeyGroups,
+                keyGroupRange, executionConfig, ttlTimeProvider, latencyTrackingStateConfig,
+                stateHandles, keyGroupCompressionDecorator, priorityQueueSetFactory,
+                asynchronousSnapshots, l0CacheEnabled, l0CacheSize,
+                ForL0Options.INITIAL_TABLE_CAPACITY.defaultValue(),
+                cancelStreamRegistry,
+                metricGroup);
     }
 
     @Override
@@ -146,10 +200,10 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         int numKeyGroups = keyGroupRange.getNumberOfKeyGroups();
         long engineHandle = NativeEngine.createEngine(
                 startKeyGroup, numKeyGroups, numberOfKeyGroups,
-                l0CacheEnabled, l0CacheSize);
-        LOG.info("[ForL0] C++ engine created: handle={}, keyGroups=[{}, {}), total={}, l0Enabled={}",
+                l0CacheEnabled, l0CacheSize, initialTableCapacity);
+        LOG.info("[ForL0] C++ engine created: handle={}, keyGroups=[{}, {}), total={}, l0Enabled={}, initialTableCapacity={}",
                 engineHandle, startKeyGroup, startKeyGroup + numKeyGroups, numberOfKeyGroups,
-                l0CacheEnabled);
+                l0CacheEnabled, initialTableCapacity);
 
         // Register HotCache gauges on the provided MetricGroup (design §8).
         // Always register so users can see whether the cache actually came up.

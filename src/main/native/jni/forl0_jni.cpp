@@ -33,7 +33,7 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
         JNIEnv* env, jclass, jint startKeyGroup, jint numKeyGroups, jint totalKeyGroups,
-        jboolean l0Enabled, jlong l0Capacity) {
+        jboolean l0Enabled, jlong l0Capacity, jint initialTableCapacity) {
     JNI_ENTRY_RETURN(jlong, 0, {
         Allocator* alloc = &DefaultAllocator::instance();
         std::unique_ptr<HotCacheManager> mgr;
@@ -56,7 +56,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
             fprintf(stderr, "[ForL0-HotCache] L0 cache disabled by config.\n");
         }
         auto* engine = new StateEngine(startKeyGroup, numKeyGroups, totalKeyGroups,
-                                       alloc, std::move(mgr));
+                                       alloc, std::move(mgr),
+                                       static_cast<size_t>(initialTableCapacity));
         return to_handle(engine);
     })
 }

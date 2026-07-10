@@ -350,6 +350,9 @@ Examples:
             if result:
                 results['wordcount'][backend] = result
                 save_result(result, 'wordcount', backend)
+            else:
+                print(f"\n[Error] WordCount failed for backend: {backend}")
+                sys.exit(1)
     
     # Run NexMark benchmarks
     if args.test == 'nexmark' or run_app_suite:

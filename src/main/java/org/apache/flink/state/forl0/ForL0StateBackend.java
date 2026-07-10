@@ -62,6 +62,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     /** L0 Cache configuration. */
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
+    private final int initialTableCapacity;
 
     // -----------------------------------------------------------------------
 
@@ -81,6 +82,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         this.asyncSnapshots = asyncSnapshots;
         this.l0CacheEnabled = ForL0Options.L0_CACHE_ENABLED.defaultValue();
         this.l0CacheSize = ForL0Options.L0_CACHE_SIZE.defaultValue().getBytes();
+        this.initialTableCapacity = ForL0Options.INITIAL_TABLE_CAPACITY.defaultValue();
         LOG.info("[ForL0] ForL0StateBackend created (asyncSnapshots={})", asyncSnapshots);
     }
 
@@ -96,6 +98,14 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         this.l0CacheSize = config.getOptional(ForL0Options.L0_CACHE_SIZE)
                 .map(MemorySize::getBytes)
                 .orElse(original.l0CacheSize);
+        this.initialTableCapacity = config.getOptional(ForL0Options.INITIAL_TABLE_CAPACITY)
+                .orElse(original.initialTableCapacity);
+        if (!ForL0Options.isValidTableCapacity(initialTableCapacity)) {
+            throw new IllegalConfigurationException(
+                    "Invalid ForL0 initial table capacity: " + initialTableCapacity
+                            + ". It must be a power of 2 and at least "
+                            + ForL0Options.MIN_TABLE_CAPACITY + ".");
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -152,6 +162,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                     asyncSnapshots,
                     l0CacheEnabled,
                     l0CacheSize,
+                    initialTableCapacity,
                     parameters.getCancelStreamRegistry(),
                     parameters.getMetricGroup())
                     .build();

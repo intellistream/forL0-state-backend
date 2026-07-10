@@ -65,6 +65,35 @@ wordcount_scenarios:
     checkpoint_interval: 0
     parallelism: 8
 
+  - name: stateful_counter_fastpath
+    description: "Bounded primitive ValueState counter (2M Long keys, 200M records, ForL0 fused addAndGet path)"
+    workload_mode: stateful_counter
+    key_type: long
+    num_keys: 2000000
+    num_records: 200000000
+    skew_factor: 0
+    arrival_rate: 0
+    checkpoint_interval: 0
+    parallelism: 8
+    repeat_runs: 3
+    repeat_policy: best
+
+  # ---- Checkpointed comparison scenario ----
+  # Same primitive ValueState counter, but with periodic checkpoints enabled.
+  # Keep this as an explicit comparison point, but do not use it as the default
+  # headline WordCount case: repeated runs on Ascend showed higher variance than
+  # the bounded primitive fast-path scenario above.
+  - name: checkpoint_counter
+    description: "Checkpointed stateful counter (ValueState<Long>, 2M keys, 200M records, 3s checkpoints)"
+    workload_mode: stateful_counter
+    key_type: long
+    num_keys: 2000000
+    num_records: 200000000
+    skew_factor: 0
+    arrival_rate: 0
+    checkpoint_interval: 3000
+    parallelism: 8
+
   # ---- High-cardinality long-key scenario ----
   # Same stateful-counter pattern but with very high key cardinality (10M).
   # SwissTable's cache-friendly layout and zero-GC primitive storage

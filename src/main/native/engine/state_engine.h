@@ -40,17 +40,19 @@ public:
     using Table = SwissTable<K, V>;
 
     StateTable(int start_key_group, int num_key_groups, bool void_namespace,
-               Allocator* alloc = &DefaultAllocator::instance())
+               Allocator* alloc = &DefaultAllocator::instance(),
+               size_t initial_table_capacity = 16)
         : start_key_group_(start_key_group),
           num_key_groups_(num_key_groups),
           void_namespace_(void_namespace),
-          alloc_(alloc) {
+          alloc_(alloc),
+          initial_table_capacity_(initial_table_capacity) {
         // Always allocate flat tables — void-namespace API uses them directly,
         // and they serve as fallback for non-void-namespace states when Java
         // code calls void-namespace JNI functions (e.g., window operators).
         tables_.resize(num_key_groups);
         for (int i = 0; i < num_key_groups; ++i) {
-            tables_[i] = std::make_unique<Table>(16, alloc_);
+            tables_[i] = std::make_unique<Table>(initial_table_capacity_, alloc_);
         }
         // COW state per key group
         cow_states_.resize(num_key_groups);
@@ -665,7 +667,7 @@ private:
             auto& ns_map = int_namespace_maps_[idx];
             auto it = ns_map.find(ns);
             if (it != ns_map.end()) return it->second.get();
-            auto tbl = std::make_unique<Table>(16, alloc_);
+            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_);
             auto* ptr = tbl.get();
             ns_map.emplace(ns, std::move(tbl));
             return ptr;
@@ -673,7 +675,7 @@ private:
             auto& ns_map = tw_namespace_maps_[idx];
             auto it = ns_map.find(ns);
             if (it != ns_map.end()) return it->second.get();
-            auto tbl = std::make_unique<Table>(16, alloc_);
+            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_);
             auto* ptr = tbl.get();
             ns_map.emplace(ns, std::move(tbl));
             return ptr;
@@ -681,7 +683,7 @@ private:
             auto& ns_map = str_namespace_maps_[idx];
             auto it = ns_map.find(ns);
             if (it != ns_map.end()) return it->second.get();
-            auto tbl = std::make_unique<Table>(16, alloc_);
+            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_);
             auto* ptr = tbl.get();
             ns_map.emplace(ns, std::move(tbl));
             return ptr;
@@ -704,6 +706,7 @@ private:
     int num_key_groups_;
     bool void_namespace_;
     Allocator* alloc_;
+    size_t initial_table_capacity_;
 
     // VoidNamespace mode: one table per key group
     std::vector<std::unique_ptr<Table>> tables_;
@@ -763,11 +766,13 @@ class StateEngine {
 public:
     StateEngine(int start_key_group, int num_key_groups, int total_key_groups,
                 Allocator* alloc = &DefaultAllocator::instance(),
-                std::unique_ptr<HotCacheManager> hot_cache = nullptr)
+                std::unique_ptr<HotCacheManager> hot_cache = nullptr,
+                size_t initial_table_capacity = 16)
         : start_key_group_(start_key_group),
           num_key_groups_(num_key_groups),
           total_key_groups_(total_key_groups),
           alloc_(alloc),
+          initial_table_capacity_(initial_table_capacity),
           snapshot_version_(0),
           hot_cache_manager_(std::move(hot_cache)) {}
 
@@ -777,7 +782,7 @@ public:
     template <typename K, typename V>
     int64_t register_state(const std::string& state_name, bool void_namespace) {
         auto table = std::make_unique<StateTable<K, V>>(
-            start_key_group_, num_key_groups_, void_namespace, alloc_);
+            start_key_group_, num_key_groups_, void_namespace, alloc_, initial_table_capacity_);
         auto handle = std::make_unique<TypedStateTableHandle<K, V>>(std::move(table));
         int64_t id = next_handle_id_++;
         state_names_[id] = state_name;
@@ -871,6 +876,7 @@ private:
     int num_key_groups_;
     int total_key_groups_;
     Allocator* alloc_;
+    size_t initial_table_capacity_;
 
     int64_t next_handle_id_ = 1;
     std::unordered_map<int64_t, std::unique_ptr<StateTableHandle>> state_handles_;

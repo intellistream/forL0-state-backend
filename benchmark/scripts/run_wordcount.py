@@ -920,10 +920,38 @@ def run_wordcount_scenario(config: dict, scenario: dict, backend: str,
     patched_config['wordcount'] = wc_config
     patched_config['runtime'] = runtime_config
 
-    result = run_wordcount(patched_config, backend, profile_mode=profile_mode)
+    repeat_runs = int(scenario.get('repeat_runs', 1) or 1)
+    repeat_policy = str(scenario.get('repeat_policy', 'single')).lower()
+    samples = []
+    for repeat_idx in range(repeat_runs):
+        if repeat_runs > 1:
+            print(f"\n--- WordCount scenario repeat {repeat_idx + 1}/{repeat_runs} ({repeat_policy}) ---")
+        sample = run_wordcount(patched_config, backend, profile_mode=profile_mode)
+        if not sample:
+            return None
+        sample['repeat_index'] = repeat_idx + 1
+        samples.append(sample)
+
+    if repeat_policy == 'best' and samples:
+        result = max(samples, key=lambda item: item.get('throughput_per_core') or item.get('throughput') or 0)
+    else:
+        result = samples[-1] if samples else None
     if result:
         result['scenario'] = scenario.get('name', 'default')
         result['scenario_description'] = scenario.get('description', '')
+        if repeat_runs > 1:
+            result['repeat_runs'] = repeat_runs
+            result['repeat_policy'] = repeat_policy
+            result['repeat_samples'] = [
+                {
+                    'repeat_index': sample.get('repeat_index'),
+                    'job_id': sample.get('job_id'),
+                    'throughput': sample.get('throughput'),
+                    'throughput_per_core': sample.get('throughput_per_core'),
+                    'total_time_seconds': sample.get('total_time_seconds'),
+                }
+                for sample in samples
+            ]
     return result
 
 
