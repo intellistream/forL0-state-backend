@@ -332,14 +332,16 @@ nexmark_scenarios:
       q20: 0
     query_overrides:
       q4:
-        tps: 600000
+        # Keep Q4 in the default offline matrix, but below the level that
+        # repeatedly dropped a TaskManager on the 16GB Ascend cluster.
+        tps: 250000
         person_proportion: 1
         auction_proportion: 19
         bid_proportion: 80
         bid_hot_ratio_auctions: 8
         auction_hot_ratio_sellers: 8
-        metric_monitor_delay: 25s
-        metric_monitor_duration: 90s
+        metric_monitor_delay: 20s
+        metric_monitor_duration: 60s
       q18:
         tps: 8000000
         person_proportion: 1
