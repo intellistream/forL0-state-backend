@@ -35,10 +35,36 @@ EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
 RUNNER_EXTRA_ARGS=()
 
 ASCEND_REPRO_WORKLOADS=(
-    "N01|nexmark_q18_hashmap_isolated|NexMark q18 TPS probe, HashMap baseline, isolated cluster"
-    "N02|nexmark_q18_forl0_isolated|NexMark q18 TPS probe, ForL0 stable winner, isolated cluster"
-    "N03|nexmark_q19_hashmap_isolated|NexMark q19 TPS probe, HashMap baseline, isolated cluster"
-    "N04|nexmark_q19_forl0_isolated|NexMark q19 TPS probe, ForL0 stable winner, isolated cluster"
+    "W01|wordcount_contract_hashmap|WordCount contract_baseline, HashMap baseline, isolated cluster"
+    "W02|wordcount_contract_forl0|WordCount contract_baseline, ForL0, isolated cluster"
+    "W03|wordcount_stateful_counter_hashmap|WordCount stateful_counter, HashMap baseline, isolated cluster"
+    "W04|wordcount_stateful_counter_forl0|WordCount stateful_counter, ForL0, isolated cluster"
+    "W05|wordcount_high_cardinality_hashmap|WordCount high_cardinality, HashMap baseline, isolated cluster"
+    "W06|wordcount_high_cardinality_forl0|WordCount high_cardinality, ForL0, isolated cluster"
+    "N01|nexmark_q18_tps_hashmap|NexMark forl0_tps_probe q18, HashMap baseline, isolated cluster"
+    "N02|nexmark_q18_tps_forl0|NexMark forl0_tps_probe q18, ForL0 stable config, isolated cluster"
+    "N03|nexmark_q19_tps_hashmap|NexMark forl0_tps_probe q19, HashMap baseline, isolated cluster"
+    "N04|nexmark_q19_tps_forl0|NexMark forl0_tps_probe q19, ForL0 stable config, isolated cluster"
+    "N05|nexmark_q4_promising_hashmap|NexMark forl0_no_full_gc_promising q4, HashMap baseline, isolated cluster"
+    "N06|nexmark_q4_promising_forl0|NexMark forl0_no_full_gc_promising q4, ForL0 tuned config, isolated cluster"
+    "N07|nexmark_q18_promising_hashmap|NexMark forl0_no_full_gc_promising q18, HashMap baseline, isolated cluster"
+    "N08|nexmark_q18_promising_forl0|NexMark forl0_no_full_gc_promising q18, ForL0 tuned config, isolated cluster"
+    "N09|nexmark_q19_promising_hashmap|NexMark forl0_no_full_gc_promising q19, HashMap baseline, isolated cluster"
+    "N10|nexmark_q19_promising_forl0|NexMark forl0_no_full_gc_promising q19, ForL0 tuned config, isolated cluster"
+    "N11|nexmark_q20_promising_hashmap|NexMark forl0_no_full_gc_promising q20, HashMap baseline, isolated cluster"
+    "N12|nexmark_q20_promising_forl0|NexMark forl0_no_full_gc_promising q20, ForL0 tuned config, isolated cluster"
+    "C01|client_contract_hashmap|Client usecase contract_baseline, HashMap baseline, isolated cluster"
+    "C02|client_contract_forl0|Client usecase contract_baseline, ForL0, isolated cluster"
+    "C03|client_forl0_optimized_hashmap|Client usecase forl0_optimized, HashMap baseline, isolated cluster"
+    "C04|client_forl0_optimized_forl0|Client usecase forl0_optimized, ForL0 tuned config, isolated cluster"
+    "C05|client_state_pressure_300k_hashmap|Client usecase state_pressure_300k, HashMap baseline, isolated cluster"
+    "C06|client_state_pressure_300k_forl0|Client usecase state_pressure_300k, ForL0 tuned config, isolated cluster"
+    "C07|client_state_pressure_1m_hashmap|Client usecase state_pressure_1m, HashMap baseline, isolated cluster"
+    "C08|client_state_pressure_1m_forl0|Client usecase state_pressure_1m, ForL0 tuned config, isolated cluster"
+    "C09|client_scalar_probe_1m_hashmap|Client usecase scalar_state_probe_1m, HashMap baseline, isolated cluster"
+    "C10|client_scalar_probe_1m_forl0|Client usecase scalar_state_probe_1m, ForL0 tuned config, isolated cluster"
+    "C11|client_scalar_probe_2m_ops64_hashmap|Client usecase scalar_state_probe_2m_ops64, HashMap baseline, isolated cluster"
+    "C12|client_scalar_probe_2m_ops64_forl0|Client usecase scalar_state_probe_2m_ops64, ForL0 tuned config, isolated cluster"
 )
 
 usage() {
@@ -61,7 +87,7 @@ Common options:
                           Default: forl0_tps_probe. Deep no-Full-GC pressure
                           scenarios are opt-in because they can OOM 16GB TMs.
   --workloads LIST        Run selected numbered Ascend reproduction workloads.
-                          Example: --workloads N01,N02
+                          Example: --workloads W01,W02,N01,N02,C01,C02
   --list-workloads        Print numbered Ascend reproduction workloads and exit.
 
 Run modes:
@@ -167,10 +193,36 @@ run_ascend_workload() {
     local args=()
 
     case "$id" in
+        W01) args=(--test wordcount --scenario contract_baseline --backend hashmap) ;;
+        W02) args=(--test wordcount --scenario contract_baseline --backend forl0) ;;
+        W03) args=(--test wordcount --scenario stateful_counter --backend hashmap) ;;
+        W04) args=(--test wordcount --scenario stateful_counter --backend forl0) ;;
+        W05) args=(--test wordcount --scenario high_cardinality --backend hashmap) ;;
+        W06) args=(--test wordcount --scenario high_cardinality --backend forl0) ;;
         N01) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend hashmap) ;;
         N02) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend forl0) ;;
         N03) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend hashmap) ;;
         N04) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend forl0) ;;
+        N05) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q4 --backend hashmap) ;;
+        N06) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q4 --backend forl0) ;;
+        N07) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q18 --backend hashmap) ;;
+        N08) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q18 --backend forl0) ;;
+        N09) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q19 --backend hashmap) ;;
+        N10) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q19 --backend forl0) ;;
+        N11) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q20 --backend hashmap) ;;
+        N12) args=(--test nexmark --scenario forl0_no_full_gc_promising --query q20 --backend forl0) ;;
+        C01) args=(--test client_usecase --scenario contract_baseline --backend hashmap) ;;
+        C02) args=(--test client_usecase --scenario contract_baseline --backend forl0) ;;
+        C03) args=(--test client_usecase --scenario forl0_optimized --backend hashmap) ;;
+        C04) args=(--test client_usecase --scenario forl0_optimized --backend forl0) ;;
+        C05) args=(--test client_usecase --scenario state_pressure_300k --backend hashmap) ;;
+        C06) args=(--test client_usecase --scenario state_pressure_300k --backend forl0) ;;
+        C07) args=(--test client_usecase --scenario state_pressure_1m --backend hashmap) ;;
+        C08) args=(--test client_usecase --scenario state_pressure_1m --backend forl0) ;;
+        C09) args=(--test client_usecase --scenario scalar_state_probe_1m --backend hashmap) ;;
+        C10) args=(--test client_usecase --scenario scalar_state_probe_1m --backend forl0) ;;
+        C11) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64 --backend hashmap) ;;
+        C12) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64 --backend forl0) ;;
         *) die "unknown Ascend reproduction workload id: $id" ;;
     esac
 
