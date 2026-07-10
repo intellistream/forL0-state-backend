@@ -53,6 +53,31 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>unpack-customer-classes</id>
+                        <phase>process-classes</phase>
+                        <configuration>
+                            <target>
+                                <unzip src="${customer.jar}" dest="${project.build.outputDirectory}">
+                                    <patternset>
+                                        <exclude name="META-INF/*.SF"/>
+                                        <exclude name="META-INF/*.DSA"/>
+                                        <exclude name="META-INF/*.RSA"/>
+                                    </patternset>
+                                </unzip>
+                            </target>
+                        </configuration>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.5.0</version>
                 <executions>

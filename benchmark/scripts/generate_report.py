@@ -138,33 +138,44 @@ def load_results():
         except Exception as e:
             print(f"Warning: Could not load {filepath}: {e}")
     
-    # Load NexMark results from nexmark_* directories
+    # Load NexMark results from all nexmark_* directories.  The Ascend
+    # reproduction suite intentionally runs each query/backend in an isolated
+    # cluster, so one complete suite produces many small result directories.
     nexmark_dirs = sorted(benchmark_results_dir.glob('nexmark_*'), reverse=True)
-    if nexmark_dirs:
-        # Use the latest nexmark results directory
-        latest_nexmark_dir = nexmark_dirs[0]
-        nexmark_results_file = latest_nexmark_dir / 'nexmark_results.json'
-        if nexmark_results_file.exists():
-            try:
-                with open(nexmark_results_file, 'r') as f:
-                    nexmark_data = json.load(f)
-                
-                # Parse NexMark results format
-                for backend in ['hashmap', 'forl0']:
-                    if backend in nexmark_data.get('results', {}):
-                        backend_results = nexmark_data['results'][backend]
-                        query_results = backend_results.get('query_results', {})
-                        for query, qdata in query_results.items():
-                            results['nexmark'][backend][query] = {
-                                'query': query,
-                                'throughput': qdata.get('throughput', qdata.get('events_per_sec', 0)),
-                                'throughput_per_core': qdata.get('throughput_per_core', 0),
-                                'time_seconds': qdata.get('time_seconds', 0),
-                                'events_num': qdata.get('events_num', 0),
-                            }
-                print(f"Loaded NexMark results from: {latest_nexmark_dir.name}")
-            except Exception as e:
-                print(f"Warning: Could not load NexMark results: {e}")
+    loaded_nexmark_dirs = 0
+    for nexmark_dir in nexmark_dirs:
+        nexmark_results_file = nexmark_dir / 'nexmark_results.json'
+        if not nexmark_results_file.exists():
+            continue
+        try:
+            with open(nexmark_results_file, 'r') as f:
+                nexmark_data = json.load(f)
+
+            loaded_from_dir = False
+            for backend in ['hashmap', 'forl0']:
+                if backend not in nexmark_data.get('results', {}):
+                    continue
+                backend_results = nexmark_data['results'][backend]
+                query_results = backend_results.get('query_results', {})
+                for query, qdata in query_results.items():
+                    if query in results['nexmark'][backend]:
+                        continue
+                    results['nexmark'][backend][query] = {
+                        'query': query,
+                        'throughput': qdata.get('throughput', qdata.get('events_per_sec', 0)),
+                        'throughput_per_core': qdata.get('throughput_per_core', 0),
+                        'time_seconds': qdata.get('time_seconds', 0),
+                        'events_num': qdata.get('events_num', 0),
+                        'scenario_name': nexmark_data.get('scenario_name', ''),
+                        'source_dir': nexmark_dir.name,
+                    }
+                    loaded_from_dir = True
+            if loaded_from_dir:
+                loaded_nexmark_dirs += 1
+        except Exception as e:
+            print(f"Warning: Could not load NexMark results from {nexmark_dir.name}: {e}")
+    if loaded_nexmark_dirs:
+        print(f"Loaded NexMark results from {loaded_nexmark_dirs} directories")
     
     return results
 
