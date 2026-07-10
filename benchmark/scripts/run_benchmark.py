@@ -366,12 +366,24 @@ Examples:
             # Store results in our format
             for backend, metrics in nexmark_results.items():
                 results['nexmark'][backend] = metrics
+            failed = {
+                backend: metrics.get('failed_queries', [])
+                for backend, metrics in nexmark_results.items()
+                if metrics.get('failed_queries')
+            }
+            if failed:
+                print(f"\n[Error] NexMark failed queries: {failed}")
+                sys.exit(1)
         except FileNotFoundError as e:
             print(f"\n[Warning] NexMark not available: {e}")
             print("To run NexMark, first compile it:")
             print("  cd benchmark/nexmark-src && mvn clean package -DskipTests")
+            if args.test == 'nexmark':
+                sys.exit(1)
         except Exception as e:
             print(f"\n[Error] NexMark failed: {e}")
+            if args.test == 'nexmark':
+                sys.exit(1)
 
     # Run client usecase benchmark
     if args.test == 'client_usecase' or run_app_suite:

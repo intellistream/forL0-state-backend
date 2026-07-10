@@ -192,9 +192,9 @@ if [[ -z "$DOCKER_BIN" ]]; then
 fi
 
 BACKEND_JAR="$(pick_first_file \
-    "${REPO_ROOT}/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
     "${REPO_ROOT}/docker/deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
-    "${REPO_ROOT}/docker/deploy/flink-statebackend-forl0-1.0-SNAPSHOT.jar")"
+    "${REPO_ROOT}/docker/deploy/flink-statebackend-forl0-1.0-SNAPSHOT.jar" \
+    "${REPO_ROOT}/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar")"
 
 NATIVE_LIB="$(pick_first_file \
     "${REPO_ROOT}/src/main/resources/native/libforl0_engine.so" \
