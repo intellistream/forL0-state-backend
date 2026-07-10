@@ -261,6 +261,58 @@ def wait_for_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> 
     return {'state': 'TIMEOUT'}
 
 
+def all_sources_finished(job_status: dict) -> bool:
+    """Return true when all source vertices report FINISHED."""
+    vertices = job_status.get('vertices', [])
+    source_vertices = [vertex for vertex in vertices if vertex.get('name', '').startswith('Source:')]
+    return bool(source_vertices) and all(vertex.get('status') == 'FINISHED' for vertex in source_vertices)
+
+
+def wait_for_bounded_job_completion(rest_url: str, job_id: str, timeout: int = 3600) -> tuple[str, bool, float]:
+    """
+    Poll a detached WordCount job until bounded input is consumed.
+
+    Sliding processing-time windows can keep the streaming job RUNNING after
+    the bounded source has finished.  Treat source completion as the benchmark
+    end point, cancel the job for cleanup, and let the sink close print the
+    machine-readable result.
+    """
+    start_time = time.time()
+    bounded_completion_time = None
+    auto_stopped = False
+    last_state = None
+
+    while time.time() - start_time < timeout:
+        job_status = get_job_status(rest_url, job_id)
+        state = job_status.get('state', 'UNKNOWN')
+
+        if state != last_state:
+            print(f"  Job state: {state}")
+            last_state = state
+
+        if state in ('FAILED', 'FINISHED'):
+            effective_end = bounded_completion_time or time.time()
+            return state, auto_stopped, effective_end - start_time
+
+        if state == 'CANCELED':
+            effective_end = bounded_completion_time or time.time()
+            return ('AUTO_STOPPED' if auto_stopped else 'CANCELED'), auto_stopped, effective_end - start_time
+
+        if bounded_completion_time is None and all_sources_finished(job_status):
+            bounded_completion_time = time.time()
+            print("  All sources finished; cancelling job for clean bounded benchmark shutdown...")
+            auto_stopped = cancel_job(rest_url, job_id)
+            if not auto_stopped:
+                print("  WARNING: auto-cancel request failed; waiting for terminal state")
+
+        time.sleep(2)
+
+    if cancel_job(rest_url, job_id):
+        print("  Timed out; cancellation requested for lingering WordCount job")
+    effective_end = bounded_completion_time or time.time()
+    return 'TIMEOUT', auto_stopped, effective_end - start_time
+
+
 def parse_job_runtime(output: str, wc_config: dict, runtime_config: dict) -> Optional[dict]:
     """Parse Job Runtime from flink run output and calculate metrics."""
     import re
@@ -292,6 +344,39 @@ def parse_job_runtime(output: str, wc_config: dict, runtime_config: dict) -> Opt
             'p99': None,
             'max': None
         }
+    }
+
+
+def build_wall_time_result(
+    wc_config: dict,
+    runtime_config: dict,
+    wall_time_seconds: float,
+    job_id: str,
+    final_state: str,
+    auto_stopped: bool,
+) -> dict:
+    """Build a result from REST-monitored wall time when sink JSON is unavailable."""
+    num_records = wc_config.get('num_records', 10000000)
+    parallelism = runtime_config.get('parallelism', 2)
+    throughput = num_records / wall_time_seconds if wall_time_seconds > 0 else 0
+    throughput_per_core = throughput / parallelism if parallelism > 0 else 0
+
+    return {
+        'benchmark': 'wordcount',
+        'total_time_seconds': wall_time_seconds,
+        'total_records': num_records,
+        'parallelism': parallelism,
+        'throughput': throughput,
+        'throughput_per_core': throughput_per_core,
+        'job_id': job_id,
+        'job_state': final_state,
+        'auto_stopped': auto_stopped,
+        'latency_ms': {
+            'p50': None,
+            'p95': None,
+            'p99': None,
+            'max': None,
+        },
     }
 
 
@@ -714,16 +799,20 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
             vtune_thread.start()
             print(f"  VTune profiling will start in background (20s delay)")
         
-        # Submit job (blocking mode - wait for completion)
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=3600
+        timeout_seconds = int(wc_config.get('timeout_seconds', runtime_config.get('wordcount_timeout_seconds', 3600)))
+        job_id = submit_job_async(cmd, rest_url)
+        if not job_id:
+            print("ERROR: Failed to submit WordCount job")
+            return None
+
+        print(f"  Job submitted: {job_id}")
+        final_state, auto_stopped, wall_time = wait_for_bounded_job_completion(
+            rest_url,
+            job_id,
+            timeout=timeout_seconds,
         )
-        
-        output = result.stdout + result.stderr
-        print(output)
+
+        output = ""
         
         # [BENCHMARK_TEST] Stop profiler first (generates flame graph)
         if container_profiler_session:
@@ -755,12 +844,26 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
             if vtune_result_dir:
                 print(f"  VTune results saved to: {vtune_result_dir}")
         
+        if final_state in ('FAILED', 'TIMEOUT', 'CANCELED'):
+            print(f"ERROR: Job ended with state: {final_state}")
+            return None
+
         # Parse result - first try from TaskManager log (has full metrics)
         benchmark_result = parse_taskmanager_log(flink_home, wc_config, runtime_config)
         
         # If no result from log, try to parse Job Runtime from flink run output
         if not benchmark_result:
             benchmark_result = parse_job_runtime(output, wc_config, runtime_config)
+
+        if not benchmark_result:
+            benchmark_result = build_wall_time_result(
+                wc_config,
+                runtime_config,
+                wall_time,
+                job_id,
+                final_state,
+                auto_stopped,
+            )
         
         # Parse latency samples file path from output
         latency_file = parse_latency_file_path(output, flink_home)
