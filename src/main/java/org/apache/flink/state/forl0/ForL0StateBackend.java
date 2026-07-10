@@ -63,6 +63,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
     private final int initialTableCapacity;
+    private final boolean hotCacheMetricsEnabled;
 
     // -----------------------------------------------------------------------
 
@@ -83,6 +84,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         this.l0CacheEnabled = ForL0Options.L0_CACHE_ENABLED.defaultValue();
         this.l0CacheSize = ForL0Options.L0_CACHE_SIZE.defaultValue().getBytes();
         this.initialTableCapacity = ForL0Options.INITIAL_TABLE_CAPACITY.defaultValue();
+        this.hotCacheMetricsEnabled = ForL0Options.HOT_CACHE_METRICS_ENABLED.defaultValue();
         LOG.info("[ForL0] ForL0StateBackend created (asyncSnapshots={})", asyncSnapshots);
     }
 
@@ -100,6 +102,8 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                 .orElse(original.l0CacheSize);
         this.initialTableCapacity = config.getOptional(ForL0Options.INITIAL_TABLE_CAPACITY)
                 .orElse(original.initialTableCapacity);
+        this.hotCacheMetricsEnabled = config.getOptional(ForL0Options.HOT_CACHE_METRICS_ENABLED)
+                .orElse(original.hotCacheMetricsEnabled);
         if (!ForL0Options.isValidTableCapacity(initialTableCapacity)) {
             throw new IllegalConfigurationException(
                     "Invalid ForL0 initial table capacity: " + initialTableCapacity
@@ -163,6 +167,7 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                     l0CacheEnabled,
                     l0CacheSize,
                     initialTableCapacity,
+                    hotCacheMetricsEnabled,
                     parameters.getCancelStreamRegistry(),
                     parameters.getMetricGroup())
                     .build();

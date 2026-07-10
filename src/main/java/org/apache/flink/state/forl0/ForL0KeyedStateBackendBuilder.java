@@ -73,6 +73,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
     private final int initialTableCapacity;
+    private final boolean hotCacheMetricsEnabled;
     /** Optional metric group for registering HotCache gauges. May be null in tests. */
     private final MetricGroup metricGroup;
 
@@ -96,7 +97,9 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this(kvStateRegistry, keySerializer, userCodeClassLoader, numberOfKeyGroups,
                 keyGroupRange, executionConfig, ttlTimeProvider, latencyTrackingStateConfig,
                 stateHandles, keyGroupCompressionDecorator, priorityQueueSetFactory,
-                asynchronousSnapshots, l0CacheEnabled, l0CacheSize, initialTableCapacity, cancelStreamRegistry,
+                asynchronousSnapshots, l0CacheEnabled, l0CacheSize, initialTableCapacity,
+                ForL0Options.HOT_CACHE_METRICS_ENABLED.defaultValue(),
+                cancelStreamRegistry,
                 /* metricGroup */ null);
     }
 
@@ -140,6 +143,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             boolean l0CacheEnabled,
             long l0CacheSize,
             int initialTableCapacity,
+            boolean hotCacheMetricsEnabled,
             CloseableRegistry cancelStreamRegistry,
             MetricGroup metricGroup) {
         super(
@@ -159,6 +163,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.l0CacheEnabled = l0CacheEnabled;
         this.l0CacheSize = l0CacheSize;
         this.initialTableCapacity = initialTableCapacity;
+        this.hotCacheMetricsEnabled = hotCacheMetricsEnabled;
         this.metricGroup = metricGroup;
     }
 
@@ -184,6 +189,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 stateHandles, keyGroupCompressionDecorator, priorityQueueSetFactory,
                 asynchronousSnapshots, l0CacheEnabled, l0CacheSize,
                 ForL0Options.INITIAL_TABLE_CAPACITY.defaultValue(),
+                ForL0Options.HOT_CACHE_METRICS_ENABLED.defaultValue(),
                 cancelStreamRegistry,
                 metricGroup);
     }
@@ -205,9 +211,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 engineHandle, startKeyGroup, startKeyGroup + numKeyGroups, numberOfKeyGroups,
                 l0CacheEnabled, initialTableCapacity);
 
-        // Register HotCache gauges on the provided MetricGroup (design §8).
-        // Always register so users can see whether the cache actually came up.
-        if (metricGroup != null) {
+        if (hotCacheMetricsEnabled && metricGroup != null) {
             registerHotCacheMetrics(metricGroup, engineHandle);
         }
 

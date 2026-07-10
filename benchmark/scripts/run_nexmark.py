@@ -321,6 +321,7 @@ FORL0_CONFIG_MAPPING = {
     'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
     'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
     'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
+    'metrics_collector_enabled': 'forL0.metricsCollector.enabled',
 }
 
 

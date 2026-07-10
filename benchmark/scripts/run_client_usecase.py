@@ -53,6 +53,7 @@ def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'clien
         'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
         'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
         'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
+        'metrics_collector_enabled': 'forL0.metricsCollector.enabled',
     }
 
     args = []
@@ -63,7 +64,6 @@ def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'clien
                 value = 'true' if value else 'false'
             args.append(f'-D{flink_key}={value}')
 
-    args.append('-DforL0.metricsCollector.enabled=true')
     return args
 
 

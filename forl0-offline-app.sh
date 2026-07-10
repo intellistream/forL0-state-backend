@@ -55,8 +55,8 @@ ASCEND_REPRO_WORKLOADS=(
     "C06|client_state_pressure_300k_forl0|Client usecase state_pressure_300k, ForL0 tuned config, isolated cluster"
     "C07|client_state_pressure_1m_hashmap|Client usecase state_pressure_1m, HashMap baseline, isolated cluster"
     "C08|client_state_pressure_1m_forl0|Client usecase state_pressure_1m, ForL0 tuned config, isolated cluster"
-    "C09|client_scalar_ops16_batch_hashmap|Client usecase scalar_state_probe_2m_ops16_batch, HashMap baseline, isolated cluster"
-    "C10|client_scalar_ops16_batch_forl0|Client usecase scalar_state_probe_2m_ops16_batch, ForL0 batched MapState config, isolated cluster"
+    "C09|client_hotspot_drift_1m_hashmap|Client usecase hotspot_drift_1m, HashMap baseline, isolated cluster"
+    "C10|client_hotspot_drift_1m_forl0|Client usecase hotspot_drift_1m, ForL0 tuned config, isolated cluster"
 )
 
 usage() {
@@ -205,8 +205,8 @@ run_ascend_workload() {
         C06) args=(--test client_usecase --scenario state_pressure_300k --backend forl0) ;;
         C07) args=(--test client_usecase --scenario state_pressure_1m --backend hashmap) ;;
         C08) args=(--test client_usecase --scenario state_pressure_1m --backend forl0) ;;
-        C09) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16_batch --backend hashmap) ;;
-        C10) args=(--test client_usecase --scenario scalar_state_probe_2m_ops16_batch --backend forl0) ;;
+        C09) args=(--test client_usecase --scenario hotspot_drift_1m --backend hashmap) ;;
+        C10) args=(--test client_usecase --scenario hotspot_drift_1m --backend forl0) ;;
         *) die "unknown Ascend reproduction workload id: $id" ;;
     esac
 

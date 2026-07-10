@@ -53,6 +53,12 @@ public class ForL0Options {
                     .defaultValue(MemorySize.ofMebiBytes(20))
                     .withDescription("Size of L0 Cache memory pool. Examples: 20mb, 64mb.");
 
+    public static final ConfigOption<Boolean> HOT_CACHE_METRICS_ENABLED =
+            ConfigOptions.key("forL0.metricsCollector.enabled")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription("Whether to register ForL0 HotCache gauges. Keep disabled for performance runs.");
+
     // ========== Internal Constants ==========
 
     /** Minimum table capacity. */
