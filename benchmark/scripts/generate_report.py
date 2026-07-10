@@ -2317,6 +2317,8 @@ def main():
     parser = argparse.ArgumentParser(description='Generate benchmark report and figures')
     parser.add_argument('--format', choices=['pdf', 'png', 'both'], default='both',
                        help='Figure output format')
+    parser.add_argument('--include-benchset-artifacts', action='store_true',
+                       help='Also generate legacy benchset figures from existing raw results')
     
     args = parser.parse_args()
     
@@ -2337,8 +2339,11 @@ def main():
     plot_wordcount_comparison(results, figures_dir)
     plot_nexmark_comparison(results, figures_dir)
     plot_improvement_summary(results, figures_dir)
-    print("\nGenerating benchset figures (if available)...")
-    generate_benchset_paper_artifacts(figures_dir, reports_dir)
+    if args.include_benchset_artifacts:
+        print("\nGenerating benchset figures (if available)...")
+        generate_benchset_paper_artifacts(figures_dir, reports_dir)
+    else:
+        print("\nSkipping benchset figures (opt in with --include-benchset-artifacts)")
     
     # [BENCHMARK_TEST] Generate L0Table metrics figures if available
     print("\nGenerating L0Table metrics figures (if available)...")

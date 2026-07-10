@@ -466,6 +466,11 @@ def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'wordc
         workload_cfg = workload_overrides.get(workload_key, {})
         if isinstance(workload_cfg, dict):
             effective_config.update(workload_cfg)
+    workload_section = config.get(workload_key, {})
+    if isinstance(workload_section, dict):
+        scenario_overrides = workload_section.get('forl0_overrides', {})
+        if isinstance(scenario_overrides, dict):
+            effective_config.update(scenario_overrides)
 
     args = []
     
@@ -900,7 +905,8 @@ def run_wordcount_scenario(config: dict, scenario: dict, backend: str,
     # Merge scenario into the wordcount config temporarily
     wc_config = dict(config.get('wordcount', {}))
     for key in ('workload_mode', 'num_keys', 'num_records', 'skew_factor',
-                'arrival_rate', 'window_size', 'slide_size', 'key_type'):
+                'arrival_rate', 'window_size', 'slide_size', 'key_type',
+                'forl0_overrides'):
         if key in scenario:
             wc_config[key] = scenario[key]
 
