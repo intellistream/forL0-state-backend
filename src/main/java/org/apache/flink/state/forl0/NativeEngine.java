@@ -477,9 +477,13 @@ public final class NativeEngine {
 
     public static native void valuePutFixedRowLong(long stateHandle, long[] keyFields, int keyGroup, long value);
 
+    public static native void valuePutFixedRow2Long(long stateHandle, long key0, long key1, int keyGroup, long value);
+
     public static native boolean valueContainsFixedRow(long stateHandle, long[] keyFields, int keyGroup);
 
     public static native void valueClearFixedRow(long stateHandle, long[] keyFields, int keyGroup);
+
+    public static native void valueClearFixedRow2(long stateHandle, long key0, long key1, int keyGroup);
 
     // --- FixedLengthRow key + double value (VoidNamespace) ---
 
@@ -487,20 +491,33 @@ public final class NativeEngine {
 
     public static native void valuePutFixedRowDouble(long stateHandle, long[] keyFields, int keyGroup, double value);
 
+    public static native void valuePutFixedRow2Double(long stateHandle, long key0, long key1, int keyGroup, double value);
+
     // --- FixedLengthRow key + generic value (VoidNamespace) ---
 
     public static native byte[] valueGetFixedRowGeneric(long stateHandle, long[] keyFields, int keyGroup);
 
+    public static native byte[] valueGetFixedRow2Generic(long stateHandle, long key0, long key1, int keyGroup);
+
     public static native void valuePutFixedRowGeneric(long stateHandle, long[] keyFields, int keyGroup, byte[] value);
+
+    public static native void valuePutFixedRow2Generic(long stateHandle, long key0, long key1, int keyGroup, byte[] value);
 
     // --- FixedLengthRow combined get: single JNI call, single hash lookup ---
 
     public static native boolean valueGetFixedRowLongSafe(long stateHandle, long[] keyFields, int keyGroup, long[] out);
 
+    public static native boolean valueGetFixedRow2LongSafe(long stateHandle, long key0, long key1, int keyGroup, long[] out);
+
     public static native boolean valueGetFixedRowDoubleSafe(long stateHandle, long[] keyFields, int keyGroup, long[] out);
+
+    public static native boolean valueGetFixedRow2DoubleSafe(long stateHandle, long key0, long key1, int keyGroup, long[] out);
 
     /** Zero-copy pointer return for FixedRow key + string value. Writes [address, size] to out. */
     public static native boolean valueGetFixedRowGenericPtr(long stateHandle, long[] keyFields, int keyGroup, long[] out);
+
+    /** Zero-copy pointer return for arity=2 FixedRow key + string value. Writes [address, size] to out. */
+    public static native boolean valueGetFixedRow2GenericPtr(long stateHandle, long key0, long key1, int keyGroup, long[] out);
 
     // ========================================================================
     //  TimeWindow namespace operations (*WithTW suffix)

@@ -791,7 +791,7 @@ nexmark_scenarios:
     checkpoint_interval: 0
     reject_full_gc: true
     runtime_overrides:
-      parallelism: 4
+      parallelism: 8
     person_proportion: 1
     auction_proportion: 9
     bid_proportion: 90
@@ -821,7 +821,7 @@ nexmark_scenarios:
         bid_hot_ratio_bidders: 24
         auction_hot_ratio_sellers: 8
         metric_monitor_delay: 15s
-        metric_monitor_duration: 90s
+        metric_monitor_duration: 60s
       q19:
         tps: 2400000
         person_proportion: 1
@@ -841,7 +841,7 @@ nexmark_scenarios:
         metric_monitor_delay: 25s
         metric_monitor_duration: 90s
     flink_config_overrides:
-      parallelism.default: 4
+      parallelism.default: 8
       taskmanager.numberOfTaskSlots: 4
       table.exec.mini-batch.enabled: false
       table.optimizer.distinct-agg.split.enabled: false

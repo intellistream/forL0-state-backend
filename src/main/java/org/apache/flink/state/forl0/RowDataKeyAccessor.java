@@ -21,6 +21,7 @@ import org.apache.flink.table.types.logical.LogicalType;
  * </ul>
  */
 public final class RowDataKeyAccessor {
+    private static final int MAX_FIXED_ROW_ARITY = 8;
 
     /** Strategy types determined at construction time. */
     public enum Strategy {
@@ -77,7 +78,7 @@ public final class RowDataKeyAccessor {
             }
         }
 
-        if (allFixed) {
+        if (allFixed && arity <= MAX_FIXED_ROW_ARITY) {
             return new RowDataKeyAccessor(Strategy.FIXED_LENGTH_ROW, arity, fieldTypes);
         }
 
@@ -123,6 +124,11 @@ public final class RowDataKeyAccessor {
             fieldBuffer[i] = extractFieldAsLong(row, i, fieldTypes[i]);
         }
         return fieldBuffer;
+    }
+
+    /** Extract one fixed-length field without materializing the reusable field array. */
+    public long extractFixedField(Object key, int pos) {
+        return extractFieldAsLong((RowData) key, pos, fieldTypes[pos]);
     }
 
     /**

@@ -61,6 +61,7 @@ public final class TypeAnalyzer {
     public static final int TYPE_LIST     = 11;
     public static final int TYPE_MAP      = 12;
     public static final int TYPE_FIXED_ROW = 13;
+    private static final int MAX_FIXED_ROW_ARITY = 8;
     public static final int TYPE_VOID_NS  = 20;
     public static final int TYPE_TIME_WINDOW = 21;
 
@@ -160,7 +161,12 @@ public final class TypeAnalyzer {
             }
         }
 
-        return TYPE_FIXED_ROW;
+        if (fieldTypes.length <= MAX_FIXED_ROW_ARITY) {
+            return TYPE_FIXED_ROW;
+        }
+        LOG.info("[ForL0] RowData fixed-length arity {} exceeds native FixedRow limit {}, using generic path.",
+                fieldTypes.length, MAX_FIXED_ROW_ARITY);
+        return -1;
     }
 
     /**

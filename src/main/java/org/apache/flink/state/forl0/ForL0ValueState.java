@@ -73,6 +73,7 @@ public class ForL0ValueState<K, N, V>
         INT_VOID,            // voidNamespace, key=Int
         ROWDATA_LONG_VOID,   // voidNamespace, RowData key → extractSingleLong
         ROWDATA_INT_VOID,    // voidNamespace, RowData key → extractSingleInt
+        ROWDATA_FIXED2_VOID, // voidNamespace, RowData key → two fixed fields without JNI array access
         ROWDATA_FIXED_VOID,  // voidNamespace, RowData key → extractFixedFields
         LONG_TW,             // TimeWindow namespace, key=Long
         GENERIC              // fallback (generic namespace / unsupported key type)
@@ -114,7 +115,11 @@ public class ForL0ValueState<K, N, V>
             switch (rowDataKeyAccessor.getStrategy()) {
                 case SINGLE_LONG: this.keyNsStrategy = KeyNsStrategy.ROWDATA_LONG_VOID; break;
                 case SINGLE_INT:  this.keyNsStrategy = KeyNsStrategy.ROWDATA_INT_VOID;  break;
-                case FIXED_LENGTH_ROW: this.keyNsStrategy = KeyNsStrategy.ROWDATA_FIXED_VOID; break;
+                case FIXED_LENGTH_ROW:
+                    this.keyNsStrategy = rowDataKeyAccessor.getArity() == 2
+                            ? KeyNsStrategy.ROWDATA_FIXED2_VOID
+                            : KeyNsStrategy.ROWDATA_FIXED_VOID;
+                    break;
                 default: this.keyNsStrategy = KeyNsStrategy.GENERIC; break;
             }
         } else if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64) {
@@ -143,6 +148,11 @@ public class ForL0ValueState<K, N, V>
                     return valueForLongKey(rowDataKeyAccessor.extractSingleLong(key), keyGroup);
                 case ROWDATA_INT_VOID:
                     return valueForIntKey(rowDataKeyAccessor.extractSingleInt(key), keyGroup);
+                case ROWDATA_FIXED2_VOID:
+                    return valueForFixedRow2Key(
+                            rowDataKeyAccessor.extractFixedField(key, 0),
+                            rowDataKeyAccessor.extractFixedField(key, 1),
+                            keyGroup);
                 case ROWDATA_FIXED_VOID:
                     return valueForFixedRowKey(rowDataKeyAccessor.extractFixedFields(key), keyGroup);
                 case LONG_TW: {
@@ -277,6 +287,40 @@ public class ForL0ValueState<K, N, V>
 
     /** Get value for a FixedLengthRow key. */
     @SuppressWarnings("unchecked")
+    private V valueForFixedRow2Key(long key0, long key1, int keyGroup) throws IOException {
+        if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
+            if (!NativeEngine.valueGetFixedRow2LongSafe(stateHandle, key0, key1, keyGroup, primitiveBuf)) {
+                return getDefaultValue();
+            }
+            if (isRowDataValue) {
+                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+            }
+            return (V) Long.valueOf(primitiveBuf[0]);
+        }
+        if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
+            if (!NativeEngine.valueGetFixedRow2DoubleSafe(stateHandle, key0, key1, keyGroup, primitiveBuf)) {
+                return getDefaultValue();
+            }
+            if (isRowDataValue) {
+                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+            }
+            return (V) Double.valueOf(Double.longBitsToDouble(primitiveBuf[0]));
+        }
+        if (isRowDataValue) {
+            if (NativeEngine.valueGetFixedRow2GenericPtr(stateHandle, key0, key1, keyGroup, nativePtrBuf)) {
+                return wrapNativePtr();
+            }
+            return getDefaultValue();
+        }
+        byte[] valueBytes = NativeEngine.valueGetFixedRow2Generic(stateHandle, key0, key1, keyGroup);
+        if (valueBytes == null) {
+            return getDefaultValue();
+        }
+        return deserializeValue(valueBytes);
+    }
+
+    /** Get value for a FixedLengthRow key. */
+    @SuppressWarnings("unchecked")
     private V valueForFixedRowKey(long[] fields, int keyGroup) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
             if (!NativeEngine.valueGetFixedRowLongSafe(stateHandle, fields, keyGroup, primitiveBuf)) {
@@ -396,6 +440,13 @@ public class ForL0ValueState<K, N, V>
                 case ROWDATA_INT_VOID:
                     updateForIntKey(rowDataKeyAccessor.extractSingleInt(key), keyGroup, value);
                     return;
+                case ROWDATA_FIXED2_VOID:
+                    updateForFixedRow2Key(
+                            rowDataKeyAccessor.extractFixedField(key, 0),
+                            rowDataKeyAccessor.extractFixedField(key, 1),
+                            keyGroup,
+                            value);
+                    return;
                 case ROWDATA_FIXED_VOID:
                     updateForFixedRowKey(rowDataKeyAccessor.extractFixedFields(key), keyGroup, value);
                     return;
@@ -460,6 +511,26 @@ public class ForL0ValueState<K, N, V>
     }
 
     /** Put value for a FixedLengthRow key. */
+    private void updateForFixedRow2Key(long key0, long key1, int keyGroup, V value) throws IOException {
+        if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
+            long raw = isRowDataValue
+                    ? rowDataValueAccessor.extractSingleLong(value)
+                    : (Long) value;
+            NativeEngine.valuePutFixedRow2Long(stateHandle, key0, key1, keyGroup, raw);
+            return;
+        }
+        if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
+            double raw = isRowDataValue
+                    ? Double.longBitsToDouble(rowDataValueAccessor.extractSingleLong(value))
+                    : (Double) value;
+            NativeEngine.valuePutFixedRow2Double(stateHandle, key0, key1, keyGroup, raw);
+            return;
+        }
+        byte[] valueBytes = serializeValue(value);
+        NativeEngine.valuePutFixedRow2Generic(stateHandle, key0, key1, keyGroup, valueBytes);
+    }
+
+    /** Put value for a FixedLengthRow key. */
     private void updateForFixedRowKey(long[] fields, int keyGroup, V value) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
             long raw = isRowDataValue
@@ -497,6 +568,13 @@ public class ForL0ValueState<K, N, V>
                     return;
                 case ROWDATA_INT_VOID:
                     NativeEngine.valueClearInt(stateHandle, rowDataKeyAccessor.extractSingleInt(key), keyGroup);
+                    return;
+                case ROWDATA_FIXED2_VOID:
+                    NativeEngine.valueClearFixedRow2(
+                            stateHandle,
+                            rowDataKeyAccessor.extractFixedField(key, 0),
+                            rowDataKeyAccessor.extractFixedField(key, 1),
+                            keyGroup);
                     return;
                 case ROWDATA_FIXED_VOID:
                     NativeEngine.valueClearFixedRow(stateHandle, rowDataKeyAccessor.extractFixedFields(key), keyGroup);
