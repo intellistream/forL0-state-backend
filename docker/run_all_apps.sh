@@ -37,6 +37,22 @@ EXPECTED_TASKMANAGERS="${FORL0_EXPECTED_TASKMANAGERS:-2}"
 EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
 RESTART_CLUSTER=false
 CLEANUP_ON_EXIT=false
+USER_FLINK_TASKMANAGER_CONTAINER="${FLINK_TASKMANAGER_CONTAINER:-}"
+
+load_local_env() {
+    local env_file="${REPO_ROOT}/docker/forl0-local.env"
+    [[ -f "$env_file" ]] || return 0
+
+    # shellcheck disable=SC1091
+    source "$env_file"
+
+    # server_setup.sh writes a safe default profiler container into
+    # forl0-local.env.  Keep an explicit caller override so profiler probes can
+    # target the TaskManager that actually owns the running workload.
+    if [[ -n "$USER_FLINK_TASKMANAGER_CONTAINER" ]]; then
+        export FLINK_TASKMANAGER_CONTAINER="$USER_FLINK_TASKMANAGER_CONTAINER"
+    fi
+}
 
 print_provenance() {
     echo "============================================================"
@@ -46,6 +62,9 @@ print_provenance() {
     echo "  Test:        ${TEST_NAME}"
     echo "  Backend:     ${BACKEND}"
     echo "  Profile:     ${PROFILE_MODE:-disabled}"
+    if [[ -n "$PROFILE_MODE" && -n "${FLINK_TASKMANAGER_CONTAINER:-}" ]]; then
+        echo "  Profile TM:  ${FLINK_TASKMANAGER_CONTAINER}"
+    fi
     echo "  Offline:     ${OFFLINE_MODE}"
     echo "  Expect TMs:  ${EXPECTED_TASKMANAGERS}"
     echo "  Expect slots:${EXPECTED_SLOTS}"
@@ -407,8 +426,7 @@ trap on_exit EXIT INT TERM
 ensure_healthy_cluster() {
     if ! curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
         echo "[2/5] Flink 集群未运行，启动 docker_run.sh"
-        # shellcheck disable=SC1091
-        source "${REPO_ROOT}/docker/forl0-local.env"
+        load_local_env
         if ! bash "${REPO_ROOT}/docker/docker_run.sh" start; then
             if [[ "$OFFLINE_MODE" == "true" ]]; then
                 echo "✗ Docker 集群启动失败；离线复现实验不切换 standalone，避免污染对比环境。"
@@ -421,8 +439,7 @@ ensure_healthy_cluster() {
         fi
     elif [[ "$RESTART_CLUSTER" == "true" ]]; then
         echo "[2/5] 按要求重启 Flink 集群"
-        # shellcheck disable=SC1091
-        source "${REPO_ROOT}/docker/forl0-local.env"
+        load_local_env
         if bash "${REPO_ROOT}/docker/docker_run.sh" stop && bash "${REPO_ROOT}/docker/docker_run.sh" start; then
             :
         else
@@ -590,10 +607,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -f "${REPO_ROOT}/docker/forl0-local.env" ]]; then
-    # shellcheck disable=SC1091
-    source "${REPO_ROOT}/docker/forl0-local.env"
-fi
+load_local_env
 
 if [[ -n "$FLINK_DIR" ]]; then
     export FLINK_HOME="$FLINK_DIR"
@@ -618,8 +632,7 @@ if [[ ! -f "${REPO_ROOT}/docker/forl0-local.env" ]]; then
     else
         bash "${REPO_ROOT}/docker/server_setup.sh" --no-start
     fi
-    # shellcheck disable=SC1091
-    source "${REPO_ROOT}/docker/forl0-local.env"
+    load_local_env
 fi
 
 if [[ "$PREFLIGHT_ONLY" == "true" ]]; then
