@@ -80,6 +80,13 @@ wordcount_scenarios:
     parallelism: 8
     repeat_runs: 3
     repeat_policy: best
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 256mb
+      l0_memory_max_size: 512mb
+      initial_table_capacity: 2048
+      max_table_capacity: 65536
+      main_table_load_factor_threshold: 0.80
 
   # ---- Checkpointed comparison scenario ----
   # Same primitive ValueState counter, but with periodic checkpoints enabled.
