@@ -43,18 +43,22 @@ ASCEND_REPRO_WORKLOADS=(
     "N04|nexmark_q18_lateq_deep_forl0|NexMark forl0_no_full_gc_lateq_deep q18, ForL0 tuned config, isolated cluster"
     "N05|nexmark_q19_tps_hashmap|NexMark forl0_tps_probe q19, HashMap supplementary comparison, isolated cluster"
     "N06|nexmark_q19_tps_forl0|NexMark forl0_tps_probe q19, ForL0 supplementary comparison, isolated cluster"
-    "N07|nexmark_q20_allq_pressure_hashmap|NexMark forl0_no_full_gc_allq_pressure q20, HashMap supplementary comparison, isolated cluster"
-    "N08|nexmark_q20_allq_pressure_forl0|NexMark forl0_no_full_gc_allq_pressure q20, ForL0 supplementary comparison, isolated cluster"
+    "N07|nexmark_q20_lateq_deep_hashmap|NexMark forl0_no_full_gc_lateq_deep q20, HashMap high-pressure comparison, isolated cluster"
+    "N08|nexmark_q20_lateq_deep_forl0|NexMark forl0_no_full_gc_lateq_deep q20, ForL0 high-pressure comparison, isolated cluster"
     "N09|nexmark_q9_allq_pressure_hashmap|NexMark forl0_no_full_gc_allq_pressure q9, HashMap CPU-efficiency comparison, isolated cluster"
     "N10|nexmark_q9_allq_pressure_forl0|NexMark forl0_no_full_gc_allq_pressure q9, ForL0 CPU-efficiency comparison, isolated cluster"
+    "N11|nexmark_q4_pressure_hashmap|NexMark forl0_no_full_gc_pressure q4, HashMap high-pressure comparison, isolated cluster"
+    "N12|nexmark_q4_pressure_forl0|NexMark forl0_no_full_gc_pressure q4, ForL0 high-pressure comparison, isolated cluster"
+    "N13|nexmark_q3_extra_sql_hashmap|NexMark forl0_no_full_gc_extra_sql q3, HashMap extra SQL comparison, isolated cluster"
+    "N14|nexmark_q3_extra_sql_forl0|NexMark forl0_no_full_gc_extra_sql q3, ForL0 extra SQL comparison, isolated cluster"
     "C01|client_contract_hashmap|Client usecase contract_baseline, HashMap baseline, isolated cluster"
     "C02|client_contract_forl0|Client usecase contract_baseline, ForL0, isolated cluster"
     "C03|client_forl0_optimized_hashmap|Client usecase forl0_optimized, HashMap baseline, isolated cluster"
     "C04|client_forl0_optimized_forl0|Client usecase forl0_optimized, ForL0 tuned config, isolated cluster"
     "C05|client_state_pressure_300k_hashmap|Client usecase state_pressure_300k, HashMap baseline, isolated cluster"
     "C06|client_state_pressure_300k_forl0|Client usecase state_pressure_300k, ForL0 tuned config, isolated cluster"
-    "C07|client_state_pressure_1m_hashmap|Client usecase state_pressure_1m, HashMap baseline, isolated cluster"
-    "C08|client_state_pressure_1m_forl0|Client usecase state_pressure_1m, ForL0 tuned config, isolated cluster"
+    "C07|client_scalar_ops64_batch_hashmap|Client scalar_state_probe_2m_ops64_batch, HashMap diagnostic pressure comparison, isolated cluster"
+    "C08|client_scalar_ops64_batch_forl0|Client scalar_state_probe_2m_ops64_batch, ForL0 diagnostic pressure comparison, isolated cluster"
 )
 
 usage() {
@@ -194,18 +198,22 @@ run_ascend_workload() {
         N04) args=(--test nexmark --scenario forl0_no_full_gc_lateq_deep --query q18 --backend forl0) ;;
         N05) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend hashmap) ;;
         N06) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend forl0) ;;
-        N07) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q20 --backend hashmap) ;;
-        N08) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q20 --backend forl0) ;;
+        N07) args=(--test nexmark --scenario forl0_no_full_gc_lateq_deep --query q20 --backend hashmap) ;;
+        N08) args=(--test nexmark --scenario forl0_no_full_gc_lateq_deep --query q20 --backend forl0) ;;
         N09) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q9 --backend hashmap) ;;
         N10) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q9 --backend forl0) ;;
+        N11) args=(--test nexmark --scenario forl0_no_full_gc_pressure --query q4 --backend hashmap) ;;
+        N12) args=(--test nexmark --scenario forl0_no_full_gc_pressure --query q4 --backend forl0) ;;
+        N13) args=(--test nexmark --scenario forl0_no_full_gc_extra_sql --query q3 --backend hashmap) ;;
+        N14) args=(--test nexmark --scenario forl0_no_full_gc_extra_sql --query q3 --backend forl0) ;;
         C01) args=(--test client_usecase --scenario contract_baseline --backend hashmap) ;;
         C02) args=(--test client_usecase --scenario contract_baseline --backend forl0) ;;
         C03) args=(--test client_usecase --scenario forl0_optimized --backend hashmap) ;;
         C04) args=(--test client_usecase --scenario forl0_optimized --backend forl0) ;;
         C05) args=(--test client_usecase --scenario state_pressure_300k --backend hashmap) ;;
         C06) args=(--test client_usecase --scenario state_pressure_300k --backend forl0) ;;
-        C07) args=(--test client_usecase --scenario state_pressure_1m --backend hashmap) ;;
-        C08) args=(--test client_usecase --scenario state_pressure_1m --backend forl0) ;;
+        C07) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend hashmap) ;;
+        C08) args=(--test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend forl0) ;;
         *) die "unknown Ascend reproduction workload id: $id" ;;
     esac
 

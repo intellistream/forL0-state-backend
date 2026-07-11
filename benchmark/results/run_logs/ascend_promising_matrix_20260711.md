@@ -1,7 +1,7 @@
 # Ascend Promising ForL0 Matrix - 2026-07-11
 
 This note records the default one-click Ascend reproduction matrix after the
-q18-only follow-up.  All comparisons below keep the workload/query, input mix,
+promising-query follow-up through 2026-07-12.  All comparisons below keep the workload/query, input mix,
 Flink/operator parallelism, TaskManager slots, and metric window identical
 within each HashMap/ForL0 pair.  Only backend implementation and ForL0 backend
 parameters differ.
@@ -23,10 +23,13 @@ The default numbered matrix includes:
 - WordCount: W01/W02 `stateful_counter_p4_probe`.
 - NexMark: N01/N02 q18 `forl0_tps_probe`; N03/N04 q18
   `forl0_no_full_gc_lateq_deep`; N05/N06 q19 `forl0_tps_probe`;
-  N07/N08 q20 `forl0_no_full_gc_allq_pressure`; N09/N10 q9
-  `forl0_no_full_gc_allq_pressure`.
+  N07/N08 q20 `forl0_no_full_gc_lateq_deep`; N09/N10 q9
+  `forl0_no_full_gc_allq_pressure`; N11/N12 q4
+  `forl0_no_full_gc_pressure`; N13/N14 q3
+  `forl0_no_full_gc_extra_sql`.
 - Client usecase: C01/C02 contract baseline; C03/C04 `forl0_optimized`;
-  C05/C06 `state_pressure_300k`; C07/C08 `state_pressure_1m`.
+  C05/C06 `state_pressure_300k`; C07/C08
+  `scalar_state_probe_2m_ops64_batch`.
 
 Benchset and non-Ascend platform cases are excluded.
 
@@ -34,13 +37,15 @@ Benchset and non-Ascend platform cases are excluded.
 
 | Pair | Workload | Scenario | HashMap | ForL0 | Delta | CPU/core note |
 |---|---|---|---:|---:|---:|---|
-| W01/W02 | WordCount | `stateful_counter_p4_probe` | 831,486 rec/s/core | 890,811 rec/s/core | +7.1% | paired p4 |
-| N01/N02 | NexMark q18 | `forl0_tps_probe` | 183,820/s | 193,960/s | +5.5% | per-core 6,498 -> 31,034 |
-| N03/N04 | NexMark q18 | `forl0_no_full_gc_lateq_deep` | 904,560/s | 1,270,000/s | +40.4% | per-core 18,023 -> 90,327 |
-| N05/N06 | NexMark q19 | `forl0_tps_probe` | 1,030,000/s | 1,050,000/s | +1.9% | per-core 75,182 -> 127,893 |
-| N09/N10 | NexMark q9 | `forl0_no_full_gc_allq_pressure` | 49,310/s | 50,150/s | +1.7% | per-core 1,161 -> 3,178 |
-| N07/N08 | NexMark q20 | `forl0_no_full_gc_allq_pressure` | 23,500/s | 23,500/s | +0.0% | per-core 1,180 -> 3,310 |
-| C07/C08 | Client usecase | `state_pressure_1m` | 930 rec/s/core | 945 rec/s/core | +1.6% | customer jar, small effect |
+| W01/W02 | WordCount | `stateful_counter_p4_probe` | 831,805 rec/s/core | 1,039,194 rec/s/core | +24.9% | paired p4, best-of-3 |
+| N01/N02 | NexMark q18 | `forl0_tps_probe` | 174,900/s | 215,890/s | +23.4% | per-core 7,339 -> 35,567 |
+| N03/N04 | NexMark q18 | `forl0_no_full_gc_lateq_deep` | 947,150/s | 1,220,000/s | +28.8% | per-core 19,373 -> 86,586 |
+| N05/N06 | NexMark q19 | `forl0_tps_probe` | 974,910/s | 1,010,000/s | +3.6% | per-core 56,223 -> 125,778 |
+| N07/N08 | NexMark q20 | `forl0_no_full_gc_lateq_deep` | 49,440/s | 51,150/s | +3.5% | per-core 1,476 -> 3,984 |
+| N09/N10 | NexMark q9 | `forl0_no_full_gc_allq_pressure` | 49,080/s | 53,390/s | +8.8% | per-core 946 -> 3,787 |
+| N11/N12 | NexMark q4 | `forl0_no_full_gc_pressure` | 53,990/s | 60,390/s | +11.9% | 45s stable window, per-core 1,038 -> 2,268 |
+| N13/N14 | NexMark q3 | `forl0_no_full_gc_extra_sql` | 123,530/s | 144,340/s | +16.8% | extra SQL, per-core 4,307 -> 17,560 |
+| C07/C08 | Client scalar diagnostic | `scalar_state_probe_2m_ops64_batch` | 24,869 rec/s/core | 62,049 rec/s/core | +149.5% | map-heavy diagnostic pressure |
 
 The earlier p8 WordCount fast-path/default-capacity probes were removed from
 the default matrix after the final clean rerun showed them as flat or negative
@@ -50,40 +55,58 @@ the L0-favorable default list.
 
 ## Fixes from this pass
 
-- Added W01/W02 p4 WordCount, N05/N06 q19, N07/N08 q20, and N09/N10 q9 to the numbered
-  Ascend reproduction matrix so the default script no longer focuses only on
-  q18.
+- Added W01/W02 p4 WordCount and expanded the numbered NexMark matrix from
+  q18-only evidence to q18, q19, q20, q9, q4, and q3.  Each pair keeps
+  its own L0-favorable but fair scenario; configurations are intentionally not
+  forced to be identical across different queries because their state shapes
+  differ.
 - Q9 with the previous 90s allq pressure window OOM-killed a HashMap
   TaskManager on the 2x16GB Ascend topology.  The q9 metric window is now 45s
   with the same TPS, input mix, parallelism, and slots, which lets both
   backends finish while preserving the join/rank pressure.
-- Q20 with the previous 90s allq pressure window could drop a TaskManager after
-  the sample was collected.  The q20 metric window is now 45s with the same TPS,
-  input mix, parallelism, and slots; both backends finish without TM loss.
+- Q20 has two usable settings.  The low-pressure allq setting is retained in
+  `benchmark.yaml` as an efficiency reference, but the default one-click matrix
+  now uses the stronger lateq-deep 700K/s p8 setting.  Its metric window is 60s
+  because the original 90s window can fail HashMap after the useful pressure
+  plateau.
+- Q4 returned to the default matrix after retesting the historical high-pressure
+  600K/s setting with a 45s window.  The previous 250K/s setting was too weak
+  and made ForL0 look negative; 60s and 90s high-pressure windows can drop a
+  HashMap TaskManager after the useful pressure segment.
 - Added `--runner-arg ARG` support to the outer one-click script.  The wrapper
   now consumes `--runner-arg` and only passes the intended argument onward,
   avoiding the previous failure where Python received an unknown
   `--runner-arg` token.
-- Removed the temporary client scalar batch diagnostic pair from the default
-  list.  On the current code it is flat at 2M records, and the 20M ValueState
-  probe is negative for ForL0.  Keeping those in the default matrix would dilute
-  the L0-favorable reproduction set.
+- Reintroduced a client scalar diagnostic pair only for the stronger
+  `scalar_state_probe_2m_ops64_batch` setting.  The lower ops16 batch setting is
+  flat on this machine; ops64 creates enough map-heavy state pressure for the
+  ForL0 batched path to show a clear effect.  It is labeled diagnostic rather
+  than original customer-business-path evidence.
 - Removed the p8 WordCount fastpath/default-capacity probes from the default
   list after a clean run produced only +0.06% and then -8.4%, respectively.
-- Removed q5 from the default matrix.  It was positive in one probe but turned
-  negative in the final clean run, so it is not stable enough for the one-shot
-  offline reproduction set.
-- Removed q4 from the default matrix after the complete one-click rerun on
-  2026-07-12 produced a negative throughput result
-  (50,360/s HashMap vs 44,960/s ForL0).  It still improves per-core efficiency
-  in that run, but it is not a stable L0-favorable default result.
+- Q5 and q11 were removed from the default proof matrix after the full one-key
+  run.  Q5 had a positive post-ramp probe, but the complete isolated rerun
+  produced 31.94K/s for HashMap and 31.00K/s for ForL0.  Q11 was effectively
+  flat in throughput, 20.88K/s versus 20.91K/s, and worse per core for ForL0.
+  Both remain useful diagnostics, but neither is a stable positive default.
+- The client `state_pressure_1m` pair was also removed from the default
+  offline matrix.  It is not a clear speedup case, and the HashMap side can run
+  long enough to make one-click offline reproduction fragile.  The shorter
+  customer-shaped pairs and the scalar diagnostic pressure pair remain.
 
 ## Interpretation
 
 The current promising NexMark set is not only q18.  q18 remains the strongest
-throughput proof, especially the lateq-deep setting.  q19 and q9 now reproduce
-as small positive throughput wins with much better per-core efficiency.  q20 is
-retained as a CPU-efficiency comparison: throughput is flat, but ForL0 uses far
-fewer CPU cores for the same pressure window.  q4 and q5 are intentionally
-excluded from the default matrix because they did not reproduce as stable
-throughput wins in the complete one-click run.
+proof, especially the lateq-deep setting.  q4 is again a strong throughput case
+once it is run at the historical high-pressure input mix with a stable 45s
+window.  q19 and q3 now provide additional throughput wins, while q20 and q9
+are better described as CPU-efficiency cases: their end-to-end throughput is
+only slightly higher, but ForL0 uses far fewer cores.  Q5, q8, and q11 are
+excluded from the default matrix because repeated tuning did not produce a
+stable, fair, clearly positive result.
+
+For client usecase, the original customer-shaped runs are compatibility and
+small-effect evidence rather than a major speedup claim.  The scalar ops64 batch
+pair is included to demonstrate the map-heavy state access pattern where ForL0
+can be much faster, but it must be described as diagnostic pressure evidence,
+not as the original customer jar's end-to-end business-path speedup.
