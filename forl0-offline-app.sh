@@ -35,8 +35,8 @@ EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
 RUNNER_EXTRA_ARGS=()
 
 ASCEND_REPRO_WORKLOADS=(
-    "W01|wordcount_stateful_counter_fastpath_hashmap|WordCount stateful_counter_fastpath best-of-3, HashMap baseline, isolated cluster"
-    "W02|wordcount_stateful_counter_fastpath_forl0|WordCount stateful_counter_fastpath best-of-3, ForL0 tuned config, isolated cluster"
+    "W01|wordcount_stateful_counter_p4_hashmap|WordCount stateful_counter_p4_probe best-of-3, HashMap baseline, isolated cluster"
+    "W02|wordcount_stateful_counter_p4_forl0|WordCount stateful_counter_p4_probe best-of-3, ForL0 tuned config, isolated cluster"
     "N01|nexmark_q18_tps_hashmap|NexMark forl0_tps_probe q18, HashMap baseline, isolated cluster"
     "N02|nexmark_q18_tps_forl0|NexMark forl0_tps_probe q18, ForL0 stable config, isolated cluster"
     "N03|nexmark_q18_lateq_deep_hashmap|NexMark forl0_no_full_gc_lateq_deep q18, HashMap baseline, isolated cluster"
@@ -45,6 +45,8 @@ ASCEND_REPRO_WORKLOADS=(
     "N06|nexmark_q19_tps_forl0|NexMark forl0_tps_probe q19, ForL0 supplementary comparison, isolated cluster"
     "N07|nexmark_q20_allq_pressure_hashmap|NexMark forl0_no_full_gc_allq_pressure q20, HashMap supplementary comparison, isolated cluster"
     "N08|nexmark_q20_allq_pressure_forl0|NexMark forl0_no_full_gc_allq_pressure q20, ForL0 supplementary comparison, isolated cluster"
+    "N09|nexmark_q9_allq_pressure_hashmap|NexMark forl0_no_full_gc_allq_pressure q9, HashMap CPU-efficiency comparison, isolated cluster"
+    "N10|nexmark_q9_allq_pressure_forl0|NexMark forl0_no_full_gc_allq_pressure q9, ForL0 CPU-efficiency comparison, isolated cluster"
     "C01|client_contract_hashmap|Client usecase contract_baseline, HashMap baseline, isolated cluster"
     "C02|client_contract_forl0|Client usecase contract_baseline, ForL0, isolated cluster"
     "C03|client_forl0_optimized_hashmap|Client usecase forl0_optimized, HashMap baseline, isolated cluster"
@@ -97,6 +99,9 @@ Operational options:
                           Required registered TaskManager count before experiments.
                           Default: 2
   --expected-slots N      Required total slot count before experiments. Default: 8
+  --runner-arg ARG        Pass one extra argument through to the benchmark runner.
+                          Repeat for multiple arguments; use --runner-arg --foo=bar
+                          for option-like values.
   -h, --help              Show this help.
 EOF
 }
@@ -181,8 +186,8 @@ run_ascend_workload() {
     local args=()
 
     case "$id" in
-        W01) args=(--test wordcount --scenario stateful_counter_fastpath --backend hashmap) ;;
-        W02) args=(--test wordcount --scenario stateful_counter_fastpath --backend forl0) ;;
+        W01) args=(--test wordcount --scenario stateful_counter_p4_probe --backend hashmap) ;;
+        W02) args=(--test wordcount --scenario stateful_counter_p4_probe --backend forl0) ;;
         N01) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend hashmap) ;;
         N02) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend forl0) ;;
         N03) args=(--test nexmark --scenario forl0_no_full_gc_lateq_deep --query q18 --backend hashmap) ;;
@@ -191,6 +196,8 @@ run_ascend_workload() {
         N06) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend forl0) ;;
         N07) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q20 --backend hashmap) ;;
         N08) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q20 --backend forl0) ;;
+        N09) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q9 --backend hashmap) ;;
+        N10) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q9 --backend forl0) ;;
         C01) args=(--test client_usecase --scenario contract_baseline --backend hashmap) ;;
         C02) args=(--test client_usecase --scenario contract_baseline --backend forl0) ;;
         C03) args=(--test client_usecase --scenario forl0_optimized --backend hashmap) ;;
@@ -309,6 +316,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --expected-slots)
             EXPECTED_SLOTS="$2"
+            shift 2
+            ;;
+        --runner-arg)
+            RUNNER_EXTRA_ARGS+=("$2")
             shift 2
             ;;
         -h|--help)

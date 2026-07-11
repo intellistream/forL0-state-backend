@@ -88,6 +88,39 @@ wordcount_scenarios:
       max_table_capacity: 262144
       main_table_load_factor_threshold: 0.80
 
+  - name: stateful_counter_defaultcap_probe
+    description: "Primitive ValueState counter (2M Long keys, 200M records, backend default table capacity)"
+    workload_mode: stateful_counter
+    key_type: long
+    num_keys: 2000000
+    num_records: 200000000
+    skew_factor: 0
+    arrival_rate: 0
+    checkpoint_interval: 0
+    parallelism: 8
+    repeat_runs: 3
+    repeat_policy: best
+
+  - name: stateful_counter_p4_probe
+    description: "Primitive ValueState counter at p4 (2M Long keys, 200M records, paired HashMap/ForL0)"
+    workload_mode: stateful_counter
+    key_type: long
+    num_keys: 2000000
+    num_records: 200000000
+    skew_factor: 0
+    arrival_rate: 0
+    checkpoint_interval: 0
+    parallelism: 4
+    repeat_runs: 3
+    repeat_policy: best
+    forl0_overrides:
+      l0_cache_enabled: true
+      l0_cache_size: 512mb
+      l0_memory_max_size: 1024mb
+      initial_table_capacity: 8192
+      max_table_capacity: 262144
+      main_table_load_factor_threshold: 0.80
+
   # ---- Checkpointed comparison scenario ----
   # Same primitive ValueState counter, but with periodic checkpoints enabled.
   # Keep this as an explicit comparison point, but do not use it as the default
@@ -618,7 +651,11 @@ nexmark_scenarios:
         bid_hot_ratio_auctions: 16
         auction_hot_ratio_sellers: 8
         metric_monitor_delay: 25s
-        metric_monitor_duration: 90s
+        # Q9's join+rank heap footprint can OOM HashMap on the 2x16GB Ascend
+        # topology if the allq pressure window runs for the full 90s.  Keep the
+        # same input mix and operator parallelism, but shorten the fairness
+        # window so both backends finish reliably in the one-shot offline run.
+        metric_monitor_duration: 45s
       q11:
         tps: 1000000
         person_proportion: 1
@@ -654,7 +691,11 @@ nexmark_scenarios:
         bid_hot_ratio_auctions: 16
         auction_hot_ratio_sellers: 8
         metric_monitor_delay: 25s
-        metric_monitor_duration: 90s
+        # Q20 accumulates enough nested state that the 90s allq window can drop
+        # a TaskManager after the sample is collected.  Use the same q20 input
+        # mix and p4 topology, but keep the default offline run inside the
+        # stable no-drop window.
+        metric_monitor_duration: 45s
     flink_config_overrides:
       parallelism.default: 4
       taskmanager.numberOfTaskSlots: 4
