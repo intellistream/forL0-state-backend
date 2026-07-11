@@ -508,6 +508,28 @@ class NexmarkRunner:
                 continue
         return running
 
+    def _select_container_profiler_target(self) -> Optional[Dict[str, str]]:
+        """Pick a running TaskManager container and its Java PID for async-profiler."""
+        for container in self._running_metric_sender_containers():
+            try:
+                result = run_checked_command([
+                    'sudo', '-n', 'docker', 'exec', container, 'sh', '-lc',
+                    (
+                        "pid=$(jps -q 2>/dev/null | head -n1 || true); "
+                        "if [ -z \"$pid\" ]; then "
+                        "  pid=$(pgrep -f 'org.apache.flink.runtime.taskexecutor.TaskManagerRunner' | head -n1 || true); "
+                        "fi; "
+                        "if [ -z \"$pid\" ] && ps -p 1 -o args= | grep -q 'TaskManagerRunner'; then pid=1; fi; "
+                        "if [ -n \"$pid\" ]; then echo \"$pid\"; fi"
+                    )
+                ], timeout=10)
+                pid = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ''
+                if pid.isdigit():
+                    return {'container': container, 'pid': pid}
+            except Exception:
+                continue
+        return None
+
     def _start_host_metric_sender(self, metric_conf: str, env: dict) -> None:
         """Start CpuMetricSender on the host for non-Docker standalone runs."""
         if self.host_metric_sender and self.host_metric_sender.poll() is None:
@@ -704,7 +726,12 @@ class NexmarkRunner:
         if not host_asprof.exists():
             return False
 
-        container = self.metric_sender_containers[0]
+        target = self._select_container_profiler_target()
+        if not target:
+            return False
+
+        container = target['container']
+        pid = target['pid']
         target_dir = '/tmp/async-profiler'
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         event = 'cpu' if profile_mode == 'cpu' else 'cache-misses'
@@ -727,18 +754,19 @@ class NexmarkRunner:
             # Best-effort cleanup of a stale previous session.
             run_checked_command([
                 'sudo', '-n', 'docker', 'exec', container,
-                'sh', '-lc', f'{target_dir}/bin/asprof stop 1 >/dev/null 2>&1 || true'
+                'sh', '-lc', f'{target_dir}/bin/asprof stop {pid} >/dev/null 2>&1 || true'
             ], timeout=15)
 
             interval = '10000' if event == 'cache-misses' else '10ms'
             run_checked_command([
                 'sudo', '-n', 'docker', 'exec', container,
                 'sh', '-lc',
-                f'{target_dir}/bin/asprof start -e {event} -i {interval} -f {tmp_output} 1'
+                f'{target_dir}/bin/asprof start -e {event} -i {interval} -f {tmp_output} {pid}'
             ], timeout=20)
 
             self.container_profiler_session = {
                 'container': container,
+                'pid': pid,
                 'tmp_output': tmp_output,
                 'local_output': str(local_profiles_dir / local_name),
                 'event': event,
@@ -757,13 +785,17 @@ class NexmarkRunner:
         session = self.container_profiler_session
         self.container_profiler_session = None
         container = session['container']
+        pid = session.get('pid', '1')
         tmp_output = session['tmp_output']
         local_output = session['local_output']
 
         try:
+            stop_script = (
+                f'/tmp/async-profiler/bin/asprof stop -f {tmp_output} {pid} '
+                f'|| test -s {tmp_output}'
+            )
             run_checked_command([
-                'sudo', '-n', 'docker', 'exec', container,
-                'sh', '-lc', f'/tmp/async-profiler/bin/asprof stop -f {tmp_output} 1'
+                'sudo', '-n', 'docker', 'exec', container, 'sh', '-lc', stop_script
             ], timeout=60)
 
             run_checked_command([
