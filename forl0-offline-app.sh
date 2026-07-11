@@ -41,6 +41,10 @@ ASCEND_REPRO_WORKLOADS=(
     "N02|nexmark_q18_tps_forl0|NexMark forl0_tps_probe q18, ForL0 stable config, isolated cluster"
     "N03|nexmark_q18_lateq_deep_hashmap|NexMark forl0_no_full_gc_lateq_deep q18, HashMap baseline, isolated cluster"
     "N04|nexmark_q18_lateq_deep_forl0|NexMark forl0_no_full_gc_lateq_deep q18, ForL0 tuned config, isolated cluster"
+    "N05|nexmark_q19_tps_hashmap|NexMark forl0_tps_probe q19, HashMap non-q18 boundary sample, isolated cluster"
+    "N06|nexmark_q19_tps_forl0|NexMark forl0_tps_probe q19, ForL0 non-q18 boundary sample, isolated cluster"
+    "N07|nexmark_q20_allq_pressure_hashmap|NexMark forl0_no_full_gc_allq_pressure q20, HashMap non-q18 pressure sample, isolated cluster"
+    "N08|nexmark_q20_allq_pressure_forl0|NexMark forl0_no_full_gc_allq_pressure q20, ForL0 non-q18 pressure sample, isolated cluster"
     "C01|client_contract_hashmap|Client usecase contract_baseline, HashMap baseline, isolated cluster"
     "C02|client_contract_forl0|Client usecase contract_baseline, ForL0, isolated cluster"
     "C03|client_forl0_optimized_hashmap|Client usecase forl0_optimized, HashMap baseline, isolated cluster"
@@ -183,6 +187,10 @@ run_ascend_workload() {
         N02) args=(--test nexmark --scenario forl0_tps_probe --query q18 --backend forl0) ;;
         N03) args=(--test nexmark --scenario forl0_no_full_gc_lateq_deep --query q18 --backend hashmap) ;;
         N04) args=(--test nexmark --scenario forl0_no_full_gc_lateq_deep --query q18 --backend forl0) ;;
+        N05) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend hashmap) ;;
+        N06) args=(--test nexmark --scenario forl0_tps_probe --query q19 --backend forl0) ;;
+        N07) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q20 --backend hashmap) ;;
+        N08) args=(--test nexmark --scenario forl0_no_full_gc_allq_pressure --query q20 --backend forl0) ;;
         C01) args=(--test client_usecase --scenario contract_baseline --backend hashmap) ;;
         C02) args=(--test client_usecase --scenario contract_baseline --backend forl0) ;;
         C03) args=(--test client_usecase --scenario forl0_optimized --backend hashmap) ;;
