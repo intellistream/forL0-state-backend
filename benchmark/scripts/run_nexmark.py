@@ -510,7 +510,14 @@ class NexmarkRunner:
 
     def _select_container_profiler_target(self) -> Optional[Dict[str, str]]:
         """Pick a running TaskManager container and its Java PID for async-profiler."""
-        for container in self._running_metric_sender_containers():
+        requested_container = os.environ.get('FLINK_TASKMANAGER_CONTAINER')
+        containers = self._running_metric_sender_containers()
+        if requested_container:
+            containers = [requested_container] + [
+                container for container in containers if container != requested_container
+            ]
+
+        for container in containers:
             try:
                 result = run_checked_command([
                     'sudo', '-n', 'docker', 'exec', container, 'sh', '-lc',
