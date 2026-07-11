@@ -220,6 +220,8 @@ ASYNC_PROFILER_DIR=""
 ASYNC_PROFILER_ARCHIVE="$(pick_first_file \
     "${REPO_ROOT}/offline-packages/async-profiler-4.4-linux-arm64.tar.gz" \
     "${REPO_ROOT}/offline-packages/async-profiler-4.4-linux-x64.tar.gz" \
+    "${REPO_ROOT}/benchmark/offline-packages/async-profiler-4.4-linux-arm64.tar.gz" \
+    "${REPO_ROOT}/benchmark/offline-packages/async-profiler-4.4-linux-x64.tar.gz" \
     "${REPO_ROOT}/docker/deploy/async-profiler-4.4-linux-arm64.tar.gz" \
     "${REPO_ROOT}/docker/deploy/async-profiler-4.4-linux-x64.tar.gz" || true)"
 
