@@ -73,7 +73,7 @@ cd "$REPO_DIR"
 ./forl0-offline-app.sh --flink-home "$FLINK_HOME" --skip-docker-load --reproduce-ascend --no-report
 ```
 
-该清单按总吞吐优先组织，但保持公平执行拓扑：同一个 workload 内 HashMap 与 ForL0 使用相同的 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只使用自身后端参数与实现优化。默认清单保留在 Ascend 上稳定正向的 WordCount fastpath、NexMark q18 pressure/promising 和 Client state-pressure 场景，不把仅体现 CPU/core 资源效率、需要提高 ForL0 并行度或复跑波动为负的样本作为交付结论。
+该清单按总吞吐优先组织，但保持公平执行拓扑：同一个 workload 内 HashMap 与 ForL0 使用相同的 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只使用自身后端参数与实现优化。默认清单保留在 Ascend 上稳定正向的 WordCount fastpath、NexMark q18 TPS probe / lateq-deep pressure 和 Client state-pressure 场景，不把仅体现 CPU/core 资源效率、需要提高 ForL0 并行度或复跑波动为负的样本作为交付结论。
 
 常用模式：
 
