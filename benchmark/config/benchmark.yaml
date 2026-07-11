@@ -74,7 +74,10 @@ wordcount_scenarios:
     skew_factor: 0
     arrival_rate: 0
     checkpoint_interval: 0
-    parallelism: 4
+    # Ascend contract topology has 2 TMs * 4 slots. Keep both backends at p8;
+    # lowering this to p4 was fair within the pair but lost the historical
+    # ForL0-positive setting verified on 2026-07-11 05:40.
+    parallelism: 8
     repeat_runs: 3
     repeat_policy: best
 

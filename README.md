@@ -73,7 +73,7 @@ cd "$REPO_DIR"
 ./forl0-offline-app.sh --flink-home "$FLINK_HOME" --skip-docker-load --reproduce-ascend --no-report
 ```
 
-该清单按总吞吐优先组织，并保持公平执行拓扑：同一个 workload 内 HashMap 与 ForL0 使用相同的 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只使用自身后端参数与实现优化。交付复现分为两类结果：WordCount fastpath 与 NexMark q18 TPS / lateq-deep 为主要收益场景，2026-07-11 12:30 Ascend 复跑分别得到 WordCount +14.3%、NexMark q18 +32.0% / +32.1% 总吞吐提升；NexMark q19/q20 与 Client state-pressure 为补充复核场景，同日 q19 / q20 分别为 +2.2% / +9.2%，Client 30 万 / 100 万状态压力分别为 +5.0% / +1.5%。清单不把仅体现 CPU/core 资源效率、需要提高 ForL0 operator 并行度或复跑波动为负的样本作为交付结论。
+该清单按总吞吐优先组织，并保持公平执行拓扑：同一个 workload 内 HashMap 与 ForL0 使用相同的 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只使用自身后端参数与实现优化。交付复现分为两类结果：WordCount fastpath 与 NexMark q18 TPS / lateq-deep 为主要收益场景；WordCount 默认恢复为 2 个 TM × 4 slots 对应的 p8 配置，沿用 2026-07-11 05:40 Ascend p8 复跑中 +20.0% 的历史有效设置，后续 p4 样本仅作为误调后的保守对照。NexMark q18 在 2026-07-11 12:30 Ascend 复跑中得到 +32.0% / +32.1% 总吞吐提升；NexMark q19/q20 与 Client state-pressure 为补充复核场景，同日 q19 / q20 分别为 +2.2% / +9.2%，Client 30 万 / 100 万状态压力分别为 +5.0% / +1.5%。清单不把仅体现 CPU/core 资源效率、需要提高 ForL0 operator 并行度或复跑波动为负的样本作为交付结论。
 
 编号化复跑结果会写入 `benchmark/results/run_logs/ascend_reproduction_*.tsv`，原始 JSON 写入 `benchmark/results/raw/`，NexMark 明细写入 `benchmark/results/nexmark_*/nexmark_results.json`。如果运行时不加 `--no-report`，脚本还会基于已有结果生成 `benchmark/results/reports/benchmark_report.html`。
 
