@@ -3,7 +3,7 @@
 # ForL0 offline app launcher
 #
 # One command on the offline server:
-#   ./forl0-offline-app.sh --flink-home /path/to/flink-1.20.3
+#   ./forl0-offline-app.sh /path/to/flink-1.20.3
 #
 # It works in either layout:
 #   1. full repository root
@@ -29,10 +29,12 @@ PROFILE_ARGS=(--no-profile)
 SKIP_DOCKER_LOAD=false
 KEEP_GOING=false
 RESTART_CLUSTER=false
+INITIAL_RESTART_CLUSTER=true
 LIST_WORKLOADS=false
 EXPECTED_TASKMANAGERS="${FORL0_EXPECTED_TASKMANAGERS:-2}"
 EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
 RUNNER_EXTRA_ARGS=()
+REQUIRE_L0=true
 
 ASCEND_REPRO_WORKLOADS=(
     "W01|wordcount_stateful_counter_p4_hashmap|WordCount stateful_counter_p4_probe best-of-3, HashMap baseline, isolated cluster"
@@ -66,6 +68,7 @@ usage() {
 ForL0 offline app launcher
 
 Usage:
+  ./forl0-offline-app.sh /path/to/flink-1.20.3 [options]
   ./forl0-offline-app.sh --flink-home /path/to/flink-1.20.3 [options]
 
 Common options:
@@ -96,9 +99,14 @@ Run modes:
   --profile MODE          Enable a specific profile mode, e.g. cpu/cache/uarch.
 
 Operational options:
+  --allow-simulation     Do not require real L0 hardware. Use only for local
+                          dry-runs; offline L0 validation should omit this.
   --skip-docker-load      Do not import docker/images/eclipse-temurin-8-jre.tar*.
   --keep-going            Continue to report generation after a benchmark failure.
   --restart-cluster       Restart the benchmark Flink cluster before running.
+  --no-initial-restart    Reuse an existing healthy Flink cluster. Not recommended
+                          for real L0 validation because old containers may miss
+                          L0 device/library mounts.
   --expected-taskmanagers N
                           Required registered TaskManager count before experiments.
                           Default: 2
@@ -310,12 +318,20 @@ while [[ $# -gt 0 ]]; do
             SKIP_DOCKER_LOAD=true
             shift
             ;;
+        --allow-simulation)
+            REQUIRE_L0=false
+            shift
+            ;;
         --keep-going)
             KEEP_GOING=true
             shift
             ;;
         --restart-cluster)
             RESTART_CLUSTER=true
+            shift
+            ;;
+        --no-initial-restart)
+            INITIAL_RESTART_CLUSTER=false
             shift
             ;;
         --expected-taskmanagers)
@@ -335,7 +351,11 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            RUNNER_EXTRA_ARGS+=("$1")
+            if [[ "$1" != --* && -z "$FLINK_DIR" ]]; then
+                FLINK_DIR="$1"
+            else
+                RUNNER_EXTRA_ARGS+=("$1")
+            fi
             shift
             ;;
     esac
@@ -360,6 +380,86 @@ esac
 [[ -n "$FLINK_DIR" ]] || die "missing --flink-home PATH or FLINK_HOME"
 [[ -d "$FLINK_DIR" ]] || die "FLINK_HOME does not exist: $FLINK_DIR"
 export FLINK_HOME="$FLINK_DIR"
+
+find_first_existing_file() {
+    local candidate
+    for candidate in "$@"; do
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_numa_lib() {
+    find_first_existing_file \
+        /lib/aarch64-linux-gnu/libnuma.so.1 \
+        /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
+        /lib64/libnuma.so.1 \
+        /usr/lib64/libnuma.so.1
+}
+
+find_l0_mempool_lib() {
+    find_first_existing_file \
+        /usr/lib64/libl0mempool.so \
+        /usr/lib/libl0mempool.so \
+        /lib64/libl0mempool.so \
+        /lib/libl0mempool.so
+}
+
+check_l0_environment() {
+    local l0_device=""
+    local l0_lib=""
+    local numa_lib=""
+    local failed=false
+
+    if [[ -e /dev/hisi_l0 ]]; then
+        l0_device="/dev/hisi_l0"
+    elif [[ -e /dev/l0 ]]; then
+        l0_device="/dev/l0"
+    fi
+
+    l0_lib="$(find_l0_mempool_lib || true)"
+    numa_lib="$(find_numa_lib || true)"
+
+    info "Checking L0 hardware environment"
+    if [[ -n "$l0_device" ]]; then
+        echo "  device:      OK (${l0_device})"
+        if [[ "$l0_device" == "/dev/l0" ]]; then
+            echo "               docker_run.sh will also expose it as /dev/hisi_l0 for native HotCache."
+        fi
+    else
+        echo "  device:      MISSING (/dev/hisi_l0 or /dev/l0)"
+        failed=true
+    fi
+
+    if [[ -n "$l0_lib" ]]; then
+        echo "  libl0:       OK (${l0_lib})"
+        export L0_MEMPOOL_LIB_HOST_PATH="$l0_lib"
+    else
+        echo "  libl0:       MISSING (libl0mempool.so in /usr/lib64, /usr/lib, /lib64, /lib)"
+        failed=true
+    fi
+
+    if [[ -n "$numa_lib" ]]; then
+        echo "  libnuma:     OK (${numa_lib})"
+    else
+        echo "  libnuma:     MISSING (libnuma.so.1)"
+        failed=true
+    fi
+
+    if [[ "$failed" == "true" ]]; then
+        if [[ "$REQUIRE_L0" == "true" ]]; then
+            die "real L0 environment is required. Fix the missing items above, or use --allow-simulation only for local dry-runs."
+        fi
+        echo "WARN: L0 hardware is incomplete; continuing in simulation/dry-run mode because --allow-simulation was set."
+    else
+        echo "  result:      real L0 environment looks available"
+    fi
+}
+
+check_l0_environment
 
 detect_docker_cmd() {
     if docker ps >/dev/null 2>&1; then
@@ -488,8 +588,12 @@ if [[ ${#RUNNER_EXTRA_ARGS[@]} -gt 0 ]]; then
 fi
 
 preflight_test="apps"
+PREFLIGHT_RUNNER_ARGS=("${COMMON_RUNNER_ARGS[@]}")
+if [[ "$INITIAL_RESTART_CLUSTER" == "true" && "$RUN_SMOKE$RUN_APPS$RUN_NEXMARK_PRESSURE$RUN_ASCEND_REPRO" == *true* ]]; then
+    PREFLIGHT_RUNNER_ARGS+=(--restart-cluster)
+fi
 run_or_handle_failure "Preflight check" \
-    "$RUNNER" --offline --preflight-only --test "$preflight_test" --backend "$BACKEND" "${COMMON_RUNNER_ARGS[@]}"
+    "$RUNNER" --offline --preflight-only --test "$preflight_test" --backend "$BACKEND" "${PREFLIGHT_RUNNER_ARGS[@]}"
 
 if [[ "$RUN_SMOKE" == "true" ]]; then
     run_or_handle_failure "Smoke test: client_usecase contract_baseline" \

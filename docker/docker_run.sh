@@ -63,6 +63,7 @@ fi
 L0_OPTS=()
 NUMA_HOST_PATH="${NUMA_LIB_HOST_PATH:-}"
 NUMA_CONTAINER_PATH="${NUMA_LIB_CONTAINER_PATH:-}"
+L0_MEMPOOL_HOST_PATH="${L0_MEMPOOL_LIB_HOST_PATH:-}"
 
 if [[ -z "$NUMA_HOST_PATH" ]]; then
     for candidate in \
@@ -78,12 +79,30 @@ if [[ -z "$NUMA_HOST_PATH" ]]; then
     done
 fi
 
+if [[ -z "$L0_MEMPOOL_HOST_PATH" ]]; then
+    for candidate in \
+        /usr/lib64/libl0mempool.so \
+        /usr/lib/libl0mempool.so \
+        /lib64/libl0mempool.so \
+        /lib/libl0mempool.so; do
+        if [[ -f "$candidate" ]]; then
+            L0_MEMPOOL_HOST_PATH="$candidate"
+            break
+        fi
+    done
+fi
+
 if [[ -e /dev/hisi_l0 ]]; then
     L0_OPTS+=(--device /dev/hisi_l0:/dev/hisi_l0)
+elif [[ -e /dev/l0 ]]; then
+    # Native HotCache probes /dev/hisi_l0. Some servers expose the same L0
+    # device as /dev/l0, so expose both paths inside the container.
+    L0_OPTS+=(--device /dev/l0:/dev/l0)
+    L0_OPTS+=(--device /dev/l0:/dev/hisi_l0)
 fi
-if [[ -f /usr/lib64/libl0mempool.so ]]; then
-    L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib/libl0mempool.so:ro)
-    L0_OPTS+=(-v /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro)
+if [[ -n "$L0_MEMPOOL_HOST_PATH" ]]; then
+    L0_OPTS+=(-v "${L0_MEMPOOL_HOST_PATH}:/usr/lib/libl0mempool.so:ro")
+    L0_OPTS+=(-v "${L0_MEMPOOL_HOST_PATH}:/usr/lib64/libl0mempool.so:ro")
 fi
 if [[ -n "$NUMA_HOST_PATH" && -n "$NUMA_CONTAINER_PATH" ]]; then
     L0_OPTS+=(-v "${NUMA_HOST_PATH}:${NUMA_CONTAINER_PATH}:ro")
@@ -116,6 +135,11 @@ do_start() {
         echo "  libnuma:    ${NUMA_HOST_PATH} -> ${NUMA_CONTAINER_PATH}"
     else
         echo "  libnuma:    未检测到；可选原生依赖可能不可用"
+    fi
+    if [[ -n "$L0_MEMPOOL_HOST_PATH" ]]; then
+        echo "  libl0:      ${L0_MEMPOOL_HOST_PATH} -> /usr/lib[64]/libl0mempool.so"
+    else
+        echo "  libl0:      未检测到；HotCache 将无法使用真实 L0"
     fi
     echo ""
 

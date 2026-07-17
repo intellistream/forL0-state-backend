@@ -99,6 +99,7 @@ report_l0_status() {
     local l0_device=""
     local l0_available=true
     local numa_found=false
+    local l0_lib=""
 
     if [[ -e /dev/l0 ]]; then
         l0_device="/dev/l0"
@@ -108,10 +109,21 @@ report_l0_status() {
         l0_available=false
     fi
 
-    if [[ -f /usr/lib64/libl0mempool.so ]]; then
-        echo "      ✓ libl0mempool.so 存在"
+    for l0_candidate in \
+        /usr/lib64/libl0mempool.so \
+        /usr/lib/libl0mempool.so \
+        /lib64/libl0mempool.so \
+        /lib/libl0mempool.so; do
+        if [[ -f "$l0_candidate" ]]; then
+            l0_lib="$l0_candidate"
+            break
+        fi
+    done
+
+    if [[ -n "$l0_lib" ]]; then
+        echo "      ✓ libl0mempool.so 存在 (${l0_lib})"
     else
-        echo "      ✗ libl0mempool.so 不存在 (/usr/lib64/libl0mempool.so)"
+        echo "      ✗ libl0mempool.so 不存在 (/usr/lib64, /usr/lib, /lib64, /lib)"
         l0_available=false
     fi
 

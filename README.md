@@ -56,21 +56,21 @@ FLINK_HOME="$HOME/flink-1.20.3"
 
 cd "$REPO_DIR"
 chmod +x ./forl0-offline-app.sh
-./forl0-offline-app.sh --flink-home "$FLINK_HOME"
+./forl0-offline-app.sh "$FLINK_HOME"
 ```
 
-默认会依次完成：安装 ForL0 到 Flink、导入离线 Docker 镜像（如存在）、preflight、Client Usecase 冒烟、合同口径 apps 测试、HTML 报告生成。需要更完整的 NexMark no-Full-GC 压力复跑时执行：
+默认会先检查真实 L0 环境（`/dev/hisi_l0` 或 `/dev/l0`、`libl0mempool.so`、`libnuma.so.1`）。检查通过后会安装 ForL0 到 Flink、导入离线 Docker 镜像（如存在），并在实验前重启 Flink Docker 集群，确保容器内挂载到 L0 设备和 L0 runtime 库。随后执行 preflight、Client Usecase 冒烟、合同口径 apps 测试、HTML 报告生成。需要更完整的 NexMark no-Full-GC 压力复跑时执行：
 
 ```bash
 cd "$REPO_DIR"
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --full
+./forl0-offline-app.sh "$FLINK_HOME" --full
 ```
 
 如果需要复现交付报告中的 Ascend 编号化性能清单，执行：
 
 ```bash
 cd "$REPO_DIR"
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --skip-docker-load --reproduce-ascend --no-report
+./forl0-offline-app.sh "$FLINK_HOME" --skip-docker-load --reproduce-ascend --no-report
 ```
 
 该清单按总吞吐优先组织，并保持公平执行拓扑：同一个 workload 内 HashMap 与 ForL0 使用相同的 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只使用自身后端参数与实现优化。2026-07-12 Ascend 最终一键复跑已完整通过，manifest 为 `benchmark/results/run_logs/ascend_reproduction_20260712_040246.tsv`。默认清单包括 WordCount p4 best-of-3、NexMark q18/q19/q20/q9/q4/q3，以及 Client contract/optimized/state_pressure_300k/scalar diagnostic；不包含 benchset、q5/q8/q11、client state_pressure_1m 或需要改变 ForL0 operator 并行度的配置。最终结果中 WordCount 为 +24.9%，NexMark q18 TPS / q18 lateq-deep / q4 / q3 分别为 +23.4% / +28.8% / +11.9% / +16.8%，q19/q20/q9 吞吐小幅正向且 CPU/core 效率显著提升；Client 原始业务路径持平无回退，map-heavy scalar diagnostic 为 +149.5%。
@@ -81,17 +81,20 @@ cd "$REPO_DIR"
 
 ```bash
 # 只做安装 + preflight + 最短冒烟，适合刚到离线机器时先验链路
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --smoke-only
+./forl0-offline-app.sh "$FLINK_HOME" --smoke-only
 
 # 只跑合同口径 apps，不跑冒烟
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --apps-only
+./forl0-offline-app.sh "$FLINK_HOME" --apps-only
 
 # 只基于已有结果重新生成 HTML 报告
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --report-only
+./forl0-offline-app.sh "$FLINK_HOME" --report-only
 
 # 只跑 ForL0 或只跑 HashMap
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --backend forl0 --apps-only
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --backend hashmap --apps-only
+./forl0-offline-app.sh "$FLINK_HOME" --backend forl0 --apps-only
+./forl0-offline-app.sh "$FLINK_HOME" --backend hashmap --apps-only
+
+# 仅在无 L0 的本地开发机 dry-run 时使用；离线 L0 服务器不要加
+./forl0-offline-app.sh "$FLINK_HOME" --allow-simulation --smoke-only
 ```
 
 运行完成后查看：
@@ -133,7 +136,7 @@ tar -xzf forl0-offline.tar.gz
 cd /tmp/forl0-offline
 
 chmod +x ./forl0-offline-app.sh
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" --install-dir "$HOME/forl0-runtime"
+./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$HOME/forl0-runtime"
 ```
 
 #### 常见问题快速定位
@@ -153,7 +156,7 @@ grep -R "ForL0\\|HotCache\\|SIMULATION\\|L0 MODE" "$FLINK_HOME/log" docker/*.log
 
 说明：
 
-- 没有 `/dev/l0`、`/dev/hisi_l0` 或 `libl0mempool.so` 时，ForL0 会自动进入模拟模式；功能测试仍可完成，但不能作为真实 L0 性能验收。
+- 默认入口要求真实 L0 环境；没有 `/dev/l0`、`/dev/hisi_l0` 或 `libl0mempool.so` 时会直接停止。`libl0mempool.so` 会从 `/usr/lib64`、`/usr/lib`、`/lib64`、`/lib` 自动探测并挂入容器。只有本地 dry-run 才加 `--allow-simulation`。
 - `run_all_apps.sh --offline` 不会联网安装依赖；如果 preflight 提示缺 wheel，需要在联网机器重新执行 `docker/package_offline_bundle.sh` 并把 `offline-packages/` 带到离线机。
 - Docker 不可用时，`run_all_apps.sh` 会尝试回退到本机 Flink standalone；若你只想安装不启动集群，使用 `server_setup.sh --no-start`。
 
