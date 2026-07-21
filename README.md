@@ -38,127 +38,127 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 
 ## 快速开始
 
-### 离线机器一键 App（推荐）
+### 离线服务器运行与测试（推荐）
 
-推荐把**整个仓库目录**拷到离线服务器。仓库内应已经包含：
+推荐使用 GitHub Release 中已经构建好的离线包，不再要求 Windows 中转机执行 Bash、Maven 或 Docker。当前 ARM64 发布包为 `forl0-offline-linux-arm64-py310-20260721.tar.gz`，适用于 Linux ARM64（鲲鹏/aarch64）和 CPython 3.10。
 
-- `docker/deploy/`：ForL0 backend JAR、WordCount / NexMark / Client benchmark JAR；native 库可在 `docker/deploy/libforl0_engine.so` 或 `src/main/resources/native/libforl0_engine.so`
-- `offline-packages/` 或 `benchmark/offline-packages/`：benchmark Python wheels，可选 async-profiler 压缩包
-- `docker/images/eclipse-temurin-8-jre.tar.gz`：可选 Docker 镜像；如果目标机已经有 `eclipse-temurin:8-jre`，可不带
+#### 1. 离线前确认服务器前置条件
 
-离线机器上只需要进入目录，执行顶层启动器：
+以下内容不包含在离线包内，必须提前装好：Flink 1.20.x、Java 8+、Python 3.10 及 venv 模块、Docker、L0 设备驱动、`libl0mempool.so` 和 `libnuma.so.1`。在目标服务器执行：
+
+```bash
+uname -m
+python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+python3 -c 'import ensurepip, venv'
+test -d "$HOME/flink-1.20.3"
+test -e /dev/hisi_l0 || test -e /dev/l0
+ldconfig -p | grep -E 'libl0mempool\.so|libnuma\.so\.1'
+docker version >/dev/null 2>&1 || sudo -n docker version >/dev/null
+```
+
+预期架构为 `aarch64`，Python 为 `3.10`。Ubuntu/Debian 必须在断网前安装 `python3.10-venv`；只有 `python3` 而没有 venv/ensurepip 时，启动器无法创建 benchmark 环境。
+
+#### 2. Windows 下载、校验并中转
+
+在 Windows 浏览器打开 [GitHub Releases](https://github.com/intellistream/forL0-state-backend/releases)，下载以下两个文件：
+
+- `forl0-offline-linux-arm64-py310-20260721.tar.gz`
+- `forl0-offline-linux-arm64-py310-20260721.tar.gz.sha256`
+
+在下载目录打开 PowerShell，校验后上传到离线服务器：
+
+```powershell
+$Bundle = ".\forl0-offline-linux-arm64-py310-20260721.tar.gz"
+$Expected = (Get-Content "$Bundle.sha256").Split()[0].ToLower()
+$Actual = (Get-FileHash $Bundle -Algorithm SHA256).Hash.ToLower()
+if ($Actual -ne $Expected) { throw "SHA256 mismatch" }
+
+scp $Bundle "$Bundle.sha256" user@offline-server:/tmp/
+```
+
+#### 3. 离线服务器解压和双重校验
 
 ```bash
 set -euo pipefail
 
-REPO_DIR="$HOME/forL0-state-backend"
+cd /tmp
+sha256sum -c forl0-offline-linux-arm64-py310-20260721.tar.gz.sha256
+tar -xzf forl0-offline-linux-arm64-py310-20260721.tar.gz -C "$HOME"
+
+BUNDLE_DIR="$HOME/forl0-offline-linux-arm64-py310-20260721"
+cd "$BUNDLE_DIR"
+sha256sum -c offline_bundle_sha256.txt
+chmod +x ./forl0-offline-app.sh docker/*.sh
+```
+
+外层 `.sha256` 校验传输的压缩包，包内 `offline_bundle_sha256.txt` 校验每个 JAR、native 库、Python wheel、脚本和 Docker 镜像。
+
+#### 4. 分阶段运行测试
+
+不要首次运行就直接压测。先做最短 smoke，成功后再跑合同 apps：
+
+```bash
+set -euo pipefail
+
 FLINK_HOME="$HOME/flink-1.20.3"
+BUNDLE_DIR="$HOME/forl0-offline-linux-arm64-py310-20260721"
+INSTALL_DIR="$HOME/forl0-runtime"
 
-cd "$REPO_DIR"
-chmod +x ./forl0-offline-app.sh
-./forl0-offline-app.sh "$FLINK_HOME"
+cd "$BUNDLE_DIR"
+
+# 阶段 1：安装 + L0/Flink/Python preflight + 最短 Client smoke
+./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --smoke-only
+
+# 阶段 2：WordCount、NexMark、Client 合同口径 apps
+./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --apps-only
+
+# 阶段 3（可选）：增加 NexMark throughput pressure 场景
+./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --full
+
+# 阶段 4（可选）：复现 Ascend 编号化性能清单
+./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" \
+  --skip-docker-load --reproduce-ascend --no-report
 ```
 
-默认会先检查真实 L0 环境（`/dev/hisi_l0` 或 `/dev/l0`、`libl0mempool.so`、`libnuma.so.1`）。检查通过后会安装 ForL0 到 Flink、导入离线 Docker 镜像（如存在），并在实验前重启 Flink Docker 集群，确保容器内挂载到 L0 设备和 L0 runtime 库。随后执行 preflight、Client Usecase 冒烟、合同口径 apps 测试、HTML 报告生成。需要更完整的 NexMark no-Full-GC 压力复跑时执行：
+默认要求 2 个 TaskManager、共 8 个 slot。若部署拓扑不同，可显式传入 `--expected-taskmanagers N --expected-slots N`。真实离线 L0 验证不要使用 `--allow-simulation`。
+
+结果位于 `$HOME/forl0-runtime/benchmark/results/`：
+
+- `raw/`：WordCount、Client Usecase、NexMark 汇总 JSON
+- `nexmark_*/`：NexMark 原始 summary、日志和监控数据
+- `run_logs/ascend_reproduction_*.tsv`：编号化复跑 manifest
+- `reports/benchmark_report.html`：HTML 汇总报告
+
+#### 5. 常见问题快速定位
 
 ```bash
-cd "$REPO_DIR"
-./forl0-offline-app.sh "$FLINK_HOME" --full
+# ForL0 是否装入 Flink
+ls -lh "$FLINK_HOME/lib"/flink-statebackend-forL0-*.jar \
+  "$FLINK_HOME/native"/libforl0_engine.so
+
+# Flink/Docker 状态
+curl -sf http://localhost:8081/overview || true
+cd "$HOME/forl0-runtime/docker"
+./docker_run.sh status || true
+
+# L0 / 模拟模式日志
+grep -R "ForL0\\|HotCache\\|SIMULATION\\|L0 MODE" \
+  "$FLINK_HOME/log" "$HOME/forl0-runtime/benchmark/results" 2>/dev/null | tail -80
 ```
 
-如果需要复现交付报告中的 Ascend 编号化性能清单，执行：
+如果仍出现 `Could not find a version that satisfies the requirement pandas>=2.0.0`，先确认 Python 是 3.10 且包内存在 `benchmark/offline-packages/pandas-*-cp310-*-aarch64.whl`。目标 Python 不是 3.10 时，在 Windows 仓库根目录执行 `powershell -ExecutionPolicy Bypass -File .\docker\download_offline_python_wheels.ps1 -TargetArch arm64 -PythonVersion 3.11`（版本按实际值修改），再用生成的 `offline-packages/` 替换离线包中的 wheel 目录。
 
-```bash
-cd "$REPO_DIR"
-./forl0-offline-app.sh "$FLINK_HOME" --skip-docker-load --reproduce-ascend --no-report
-```
-
-该清单按总吞吐优先组织，并保持公平执行拓扑：同一个 workload 内 HashMap 与 ForL0 使用相同的 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只使用自身后端参数与实现优化。2026-07-12 Ascend 最终一键复跑已完整通过，manifest 为 `benchmark/results/run_logs/ascend_reproduction_20260712_040246.tsv`。默认清单包括 WordCount p4 best-of-3、NexMark q18/q19/q20/q9/q4/q3，以及 Client contract/optimized/state_pressure_300k/scalar diagnostic；不包含 benchset、q5/q8/q11、client state_pressure_1m 或需要改变 ForL0 operator 并行度的配置。最终结果中 WordCount 为 +24.9%，NexMark q18 TPS / q18 lateq-deep / q4 / q3 分别为 +23.4% / +28.8% / +11.9% / +16.8%，q19/q20/q9 吞吐小幅正向且 CPU/core 效率显著提升；Client 原始业务路径持平无回退，map-heavy scalar diagnostic 为 +149.5%。
-
-编号化复跑结果会写入 `benchmark/results/run_logs/ascend_reproduction_*.tsv`，原始 JSON 写入 `benchmark/results/raw/`，NexMark 明细写入 `benchmark/results/nexmark_*/nexmark_results.json`。如果运行时不加 `--no-report`，脚本还会基于已有结果生成 `benchmark/results/reports/benchmark_report.html`。
-
-常用模式：
-
-```bash
-# 只做安装 + preflight + 最短冒烟，适合刚到离线机器时先验链路
-./forl0-offline-app.sh "$FLINK_HOME" --smoke-only
-
-# 只跑合同口径 apps，不跑冒烟
-./forl0-offline-app.sh "$FLINK_HOME" --apps-only
-
-# 只基于已有结果重新生成 HTML 报告
-./forl0-offline-app.sh "$FLINK_HOME" --report-only
-
-# 只跑 ForL0 或只跑 HashMap
-./forl0-offline-app.sh "$FLINK_HOME" --backend forl0 --apps-only
-./forl0-offline-app.sh "$FLINK_HOME" --backend hashmap --apps-only
-
-# 仅在无 L0 的本地开发机 dry-run 时使用；离线 L0 服务器不要加
-./forl0-offline-app.sh "$FLINK_HOME" --allow-simulation --smoke-only
-```
-
-运行完成后查看：
-
-```bash
-cd "$REPO_DIR"
-ls -lh benchmark/results/reports/benchmark_report.html
-find benchmark/results/raw -maxdepth 1 -type f | sort | tail
-find benchmark/results -maxdepth 1 -type d -name 'nexmark_*' | sort | tail
-```
-
-结果目录说明：
-
-- `benchmark/results/raw/`：WordCount、Client Usecase、NexMark 汇总 JSON
-- `benchmark/results/nexmark_*/`：NexMark 每次运行的原始 summary、日志与监控数据
-- `benchmark/results/figures/`：报告图表
-- `benchmark/results/reports/benchmark_report.html`：HTML 汇总报告
-
-#### 离线包安装路径（不拷整个仓库时使用）
-
-如果你在联网/构建机器上先生成独立离线包，打包脚本会把 `forl0-offline-app.sh` 一起放到离线包根目录：
+#### 6. 在联网 Linux 构建机重新打包
 
 ```bash
 cd /path/to/forL0-state-backend
-./docker/package_offline_bundle.sh --arch arm64 --output-dir /tmp/forl0-offline
-tar -C /tmp -czf /tmp/forl0-offline.tar.gz forl0-offline
-scp /tmp/forl0-offline.tar.gz user@server:/tmp/
+./docker/package_offline_bundle.sh \
+  --arch arm64 \
+  --python-version 3.10 \
+  --output-dir "$PWD/docker/generated/forl0-offline-linux-arm64-py310-20260721"
 ```
 
-在离线服务器上执行：
-
-```bash
-set -euo pipefail
-
-FLINK_HOME="$HOME/flink-1.20.3"
-
-cd /tmp
-tar -xzf forl0-offline.tar.gz
-cd /tmp/forl0-offline
-
-chmod +x ./forl0-offline-app.sh
-./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$HOME/forl0-runtime"
-```
-
-#### 常见问题快速定位
-
-```bash
-# 查看 ForL0 是否装入 Flink
-ls -lh "$FLINK_HOME/lib"/flink-statebackend-forL0-*.jar "$FLINK_HOME/native"/libforl0_engine.so
-
-# 查看 Flink/Docker 是否已经起来
-curl -sf http://localhost:8081/overview || true
-cd "$REPO_DIR/docker" 2>/dev/null || cd "$INSTALL_DIR/docker"
-./docker_run.sh status || true
-
-# 查看 L0 / 模拟模式日志
-grep -R "ForL0\\|HotCache\\|SIMULATION\\|L0 MODE" "$FLINK_HOME/log" docker/*.log benchmark/results 2>/dev/null | tail -80
-```
-
-说明：
-
-- 默认入口要求真实 L0 环境；没有 `/dev/l0`、`/dev/hisi_l0` 或 `libl0mempool.so` 时会直接停止。`libl0mempool.so` 会从 `/usr/lib64`、`/usr/lib`、`/lib64`、`/lib` 自动探测并挂入容器。只有本地 dry-run 才加 `--allow-simulation`。
-- `run_all_apps.sh --offline` 不会联网安装依赖；如果 preflight 提示缺 wheel，Linux/macOS 联网机器可重新执行 `docker/package_offline_bundle.sh`。如果联网中转机是 Windows，先在离线服务器用 `uname -m` 和 `python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'` 确认架构与 Python 版本，再在仓库根目录的 PowerShell 执行 `powershell -ExecutionPolicy Bypass -File .\docker\download_offline_python_wheels.ps1 -TargetArch arm64 -PythonVersion 3.11`（参数按实际环境修改）。把生成的整个 `offline-packages/` 目录带到离线机；该脚本会下载 Linux 目标 wheel，避免 Windows wheel 无法安装。
-- Docker 不可用时，`run_all_apps.sh` 会尝试回退到本机 Flink standalone；若你只想安装不启动集群，使用 `server_setup.sh --no-start`。
+打包脚本会重新编译 JAR/native 产物、下载指定 Linux 架构和 CPython ABI 的 wheels、导出 ARM64 Docker 镜像，并生成包内 manifest/SHA256。不要从旧的 `benchmark/offline-packages/` 手工复制 wheel；旧 wheel 可能属于其他 Python ABI。
 
 更详细的 benchmark 参数和场景说明见：[benchmark/README.md](benchmark/README.md)。
 

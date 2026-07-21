@@ -14,6 +14,7 @@
 #    ./docker/package_offline_bundle.sh --skip-docker-save
 #    ./docker/package_offline_bundle.sh --output-dir /tmp/offline-artifacts
 #    ./docker/package_offline_bundle.sh --skip-python-wheels
+#    ./docker/package_offline_bundle.sh --arch arm64 --python-version 3.10
 ################################################################################
 
 set -euo pipefail
@@ -22,12 +23,15 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd .. && pwd)"
 OUTPUT_DIR="${REPO_ROOT}/offline-artifacts"
 SKIP_TESTS=true
+SKIP_BUILD=false
 SKIP_DOCKER_SAVE=false
 COPY_PROFILER=true
 DOWNLOAD_PYTHON_WHEELS=true
 DOCKER_IMAGE="eclipse-temurin:8-jre"
 ARCH=""
 DOCKER_PLATFORM=""
+PYTHON_VERSION=""
+PIP_PLATFORM=""
 
 detect_sha_cmd() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -71,6 +75,20 @@ arch_to_platform() {
     esac
 }
 
+arch_to_pip_platform() {
+    case "$1" in
+        arm64)
+            echo "manylinux2014_aarch64"
+            ;;
+        x64)
+            echo "manylinux2014_x86_64"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 ensure_docker_image_for_platform() {
     local image="$1"
     local platform="$2"
@@ -90,6 +108,35 @@ ensure_docker_image_for_platform() {
     return 1
 }
 
+copy_deploy_artifacts() {
+    local destination="$1"
+    local artifact
+    local -a artifact_names=(
+        "flink-statebackend-forL0-1.0-SNAPSHOT.jar"
+        "libforl0_engine.so"
+        "wordcount-benchmark-1.0-SNAPSHOT.jar"
+        "unit-test-benchmark-1.0-SNAPSHOT.jar"
+        "nexmark-flink-0.3-SNAPSHOT.jar"
+        "flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar"
+        "client-drift-benchmark-1.0-SNAPSHOT.jar"
+    )
+    mkdir -p "$destination"
+    for artifact in "${artifact_names[@]}"; do
+        if [[ -f "$REPO_ROOT/docker/deploy/$artifact" ]]; then
+            cp -f "$REPO_ROOT/docker/deploy/$artifact" "$destination/"
+        fi
+    done
+    for artifact in \
+        "flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
+        "libforl0_engine.so" \
+        "wordcount-benchmark-1.0-SNAPSHOT.jar"; do
+        if [[ ! -f "$destination/$artifact" ]]; then
+            echo "✗ 缺少必需部署产物: $artifact"
+            exit 1
+        fi
+    done
+}
+
 usage() {
     cat <<'EOF'
 用法:
@@ -99,10 +146,12 @@ usage() {
   --output-dir PATH      产物输出目录，默认 offline-artifacts/
   --with-tests           编译时执行测试（默认跳过）
   --skip-tests           编译时跳过测试（默认）
+  --skip-build           复用 docker/deploy 中已构建产物，只重新组包
   --skip-docker-save     不导出 docker/images/eclipse-temurin-8-jre.tar.gz
   --skip-python-wheels   不下载 benchmark Python 依赖 wheels
   --no-profiler          不处理 async-profiler 离线包
   --arch NAME            目标架构: arm64 或 x64（默认按当前机器自动判断）
+  --python-version X.Y   目标 Linux 的 CPython 版本（默认使用本机 python3）
   -h, --help             显示帮助
 EOF
 }
@@ -121,6 +170,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_TESTS=true
             shift
             ;;
+        --skip-build)
+            SKIP_BUILD=true
+            shift
+            ;;
         --skip-docker-save)
             SKIP_DOCKER_SAVE=true
             shift
@@ -137,6 +190,10 @@ while [[ $# -gt 0 ]]; do
             ARCH="$2"
             shift 2
             ;;
+        --python-version)
+            PYTHON_VERSION="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -149,6 +206,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "$OUTPUT_DIR" != /* ]]; then
+    OUTPUT_DIR="${REPO_ROOT}/${OUTPUT_DIR#./}"
+fi
+
 if [[ -z "$ARCH" ]]; then
     ARCH="$(detect_default_arch)"
 fi
@@ -159,13 +220,30 @@ if [[ "$ARCH" != "arm64" && "$ARCH" != "x64" ]]; then
 fi
 
 DOCKER_PLATFORM="$(arch_to_platform "$ARCH")"
+PIP_PLATFORM="$(arch_to_pip_platform "$ARCH")"
+
+if [[ -z "$PYTHON_VERSION" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    else
+        echo "✗ 未找到 python3；请安装 Python 3 或显式传入 --python-version X.Y"
+        exit 1
+    fi
+fi
+if [[ ! "$PYTHON_VERSION" =~ ^3\.[0-9]+$ ]]; then
+    echo "✗ Python 版本格式无效: ${PYTHON_VERSION}（应为 3.10、3.11 等）"
+    exit 1
+fi
+PYTHON_VERSION_DIGITS="${PYTHON_VERSION//./}"
+PYTHON_ABI="cp${PYTHON_VERSION_DIGITS}"
 
 MVN_ARGS=(clean package)
 if [[ "$SKIP_TESTS" == "true" ]]; then
     MVN_ARGS+=(-DskipTests)
 fi
 
-mkdir -p "${REPO_ROOT}/docker/deploy" "${REPO_ROOT}/docker/images" "${REPO_ROOT}/offline-packages" "$OUTPUT_DIR"
+WHEEL_OUTPUT_DIR="${OUTPUT_DIR}/benchmark/offline-packages"
+mkdir -p "${REPO_ROOT}/docker/deploy" "${REPO_ROOT}/docker/images" "$WHEEL_OUTPUT_DIR"
 
 echo "============================================================"
 echo "  ForL0 一键离线打包"
@@ -173,70 +251,75 @@ echo "============================================================"
 echo "  Repo:       ${REPO_ROOT}"
 echo "  OutputDir:  ${OUTPUT_DIR}"
 echo "  Arch:       ${ARCH} (${DOCKER_PLATFORM})"
+echo "  Python:     CPython ${PYTHON_VERSION} (${PIP_PLATFORM}, ${PYTHON_ABI})"
 echo ""
 
-echo "[1/10] 编译 ForL0 backend"
-(cd "$REPO_ROOT" && mvn "${MVN_ARGS[@]}")
+if [[ "$SKIP_BUILD" == "true" ]]; then
+    echo "[1-7/10] 复用 docker/deploy 中已构建产物"
+else
+    echo "[1/10] 编译 ForL0 backend"
+    (cd "$REPO_ROOT" && mvn "${MVN_ARGS[@]}")
 
-echo "[2/10] 编译 native 库"
-(cd "$REPO_ROOT/src/main/native" && make clean && make && make install)
+    echo "[2/10] 编译 native 库"
+    (cd "$REPO_ROOT/src/main/native" && make clean && make && make install)
 
-echo "[3/10] 编译 WordCount benchmark"
-(cd "$REPO_ROOT/benchmark/wordcount" && mvn "${MVN_ARGS[@]}")
+    echo "[3/10] 编译 WordCount benchmark"
+    (cd "$REPO_ROOT/benchmark/wordcount" && mvn "${MVN_ARGS[@]}")
 
-if [[ -d "$REPO_ROOT/benchmark/unit-test" ]]; then
-    echo "[4/10] 编译 unit-test benchmark"
-    (cd "$REPO_ROOT/benchmark/unit-test" && mvn "${MVN_ARGS[@]}")
-fi
-
-if [[ -d "$REPO_ROOT/benchmark/nexmark-src" ]]; then
-    echo "[5/10] 编译 NexMark"
-    (cd "$REPO_ROOT/benchmark/nexmark-src" && mvn "${MVN_ARGS[@]}")
-fi
-
-if [[ -d "$REPO_ROOT/client_usecase/XX_6000c_Demo" ]]; then
-    echo "[6/10] 编译 client_usecase"
-    (cd "$REPO_ROOT/client_usecase/XX_6000c_Demo" && mvn "${MVN_ARGS[@]}")
-fi
-
-if [[ -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
-    cp -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" "$REPO_ROOT/docker/deploy/"
-fi
-
-if [[ -d "$REPO_ROOT/benchmark/client-drift" ]]; then
-    if [[ -f "$REPO_ROOT/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
-        echo "[6/10] 编译 client hotspot-drift benchmark"
-        (cd "$REPO_ROOT/benchmark/client-drift" && mvn "${MVN_ARGS[@]}")
-    else
-        echo "[6/10] 跳过 client hotspot-drift benchmark（缺少客户 usecase jar）"
+    if [[ -d "$REPO_ROOT/benchmark/unit-test" ]]; then
+        echo "[4/10] 编译 unit-test benchmark"
+        (cd "$REPO_ROOT/benchmark/unit-test" && mvn "${MVN_ARGS[@]}")
     fi
-fi
 
-echo "[7/10] 收集离线部署产物到 docker/deploy"
-cp -f "$REPO_ROOT/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
+    if [[ -d "$REPO_ROOT/benchmark/nexmark-src" ]]; then
+        echo "[5/10] 编译 NexMark"
+        (cd "$REPO_ROOT/benchmark/nexmark-src" && mvn "${MVN_ARGS[@]}")
+    fi
 
-if [[ -f "$REPO_ROOT/src/main/resources/native/libforl0_engine.so" ]]; then
-    cp -f "$REPO_ROOT/src/main/resources/native/libforl0_engine.so" "$REPO_ROOT/docker/deploy/libforl0_engine.so"
-fi
+    if [[ -d "$REPO_ROOT/client_usecase/XX_6000c_Demo" ]]; then
+        echo "[6/10] 编译 client_usecase"
+        (cd "$REPO_ROOT/client_usecase/XX_6000c_Demo" && mvn "${MVN_ARGS[@]}")
+    fi
 
-if [[ -f "$REPO_ROOT/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar" ]]; then
-    cp -f "$REPO_ROOT/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
-fi
+    if [[ -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
+        cp -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" "$REPO_ROOT/docker/deploy/"
+    fi
 
-if [[ -f "$REPO_ROOT/benchmark/unit-test/target/unit-test-benchmark-1.0-SNAPSHOT.jar" ]]; then
-    cp -f "$REPO_ROOT/benchmark/unit-test/target/unit-test-benchmark-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
-fi
+    if [[ -d "$REPO_ROOT/benchmark/client-drift" ]]; then
+        if [[ -f "$REPO_ROOT/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
+            echo "[6/10] 编译 client hotspot-drift benchmark"
+            (cd "$REPO_ROOT/benchmark/client-drift" && mvn "${MVN_ARGS[@]}")
+        else
+            echo "[6/10] 跳过 client hotspot-drift benchmark（缺少客户 usecase jar）"
+        fi
+    fi
 
-if [[ -f "$REPO_ROOT/benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink/lib/nexmark-flink-0.3-SNAPSHOT.jar" ]]; then
-    cp -f "$REPO_ROOT/benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink/lib/nexmark-flink-0.3-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
-fi
+    echo "[7/10] 收集离线部署产物到 docker/deploy"
+    cp -f "$REPO_ROOT/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
 
-if [[ -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
-    cp -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" "$REPO_ROOT/docker/deploy/"
-fi
+    if [[ -f "$REPO_ROOT/src/main/resources/native/libforl0_engine.so" ]]; then
+        cp -f "$REPO_ROOT/src/main/resources/native/libforl0_engine.so" "$REPO_ROOT/docker/deploy/libforl0_engine.so"
+    fi
 
-if [[ -f "$REPO_ROOT/benchmark/client-drift/target/client-drift-benchmark-1.0-SNAPSHOT.jar" ]]; then
-    cp -f "$REPO_ROOT/benchmark/client-drift/target/client-drift-benchmark-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
+    if [[ -f "$REPO_ROOT/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar" ]]; then
+        cp -f "$REPO_ROOT/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
+    fi
+
+    if [[ -f "$REPO_ROOT/benchmark/unit-test/target/unit-test-benchmark-1.0-SNAPSHOT.jar" ]]; then
+        cp -f "$REPO_ROOT/benchmark/unit-test/target/unit-test-benchmark-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
+    fi
+
+    if [[ -f "$REPO_ROOT/benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink/lib/nexmark-flink-0.3-SNAPSHOT.jar" ]]; then
+        cp -f "$REPO_ROOT/benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink/lib/nexmark-flink-0.3-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
+    fi
+
+    if [[ -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" ]]; then
+        cp -f "$REPO_ROOT/client_usecase/XX_6000c_Demo/target/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar" "$REPO_ROOT/docker/deploy/"
+    fi
+
+    if [[ -f "$REPO_ROOT/benchmark/client-drift/target/client-drift-benchmark-1.0-SNAPSHOT.jar" ]]; then
+        cp -f "$REPO_ROOT/benchmark/client-drift/target/client-drift-benchmark-1.0-SNAPSHOT.jar" "$REPO_ROOT/docker/deploy/"
+    fi
 fi
 
 if [[ "$COPY_PROFILER" == "true" ]]; then
@@ -250,21 +333,39 @@ if [[ "$COPY_PROFILER" == "true" ]]; then
             echo "      ✗ ASYNC_PROFILER_HOME 与目标架构不匹配（期望 x64）: ${ASYNC_PROFILER_HOME}"
             exit 1
         fi
-        tar -czf "$REPO_ROOT/offline-packages/${profiler_name}.tar.gz" -C "$(dirname "$ASYNC_PROFILER_HOME")" "$profiler_name"
-        echo "      ✓ async-profiler 已打包到 offline-packages/${profiler_name}.tar.gz"
+        tar -czf "$WHEEL_OUTPUT_DIR/${profiler_name}.tar.gz" -C "$(dirname "$ASYNC_PROFILER_HOME")" "$profiler_name"
+        echo "      ✓ async-profiler 已打包到 benchmark/offline-packages/${profiler_name}.tar.gz"
     else
-        echo "      ⚠ 未设置 ASYNC_PROFILER_HOME，跳过 async-profiler 打包"
+        profiler_archive=""
+        for candidate in \
+            "$REPO_ROOT/benchmark/offline-packages/async-profiler-4.4-linux-${ARCH}.tar.gz" \
+            "$REPO_ROOT/offline-packages/async-profiler-4.4-linux-${ARCH}.tar.gz"; do
+            if [[ -f "$candidate" ]]; then
+                profiler_archive="$candidate"
+                break
+            fi
+        done
+        if [[ -n "$profiler_archive" ]]; then
+            cp -f "$profiler_archive" "$WHEEL_OUTPUT_DIR/"
+            echo "      ✓ 已复用 $(basename "$profiler_archive")"
+        else
+            echo "      ⚠ 未设置 ASYNC_PROFILER_HOME 且没有匹配 ${ARCH} 的离线包，跳过"
+        fi
     fi
 fi
 
 if [[ "$DOWNLOAD_PYTHON_WHEELS" == "true" ]]; then
     echo "[8/10] 收集 benchmark Python 离线依赖"
-    if [[ -d "$REPO_ROOT/benchmark/offline-packages" ]]; then
-        cp -a "$REPO_ROOT/benchmark/offline-packages/." "$REPO_ROOT/offline-packages/" 2>/dev/null || true
-    fi
     if command -v python3 >/dev/null 2>&1; then
-        if python3 -m pip download --only-binary=:all: -r "$REPO_ROOT/benchmark/requirements.txt" -d "$REPO_ROOT/offline-packages"; then
-            echo "      ✓ Python wheels 已保存到 offline-packages/"
+        if python3 -m pip download \
+            --only-binary=:all: \
+            --platform "$PIP_PLATFORM" \
+            --implementation cp \
+            --python-version "$PYTHON_VERSION_DIGITS" \
+            --abi "$PYTHON_ABI" \
+            -r "$REPO_ROOT/benchmark/requirements.txt" \
+            -d "$WHEEL_OUTPUT_DIR"; then
+            echo "      ✓ Linux ${ARCH} / CPython ${PYTHON_VERSION} wheels 已保存到 benchmark/offline-packages/"
         else
             echo "      ⚠ Python wheels 下载未完全成功；如目标机离线运行失败，请补齐 offline-packages/"
         fi
@@ -290,19 +391,16 @@ else
     echo "[9/10] 跳过 Docker 镜像导出"
 fi
 
-cp -a "$REPO_ROOT/docker/deploy/." "$OUTPUT_DIR/"
-cp -a "$REPO_ROOT/docker/images/." "$OUTPUT_DIR/" 2>/dev/null || true
-cp -a "$REPO_ROOT/offline-packages/." "$OUTPUT_DIR/" 2>/dev/null || true
-
 mkdir -p "$OUTPUT_DIR/artifacts" \
          "$OUTPUT_DIR/benchmark" \
          "$OUTPUT_DIR/docker" \
          "$OUTPUT_DIR/docker/images" \
          "$OUTPUT_DIR/docs"
 
-cp -a "$REPO_ROOT/docker/deploy/." "$OUTPUT_DIR/artifacts/"
-cp -a "$REPO_ROOT/docker/images/." "$OUTPUT_DIR/docker/images/" 2>/dev/null || true
-cp -a "$REPO_ROOT/offline-packages" "$OUTPUT_DIR/benchmark/" 2>/dev/null || true
+copy_deploy_artifacts "$OUTPUT_DIR/artifacts"
+if [[ -f "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar.gz" ]]; then
+    cp -f "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar.gz" "$OUTPUT_DIR/docker/images/"
+fi
 cp -a "$REPO_ROOT/benchmark/config" "$OUTPUT_DIR/benchmark/"
 cp -a "$REPO_ROOT/benchmark/scripts" "$OUTPUT_DIR/benchmark/"
 rm -rf "$OUTPUT_DIR/benchmark/scripts/__pycache__"
@@ -338,6 +436,9 @@ CHECKSUM_FILE="$OUTPUT_DIR/offline_bundle_sha256.txt"
     echo "GeneratedAt: $(date '+%Y-%m-%d %H:%M:%S %z')"
     echo "Arch: ${ARCH}"
     echo "DockerPlatform: ${DOCKER_PLATFORM}"
+    echo "PythonVersion: ${PYTHON_VERSION}"
+    echo "PipPlatform: ${PIP_PLATFORM}"
+    echo "PythonABI: ${PYTHON_ABI}"
     echo ""
     (
         cd "$OUTPUT_DIR"
