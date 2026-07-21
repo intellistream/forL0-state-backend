@@ -234,7 +234,7 @@ if [[ ! "$PYTHON_VERSION" =~ ^3\.[0-9]+$ ]]; then
     echo "✗ Python 版本格式无效: ${PYTHON_VERSION}（应为 3.10、3.11 等）"
     exit 1
 fi
-PYTHON_VERSION_DIGITS="${PYTHON_VERSION//./}"
+PYTHON_VERSION_DIGITS="$(printf '%s' "$PYTHON_VERSION" | tr -d '.')"
 PYTHON_ABI="cp${PYTHON_VERSION_DIGITS}"
 
 MVN_ARGS=(clean package)

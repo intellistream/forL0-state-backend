@@ -107,16 +107,16 @@ INSTALL_DIR="$HOME/forl0-runtime"
 cd "$BUNDLE_DIR"
 
 # 阶段 1：安装 + L0/Flink/Python preflight + 最短 Client smoke
-./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --smoke-only
+bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --smoke-only
 
 # 阶段 2：WordCount、NexMark、Client 合同口径 apps
-./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --apps-only
+bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --apps-only
 
 # 阶段 3（可选）：增加 NexMark throughput pressure 场景
-./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --full
+bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --full
 
 # 阶段 4（可选）：复现 Ascend 编号化性能清单
-./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" \
+bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" \
   --skip-docker-load --reproduce-ascend --no-report
 ```
 
