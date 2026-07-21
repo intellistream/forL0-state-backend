@@ -175,6 +175,9 @@ for script in docker_run.sh server_setup.sh run_all_apps.sh start.sh stop.sh res
         cp "${BUNDLE_ROOT}/docker/${script}" "${INSTALL_DIR}/docker/"
     fi
 done
+if [[ -f "${BUNDLE_ROOT}/docker/docker-compose.yml" ]]; then
+    cp "${BUNDLE_ROOT}/docker/docker-compose.yml" "${INSTALL_DIR}/docker/"
+fi
 if [[ -d "${BUNDLE_ROOT}/docker/lib" ]]; then
     cp -r "${BUNDLE_ROOT}/docker/lib" "${INSTALL_DIR}/docker/"
     chmod +x "${INSTALL_DIR}/docker/lib/l0_detector.sh"

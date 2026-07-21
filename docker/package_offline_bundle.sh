@@ -419,6 +419,9 @@ for script in docker_run.sh server_setup.sh run_all_apps.sh install_offline_bund
         cp -f "$REPO_ROOT/docker/$script" "$OUTPUT_DIR/docker/"
     fi
 done
+if [[ -f "$REPO_ROOT/docker/docker-compose.yml" ]]; then
+    cp -f "$REPO_ROOT/docker/docker-compose.yml" "$OUTPUT_DIR/docker/"
+fi
 if [[ -d "$REPO_ROOT/docker/lib" ]]; then
     cp -a "$REPO_ROOT/docker/lib" "$OUTPUT_DIR/docker/"
     chmod +x "$OUTPUT_DIR/docker/lib/l0_detector.sh"
