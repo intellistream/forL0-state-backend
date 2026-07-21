@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Target flow after scp-ing the repository to an offline server:
 #   cd /path/to/forL0-state-backend/docker
-#   ./run_offline_l0_experiment.sh --flink-home /path/to/flink-1.20.3
+#   ./run_offline_l0_experiment.sh --flink-home "$HOME/flink_home"
 #
 # Default behavior:
 #   1. deploy repository-local artifacts and run preflight
@@ -21,7 +21,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-FLINK_DIR="${FLINK_HOME:-}"
+FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
 TEST_NAME="apps"
 BACKEND="all"
 PROFILE_MODE="cpu"
@@ -38,7 +38,7 @@ Usage:
 
 Options:
   --flink-home PATH          Flink installation directory. Defaults to FLINK_HOME
-                             or server_setup.sh auto-detection.
+                             or $HOME/flink_home.
   --test NAME                Benchmark suite to run. Default: apps.
   --backend NAME             Backend to run. Default: all.
   --profile MODE             Profile mode for the second pass. Default: cpu.

@@ -50,7 +50,7 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 uname -m
 python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
 python3 -c 'import ensurepip, venv'
-test -d "$HOME/flink-1.20.3"
+test -d "$HOME/flink_home"
 test -e /dev/hisi_l0 || test -e /dev/l0
 ldconfig -p | grep -E 'libl0mempool\.so|libnuma\.so\.1'
 docker version >/dev/null 2>&1 || sudo -n docker version >/dev/null
@@ -117,23 +117,23 @@ chmod +x ./forl0-offline-app.sh docker/*.sh
 ```bash
 set -euo pipefail
 
-FLINK_HOME="$HOME/flink-1.20.3"
+export FLINK_HOME="$HOME/flink_home"
 BUNDLE_DIR="$HOME/forl0-offline-linux-arm64-py310-20260721"
 INSTALL_DIR="$HOME/forl0-runtime"
 
 cd "$BUNDLE_DIR"
 
 # 阶段 1：安装 + L0/Flink/Python preflight + 最短 Client smoke
-bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --smoke-only
+bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" --smoke-only
 
 # 阶段 2：WordCount、NexMark、Client 合同口径 apps
-bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --apps-only
+bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" --apps-only
 
 # 阶段 3（可选）：增加 NexMark throughput pressure 场景
-bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" --full
+bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" --full
 
 # 阶段 4（可选）：复现 Ascend 编号化性能清单
-bash ./forl0-offline-app.sh "$FLINK_HOME" --install-dir "$INSTALL_DIR" \
+bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" \
   --skip-docker-load --reproduce-ascend --no-report
 ```
 

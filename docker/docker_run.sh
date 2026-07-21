@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 source "./lib/l0_detector.sh"
 
 REPO_ROOT="$(cd .. && pwd)"
-FLINK_DIR="${FLINK_HOME:-/home/user/flink}"
+FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
 NATIVE_DIR="${FORL0_NATIVE_DIR:-}"
 CONF_DIR="${FORL0_FLINK_CONF_DIR:-$(pwd)/conf}"
 NETWORK="flink-net"

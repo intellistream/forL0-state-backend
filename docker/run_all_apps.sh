@@ -22,7 +22,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 REPO_ROOT="$(cd .. && pwd)"
-FLINK_DIR="${FLINK_HOME:-}"
+FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
 PROFILE_MODE=""
 BACKEND="all"
 TEST_NAME="apps"

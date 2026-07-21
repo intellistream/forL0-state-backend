@@ -6,6 +6,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+export FLINK_HOME="${FLINK_HOME:-${HOME}/flink_home}"
 source "./lib/l0_detector.sh"
 forl0_detect_l0_environment || true
 echo "=== L0 环境探测 ==="

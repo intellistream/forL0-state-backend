@@ -3,7 +3,8 @@
 # ForL0 offline app launcher
 #
 # One command on the offline server:
-#   bash ./forl0-offline-app.sh /path/to/flink-1.20.3
+#   bash ./forl0-offline-app.sh
+# Default Flink installation: $HOME/flink_home
 #
 # It works in either layout:
 #   1. full repository root
@@ -85,11 +86,13 @@ usage() {
 ForL0 offline app launcher
 
 Usage:
-  ./forl0-offline-app.sh /path/to/flink-1.20.3 [options]
-  ./forl0-offline-app.sh --flink-home /path/to/flink-1.20.3 [options]
+  ./forl0-offline-app.sh [options]
+  ./forl0-offline-app.sh /custom/path/to/flink [options]
+  ./forl0-offline-app.sh --flink-home /custom/path/to/flink [options]
 
 Common options:
   --flink-home PATH       Flink installation directory. Can also use FLINK_HOME.
+                          Default: $HOME/flink_home
   --install-dir PATH      Runtime install dir when running from an offline bundle.
                           Default: ~/forl0-runtime
   --backend NAME          all / forl0 / hashmap. Default: all
@@ -413,7 +416,9 @@ case "$BACKEND" in
     *) die "--backend must be all, forl0, or hashmap: $BACKEND" ;;
 esac
 
-[[ -n "$FLINK_DIR" ]] || die "missing --flink-home PATH or FLINK_HOME"
+if [[ -z "$FLINK_DIR" ]]; then
+    FLINK_DIR="${HOME}/flink_home"
+fi
 [[ -d "$FLINK_DIR" ]] || die "FLINK_HOME does not exist: $FLINK_DIR"
 export FLINK_HOME="$FLINK_DIR"
 

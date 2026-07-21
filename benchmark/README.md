@@ -62,10 +62,10 @@ cd /path/to/forL0-state-backend
 **2. 指定 Flink**
 
 ```bash
-export FLINK_HOME=/path/to/flink-1.20.3
+export FLINK_HOME="$HOME/flink_home"
 ```
 
-也可以不设置环境变量，让脚本自动查找 `~/flink-1.20.3`、`~/flink`、`/opt/flink` 或 `/usr/local/flink`。
+默认使用 `~/flink_home`。部署脚本也会兼容查找 `~/flink-1.20.3`、`~/flink`、`/opt/flink` 或 `/usr/local/flink`。
 
 **3. 离线目标机一键完整实验**
 
@@ -181,7 +181,7 @@ cd /path/to/forL0-state-backend
 
 ```bash
 cd /path/to/forl0-offline/docker
-./install_offline_bundle.sh --flink-home /path/to/flink-1.20.3 --install-dir ~/forl0-runtime
+./install_offline_bundle.sh --flink-home "$HOME/flink_home" --install-dir ~/forl0-runtime
 cd ~/forl0-runtime/docker
 ./run_all_apps.sh --offline --preflight-only --test apps --backend all
 ```

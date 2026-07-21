@@ -18,17 +18,17 @@ cd "$(dirname "$0")"
 
 BUNDLE_ROOT="$(cd .. && pwd)"
 INSTALL_DIR="${HOME}/forl0-runtime"
-FLINK_DIR="${FLINK_HOME:-}"
+FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
 START_DOCKER=false
 COPY_PROFILER=false
 
 usage() {
     cat <<'EOF'
 用法:
-  ./docker/install_offline_bundle.sh --flink-home /path/to/flink [选项]
+  ./docker/install_offline_bundle.sh [选项]
 
 选项:
-  --flink-home PATH     Flink 安装目录，必填（也可通过 FLINK_HOME 提供）
+  --flink-home PATH     Flink 安装目录（默认 $HOME/flink_home，也可通过 FLINK_HOME 提供）
   --install-dir PATH    安装输出目录，默认 ~/forl0-runtime
   --start-docker        安装完成后直接启动 docker/docker_run.sh start
   --copy-profiler       将 tools/async-profiler-4.4-linux-arm64 复制到安装目录
@@ -65,12 +65,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-if [[ -z "$FLINK_DIR" ]]; then
-    echo "✗ 必须提供 --flink-home 或预先设置 FLINK_HOME"
-    usage
-    exit 1
-fi
 
 pick_first_file() {
     for candidate in "$@"; do

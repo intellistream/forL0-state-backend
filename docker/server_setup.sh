@@ -57,6 +57,7 @@ detect_flink_home() {
     fi
 
     for candidate in \
+        "$HOME/flink_home" \
         "$HOME/flink-1.20.3" \
         "$HOME/flink" \
         /opt/flink \
@@ -138,7 +139,8 @@ fi
 
 if [[ -z "$FLINK_DIR" || ! -d "$FLINK_DIR" ]]; then
     echo "✗ 未能自动找到 FLINK_HOME"
-    echo "  请手工执行: ./server_setup.sh --flink-home /path/to/flink"
+    echo "  默认目录为: $HOME/flink_home"
+    echo "  其他目录请执行: ./server_setup.sh --flink-home /path/to/flink"
     exit 1
 fi
 
