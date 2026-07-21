@@ -24,6 +24,12 @@ fi
 set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+L0_DETECTOR="${APP_ROOT}/docker/lib/l0_detector.sh"
+if [[ ! -f "$L0_DETECTOR" ]]; then
+    echo "ERROR: missing L0 detector: $L0_DETECTOR" >&2
+    exit 1
+fi
+source "$L0_DETECTOR"
 FLINK_DIR="${FLINK_HOME:-}"
 INSTALL_DIR="${HOME}/forl0-runtime"
 BACKEND="all"
@@ -422,62 +428,27 @@ find_first_existing_file() {
     return 1
 }
 
-find_numa_lib() {
-    find_first_existing_file \
-        /lib/aarch64-linux-gnu/libnuma.so.1 \
-        /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
-        /lib64/libnuma.so.1 \
-        /usr/lib64/libnuma.so.1
-}
-
-find_l0_mempool_lib() {
-    find_first_existing_file \
-        /usr/lib64/libl0mempool.so \
-        /usr/lib/libl0mempool.so \
-        /lib64/libl0mempool.so \
-        /lib/libl0mempool.so
-}
-
 check_l0_environment() {
-    local l0_device=""
-    local l0_lib=""
-    local numa_lib=""
     local failed=false
 
-    if [[ -e /dev/hisi_l0 ]]; then
-        l0_device="/dev/hisi_l0"
-    elif [[ -e /dev/l0 ]]; then
-        l0_device="/dev/l0"
-    fi
-
-    l0_lib="$(find_l0_mempool_lib || true)"
-    numa_lib="$(find_numa_lib || true)"
+    forl0_detect_l0_environment || true
 
     info "Checking L0 hardware environment"
-    if [[ -n "$l0_device" ]]; then
-        echo "  device:      OK (${l0_device})"
-        if [[ "$l0_device" == "/dev/l0" ]]; then
-            echo "               docker_run.sh will also expose it as /dev/hisi_l0 for native HotCache."
-        fi
-    else
-        echo "  device:      MISSING (/dev/hisi_l0 or /dev/l0)"
+    forl0_print_l0_detection
+    if [[ -z "$FORL0_L0_DEVICE_PATH" ]]; then
+        failed=true
+    fi
+    if [[ -z "$FORL0_L0_LIBRARY_PATH" ]]; then
+        failed=true
+    fi
+    if [[ -z "$FORL0_NUMA_LIBRARY_PATH" ]]; then
         failed=true
     fi
 
-    if [[ -n "$l0_lib" ]]; then
-        echo "  libl0:       OK (${l0_lib})"
-        export L0_MEMPOOL_LIB_HOST_PATH="$l0_lib"
-    else
-        echo "  libl0:       MISSING (libl0mempool.so in /usr/lib64, /usr/lib, /lib64, /lib)"
-        failed=true
-    fi
-
-    if [[ -n "$numa_lib" ]]; then
-        echo "  libnuma:     OK (${numa_lib})"
-    else
-        echo "  libnuma:     MISSING (libnuma.so.1)"
-        failed=true
-    fi
+    export L0_DEVICE_HOST_PATH="$FORL0_L0_DEVICE_PATH"
+    export L0_MEMPOOL_LIB_HOST_PATH="$FORL0_L0_LIBRARY_PATH"
+    export NUMA_LIB_HOST_PATH="$FORL0_NUMA_LIBRARY_PATH"
+    forl0_prepend_l0_library_path "$FORL0_L0_LIBRARY_PATH"
 
     if [[ "$failed" == "true" ]]; then
         if [[ "$REQUIRE_L0" == "true" ]]; then

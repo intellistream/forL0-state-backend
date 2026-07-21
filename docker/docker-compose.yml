@@ -14,6 +14,9 @@
 #  若宿主机 libnuma.so.1 不在默认位置，请先设置：
 #    export NUMA_LIB_HOST_PATH=/path/to/libnuma.so.1
 #    export NUMA_LIB_CONTAINER_PATH=/lib/aarch64-linux-gnu/libnuma.so.1
+#  start.sh 会自动探测 L0；直接运行 docker compose 时可显式设置：
+#    export L0_MEMPOOL_LIB_HOST_PATH=/path/to/libl0mempool.so
+#    export L0_DEVICE_HOST_PATH=/dev/l0
 ################################################################################
 
 services:
@@ -59,10 +62,10 @@ services:
       - ../src/main/resources/native:/opt/flink/native:ro
       - flink-checkpoints:/opt/flink-data/checkpoints
       - tm1-logs:/opt/flink/log
-      - /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro
+      - ${L0_MEMPOOL_LIB_HOST_PATH:-/usr/lib64/libl0mempool.so}:/usr/lib64/libl0mempool.so:ro
       - ${NUMA_LIB_HOST_PATH:-/lib/aarch64-linux-gnu/libnuma.so.1}:${NUMA_LIB_CONTAINER_PATH:-/lib/aarch64-linux-gnu/libnuma.so.1}:ro
     devices:
-      - /dev/hisi_l0:/dev/hisi_l0
+      - ${L0_DEVICE_HOST_PATH:-/dev/hisi_l0}:/dev/hisi_l0
     environment:
       FLINK_HOME: /opt/flink
       LD_LIBRARY_PATH: /usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu
@@ -91,10 +94,10 @@ services:
       - ../src/main/resources/native:/opt/flink/native:ro
       - flink-checkpoints:/opt/flink-data/checkpoints
       - tm2-logs:/opt/flink/log
-      - /usr/lib64/libl0mempool.so:/usr/lib64/libl0mempool.so:ro
+      - ${L0_MEMPOOL_LIB_HOST_PATH:-/usr/lib64/libl0mempool.so}:/usr/lib64/libl0mempool.so:ro
       - ${NUMA_LIB_HOST_PATH:-/lib/aarch64-linux-gnu/libnuma.so.1}:${NUMA_LIB_CONTAINER_PATH:-/lib/aarch64-linux-gnu/libnuma.so.1}:ro
     devices:
-      - /dev/hisi_l0:/dev/hisi_l0
+      - ${L0_DEVICE_HOST_PATH:-/dev/hisi_l0}:/dev/hisi_l0
     environment:
       FLINK_HOME: /opt/flink
       LD_LIBRARY_PATH: /usr/lib:/usr/lib64:/usr/lib/aarch64-linux-gnu:/lib:/lib64:/lib/aarch64-linux-gnu

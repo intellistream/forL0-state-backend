@@ -10,6 +10,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+source "./lib/l0_detector.sh"
 
 REPO_ROOT="$(cd .. && pwd)"
 FLINK_DIR="${FLINK_HOME:-/home/user/flink}"
@@ -61,44 +62,20 @@ fi
 
 # L0 挂载参数 (仅当硬件存在时)
 L0_OPTS=()
-NUMA_HOST_PATH="${NUMA_LIB_HOST_PATH:-}"
+forl0_detect_l0_environment || true
+NUMA_HOST_PATH="${FORL0_NUMA_LIBRARY_PATH:-}"
 NUMA_CONTAINER_PATH="${NUMA_LIB_CONTAINER_PATH:-}"
-L0_MEMPOOL_HOST_PATH="${L0_MEMPOOL_LIB_HOST_PATH:-}"
+L0_MEMPOOL_HOST_PATH="${FORL0_L0_LIBRARY_PATH:-}"
+L0_DEVICE_PATH="${FORL0_L0_DEVICE_PATH:-}"
+[[ -n "$NUMA_CONTAINER_PATH" ]] || NUMA_CONTAINER_PATH="/usr/lib/libnuma.so.1"
 
-if [[ -z "$NUMA_HOST_PATH" ]]; then
-    for candidate in \
-        /lib/aarch64-linux-gnu/libnuma.so.1 \
-        /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
-        /lib64/libnuma.so.1 \
-        /usr/lib64/libnuma.so.1; do
-        if [[ -f "$candidate" ]]; then
-            NUMA_HOST_PATH="$candidate"
-            NUMA_CONTAINER_PATH="$candidate"
-            break
-        fi
-    done
-fi
-
-if [[ -z "$L0_MEMPOOL_HOST_PATH" ]]; then
-    for candidate in \
-        /usr/lib64/libl0mempool.so \
-        /usr/lib/libl0mempool.so \
-        /lib64/libl0mempool.so \
-        /lib/libl0mempool.so; do
-        if [[ -f "$candidate" ]]; then
-            L0_MEMPOOL_HOST_PATH="$candidate"
-            break
-        fi
-    done
-fi
-
-if [[ -e /dev/hisi_l0 ]]; then
-    L0_OPTS+=(--device /dev/hisi_l0:/dev/hisi_l0)
-elif [[ -e /dev/l0 ]]; then
+if [[ "$L0_DEVICE_PATH" == */hisi_l0 ]]; then
+    L0_OPTS+=(--device "${L0_DEVICE_PATH}:/dev/hisi_l0")
+elif [[ -n "$L0_DEVICE_PATH" ]]; then
     # Native HotCache probes /dev/hisi_l0. Some servers expose the same L0
     # device as /dev/l0, so expose both paths inside the container.
-    L0_OPTS+=(--device /dev/l0:/dev/l0)
-    L0_OPTS+=(--device /dev/l0:/dev/hisi_l0)
+    L0_OPTS+=(--device "${L0_DEVICE_PATH}:/dev/l0")
+    L0_OPTS+=(--device "${L0_DEVICE_PATH}:/dev/hisi_l0")
 fi
 if [[ -n "$L0_MEMPOOL_HOST_PATH" ]]; then
     L0_OPTS+=(-v "${L0_MEMPOOL_HOST_PATH}:/usr/lib/libl0mempool.so:ro")

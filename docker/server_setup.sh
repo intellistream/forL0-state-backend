@@ -19,6 +19,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+source "./lib/l0_detector.sh"
 
 REPO_ROOT="$(cd .. && pwd)"
 FLINK_DIR="${FLINK_HOME:-}"
@@ -96,61 +97,9 @@ detect_docker_bin() {
 }
 
 report_l0_status() {
-    local l0_device=""
-    local l0_available=true
-    local numa_found=false
-    local l0_lib=""
-
-    if [[ -e /dev/l0 ]]; then
-        l0_device="/dev/l0"
-    elif [[ -e /dev/hisi_l0 ]]; then
-        l0_device="/dev/hisi_l0"
-    else
-        l0_available=false
-    fi
-
-    for l0_candidate in \
-        /usr/lib64/libl0mempool.so \
-        /usr/lib/libl0mempool.so \
-        /lib64/libl0mempool.so \
-        /lib/libl0mempool.so; do
-        if [[ -f "$l0_candidate" ]]; then
-            l0_lib="$l0_candidate"
-            break
-        fi
-    done
-
-    if [[ -n "$l0_lib" ]]; then
-        echo "      ✓ libl0mempool.so 存在 (${l0_lib})"
-    else
-        echo "      ✗ libl0mempool.so 不存在 (/usr/lib64, /usr/lib, /lib64, /lib)"
-        l0_available=false
-    fi
-
-    for numa_candidate in \
-        /lib/aarch64-linux-gnu/libnuma.so.1 \
-        /usr/lib/aarch64-linux-gnu/libnuma.so.1 \
-        /lib64/libnuma.so.1 \
-        /usr/lib64/libnuma.so.1; do
-        if [[ -f "$numa_candidate" ]]; then
-            echo "      ✓ libnuma.so.1 存在 (${numa_candidate})"
-            numa_found=true
-            break
-        fi
-    done
-
-    if [[ "$numa_found" == "false" ]]; then
-        echo "      ✗ libnuma.so.1 不存在"
-        l0_available=false
-    fi
-
-    if [[ -n "$l0_device" ]]; then
-        echo "      ✓ ${l0_device} 设备存在"
-    else
-        echo "      ✗ /dev/l0 和 /dev/hisi_l0 都不存在"
-    fi
-
-    if [[ "$l0_available" == "true" ]]; then
+    forl0_detect_l0_environment || true
+    forl0_print_l0_detection | sed 's/^/    /'
+    if [[ -n "$FORL0_L0_DEVICE_PATH" && -n "$FORL0_L0_LIBRARY_PATH" && -n "$FORL0_NUMA_LIBRARY_PATH" ]]; then
         echo "      ✓ L0 硬件环境可用"
     else
         echo "      ⚠ 当前不会使用真实 L0 硬件加速"
@@ -298,6 +247,7 @@ fi
 echo ""
 echo "[2/4] 检查 L0 环境..."
 report_l0_status
+forl0_prepend_l0_library_path "$FORL0_L0_LIBRARY_PATH"
 
 echo ""
 echo "[3/4] 安装预编译产物到 Flink..."
@@ -319,6 +269,10 @@ export REPO_ROOT="${REPO_ROOT}"
 export DOCKER_BIN="${DOCKER_BIN}"
 export ASYNC_PROFILER_HOME="${ASYNC_PROFILER_DIR}"
 export FLINK_TASKMANAGER_CONTAINER="flink-taskmanager-1"
+export L0_DEVICE_HOST_PATH="${FORL0_L0_DEVICE_PATH}"
+export L0_MEMPOOL_LIB_HOST_PATH="${FORL0_L0_LIBRARY_PATH}"
+export NUMA_LIB_HOST_PATH="${FORL0_NUMA_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 EOF
 
 echo "      ✓ backend JAR 已安装到 ${FLINK_DIR}/lib/"

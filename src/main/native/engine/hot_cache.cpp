@@ -43,8 +43,8 @@ bool default_l0_bindings_loader(L0LibBindings* out, std::string* reason) {
 
     // Sanity: also require /dev/hisi_l0. Otherwise even with the library
     // present cache_tuner_init may behave unpredictably.
-    if (access("/dev/hisi_l0", F_OK) != 0) {
-        if (reason) *reason = "/dev/hisi_l0 not present";
+    if (access("/dev/hisi_l0", F_OK) != 0 && access("/dev/l0", F_OK) != 0) {
+        if (reason) *reason = "/dev/hisi_l0 and /dev/l0 not present";
         dlclose(handle);
         return false;
     }

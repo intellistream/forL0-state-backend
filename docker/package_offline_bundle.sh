@@ -419,6 +419,10 @@ for script in docker_run.sh server_setup.sh run_all_apps.sh install_offline_bund
         cp -f "$REPO_ROOT/docker/$script" "$OUTPUT_DIR/docker/"
     fi
 done
+if [[ -d "$REPO_ROOT/docker/lib" ]]; then
+    cp -a "$REPO_ROOT/docker/lib" "$OUTPUT_DIR/docker/"
+    chmod +x "$OUTPUT_DIR/docker/lib/l0_detector.sh"
+fi
 if [[ -f "$REPO_ROOT/docker/download_offline_python_wheels.ps1" ]]; then
     cp -f "$REPO_ROOT/docker/download_offline_python_wheels.ps1" "$OUTPUT_DIR/docker/"
 fi

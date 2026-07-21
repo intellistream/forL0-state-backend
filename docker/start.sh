@@ -6,6 +6,17 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+source "./lib/l0_detector.sh"
+forl0_detect_l0_environment || true
+echo "=== L0 环境探测 ==="
+forl0_print_l0_detection
+if [[ -z "$FORL0_L0_DEVICE_PATH" || -z "$FORL0_L0_LIBRARY_PATH" ]]; then
+    echo "✗ 未找到真实 L0 设备或运行库；请按上面的 override 提示设置后重试"
+    exit 1
+fi
+export L0_DEVICE_HOST_PATH="$FORL0_L0_DEVICE_PATH"
+export L0_MEMPOOL_LIB_HOST_PATH="$FORL0_L0_LIBRARY_PATH"
+export NUMA_LIB_HOST_PATH="$FORL0_NUMA_LIBRARY_PATH"
 
 # 兼容 Docker Compose V1/V2
 if docker compose version >/dev/null 2>&1; then

@@ -58,6 +58,23 @@ docker version >/dev/null 2>&1 || sudo -n docker version >/dev/null
 
 预期架构为 `aarch64`，Python 为 `3.10`。Ubuntu/Debian 必须在断网前安装 `python3.10-venv`；只有 `python3` 而没有 venv/ensurepip 时，启动器无法创建 benchmark 环境。
 
+`libl0mempool.so` 不一定安装在 `/usr/lib64` 等系统目录。解压离线包后可运行统一探测器，它依次检查显式配置、`LD_LIBRARY_PATH`、`ldconfig`、multiarch 目录、常见 L0 厂商目录，并在 `/opt`、`/usr/local` 和当前用户目录内进行有限深度搜索：
+
+```bash
+bash ./docker/lib/l0_detector.sh
+```
+
+输出会同时显示实际路径和命中来源。若厂商运行库位于其他挂载点，可明确指定，后续启动器和 Docker 脚本都会沿用该路径：
+
+```bash
+export L0_MEMPOOL_LIB_HOST_PATH=/path/to/libl0mempool.so
+export L0_DEVICE_HOST_PATH=/dev/l0       # 或 /dev/hisi_l0
+export NUMA_LIB_HOST_PATH=/path/to/libnuma.so.1  # 仅在自动探测失败时需要
+bash ./docker/lib/l0_detector.sh
+```
+
+所有入口均应使用 `bash ./脚本名.sh`（或直接执行带可执行权限的脚本）；探测器和主启动器在误用 `sh` 时会自动切回 Bash，避免 `bad substitution`。
+
 #### 2. Windows 下载、校验并中转
 
 在 Windows 浏览器打开 [GitHub Releases](https://github.com/intellistream/forL0-state-backend/releases)，下载以下两个文件：
@@ -144,6 +161,9 @@ cd "$HOME/forl0-runtime/docker"
 # L0 / 模拟模式日志
 grep -R "ForL0\\|HotCache\\|SIMULATION\\|L0 MODE" \
   "$FLINK_HOME/log" "$HOME/forl0-runtime/benchmark/results" 2>/dev/null | tail -80
+
+# 显示 L0 探测结果及命中来源
+bash "$HOME/forl0-runtime/docker/lib/l0_detector.sh" || true
 ```
 
 如果仍出现 `Could not find a version that satisfies the requirement pandas>=2.0.0`，先确认 Python 是 3.10 且包内存在 `benchmark/offline-packages/pandas-*-cp310-*-aarch64.whl`。目标 Python 不是 3.10 时，在 Windows 仓库根目录执行 `powershell -ExecutionPolicy Bypass -File .\docker\download_offline_python_wheels.ps1 -TargetArch arm64 -PythonVersion 3.11`（版本按实际值修改），再用生成的 `offline-packages/` 替换离线包中的 wheel 目录。
