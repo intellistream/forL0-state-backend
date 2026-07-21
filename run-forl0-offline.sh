@@ -22,6 +22,22 @@ CHECKSUM_FILE="${ARCHIVE}.sha256"
 RELEASE_TAG="${FORL0_RELEASE_TAG:-offline-arm64-py310-20260721-r7}"
 RELEASE_BASE_URL="https://github.com/intellistream/forL0-state-backend/releases/download/${RELEASE_TAG}"
 DOWNLOAD_AUTH_TOKEN=""
+DEFAULT_RUN_ARGS=(--reproduce-ascend --keep-going)
+
+# The root entry point is the "everything" path.  Keep explicit launcher modes
+# working, but make a no-mode invocation run the complete numbered Ascend
+# reproduction matrix instead of the smaller contract-app subset.
+has_explicit_run_mode() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --smoke-only|--apps-only|--full|--pressure-only|--reproduce-ascend|--report-only|--workloads|--list-workloads)
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
 
 discover_github_token() {
     local credential=""
@@ -174,6 +190,14 @@ fi
 echo "[4/4] Install and run ForL0 validation"
 echo ""
 export FLINK_HOME="${FLINK_HOME:-${HOME}/flink_home}"
+if has_explicit_run_mode "$@"; then
+    RUN_ARGS=("$@")
+else
+    echo "No run mode selected; running the complete Ascend reproduction matrix."
+    echo "  workloads: W01-W02, N01-N14, C01-C08"
+    echo "  failures:  keep going, then generate the final HTML report"
+    RUN_ARGS=("${DEFAULT_RUN_ARGS[@]}" "$@")
+fi
 exec bash "$BUNDLE_DIR/forl0-offline-app.sh" \
     --install-dir "${FORL0_INSTALL_DIR:-${HOME}/forl0-runtime}" \
-    "$@"
+    "${RUN_ARGS[@]}"

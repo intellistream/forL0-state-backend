@@ -121,7 +121,7 @@ cd "$HOME/forL0-state-backend"
 bash ./run-forl0-offline.sh
 ```
 
-它会自动校验压缩包、解压到当前代码仓库、校验包内全部文件，并使用默认的 `$HOME/flink_home` 完成安装、启动、smoke、合同 apps 和报告生成。需要额外执行 NexMark throughput pressure 时，可改为 `bash ./run-forl0-offline.sh --full`。所有 `forl0-offline-app.sh` 参数都可以直接追加到该命令。
+它会自动校验压缩包、解压到当前代码仓库、校验包内全部文件，并使用默认的 `$HOME/flink_home` 完成安装和启动。根入口无参数时默认执行完整的 Ascend 编号化复现实验矩阵：W01--W02、N01--N14、C01--C08；单项失败会被记录，但不会阻止后续场景，全部场景结束后生成 HTML 报告。若只需较小的合同 apps，可显式使用 `--apps-only`；其他 `forl0-offline-app.sh` 参数也可以直接追加到该命令。
 
 #### 3. 离线服务器解压和双重校验
 
@@ -162,9 +162,9 @@ bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" --apps-only
 # 阶段 3（可选）：增加 NexMark throughput pressure 场景
 bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" --full
 
-# 阶段 4（可选）：复现 Ascend 编号化性能清单
+# 阶段 4：复现完整 Ascend 编号化性能清单并生成最终报告
 bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" \
-  --skip-docker-load --reproduce-ascend --no-report
+  --skip-docker-load --reproduce-ascend --keep-going
 ```
 
 默认要求 2 个 TaskManager、共 8 个 slot。若部署拓扑不同，可显式传入 `--expected-taskmanagers N --expected-slots N`。真实离线 L0 验证不要使用 `--allow-simulation`。
