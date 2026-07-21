@@ -90,8 +90,16 @@ $Expected = (Get-Content "$Bundle.sha256").Split()[0].ToLower()
 $Actual = (Get-FileHash $Bundle -Algorithm SHA256).Hash.ToLower()
 if ($Actual -ne $Expected) { throw "SHA256 mismatch" }
 
-scp $Bundle "$Bundle.sha256" user@offline-server:/tmp/
+scp $Bundle "$Bundle.sha256" .\run-forl0-offline.sh user@offline-server:~/
 ```
+
+`run-forl0-offline.sh` 可从同一个 Release 下载。上传完成后只需登录离线服务器执行：
+
+```bash
+bash "$HOME/run-forl0-offline.sh"
+```
+
+它会自动校验压缩包、解压到 `$HOME`、校验包内全部文件，并使用默认的 `$HOME/flink_home` 完成安装、启动、smoke、合同 apps 和报告生成。需要额外执行 NexMark throughput pressure 时，可改为 `bash "$HOME/run-forl0-offline.sh" --full`。所有 `forl0-offline-app.sh` 参数都可以直接追加到该命令。
 
 #### 3. 离线服务器解压和双重校验
 

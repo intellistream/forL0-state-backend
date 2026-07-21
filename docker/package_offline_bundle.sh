@@ -413,6 +413,10 @@ if [[ -f "$REPO_ROOT/forl0-offline-app.sh" ]]; then
     cp -f "$REPO_ROOT/forl0-offline-app.sh" "$OUTPUT_DIR/"
     chmod +x "$OUTPUT_DIR/forl0-offline-app.sh"
 fi
+if [[ -f "$REPO_ROOT/run-forl0-offline.sh" ]]; then
+    cp -f "$REPO_ROOT/run-forl0-offline.sh" "$OUTPUT_DIR/"
+    chmod +x "$OUTPUT_DIR/run-forl0-offline.sh"
+fi
 cp -a "$REPO_ROOT/docker/conf" "$OUTPUT_DIR/docker/"
 for script in docker_run.sh server_setup.sh run_all_apps.sh install_offline_bundle.sh start.sh stop.sh restart.sh; do
     if [[ -f "$REPO_ROOT/docker/$script" ]]; then
