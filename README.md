@@ -52,6 +52,19 @@ bash ./run-forl0-offline.sh
 
 如果服务器真正断网，则在联网机器克隆仓库并下载 Release 三个资产后，将整个仓库传入服务器。可设置 `FORL0_OFFLINE_ONLY=true` 禁止脚本尝试联网。
 
+使用 Windows IDEA Deployment 时，在 IDEA 同步完代码后，于仓库根目录运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\prepare-idea-offline-deployment.ps1
+```
+
+该脚本通过已认证的 GitHub CLI 自动下载私有 r7 Release 压缩包和 SHA256 到仓库根目录并完成校验。随后让 IDEA Deployment 上传整个仓库，确认没有把 `*.tar.gz` 排除。服务器端执行：
+
+```bash
+cd /root/forl0
+FORL0_OFFLINE_ONLY=true bash ./run-forl0-offline.sh
+```
+
 #### 1. 离线前确认服务器前置条件
 
 以下内容不包含在离线包内，必须提前装好：Docker、L0 设备驱动、`libl0mempool.so` 和 `libnuma.so.1`。完整离线包已经包含 Flink 1.20.3、ARM64 CPython 3.10、venv/pip、对应 wheels 和 Java Docker 镜像；目标服务器无需预装 Flink、Python 或宿主机 Java。在目标服务器执行：
