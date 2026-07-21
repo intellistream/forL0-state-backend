@@ -51,7 +51,7 @@ pick_first_file() {
 }
 
 detect_flink_home() {
-    if [[ -n "${FLINK_HOME:-}" && -d "${FLINK_HOME}" ]]; then
+    if [[ -n "${FLINK_HOME:-}" && -x "${FLINK_HOME}/bin/flink" ]]; then
         echo "${FLINK_HOME}"
         return 0
     fi
@@ -62,16 +62,16 @@ detect_flink_home() {
         "$HOME/flink" \
         /opt/flink \
         /usr/local/flink; do
-        if [[ -d "$candidate" ]]; then
+        if [[ -x "$candidate/bin/flink" ]]; then
             echo "$candidate"
             return 0
         fi
     done
 
     local detected
-    detected="$(find "$HOME" -maxdepth 1 -type d \( -name 'flink-1.20.3' -o -name 'flink-*' \) | head -n 1 || true)"
+    detected="$(find "$HOME" -maxdepth 2 -type f -path '*/bin/flink' -perm -u+x -print 2>/dev/null | head -n 1 || true)"
     if [[ -n "$detected" ]]; then
-        echo "$detected"
+        dirname "$(dirname "$detected")"
         return 0
     fi
 
@@ -137,7 +137,7 @@ if [[ -z "$FLINK_DIR" ]]; then
     FLINK_DIR="$(detect_flink_home || true)"
 fi
 
-if [[ -z "$FLINK_DIR" || ! -d "$FLINK_DIR" ]]; then
+if [[ -z "$FLINK_DIR" || ! -x "$FLINK_DIR/bin/flink" ]]; then
     echo "✗ 未能自动找到 FLINK_HOME"
     echo "  默认目录为: $HOME/flink_home"
     echo "  其他目录请执行: ./server_setup.sh --flink-home /path/to/flink"

@@ -416,7 +416,13 @@ esac
 if [[ -z "$FLINK_DIR" ]]; then
     FLINK_DIR="${HOME}/flink_home"
 fi
-[[ -d "$FLINK_DIR" ]] || die "FLINK_HOME does not exist: $FLINK_DIR"
+if [[ ! -x "$FLINK_DIR/bin/flink" ]]; then
+    if ! compgen -G "${APP_ROOT}/tools/flink/flink-*-bin-scala_*.tgz" >/dev/null && \
+       ! compgen -G "${APP_ROOT}/tools/flink/flink-*-bin-scala_*.tar.gz" >/dev/null; then
+        die "FLINK_HOME is incomplete (${FLINK_DIR}/bin/flink missing) and the bundle has no Flink distribution"
+    fi
+    echo "WARN: ${FLINK_DIR}/bin/flink is missing; the bundled Flink distribution will be installed automatically."
+fi
 export FLINK_HOME="$FLINK_DIR"
 
 find_first_existing_file() {

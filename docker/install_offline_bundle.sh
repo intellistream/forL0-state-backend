@@ -22,6 +22,35 @@ FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
 START_DOCKER=false
 COPY_PROFILER=false
 
+ensure_flink_distribution() {
+    local flink_archive=""
+    if [[ -x "${FLINK_DIR}/bin/flink" ]]; then
+        echo "      ✓ 已发现完整 Flink: ${FLINK_DIR}/bin/flink"
+        return 0
+    fi
+
+    flink_archive="$(find "${BUNDLE_ROOT}/tools/flink" -maxdepth 1 -type f \
+        \( -name 'flink-*-bin-scala_*.tgz' -o -name 'flink-*-bin-scala_*.tar.gz' \) \
+        -print -quit 2>/dev/null || true)"
+    if [[ -z "$flink_archive" ]]; then
+        echo "✗ FLINK_HOME 不完整，缺少可执行文件: ${FLINK_DIR}/bin/flink" >&2
+        echo "  离线包中也没有完整 Flink 分发包: ${BUNDLE_ROOT}/tools/flink/" >&2
+        return 1
+    fi
+
+    echo "      ⚠ FLINK_HOME 不完整，正在从离线包安装 Flink"
+    echo "        archive: $flink_archive"
+    echo "        target:  $FLINK_DIR"
+    mkdir -p "$FLINK_DIR"
+    tar -xzf "$flink_archive" -C "$FLINK_DIR" --strip-components=1
+    chmod +x "$FLINK_DIR/bin/"*.sh "$FLINK_DIR/bin/flink" 2>/dev/null || true
+    if [[ ! -x "$FLINK_DIR/bin/flink" ]]; then
+        echo "✗ Flink 解压后仍缺少可执行文件: $FLINK_DIR/bin/flink" >&2
+        return 1
+    fi
+    echo "      ✓ Flink 已安装: $FLINK_DIR"
+}
+
 usage() {
     cat <<'EOF'
 用法:
@@ -105,10 +134,7 @@ for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR"; do
     fi
 done
 
-if [[ ! -d "$FLINK_DIR" ]]; then
-    echo "✗ Flink 目录不存在: $FLINK_DIR"
-    exit 1
-fi
+ensure_flink_distribution
 
 echo "============================================================"
 echo "  ForL0 离线包一键安装"

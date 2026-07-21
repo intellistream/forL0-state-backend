@@ -44,17 +44,16 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 
 #### 1. 离线前确认服务器前置条件
 
-以下内容不包含在离线包内，必须提前装好：Flink 1.20.x、Java 8+、Docker、L0 设备驱动、`libl0mempool.so` 和 `libnuma.so.1`。完整离线包已经包含 ARM64 CPython 3.10、venv/pip 和对应 wheels，目标服务器无需预装 Python。在目标服务器执行：
+以下内容不包含在离线包内，必须提前装好：Docker、L0 设备驱动、`libl0mempool.so` 和 `libnuma.so.1`。完整离线包已经包含 Flink 1.20.3、ARM64 CPython 3.10、venv/pip、对应 wheels 和 Java Docker 镜像；目标服务器无需预装 Flink、Python 或宿主机 Java。在目标服务器执行：
 
 ```bash
 uname -m
-test -d "$HOME/flink_home"
 test -e /dev/hisi_l0 || test -e /dev/l0
 ldconfig -p | grep -E 'libl0mempool\.so|libnuma\.so\.1'
 docker version >/dev/null 2>&1 || sudo -n docker version >/dev/null
 ```
 
-预期架构为 `aarch64`。解压后可用 `./tools/python/bin/python3 --version` 检查包内 Python；启动器会优先使用它，并创建独立的 `cp310` venv。
+预期架构为 `aarch64`。如果 `$HOME/flink_home/bin/flink` 不存在，安装器会从包内完整分发包自动创建 `$HOME/flink_home`。解压后可用 `./tools/python/bin/python3 --version` 检查包内 Python；启动器会优先使用它，并创建独立的 `cp310` venv。
 
 `libl0mempool.so` 不一定安装在 `/usr/lib64` 等系统目录。解压离线包后可运行统一探测器，它依次检查显式配置、`LD_LIBRARY_PATH`、`ldconfig`、multiarch 目录、常见 L0 厂商目录，并在 `/opt`、`/usr/local` 和当前用户目录内进行有限深度搜索：
 
@@ -195,7 +194,7 @@ cd /path/to/forL0-state-backend
   --output-dir "$PWD/docker/generated/forl0-offline-linux-arm64-py310-20260721"
 ```
 
-打包脚本会重新编译 JAR/native 产物、下载指定 Linux 架构和 CPython ABI 的 wheels、加入同版本可携带 CPython、导出 ARM64 Docker 镜像，并生成包内 manifest/SHA256。不要从旧的 `benchmark/offline-packages/` 手工复制 wheel；旧 wheel 可能属于其他 Python ABI。
+打包脚本会重新编译 JAR/native 产物、下载指定 Linux 架构和 CPython ABI 的 wheels、加入同版本可携带 CPython、完整 Flink 1.20.3 分发包、ARM64 Docker 镜像，并生成包内 manifest/SHA256。不要从旧的 `benchmark/offline-packages/` 手工复制 wheel；旧 wheel可能属于其他 Python ABI。
 
 更详细的 benchmark 参数和场景说明见：[benchmark/README.md](benchmark/README.md)。
 

@@ -28,6 +28,7 @@ SKIP_DOCKER_SAVE=false
 COPY_PROFILER=true
 DOWNLOAD_PYTHON_WHEELS=true
 DOWNLOAD_PORTABLE_PYTHON=true
+DOWNLOAD_FLINK_DISTRIBUTION=true
 DOCKER_IMAGE="eclipse-temurin:8-jre"
 ARCH=""
 DOCKER_PLATFORM=""
@@ -35,6 +36,7 @@ PYTHON_VERSION=""
 PIP_PLATFORM=""
 PORTABLE_PYTHON_FULL_VERSION=""
 PORTABLE_PYTHON_RELEASE="20260718"
+FLINK_VERSION="1.20.3"
 
 detect_sha_cmd() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -153,6 +155,7 @@ usage() {
   --skip-docker-save     不导出 docker/images/eclipse-temurin-8-jre.tar.gz
   --skip-python-wheels   不下载 benchmark Python 依赖 wheels
   --skip-portable-python 不下载可携带 CPython 运行时（目标机已有兼容 Python 时使用）
+  --skip-flink           不下载完整 Flink 分发包（目标机已有完整 FLINK_HOME 时使用）
   --no-profiler          不处理 async-profiler 离线包
   --arch NAME            目标架构: arm64 或 x64（默认按当前机器自动判断）
   --python-version X.Y   目标 Linux 的 CPython 版本（默认使用本机 python3）
@@ -188,6 +191,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-portable-python)
             DOWNLOAD_PORTABLE_PYTHON=false
+            shift
+            ;;
+        --skip-flink)
+            DOWNLOAD_FLINK_DISTRIBUTION=false
             shift
             ;;
         --no-profiler)
@@ -422,6 +429,28 @@ if [[ "$DOWNLOAD_PORTABLE_PYTHON" == "true" ]]; then
     printf '%s\n' "$portable_url" > "$OUTPUT_DIR/tools/python-runtime-source.txt"
 else
     echo "[8b/10] 跳过可携带 CPython 运行时"
+fi
+
+if [[ "$DOWNLOAD_FLINK_DISTRIBUTION" == "true" ]]; then
+    echo "[8c/10] 收集完整 Apache Flink ${FLINK_VERSION} 分发包"
+    flink_name="flink-${FLINK_VERSION}-bin-scala_2.12.tgz"
+    flink_url="https://archive.apache.org/dist/flink/flink-${FLINK_VERSION}/${flink_name}"
+    mkdir -p "$OUTPUT_DIR/tools/flink"
+    if [[ ! -f "$OUTPUT_DIR/tools/flink/$flink_name" ]]; then
+        if command -v curl >/dev/null 2>&1; then
+            curl -fL --retry 5 --retry-all-errors -o "$OUTPUT_DIR/tools/flink/$flink_name" "$flink_url"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -O "$OUTPUT_DIR/tools/flink/$flink_name" "$flink_url"
+        else
+            echo "✗ 下载 Flink 需要 curl 或 wget"
+            exit 1
+        fi
+    fi
+    tar -tzf "$OUTPUT_DIR/tools/flink/$flink_name" '*/bin/flink' >/dev/null
+    printf '%s\n' "$flink_url" > "$OUTPUT_DIR/tools/flink/flink-runtime-source.txt"
+    echo "      ✓ 已加入 $flink_name"
+else
+    echo "[8c/10] 跳过完整 Flink 分发包"
 fi
 
 if [[ "$SKIP_DOCKER_SAVE" == "false" ]]; then
