@@ -128,6 +128,25 @@ info() {
     echo "==> $*"
 }
 
+print_python_wheel_recovery() {
+    cat >&2 <<'EOF'
+
+如果上面的错误包含 “Could not find a version that satisfies the requirement”，
+说明离线 Python wheel 不完整或与服务器的 Linux 架构/Python 版本不匹配。
+
+先在离线服务器确认目标信息：
+  uname -m
+  python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+
+如果联网中转机是 Windows，请在仓库根目录打开 PowerShell，按上面的实际值执行：
+  powershell -ExecutionPolicy Bypass -File .\docker\download_offline_python_wheels.ps1 -TargetArch arm64 -PythonVersion 3.11
+
+其中 TargetArch 可选 arm64 或 x64。脚本会下载目标 Linux wheel，而不是 Windows wheel。
+下载完成后，把整个 offline-packages 目录拷到离线服务器的仓库/离线包根目录，
+再重新执行 forl0-offline-app.sh。不要直接在 Windows 上运行 pip download 而不指定目标平台。
+EOF
+}
+
 list_ascend_workloads() {
     printf "%-4s  %-36s  %s\n" "ID" "Name" "Description"
     printf "%-4s  %-36s  %s\n" "----" "------------------------------------" "-----------"
@@ -515,6 +534,9 @@ run_or_handle_failure() {
     echo "Command: $*"
     if "$@"; then
         return 0
+    fi
+    if [[ "$description" == "Preflight check" ]]; then
+        print_python_wheel_recovery
     fi
     if [[ "$KEEP_GOING" == "true" ]]; then
         echo "WARN: command failed but --keep-going is enabled: $description"

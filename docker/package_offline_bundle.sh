@@ -321,6 +321,9 @@ for script in docker_run.sh server_setup.sh run_all_apps.sh install_offline_bund
         cp -f "$REPO_ROOT/docker/$script" "$OUTPUT_DIR/docker/"
     fi
 done
+if [[ -f "$REPO_ROOT/docker/download_offline_python_wheels.ps1" ]]; then
+    cp -f "$REPO_ROOT/docker/download_offline_python_wheels.ps1" "$OUTPUT_DIR/docker/"
+fi
 if [[ -d "$REPO_ROOT/交付文档" ]]; then
     cp -a "$REPO_ROOT/交付文档" "$OUTPUT_DIR/docs/"
 elif [[ -d "$REPO_ROOT/docs" ]]; then

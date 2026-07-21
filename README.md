@@ -157,7 +157,7 @@ grep -R "ForL0\\|HotCache\\|SIMULATION\\|L0 MODE" "$FLINK_HOME/log" docker/*.log
 说明：
 
 - 默认入口要求真实 L0 环境；没有 `/dev/l0`、`/dev/hisi_l0` 或 `libl0mempool.so` 时会直接停止。`libl0mempool.so` 会从 `/usr/lib64`、`/usr/lib`、`/lib64`、`/lib` 自动探测并挂入容器。只有本地 dry-run 才加 `--allow-simulation`。
-- `run_all_apps.sh --offline` 不会联网安装依赖；如果 preflight 提示缺 wheel，需要在联网机器重新执行 `docker/package_offline_bundle.sh` 并把 `offline-packages/` 带到离线机。
+- `run_all_apps.sh --offline` 不会联网安装依赖；如果 preflight 提示缺 wheel，Linux/macOS 联网机器可重新执行 `docker/package_offline_bundle.sh`。如果联网中转机是 Windows，先在离线服务器用 `uname -m` 和 `python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'` 确认架构与 Python 版本，再在仓库根目录的 PowerShell 执行 `powershell -ExecutionPolicy Bypass -File .\docker\download_offline_python_wheels.ps1 -TargetArch arm64 -PythonVersion 3.11`（参数按实际环境修改）。把生成的整个 `offline-packages/` 目录带到离线机；该脚本会下载 Linux 目标 wheel，避免 Windows wheel 无法安装。
 - Docker 不可用时，`run_all_apps.sh` 会尝试回退到本机 Flink standalone；若你只想安装不启动集群，使用 `server_setup.sh --no-start`。
 
 更详细的 benchmark 参数和场景说明见：[benchmark/README.md](benchmark/README.md)。
