@@ -19,6 +19,25 @@ ARCHIVE="${FORL0_OFFLINE_ARCHIVE:-${SCRIPT_DIR}/${BUNDLE_NAME}.tar.gz}"
 EXTRACT_PARENT="${FORL0_EXTRACT_PARENT:-${SCRIPT_DIR}}"
 BUNDLE_DIR="${EXTRACT_PARENT}/${BUNDLE_NAME}"
 CHECKSUM_FILE="${ARCHIVE}.sha256"
+RELEASE_TAG="${FORL0_RELEASE_TAG:-offline-arm64-py310-20260721-r7}"
+RELEASE_BASE_URL="https://github.com/intellistream/forL0-state-backend/releases/download/${RELEASE_TAG}"
+
+download_release_asset() {
+    local asset_name="$1"
+    local destination="$2"
+    local url="${RELEASE_BASE_URL}/${asset_name}"
+    local partial="${destination}.part"
+    echo "  download: $url"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL --retry 8 --retry-all-errors --continue-at - -o "$partial" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -c -O "$partial" "$url"
+    else
+        echo "ERROR: automatic Release download requires curl or wget" >&2
+        return 1
+    fi
+    mv -f "$partial" "$destination"
+}
 
 verify_checksum_file() {
     local checksum_file="$1"
@@ -43,6 +62,15 @@ echo "  Project dir: ${SCRIPT_DIR}"
 echo "  Extract to:  ${BUNDLE_DIR}"
 echo "  FLINK_HOME:  ${FLINK_HOME:-${HOME}/flink_home}"
 echo ""
+
+if [[ ! -f "$CHECKSUM_FILE" && "${FORL0_OFFLINE_ONLY:-false}" != "true" ]]; then
+    echo "[0/4] Download Release checksum"
+    download_release_asset "$(basename "$CHECKSUM_FILE")" "$CHECKSUM_FILE"
+fi
+if [[ ! -f "$ARCHIVE" && "${FORL0_OFFLINE_ONLY:-false}" != "true" ]]; then
+    echo "[0/4] Download Release archive (resume is supported)"
+    download_release_asset "$(basename "$ARCHIVE")" "$ARCHIVE"
+fi
 
 if [[ -f "$ARCHIVE" ]]; then
     if [[ ! -f "$CHECKSUM_FILE" ]]; then

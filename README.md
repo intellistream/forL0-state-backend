@@ -42,6 +42,16 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 
 推荐使用 GitHub Release 中已经构建好的离线包，不再要求 Windows 中转机执行 Bash、Maven 或 Docker。当前 ARM64 发布包为 `forl0-offline-linux-arm64-py310-20260721.tar.gz`，适用于 Linux ARM64（鲲鹏/aarch64）和 CPython 3.10。
 
+如果目标服务器能访问 GitHub，最简单的方式是只克隆代码；一键脚本会在仓库根目录自动下载固定版本的 Release 压缩包及 SHA256，支持断点续传：
+
+```bash
+git clone https://github.com/intellistream/forL0-state-backend.git "$HOME/forL0-state-backend"
+cd "$HOME/forL0-state-backend"
+bash ./run-forl0-offline.sh
+```
+
+如果服务器真正断网，则在联网机器克隆仓库并下载 Release 三个资产后，将整个仓库传入服务器。可设置 `FORL0_OFFLINE_ONLY=true` 禁止脚本尝试联网。
+
 #### 1. 离线前确认服务器前置条件
 
 以下内容不包含在离线包内，必须提前装好：Docker、L0 设备驱动、`libl0mempool.so` 和 `libnuma.so.1`。完整离线包已经包含 Flink 1.20.3、ARM64 CPython 3.10、venv/pip、对应 wheels 和 Java Docker 镜像；目标服务器无需预装 Flink、Python 或宿主机 Java。在目标服务器执行：
