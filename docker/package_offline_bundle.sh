@@ -446,7 +446,7 @@ if [[ "$DOWNLOAD_FLINK_DISTRIBUTION" == "true" ]]; then
             exit 1
         fi
     fi
-    tar -tzf "$OUTPUT_DIR/tools/flink/$flink_name" '*/bin/flink' >/dev/null
+    tar -tzf "$OUTPUT_DIR/tools/flink/$flink_name" "flink-${FLINK_VERSION}/bin/flink" >/dev/null
     printf '%s\n' "$flink_url" > "$OUTPUT_DIR/tools/flink/flink-runtime-source.txt"
     echo "      ✓ 已加入 $flink_name"
 else
@@ -493,6 +493,9 @@ fi
 if [[ -f "$REPO_ROOT/run-forl0-offline.sh" ]]; then
     cp -f "$REPO_ROOT/run-forl0-offline.sh" "$OUTPUT_DIR/"
     chmod +x "$OUTPUT_DIR/run-forl0-offline.sh"
+fi
+if [[ -f "$REPO_ROOT/prepare-idea-offline-deployment.ps1" ]]; then
+    cp -f "$REPO_ROOT/prepare-idea-offline-deployment.ps1" "$OUTPUT_DIR/"
 fi
 cp -a "$REPO_ROOT/docker/conf" "$OUTPUT_DIR/docker/"
 for script in docker_run.sh server_setup.sh run_all_apps.sh install_offline_bundle.sh start.sh stop.sh restart.sh; do
