@@ -156,14 +156,11 @@ print_python_wheel_recovery() {
 
 先在离线服务器确认目标信息：
   uname -m
-  python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+  ./tools/python/bin/python3 --version
 
-如果联网中转机是 Windows，请在仓库根目录打开 PowerShell，按上面的实际值执行：
-  powershell -ExecutionPolicy Bypass -File .\docker\download_offline_python_wheels.ps1 -TargetArch arm64 -PythonVersion 3.11
-
-其中 TargetArch 可选 arm64 或 x64。脚本会下载目标 Linux wheel，而不是 Windows wheel。
-下载完成后，把整个 offline-packages 目录拷到离线服务器的仓库/离线包根目录，
-再重新执行 forl0-offline-app.sh。不要直接在 Windows 上运行 pip download 而不指定目标平台。
+新版完整离线包自带与 wheels 匹配的可携带 Python。若 tools/python/bin/python3
+不存在，说明使用了旧包或打包时跳过了 portable Python；请换用最新完整 Release，
+不要在没有 Python 的离线机上继续调用 pip。
 EOF
 }
 

@@ -189,6 +189,12 @@ fi
 if [[ -d "${BUNDLE_ROOT}/docs" ]]; then
     cp -r "${BUNDLE_ROOT}/docs/." "${INSTALL_DIR}/docs/" 2>/dev/null || true
 fi
+if [[ -x "${BUNDLE_ROOT}/tools/python/bin/python3" ]]; then
+    echo "      ✓ 同步包内 CPython 运行时"
+    mkdir -p "${INSTALL_DIR}/tools"
+    rm -rf "${INSTALL_DIR}/tools/python"
+    cp -a "${BUNDLE_ROOT}/tools/python" "${INSTALL_DIR}/tools/"
+fi
 
 if [[ "$COPY_PROFILER" == "true" ]]; then
     echo "[4/5] 复制 async-profiler 到安装目录"

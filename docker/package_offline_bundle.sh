@@ -27,11 +27,14 @@ SKIP_BUILD=false
 SKIP_DOCKER_SAVE=false
 COPY_PROFILER=true
 DOWNLOAD_PYTHON_WHEELS=true
+DOWNLOAD_PORTABLE_PYTHON=true
 DOCKER_IMAGE="eclipse-temurin:8-jre"
 ARCH=""
 DOCKER_PLATFORM=""
 PYTHON_VERSION=""
 PIP_PLATFORM=""
+PORTABLE_PYTHON_FULL_VERSION=""
+PORTABLE_PYTHON_RELEASE="20260718"
 
 detect_sha_cmd() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -149,6 +152,7 @@ usage() {
   --skip-build           复用 docker/deploy 中已构建产物，只重新组包
   --skip-docker-save     不导出 docker/images/eclipse-temurin-8-jre.tar.gz
   --skip-python-wheels   不下载 benchmark Python 依赖 wheels
+  --skip-portable-python 不下载可携带 CPython 运行时（目标机已有兼容 Python 时使用）
   --no-profiler          不处理 async-profiler 离线包
   --arch NAME            目标架构: arm64 或 x64（默认按当前机器自动判断）
   --python-version X.Y   目标 Linux 的 CPython 版本（默认使用本机 python3）
@@ -180,6 +184,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-python-wheels)
             DOWNLOAD_PYTHON_WHEELS=false
+            shift
+            ;;
+        --skip-portable-python)
+            DOWNLOAD_PORTABLE_PYTHON=false
             shift
             ;;
         --no-profiler)
@@ -236,6 +244,17 @@ if [[ ! "$PYTHON_VERSION" =~ ^3\.[0-9]+$ ]]; then
 fi
 PYTHON_VERSION_DIGITS="$(printf '%s' "$PYTHON_VERSION" | tr -d '.')"
 PYTHON_ABI="cp${PYTHON_VERSION_DIGITS}"
+case "$PYTHON_VERSION" in
+    3.10) PORTABLE_PYTHON_FULL_VERSION="3.10.20" ;;
+    3.11) PORTABLE_PYTHON_FULL_VERSION="3.11.15" ;;
+    3.12) PORTABLE_PYTHON_FULL_VERSION="3.12.13" ;;
+    *)
+        if [[ "$DOWNLOAD_PORTABLE_PYTHON" == "true" ]]; then
+            echo "✗ 暂无 Python ${PYTHON_VERSION} 的固定可携带运行时；请使用 3.10/3.11/3.12 或 --skip-portable-python"
+            exit 1
+        fi
+        ;;
+esac
 
 MVN_ARGS=(clean package)
 if [[ "$SKIP_TESTS" == "true" ]]; then
@@ -374,6 +393,35 @@ if [[ "$DOWNLOAD_PYTHON_WHEELS" == "true" ]]; then
     fi
 else
     echo "[8/10] 跳过 benchmark Python 离线依赖收集"
+fi
+
+if [[ "$DOWNLOAD_PORTABLE_PYTHON" == "true" ]]; then
+    echo "[8b/10] 收集可携带 CPython ${PORTABLE_PYTHON_FULL_VERSION} 运行时"
+    case "$ARCH" in
+        arm64) portable_target="aarch64-unknown-linux-gnu" ;;
+        x64) portable_target="x86_64-unknown-linux-gnu" ;;
+    esac
+    portable_name="cpython-${PORTABLE_PYTHON_FULL_VERSION}+${PORTABLE_PYTHON_RELEASE}-${portable_target}-install_only_stripped.tar.gz"
+    portable_url="https://github.com/astral-sh/python-build-standalone/releases/download/${PORTABLE_PYTHON_RELEASE}/${portable_name}"
+    portable_tmp="$(mktemp -d /tmp/forl0-portable-python.XXXXXX)"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL --retry 5 --retry-all-errors -o "$portable_tmp/$portable_name" "$portable_url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O "$portable_tmp/$portable_name" "$portable_url"
+    else
+        echo "✗ 下载可携带 Python 需要 curl 或 wget"
+        exit 1
+    fi
+    mkdir -p "$OUTPUT_DIR/tools"
+    tar -xzf "$portable_tmp/$portable_name" -C "$OUTPUT_DIR/tools"
+    [[ -x "$OUTPUT_DIR/tools/python/bin/python3" ]] || {
+        echo "✗ 可携带 Python 归档结构无效: $portable_name"
+        exit 1
+    }
+    "$OUTPUT_DIR/tools/python/bin/python3" --version
+    printf '%s\n' "$portable_url" > "$OUTPUT_DIR/tools/python-runtime-source.txt"
+else
+    echo "[8b/10] 跳过可携带 CPython 运行时"
 fi
 
 if [[ "$SKIP_DOCKER_SAVE" == "false" ]]; then

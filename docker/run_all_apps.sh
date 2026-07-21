@@ -20,6 +20,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+source "./lib/python_wheel_detector.sh"
 
 REPO_ROOT="$(cd .. && pwd)"
 FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
@@ -215,7 +216,8 @@ bootstrap_async_profiler() {
 bootstrap_benchmark_python() {
     local requirements_file="${REPO_ROOT}/benchmark/requirements.txt"
     local offline_wheels_dir=""
-    local venv_dir="${REPO_ROOT}/.venv-benchmark"
+    local venv_dir=""
+    local python_bin=""
 
     for candidate in \
         "${REPO_ROOT}/offline-packages" \
@@ -226,21 +228,38 @@ bootstrap_benchmark_python() {
         fi
     done
 
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "✗ 未找到 python3，无法运行 benchmark 脚本"
-        exit 1
-    fi
-
     if [[ ! -f "$requirements_file" ]]; then
         echo "✗ 缺少 requirements 文件: $requirements_file"
         exit 1
     fi
 
-    if [[ ! -x "$venv_dir/bin/python" ]]; then
-        echo "[3/5] 创建 benchmark Python 虚拟环境..."
-        python3 -m venv "$venv_dir"
+    if [[ -n "$offline_wheels_dir" ]]; then
+        echo "[3/5] 检查离线 wheel 与 Python/架构兼容性..."
+        if [[ -x "${REPO_ROOT}/tools/python/bin/python3" ]]; then
+            export FORL0_BUNDLED_PYTHON_BIN="${REPO_ROOT}/tools/python/bin/python3"
+        fi
+        if ! forl0_select_python_for_wheels "$offline_wheels_dir"; then
+            echo "✗ 离线 Python 环境与 wheel 不兼容；尚未调用 pip，避免误报 No matching distribution"
+            exit 1
+        fi
+        forl0_print_python_wheel_detection | sed 's/^/      /'
+        python_bin="$FORL0_SELECTED_PYTHON"
+        venv_dir="${REPO_ROOT}/.venv-benchmark-${FORL0_WHEEL_PYTHON_ABI}"
     else
-        echo "[3/5] 复用已有 benchmark Python 虚拟环境"
+        python_bin="$(command -v python3 || true)"
+        venv_dir="${REPO_ROOT}/.venv-benchmark"
+    fi
+
+    if [[ -z "$python_bin" ]]; then
+        echo "✗ 未找到兼容的 Python，无法运行 benchmark 脚本"
+        exit 1
+    fi
+
+    if [[ ! -x "$venv_dir/bin/python" ]]; then
+        echo "      创建 benchmark Python 虚拟环境: $venv_dir"
+        "$python_bin" -m venv "$venv_dir"
+    else
+        echo "      复用已有 benchmark Python 虚拟环境: $venv_dir"
     fi
 
     local py_bin="$venv_dir/bin/python"
@@ -264,7 +283,7 @@ PY
     if [[ "$deps_ok" == "false" ]]; then
         echo "      安装 benchmark Python 依赖（离线优先）..."
         if [[ -n "$offline_wheels_dir" && -d "$offline_wheels_dir" ]]; then
-            if "$pip_bin" install --no-index --find-links "$offline_wheels_dir" -r "$requirements_file"; then
+            if "$pip_bin" install --no-index --only-binary=:all: --find-links "$offline_wheels_dir" -r "$requirements_file"; then
                 echo "      ✓ 离线依赖安装成功"
             else
                 if [[ "$OFFLINE_MODE" == "true" ]]; then
@@ -286,6 +305,11 @@ PY
         fi
     else
         echo "      ✓ benchmark Python 依赖已满足"
+    fi
+
+    if ! "$py_bin" -c 'import pandas, yaml, numpy, matplotlib, seaborn, jinja2, requests, tqdm'; then
+        echo "✗ benchmark Python 依赖安装后仍无法导入" >&2
+        exit 1
     fi
 
     BENCH_PYTHON="$py_bin"

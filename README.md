@@ -44,19 +44,17 @@ ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
 
 #### 1. 离线前确认服务器前置条件
 
-以下内容不包含在离线包内，必须提前装好：Flink 1.20.x、Java 8+、Python 3.10 及 venv 模块、Docker、L0 设备驱动、`libl0mempool.so` 和 `libnuma.so.1`。在目标服务器执行：
+以下内容不包含在离线包内，必须提前装好：Flink 1.20.x、Java 8+、Docker、L0 设备驱动、`libl0mempool.so` 和 `libnuma.so.1`。完整离线包已经包含 ARM64 CPython 3.10、venv/pip 和对应 wheels，目标服务器无需预装 Python。在目标服务器执行：
 
 ```bash
 uname -m
-python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
-python3 -c 'import ensurepip, venv'
 test -d "$HOME/flink_home"
 test -e /dev/hisi_l0 || test -e /dev/l0
 ldconfig -p | grep -E 'libl0mempool\.so|libnuma\.so\.1'
 docker version >/dev/null 2>&1 || sudo -n docker version >/dev/null
 ```
 
-预期架构为 `aarch64`，Python 为 `3.10`。Ubuntu/Debian 必须在断网前安装 `python3.10-venv`；只有 `python3` 而没有 venv/ensurepip 时，启动器无法创建 benchmark 环境。
+预期架构为 `aarch64`。解压后可用 `./tools/python/bin/python3 --version` 检查包内 Python；启动器会优先使用它，并创建独立的 `cp310` venv。
 
 `libl0mempool.so` 不一定安装在 `/usr/lib64` 等系统目录。解压离线包后可运行统一探测器，它依次检查显式配置、`LD_LIBRARY_PATH`、`ldconfig`、multiarch 目录、常见 L0 厂商目录，并在 `/opt`、`/usr/local` 和当前用户目录内进行有限深度搜索：
 
@@ -90,27 +88,29 @@ $Expected = (Get-Content "$Bundle.sha256").Split()[0].ToLower()
 $Actual = (Get-FileHash $Bundle -Algorithm SHA256).Hash.ToLower()
 if ($Actual -ne $Expected) { throw "SHA256 mismatch" }
 
-scp $Bundle "$Bundle.sha256" .\run-forl0-offline.sh user@offline-server:~/
+scp $Bundle "$Bundle.sha256" .\run-forl0-offline.sh `
+  user@offline-server:~/forL0-state-backend/
 ```
 
 `run-forl0-offline.sh` 可从同一个 Release 下载。上传完成后只需登录离线服务器执行：
 
 ```bash
-bash "$HOME/run-forl0-offline.sh"
+cd "$HOME/forL0-state-backend"
+bash ./run-forl0-offline.sh
 ```
 
-它会自动校验压缩包、解压到 `$HOME`、校验包内全部文件，并使用默认的 `$HOME/flink_home` 完成安装、启动、smoke、合同 apps 和报告生成。需要额外执行 NexMark throughput pressure 时，可改为 `bash "$HOME/run-forl0-offline.sh" --full`。所有 `forl0-offline-app.sh` 参数都可以直接追加到该命令。
+它会自动校验压缩包、解压到当前代码仓库、校验包内全部文件，并使用默认的 `$HOME/flink_home` 完成安装、启动、smoke、合同 apps 和报告生成。需要额外执行 NexMark throughput pressure 时，可改为 `bash ./run-forl0-offline.sh --full`。所有 `forl0-offline-app.sh` 参数都可以直接追加到该命令。
 
 #### 3. 离线服务器解压和双重校验
 
 ```bash
 set -euo pipefail
 
-cd /tmp
+cd "$HOME/forL0-state-backend"
 sha256sum -c forl0-offline-linux-arm64-py310-20260721.tar.gz.sha256
-tar -xzf forl0-offline-linux-arm64-py310-20260721.tar.gz -C "$HOME"
+tar -xzf forl0-offline-linux-arm64-py310-20260721.tar.gz -C "$PWD"
 
-BUNDLE_DIR="$HOME/forl0-offline-linux-arm64-py310-20260721"
+BUNDLE_DIR="$PWD/forl0-offline-linux-arm64-py310-20260721"
 cd "$BUNDLE_DIR"
 sha256sum -c offline_bundle_sha256.txt
 chmod +x ./forl0-offline-app.sh docker/*.sh
@@ -126,7 +126,7 @@ chmod +x ./forl0-offline-app.sh docker/*.sh
 set -euo pipefail
 
 export FLINK_HOME="$HOME/flink_home"
-BUNDLE_DIR="$HOME/forl0-offline-linux-arm64-py310-20260721"
+BUNDLE_DIR="$HOME/forL0-state-backend/forl0-offline-linux-arm64-py310-20260721"
 INSTALL_DIR="$HOME/forl0-runtime"
 
 cd "$BUNDLE_DIR"
@@ -174,7 +174,16 @@ grep -R "ForL0\\|HotCache\\|SIMULATION\\|L0 MODE" \
 bash "$HOME/forl0-runtime/docker/lib/l0_detector.sh" || true
 ```
 
-如果仍出现 `Could not find a version that satisfies the requirement pandas>=2.0.0`，先确认 Python 是 3.10 且包内存在 `benchmark/offline-packages/pandas-*-cp310-*-aarch64.whl`。目标 Python 不是 3.10 时，在 Windows 仓库根目录执行 `powershell -ExecutionPolicy Bypass -File .\docker\download_offline_python_wheels.ps1 -TargetArch arm64 -PythonVersion 3.11`（版本按实际值修改），再用生成的 `offline-packages/` 替换离线包中的 wheel 目录。
+若 Python 与 wheel 不匹配，新版 preflight 会在调用 pip 前直接显示 host 架构、wheel ABI 和选中的解释器。当前 ARM64 发布包要求 Python 3.10，并优先使用 `python3.10`，不会再盲目使用指向其他版本的 `python3`。可在仓库根目录单独检查：
+
+```bash
+cd "$HOME/forL0-state-backend"
+BUNDLE_DIR="$PWD/forl0-offline-linux-arm64-py310-20260721"
+bash "$BUNDLE_DIR/docker/lib/python_wheel_detector.sh" \
+  "$BUNDLE_DIR/benchmark/offline-packages"
+```
+
+完整 Release 会自动使用包内 `tools/python/bin/python3`，不依赖系统 Python。如需覆盖，可设置 `export FORL0_PYTHON_BIN=/path/to/python3.10`；该解释器仍必须与 cp310 wheels 匹配。
 
 #### 6. 在联网 Linux 构建机重新打包
 
@@ -186,7 +195,7 @@ cd /path/to/forL0-state-backend
   --output-dir "$PWD/docker/generated/forl0-offline-linux-arm64-py310-20260721"
 ```
 
-打包脚本会重新编译 JAR/native 产物、下载指定 Linux 架构和 CPython ABI 的 wheels、导出 ARM64 Docker 镜像，并生成包内 manifest/SHA256。不要从旧的 `benchmark/offline-packages/` 手工复制 wheel；旧 wheel 可能属于其他 Python ABI。
+打包脚本会重新编译 JAR/native 产物、下载指定 Linux 架构和 CPython ABI 的 wheels、加入同版本可携带 CPython、导出 ARM64 Docker 镜像，并生成包内 manifest/SHA256。不要从旧的 `benchmark/offline-packages/` 手工复制 wheel；旧 wheel 可能属于其他 Python ABI。
 
 更详细的 benchmark 参数和场景说明见：[benchmark/README.md](benchmark/README.md)。
 
