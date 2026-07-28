@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# One-command, disconnect-safe launcher for the complete offline benchmark suite.
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_FILE="${PROJECT_ROOT}/.reproduce-all.pid"
+RUN_LOG="${PROJECT_ROOT}/.logs"
+
+if [[ "${1:-}" == "--worker" ]]; then
+    printf '%s\n' "$$" > "$PID_FILE"
+    cleanup() {
+        rm -f "$PID_FILE"
+    }
+    trap cleanup EXIT INT TERM
+
+    export FORL0_OFFLINE_ONLY=true
+    export FORL0_RUN_LOG="$RUN_LOG"
+    cd "$PROJECT_ROOT"
+    bash ./run-forl0-offline.sh \
+        --reproduce-ascend \
+        --keep-going \
+        --skip-docker-load
+    exit $?
+fi
+
+if [[ -f "$PID_FILE" ]]; then
+    existing_pid="$(tr -d '[:space:]' < "$PID_FILE")"
+    if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+        echo "完整性能测试已在运行，PID=${existing_pid}"
+        echo "日志：${RUN_LOG}"
+        exit 0
+    fi
+    rm -f "$PID_FILE"
+fi
+
+nohup "$0" --worker >/dev/null 2>&1 &
+worker_pid=$!
+
+echo "完整性能测试已后台启动，PID=${worker_pid}"
+echo "日志：${RUN_LOG}"
+echo "结果：${PROJECT_ROOT}/benchmark/results"
