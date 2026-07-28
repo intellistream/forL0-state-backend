@@ -24,7 +24,9 @@ fi
 
 set -euo pipefail
 
-APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="${FORL0_APP_ROOT:-${LAUNCHER_ROOT}}"
+CONTROL_ROOT="${FORL0_CONTROL_ROOT:-${APP_ROOT}}"
 L0_DETECTOR="${APP_ROOT}/docker/lib/l0_detector.sh"
 if [[ ! -f "$L0_DETECTOR" ]]; then
     echo "ERROR: missing L0 detector: $L0_DETECTOR" >&2
@@ -582,8 +584,39 @@ prepare_runtime() {
     die "cannot find a runnable ForL0 repository or offline bundle under ${APP_ROOT}"
 }
 
+sync_runtime_control_plane() {
+    [[ "$CONTROL_ROOT" != "$APP_ROOT" ]] || return 0
+
+    info "Syncing current repository control scripts into installed runtime"
+    mkdir -p "${RUNTIME_ROOT}/benchmark/scripts/utils" "${RUNTIME_ROOT}/docker/deploy"
+
+    local script
+    for script in \
+        clean_results.py \
+        run_benchmark.py \
+        run_benchset.py \
+        run_client_usecase.py \
+        run_nexmark.py; do
+        cp "${CONTROL_ROOT}/benchmark/scripts/${script}" \
+            "${RUNTIME_ROOT}/benchmark/scripts/${script}"
+    done
+    cp "${CONTROL_ROOT}/benchmark/scripts/utils/config.py" \
+        "${RUNTIME_ROOT}/benchmark/scripts/utils/config.py"
+    cp "${CONTROL_ROOT}/docker/run_all_apps.sh" \
+        "${RUNTIME_ROOT}/docker/run_all_apps.sh"
+    chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh"
+
+    if [[ -d "${CONTROL_ROOT}/docker/deploy/nexmark-flink" ]]; then
+        mkdir -p "${RUNTIME_ROOT}/docker/deploy/nexmark-flink"
+        cp -a "${CONTROL_ROOT}/docker/deploy/nexmark-flink/." \
+            "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/"
+        chmod +x "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/bin/"*.sh 2>/dev/null || true
+    fi
+}
+
 RUNTIME_ROOT=""
 prepare_runtime
+sync_runtime_control_plane
 RUNNER="${RUNTIME_ROOT}/docker/run_all_apps.sh"
 [[ -x "$RUNNER" ]] || die "run_all_apps.sh is not executable: $RUNNER"
 if [[ "$RESULTS_DIR" != /* ]]; then
@@ -616,6 +649,11 @@ if [[ ${#RUNNER_EXTRA_ARGS[@]} -gt 0 ]]; then
 fi
 
 preflight_test="apps"
+if [[ "$RUN_SMOKE" == "true" && "$RUN_APPS" == "false" && "$RUN_NEXMARK_PRESSURE" == "false" && "$RUN_ASCEND_REPRO" == "false" ]]; then
+    preflight_test="client_usecase"
+elif [[ "$RUN_NEXMARK_PRESSURE" == "true" && "$RUN_APPS" == "false" && "$RUN_SMOKE" == "false" && "$RUN_ASCEND_REPRO" == "false" ]]; then
+    preflight_test="nexmark"
+fi
 PREFLIGHT_RUNNER_ARGS=("${COMMON_RUNNER_ARGS[@]}")
 if [[ "$INITIAL_RESTART_CLUSTER" == "true" && "$RUN_SMOKE$RUN_APPS$RUN_NEXMARK_PRESSURE$RUN_ASCEND_REPRO" == *true* ]]; then
     PREFLIGHT_RUNNER_ARGS+=(--restart-cluster)

@@ -14,6 +14,9 @@ fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_LOG="${FORL0_RUN_LOG:-${SCRIPT_DIR}/.logs}"
+exec > >(tee "$RUN_LOG") 2>&1
+
 BUNDLE_NAME="forl0-offline-linux-arm64-py310-20260721"
 ARCHIVE="${FORL0_OFFLINE_ARCHIVE:-${SCRIPT_DIR}/${BUNDLE_NAME}.tar.gz}"
 EXTRACT_PARENT="${FORL0_EXTRACT_PARENT:-${SCRIPT_DIR}}"
@@ -136,6 +139,7 @@ echo "  ForL0 offline one-command bootstrap"
 echo "============================================================"
 echo "  Archive:     ${ARCHIVE}"
 echo "  Project dir: ${SCRIPT_DIR}"
+echo "  Run log:     ${RUN_LOG}"
 echo "  Extract to:  ${BUNDLE_DIR}"
 echo "  FLINK_HOME:  ${FLINK_HOME:-${HOME}/flink_home}"
 echo ""
@@ -198,7 +202,9 @@ else
     echo "  failures:  keep going, then generate the final HTML report"
     RUN_ARGS=("${DEFAULT_RUN_ARGS[@]}" "$@")
 fi
-exec bash "$BUNDLE_DIR/forl0-offline-app.sh" \
+export FORL0_APP_ROOT="$BUNDLE_DIR"
+export FORL0_CONTROL_ROOT="$SCRIPT_DIR"
+exec bash "$SCRIPT_DIR/forl0-offline-app.sh" \
     --install-dir "${FORL0_INSTALL_DIR:-${HOME}/forl0-runtime}" \
     --results-dir "${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/benchmark/results}" \
     "${RUN_ARGS[@]}"

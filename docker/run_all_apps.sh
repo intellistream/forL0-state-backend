@@ -558,6 +558,7 @@ usage() {
   --backend NAME        默认 all，可选 hashmap / forl0 / all
   --test NAME           默认 apps，可选 unittest / wordcount / nexmark / client_usecase / benchset / apps / all
   --scenario NAME       透传场景名，例如 NexMark forl0_q5_tps_probe 或 WordCount high_cardinality
+  --results-dir PATH    结果根目录；默认 benchmark/results
   --offline             禁止联网安装依赖；缺少离线包时直接失败
   --online              允许离线包失败后回退在线安装（默认 auto）
   --no-report           只跑实验，不生成 benchmark HTML 报告
@@ -587,6 +588,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --scenario)
             EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
+        --results-dir)
+            export FORL0_RESULTS_DIR="$2"
             shift 2
             ;;
         --no-profile)
