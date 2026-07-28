@@ -105,6 +105,16 @@ pick_first_file() {
     return 1
 }
 
+pick_first_dir() {
+    for candidate in "$@"; do
+        if [[ -d "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 BACKEND_JAR="$(pick_first_file \
     "${BUNDLE_ROOT}/artifacts/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
     "${BUNDLE_ROOT}/flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
@@ -121,15 +131,24 @@ UNITTEST_JAR="$(pick_first_file \
 NEXMARK_JAR="$(pick_first_file \
     "${BUNDLE_ROOT}/artifacts/nexmark-flink-0.3-SNAPSHOT.jar" \
     "${BUNDLE_ROOT}/nexmark-flink-0.3-SNAPSHOT.jar" || true)"
+NEXMARK_DIST="$(pick_first_dir \
+    "${BUNDLE_ROOT}/artifacts/nexmark-flink" \
+    "${BUNDLE_ROOT}/docker/deploy/nexmark-flink" || true)"
 PROFILER_ARCHIVE="$(pick_first_file \
     "${BUNDLE_ROOT}/benchmark/offline-packages/async-profiler-4.4-linux-arm64.tar.gz" \
     "${BUNDLE_ROOT}/benchmark/offline-packages/async-profiler-4.4-linux-x64.tar.gz" \
     "${BUNDLE_ROOT}/async-profiler-4.4-linux-arm64.tar.gz" \
     "${BUNDLE_ROOT}/async-profiler-4.4-linux-x64.tar.gz" || true)"
 
-for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR"; do
+for required in "$BACKEND_JAR" "$NATIVE_LIB" "$WORDCOUNT_JAR" "$NEXMARK_JAR"; do
     if [[ ! -f "$required" ]]; then
         echo "✗ 离线包内容不完整，缺少: $required"
+        exit 1
+    fi
+done
+for required_dir in bin conf queries; do
+    if [[ -z "$NEXMARK_DIST" || ! -d "${NEXMARK_DIST}/${required_dir}" ]]; then
+        echo "✗ 离线包缺少完整 NexMark 分发目录: ${required_dir}"
         exit 1
     fi
 done
@@ -170,6 +189,9 @@ fi
 [[ -n "$NEXMARK_JAR" && -f "$NEXMARK_JAR" ]] && cp "$NEXMARK_JAR" "${INSTALL_DIR}/artifacts/"
 [[ -n "$UNITTEST_JAR" && -f "$UNITTEST_JAR" ]] && cp "$UNITTEST_JAR" "${INSTALL_DIR}/docker/deploy/"
 [[ -n "$NEXMARK_JAR" && -f "$NEXMARK_JAR" ]] && cp "$NEXMARK_JAR" "${INSTALL_DIR}/docker/deploy/"
+rm -rf "${INSTALL_DIR}/docker/deploy/nexmark-flink"
+cp -a "$NEXMARK_DIST" "${INSTALL_DIR}/docker/deploy/nexmark-flink"
+chmod +x "${INSTALL_DIR}/docker/deploy/nexmark-flink/bin/"*.sh 2>/dev/null || true
 
 rm -rf "${INSTALL_DIR}/benchmark/config" "${INSTALL_DIR}/benchmark/scripts" "${INSTALL_DIR}/benchmark/offline-packages"
 if [[ -d "${BUNDLE_ROOT}/benchmark/config" ]]; then
@@ -243,6 +265,7 @@ export FORL0_NATIVE_DIR="${FLINK_DIR}/native"
 export WORDCOUNT_BENCHMARK_JAR="${INSTALL_DIR}/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar"
 export UNITTEST_BENCHMARK_JAR="${INSTALL_DIR}/artifacts/unit-test-benchmark-1.0-SNAPSHOT.jar"
 export NEXMARK_FLINK_JAR="${INSTALL_DIR}/artifacts/nexmark-flink-0.3-SNAPSHOT.jar"
+export NEXMARK_HOME="${INSTALL_DIR}/docker/deploy/nexmark-flink"
 export REPO_ROOT="${INSTALL_DIR}"
 export FORL0_OFFLINE=true
 EOF

@@ -57,7 +57,13 @@ def get_flink_home():
 
 def get_results_dir(subdir='raw'):
     """Get results directory path."""
-    results_dir = get_benchmark_root() / "results" / subdir
+    configured_root = os.environ.get('FORL0_RESULTS_DIR', '').strip()
+    results_root = (
+        Path(configured_root).expanduser()
+        if configured_root
+        else get_benchmark_root() / "results"
+    )
+    results_dir = results_root / subdir
     results_dir.mkdir(parents=True, exist_ok=True)
     return results_dir
 

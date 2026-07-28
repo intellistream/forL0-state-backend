@@ -200,4 +200,5 @@ else
 fi
 exec bash "$BUNDLE_DIR/forl0-offline-app.sh" \
     --install-dir "${FORL0_INSTALL_DIR:-${HOME}/forl0-runtime}" \
+    --results-dir "${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/benchmark/results}" \
     "${RUN_ARGS[@]}"

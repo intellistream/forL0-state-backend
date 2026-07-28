@@ -114,7 +114,8 @@ fi
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 RUN_STARTED_EPOCH="$(date +%s)"
-LOG_DIR="${REPO_ROOT}/benchmark/results/run_logs"
+RESULTS_DIR="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
+LOG_DIR="${RESULTS_DIR}/run_logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/offline_l0_experiment_${RUN_ID}.log"
 
@@ -199,18 +200,18 @@ fi
 
 echo
 echo "[4/4] Verify regenerated report and latest profiled artifacts"
-python3 - "$REPO_ROOT" "$RUN_STARTED_EPOCH" "$TEST_NAME" "$BACKEND" <<'VERIFY_REPORT'
+python3 - "$RESULTS_DIR" "$RUN_STARTED_EPOCH" "$TEST_NAME" "$BACKEND" <<'VERIFY_REPORT'
 import json
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-repo = Path(sys.argv[1])
+results_dir = Path(sys.argv[1])
 started = int(sys.argv[2])
 test_name = sys.argv[3]
 backend_arg = sys.argv[4]
-report = repo / 'benchmark/results/reports/benchmark_report.html'
-raw_dir = repo / 'benchmark/results/raw'
+report = results_dir / 'reports/benchmark_report.html'
+raw_dir = results_dir / 'raw'
 
 class TextParser(HTMLParser):
     def __init__(self):
@@ -297,6 +298,6 @@ echo
 echo "============================================================"
 echo "  Offline L0 experiment completed"
 echo "============================================================"
-echo "  Report: ${REPO_ROOT}/benchmark/results/reports/benchmark_report.html"
+echo "  Report: ${RESULTS_DIR}/reports/benchmark_report.html"
 echo "  Log:    ${LOG_FILE}"
 echo "  Flink cluster is intentionally left running for inspection."

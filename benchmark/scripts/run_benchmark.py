@@ -22,7 +22,7 @@ from run_wordcount import run_wordcount, run_wordcount_scenario, save_result
 from run_nexmark import NexmarkRunner, apply_nexmark_scenario
 from run_unittest import run_unittest
 from run_client_usecase import run_client_usecase, apply_client_usecase_scenario
-from utils.config import load_config
+from utils.config import get_results_dir, load_config
 
 
 APP_TEST_GROUP = {'wordcount', 'nexmark', 'client_usecase', 'benchset'}
@@ -377,16 +377,25 @@ Examples:
             if failed:
                 print(f"\n[Error] NexMark failed queries: {failed}")
                 sys.exit(1)
+            expected_queries = set(getattr(runner, 'selected_queries', []) or [])
+            incomplete = {}
+            for backend in backends:
+                metrics = nexmark_results.get(backend, {})
+                completed_queries = set(metrics.get('query_results', {}))
+                missing_queries = sorted(expected_queries - completed_queries)
+                if not completed_queries or missing_queries:
+                    incomplete[backend] = missing_queries or ['<no query results>']
+            if incomplete:
+                print(f"\n[Error] NexMark results are incomplete: {incomplete}")
+                sys.exit(1)
         except FileNotFoundError as e:
             print(f"\n[Warning] NexMark not available: {e}")
             print("To run NexMark, first compile it:")
             print("  cd benchmark/nexmark-src && mvn clean package -DskipTests")
-            if args.test == 'nexmark':
-                sys.exit(1)
+            sys.exit(1)
         except Exception as e:
             print(f"\n[Error] NexMark failed: {e}")
-            if args.test == 'nexmark':
-                sys.exit(1)
+            sys.exit(1)
 
     # Run client usecase benchmark
     if args.test == 'client_usecase' or run_app_suite:
@@ -425,7 +434,7 @@ Examples:
             print("\nGenerating benchset paper figures...")
             artifacts = generate_benchset_paper_artifacts()
             if artifacts:
-                print("Benchset figures generated in: benchmark/results/figures/")
+                print(f"Benchset figures generated in: {get_results_dir('figures')}/")
         except FileNotFoundError as e:
             print(f"\n[Warning] Benchset not available: {e}")
             print("To run Benchset, first compile it:")
@@ -439,10 +448,11 @@ Examples:
     print_summary(results, backends)
     
     # Suggest next steps
+    results_root = get_results_dir('')
     print("\nNext steps:")
-    print("  1. Review raw results in: benchmark/results/raw/")
+    print(f"  1. Review raw results in: {results_root / 'raw'}/")
     print("  2. Generate report: python scripts/generate_report.py")
-    print("  3. View report in: benchmark/results/reports/")
+    print(f"  3. View report in: {results_root / 'reports'}/")
 
 
 if __name__ == '__main__':

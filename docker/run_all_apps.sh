@@ -56,10 +56,12 @@ load_local_env() {
 }
 
 print_provenance() {
+    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
     echo "============================================================"
     echo "  ForL0 benchmark run context"
     echo "============================================================"
     echo "  Repo:        ${REPO_ROOT}"
+    echo "  Results:     ${results_dir}"
     echo "  Test:        ${TEST_NAME}"
     echo "  Backend:     ${BACKEND}"
     echo "  Profile:     ${PROFILE_MODE:-disabled}"
@@ -122,6 +124,14 @@ preflight_check() {
     fi
     if [[ "$TEST_NAME" == "nexmark" || "$TEST_NAME" == "apps" || "$TEST_NAME" == "all" ]]; then
         check_glob "NexMark JAR" "${REPO_ROOT}/docker/deploy/nexmark-flink-*.jar" || failed=1
+        for required_dir in bin conf queries; do
+            if [[ -d "${REPO_ROOT}/docker/deploy/nexmark-flink/${required_dir}" ]]; then
+                echo "      ✓ NexMark ${required_dir}: ${REPO_ROOT}/docker/deploy/nexmark-flink/${required_dir}"
+            else
+                echo "      ✗ NexMark ${required_dir}: ${REPO_ROOT}/docker/deploy/nexmark-flink/${required_dir}"
+                failed=1
+            fi
+        done
     fi
     if [[ "$TEST_NAME" == "client_usecase" || "$TEST_NAME" == "apps" || "$TEST_NAME" == "all" ]]; then
         check_glob "Client usecase JAR" "${REPO_ROOT}/docker/deploy/flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar" || failed=1
@@ -402,7 +412,8 @@ PY
 
 write_failed_marker() {
     local status="$1"
-    local log_dir="${REPO_ROOT}/benchmark/results/run_logs"
+    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
+    local log_dir="${results_dir}/run_logs"
     mkdir -p "$log_dir"
     local marker="${log_dir}/FAILED_${TEST_NAME}_${BACKEND}_$(date '+%Y%m%d_%H%M%S').txt"
     {

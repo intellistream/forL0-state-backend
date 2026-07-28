@@ -483,10 +483,10 @@ Examples:
     print("\nGenerating benchset paper figures...")
     artifacts = generate_benchset_paper_artifacts()
     if artifacts:
-        print("Figures saved to: benchmark/results/figures/")
-        print("Summary saved to: benchmark/results/reports/benchset_summary.md")
-    
-    print("\nResults saved to: benchmark/results/raw/")
+        print(f"Figures saved to: {get_results_dir('figures')}/")
+        print(f"Summary saved to: {get_results_dir('reports') / 'benchset_summary.md'}")
+
+    print(f"\nResults saved to: {get_results_dir('raw')}/")
 
 
 if __name__ == '__main__':

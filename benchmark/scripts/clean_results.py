@@ -2,10 +2,13 @@
 """清理 benchmark 结果目录"""
 
 import shutil
+import sys
 from pathlib import Path
 
-BENCHMARK_DIR = Path(__file__).parent.parent
-RESULTS_DIR = BENCHMARK_DIR / "results"
+sys.path.insert(0, str(Path(__file__).parent))
+from utils.config import get_results_dir
+
+RESULTS_DIR = get_results_dir('')
 
 
 def clean_results(confirm: bool = True) -> None:
@@ -39,7 +42,7 @@ def clean_results(confirm: bool = True) -> None:
         if d.exists():
             files = list(d.glob("*"))
             if files:
-                print(f"  - {d.relative_to(BENCHMARK_DIR)}: {len(files)} 个文件")
+                print(f"  - {d}: {len(files)} 个文件")
     if nexmark_dirs:
         print(f"  - nexmark_* 目录: {len(nexmark_dirs)} 个")
     

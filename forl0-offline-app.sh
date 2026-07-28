@@ -33,6 +33,7 @@ fi
 source "$L0_DETECTOR"
 FLINK_DIR="${FLINK_HOME:-}"
 INSTALL_DIR="${HOME}/forl0-runtime"
+RESULTS_DIR="${APP_ROOT}/benchmark/results"
 BACKEND="all"
 QUERIES="q4,q5,q8,q9,q11,q18,q19,q20"
 QUERIES_EXPLICIT=false
@@ -46,6 +47,7 @@ RUN_REPORT=true
 PROFILE_ARGS=(--no-profile)
 SKIP_DOCKER_LOAD=false
 KEEP_GOING=false
+HAD_FAILURE=false
 RESTART_CLUSTER=false
 INITIAL_RESTART_CLUSTER=true
 LIST_WORKLOADS=false
@@ -95,6 +97,8 @@ Common options:
                           Default: $HOME/flink_home
   --install-dir PATH      Runtime install dir when running from an offline bundle.
                           Default: ~/forl0-runtime
+  --results-dir PATH      Benchmark output directory. Relative paths are resolved
+                          from the launcher directory. Default: benchmark/results
   --backend NAME          all / forl0 / hashmap. Default: all
   --queries LIST          Override NexMark query list for pressure scenarios.
                           By default, each tuned pressure scenario uses its own
@@ -273,6 +277,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --install-dir)
             INSTALL_DIR="$2"
+            shift 2
+            ;;
+        --results-dir)
+            RESULTS_DIR="$2"
             shift 2
             ;;
         --backend)
@@ -529,6 +537,7 @@ run_or_handle_failure() {
         print_python_wheel_recovery
     fi
     if [[ "$KEEP_GOING" == "true" ]]; then
+        HAD_FAILURE=true
         echo "WARN: command failed but --keep-going is enabled: $description"
         return 0
     fi
@@ -577,10 +586,17 @@ RUNTIME_ROOT=""
 prepare_runtime
 RUNNER="${RUNTIME_ROOT}/docker/run_all_apps.sh"
 [[ -x "$RUNNER" ]] || die "run_all_apps.sh is not executable: $RUNNER"
+if [[ "$RESULTS_DIR" != /* ]]; then
+    RESULTS_DIR="${APP_ROOT}/${RESULTS_DIR}"
+fi
+mkdir -p "$RESULTS_DIR"
+RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd)"
+export FORL0_RESULTS_DIR="$RESULTS_DIR"
 
 info "Runtime summary"
 echo "  app root:    ${APP_ROOT}"
 echo "  runtime:     ${RUNTIME_ROOT}"
+echo "  results:     ${FORL0_RESULTS_DIR}"
 echo "  FLINK_HOME:  ${FLINK_DIR}"
 echo "  backend:     ${BACKEND}"
 echo "  profile:     ${PROFILE_ARGS[*]}"
@@ -642,7 +658,7 @@ if [[ "$RUN_NEXMARK_PRESSURE" == "true" ]]; then
 fi
 
 if [[ "$RUN_ASCEND_REPRO" == "true" ]]; then
-    run_log_dir="${RUNTIME_ROOT}/benchmark/results/run_logs"
+    run_log_dir="${FORL0_RESULTS_DIR}/run_logs"
     mkdir -p "$run_log_dir"
     manifest="${run_log_dir}/ascend_reproduction_$(date '+%Y%m%d_%H%M%S').tsv"
     {
@@ -674,8 +690,12 @@ fi
 
 info "Done"
 echo "Report:"
-echo "  ${RUNTIME_ROOT}/benchmark/results/reports/benchmark_report.html"
+echo "  ${FORL0_RESULTS_DIR}/reports/benchmark_report.html"
 echo "Raw results:"
-echo "  ${RUNTIME_ROOT}/benchmark/results/raw/"
+echo "  ${FORL0_RESULTS_DIR}/raw/"
 echo "NexMark runs:"
-echo "  ${RUNTIME_ROOT}/benchmark/results/nexmark_*/"
+echo "  ${FORL0_RESULTS_DIR}/nexmark_*/"
+if [[ "$HAD_FAILURE" == "true" ]]; then
+    echo "ERROR: one or more workloads failed; inspect ${FORL0_RESULTS_DIR}/run_logs/FAILED_*" >&2
+    exit 1
+fi

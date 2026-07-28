@@ -134,12 +134,35 @@ copy_deploy_artifacts() {
     for artifact in \
         "flink-statebackend-forL0-1.0-SNAPSHOT.jar" \
         "libforl0_engine.so" \
-        "wordcount-benchmark-1.0-SNAPSHOT.jar"; do
+        "wordcount-benchmark-1.0-SNAPSHOT.jar" \
+        "nexmark-flink-0.3-SNAPSHOT.jar"; do
         if [[ ! -f "$destination/$artifact" ]]; then
             echo "✗ 缺少必需部署产物: $artifact"
             exit 1
         fi
     done
+}
+
+copy_nexmark_distribution() {
+    local destination="$1"
+    local distribution=""
+    local candidate
+    for candidate in \
+        "$REPO_ROOT/benchmark/nexmark-src/nexmark-flink/target/nexmark-flink-bin/nexmark-flink" \
+        "$REPO_ROOT/docker/deploy/nexmark-flink"; do
+        if [[ -d "$candidate/bin" && -d "$candidate/conf" && -d "$candidate/queries" ]]; then
+            distribution="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$distribution" ]]; then
+        echo "✗ 缺少完整 NexMark 分发目录（需要 bin/conf/queries）"
+        exit 1
+    fi
+    rm -rf "$destination/nexmark-flink"
+    cp -a "$distribution" "$destination/nexmark-flink"
+    chmod +x "$destination/nexmark-flink/bin/"*.sh 2>/dev/null || true
+    echo "      ✓ NexMark 分发目录: $distribution"
 }
 
 usage() {
@@ -475,6 +498,7 @@ mkdir -p "$OUTPUT_DIR/artifacts" \
          "$OUTPUT_DIR/docs"
 
 copy_deploy_artifacts "$OUTPUT_DIR/artifacts"
+copy_nexmark_distribution "$OUTPUT_DIR/artifacts"
 if [[ -f "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar.gz" ]]; then
     cp -f "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar.gz" "$OUTPUT_DIR/docker/images/"
 fi

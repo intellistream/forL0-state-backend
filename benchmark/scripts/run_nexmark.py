@@ -32,7 +32,7 @@ from typing import Optional, Dict, List
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import requests_shim as requests  # type: ignore[assignment]
-from utils.config import load_config, parse_json_from_output
+from utils.config import get_results_dir, load_config, parse_json_from_output
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 from utils.flamegraph_quality import analyze_flamegraph_quality
 
@@ -423,7 +423,7 @@ class NexmarkRunner:
         
         # Results directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.results_dir = self.benchmark_root / "results" / f"nexmark_{timestamp}"
+        self.results_dir = get_results_dir(f"nexmark_{timestamp}")
 
         self.metric_reporter_host = self._resolve_metric_reporter_host()
         self.metric_reporter_port: Optional[int] = None
@@ -852,12 +852,16 @@ class NexmarkRunner:
 
     def _find_nexmark_home(self) -> Path:
         """Find the packaged NexMark distribution directory with bin/conf/queries."""
+        configured_home = os.environ.get('NEXMARK_HOME', '').strip()
         candidates = [
+            Path(configured_home).expanduser() if configured_home else None,
             self.project_root / 'benchmark' / 'nexmark-src' / 'nexmark-flink' / 'target' / 'nexmark-flink-bin' / 'nexmark-flink',
             self.project_root / 'docker' / 'deploy' / 'nexmark-flink',
         ]
 
         for candidate in candidates:
+            if candidate is None:
+                continue
             if (candidate / 'bin').exists() and (candidate / 'conf').exists() and (candidate / 'queries').exists():
                 return candidate
 

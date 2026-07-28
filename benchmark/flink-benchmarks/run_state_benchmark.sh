@@ -73,9 +73,11 @@ if [ "$ENABLE_PROFILING" = true ]; then
         exit 1
     fi
     
-    PROFILER_ARGS="-prof async:libPath=$ASYNC_PROFILER_LIB;output=flamegraph;dir=../../results/profiles"
+    RESULTS_DIR="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/../results}"
+    mkdir -p "$RESULTS_DIR/profiles"
+    RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd)"
+    PROFILER_ARGS="-prof async:libPath=$ASYNC_PROFILER_LIB;output=flamegraph;dir=${RESULTS_DIR}/profiles"
     echo -e "${GREEN}Using async-profiler: $ASYNC_PROFILER_LIB${NC}"
-    mkdir -p ../../results/profiles
 fi
 
 # Check VTune if enabled
@@ -382,5 +384,4 @@ if [ -f "$CHART_SCRIPT" ]; then
 else
     echo -e "${YELLOW}⚠ Chart script not found: $CHART_SCRIPT${NC}"
 fi
-
 

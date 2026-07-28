@@ -20,7 +20,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import requests_shim as requests  # type: ignore[assignment]
 
-from utils.config import load_config, get_flink_home, save_result
+from utils.config import get_results_dir, load_config, get_flink_home, save_result
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
@@ -406,8 +406,7 @@ def run_client_usecase(
         if profiler.is_available():
             tm_pids = find_taskmanager_pids(flink_home)
             if tm_pids:
-                profiles_dir = Path(__file__).parent.parent / 'results' / 'profiles'
-                profiles_dir.mkdir(parents=True, exist_ok=True)
+                profiles_dir = get_results_dir('profiles')
                 events = ['cpu', 'alloc'] if profile_mode == 'cpu' else ['cache-misses']
                 started = profiler.start(
                     pid=tm_pids[0],
