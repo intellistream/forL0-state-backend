@@ -17,7 +17,11 @@ if [[ "${1:-}" == "--worker" ]]; then
     export FORL0_OFFLINE_ONLY=true
     export FORL0_RUN_LOG="$RUN_LOG"
     cd "$PROJECT_ROOT"
-    bash ./run-forl0-offline.sh \
+
+    bash ./reproduce-smoke
+    echo "SMOKE PASSED: starting the complete W01-W02, N01-N14, C01-C08 suite" | tee -a "$RUN_LOG"
+
+    FORL0_RUN_LOG_MODE=append bash ./run-forl0-offline.sh \
         --reproduce-ascend \
         --keep-going \
         --skip-docker-load
@@ -37,6 +41,6 @@ fi
 nohup "$0" --worker >/dev/null 2>&1 &
 worker_pid=$!
 
-echo "完整性能测试已后台启动，PID=${worker_pid}"
+echo "完整性能测试已后台启动，PID=${worker_pid}（先 smoke，通过后自动跑全量）"
 echo "日志：${RUN_LOG}"
 echo "结果：${PROJECT_ROOT}/benchmark/results"

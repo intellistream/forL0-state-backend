@@ -15,7 +15,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_LOG="${FORL0_RUN_LOG:-${SCRIPT_DIR}/.logs}"
-exec > >(tee "$RUN_LOG") 2>&1
+if [[ "${FORL0_RUN_LOG_MODE:-overwrite}" == "append" ]]; then
+    exec > >(tee -a "$RUN_LOG") 2>&1
+else
+    exec > >(tee "$RUN_LOG") 2>&1
+fi
 
 BUNDLE_NAME="forl0-offline-linux-arm64-py310-20260721"
 ARCHIVE="${FORL0_OFFLINE_ARCHIVE:-${SCRIPT_DIR}/${BUNDLE_NAME}.tar.gz}"

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Fast correctness gate for the offline benchmark environment and result path.
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESULTS_ROOT="${PROJECT_ROOT}/benchmark/results"
+RUN_LOG="${PROJECT_ROOT}/.logs"
+MARKER="$(mktemp /tmp/forl0-smoke-check.XXXXXX)"
+
+cleanup() {
+    rm -f "$MARKER"
+}
+trap cleanup EXIT
+
+cd "$PROJECT_ROOT"
+export FORL0_OFFLINE_ONLY=true
+export FORL0_RUN_LOG="$RUN_LOG"
+
+if ! bash ./run-forl0-offline.sh --smoke-only --skip-docker-load; then
+    echo "SMOKE FAILED: launcher returned a non-zero status" | tee -a "$RUN_LOG"
+    exit 1
+fi
+
+new_raw_count="$(
+    find "${RESULTS_ROOT}/raw" \
+        -type f \
+        -name 'client_usecase_*.json' \
+        -newer "$MARKER" \
+        -print | wc -l
+)"
+if (( new_raw_count < 2 )); then
+    echo "SMOKE FAILED: expected two new Client Usecase JSON files, found ${new_raw_count}" | tee -a "$RUN_LOG"
+    exit 1
+fi
+
+report="${RESULTS_ROOT}/reports/benchmark_report.html"
+if [[ ! -f "$report" || ! "$report" -nt "$MARKER" ]]; then
+    echo "SMOKE FAILED: report was not regenerated at ${report}" | tee -a "$RUN_LOG"
+    exit 1
+fi
+
+wrong_root="/root/forl0-runtime/benchmark/results"
+if [[ -d "$wrong_root" ]] && find "$wrong_root" -type f -newer "$MARKER" -print -quit | grep -q .; then
+    echo "SMOKE FAILED: new output was written under ${wrong_root}" | tee -a "$RUN_LOG"
+    exit 1
+fi
+
+echo "SMOKE PASSED: environment, both backends, report, and result path are valid" | tee -a "$RUN_LOG"
