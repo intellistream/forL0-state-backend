@@ -1,0 +1,44 @@
+ForL0 native correctness evidence
+=================================
+
+Date: 2026-07-31 (Asia/Shanghai)
+Repository commit: 03558094e43cb12612daf9544c33f49741f562f4
+Host: host-192-168-0-84
+Architecture: aarch64
+Compiler: g++ (system compiler)
+L0 device: absent (/dev/hisi_l0 and /dev/l0 both missing)
+L0 runtime: absent (libl0/libl0mempool not found)
+NPU used: no
+
+The native test binary was built outside the repository in a mktemp directory,
+using the repository's mini_gtest fallback.  The equivalent command was:
+
+  g++ -std=c++17 -O2 -DFORL0_USE_MINI_GTEST=1 -DFORL0_NEON=1 \
+    -I src/main/native -I src/main/native/engine \
+    -I src/main/native/platform -I src/main/native/checkpoint \
+    -I src/main/native/test \
+    src/main/native/engine/hot_cache.cpp \
+    src/main/native/test/swiss_table_test.cpp \
+    src/main/native/test/state_table_cow_test.cpp \
+    src/main/native/test/checkpoint_round_trip_test.cpp \
+    src/main/native/test/type_layout_parser_test.cpp \
+    src/main/native/test/time_window_namespace_test.cpp \
+    src/main/native/test/typed_inner_map_test.cpp \
+    src/main/native/test/hot_cache_test.cpp \
+    src/main/native/test/hot_cache_manager_test.cpp \
+    src/main/native/test/hot_cache_phase_b_test.cpp \
+    src/main/native/test/test_main.cpp -ldl -pthread -o forl0_tests
+
+Result:
+
+  [==========] 130 test(s) ran.
+  [  PASSED  ] 130 test(s).
+
+Coverage represented by this run includes SwissTable and split-table behavior,
+copy-on-write snapshots, checkpoint serialization round trips, type-layout
+parsing, TimeWindow namespaces, typed inner maps, Hot Cache layouts, cache
+operations, manager failure handling, and manager rebalancing/statistics.
+
+Evidence boundary: this is fresh native/backend correctness evidence only.  It
+does not execute the Java/Flink integration and recovery suite, JNI loading, or
+real L0 hardware access.
