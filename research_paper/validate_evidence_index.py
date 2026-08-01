@@ -15,6 +15,7 @@ import json
 import math
 import re
 import statistics
+import subprocess
 import sys
 from pathlib import Path
 
@@ -345,6 +346,98 @@ def repository_path(root: Path, value: str, errors: list[str], context: str) -> 
     return path
 
 
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+    )
+
+
+def _resolve_git_object(
+    root: Path, revision: object, expected_type: str, errors: list[str], context: str
+) -> str | None:
+    if not isinstance(revision, str) or not COMMIT_RE.fullmatch(revision):
+        errors.append(f"{context}: object id is not full 40-hex")
+        return None
+    resolved = _git(root, "rev-parse", "--verify", f"{revision}^{{{expected_type}}}")
+    if resolved.returncode != 0:
+        errors.append(f"{context}: Git {expected_type} object does not exist: {revision}")
+        return None
+    object_id = resolved.stdout.decode("ascii", errors="replace").strip()
+    if object_id != revision and expected_type == "commit":
+        errors.append(f"{context}: Git commit did not resolve exactly: {revision}")
+        return None
+    return object_id
+
+
+def validate_repository_binding(root: Path, index: dict, errors: list[str]) -> None:
+    repository = index.get("repository")
+    if not isinstance(repository, dict):
+        errors.append("repository must be an object")
+        return
+    required = {"head_commit", "source_tree_path", "source_tree", "paper_source", "notes"}
+    if set(repository) != required:
+        errors.append(
+            "repository binding fields drifted: "
+            f"missing={sorted(required - set(repository))!r} "
+            f"extra={sorted(set(repository) - required)!r}"
+        )
+        return
+    head = repository["head_commit"]
+    if _resolve_git_object(root, head, "commit", errors, "repository.head_commit") is None:
+        return
+    source_tree_path = repository["source_tree_path"]
+    if source_tree_path != "src/main":
+        errors.append("repository.source_tree_path must be exactly 'src/main'")
+        return
+    declared_tree = repository["source_tree"]
+    if not isinstance(declared_tree, str) or not COMMIT_RE.fullmatch(declared_tree):
+        errors.append("repository.source_tree is not a full Git tree id")
+        return
+    committed_tree = _git(root, "rev-parse", f"{head}:{source_tree_path}")
+    if committed_tree.returncode != 0:
+        errors.append("repository source tree does not exist at head_commit")
+        return
+    actual_tree = committed_tree.stdout.decode("ascii", errors="replace").strip()
+    if actual_tree != declared_tree:
+        errors.append(
+            "repository source_tree differs from head_commit: "
+            f"declared={declared_tree} actual={actual_tree}"
+        )
+    tracked_diff = _git(root, "diff", "--quiet", head, "--", source_tree_path)
+    if tracked_diff.returncode not in (0, 1):
+        errors.append("cannot compare current source tree with repository.head_commit")
+    elif tracked_diff.returncode == 1:
+        errors.append("current source tree differs from repository.head_commit")
+    source_status = _git(
+        root, "status", "--porcelain", "--untracked-files=all", "--", source_tree_path
+    )
+    if source_status.returncode != 0:
+        errors.append("cannot inspect current source-tree cleanliness")
+    elif source_status.stdout.strip():
+        errors.append("current source tree has tracked or untracked worktree changes")
+
+
+def _positive_finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        parsed = float(value)
+    except OverflowError:
+        return None
+    return parsed if math.isfinite(parsed) and parsed > 0 else None
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        parsed = float(value)
+    except OverflowError:
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
 def validate_ratio_grid(root: Path, claim: dict, errors: list[str]) -> None:
     check = claim.get("quantitative_check")
     if not check:
@@ -356,7 +449,7 @@ def validate_ratio_grid(root: Path, claim: dict, errors: list[str]) -> None:
         errors.append(f"{claim['id']}: unknown quantitative check {check.get('type')!r}")
         return
 
-    required = {"raw_path", "count", "all_greater_than_one", "mean", "max"}
+    required = {"raw_path", "grid", "count", "all_greater_than_one", "mean", "max"}
     missing = required - set(check)
     if missing:
         errors.append(
@@ -371,14 +464,119 @@ def validate_ratio_grid(root: Path, claim: dict, errors: list[str]) -> None:
         return
     payload = load_json(raw_path)
     records = payload.get("records", []) if isinstance(payload, dict) else []
+    grid = check.get("grid")
+    expected_grid_keys = {
+        "num_keys",
+        "skew_factors",
+        "benchmark",
+        "total_records",
+        "parallelism",
+    }
+    if not isinstance(grid, dict) or set(grid) != expected_grid_keys:
+        errors.append(f"{claim['id']}: grid contract must declare exact workload axes")
+        return
+    num_keys = grid["num_keys"]
+    skew_factors = grid["skew_factors"]
+    if (
+        not isinstance(grid["benchmark"], str)
+        or not grid["benchmark"]
+        or isinstance(grid["total_records"], bool)
+        or not isinstance(grid["total_records"], int)
+        or grid["total_records"] <= 0
+        or isinstance(grid["parallelism"], bool)
+        or not isinstance(grid["parallelism"], int)
+        or grid["parallelism"] <= 0
+    ):
+        errors.append(f"{claim['id']}: grid workload contract is invalid")
+        return
+    if (
+        not isinstance(num_keys, list)
+        or not num_keys
+        or any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in num_keys)
+        or len(set(num_keys)) != len(num_keys)
+    ):
+        errors.append(f"{claim['id']}: grid num_keys must be unique positive integers")
+        return
+    if (
+        not isinstance(skew_factors, list)
+        or not skew_factors
+        or any(_finite_number(value) is None for value in skew_factors)
+        or len({_finite_number(value) for value in skew_factors}) != len(skew_factors)
+    ):
+        errors.append(f"{claim['id']}: grid skew_factors must be unique finite numbers")
+        return
+    expected_coordinates = {
+        (num_key, _finite_number(skew)) for num_key in num_keys for skew in skew_factors
+    }
+    if check["count"] != len(expected_coordinates):
+        errors.append(
+            f"{claim['id']}: declared count does not equal complete grid size"
+        )
+    if not isinstance(records, list):
+        errors.append(f"{claim['id']}: quantitative records must be an array")
+        return
     ratios: list[float] = []
+    observed_coordinates: set[tuple[int, float]] = set()
     for index, record in enumerate(records):
-        try:
-            results = record["results"]
-            ratios.append(results["forl0"]["throughput"] / results["hashmap"]["throughput"])
-        except (KeyError, TypeError, ZeroDivisionError) as exc:
-            errors.append(f"{claim['id']}: invalid record {index}: {exc}")
+        if not isinstance(record, dict) or set(record) != {"num_keys", "skew_factor", "results"}:
+            errors.append(f"{claim['id']}: record {index} has invalid schema")
             return
+        coordinate = (record["num_keys"], _finite_number(record["skew_factor"])) if (
+            isinstance(record["num_keys"], int)
+            and not isinstance(record["num_keys"], bool)
+            and _finite_number(record["skew_factor"]) is not None
+        ) else None
+        if coordinate is None or coordinate not in expected_coordinates:
+            errors.append(f"{claim['id']}: record {index} has an out-of-grid coordinate")
+            return
+        if coordinate in observed_coordinates:
+            errors.append(f"{claim['id']}: duplicate grid coordinate {coordinate!r}")
+            return
+        observed_coordinates.add(coordinate)
+        results = record["results"]
+        if not isinstance(results, dict) or set(results) != {"hashmap", "forl0"}:
+            errors.append(f"{claim['id']}: record {index} must contain exactly two backends")
+            return
+        throughputs: dict[str, float] = {}
+        for backend in ("hashmap", "forl0"):
+            result = results[backend]
+            if not isinstance(result, dict):
+                errors.append(f"{claim['id']}: record {index} {backend} result is invalid")
+                return
+            if (
+                result.get("backend") != backend
+                or result.get("benchmark") != grid["benchmark"]
+                or result.get("total_records") != grid["total_records"]
+                or result.get("parallelism") != grid["parallelism"]
+            ):
+                errors.append(
+                    f"{claim['id']}: record {index} {backend} workload contract differs"
+                )
+                return
+            elapsed = _positive_finite_number(result.get("total_time_seconds"))
+            throughput = _positive_finite_number(result.get("throughput"))
+            per_core = _positive_finite_number(result.get("throughput_per_core"))
+            if elapsed is None or throughput is None or per_core is None:
+                errors.append(f"{claim['id']}: record {index} {backend} metrics are invalid")
+                return
+            expected_throughput = grid["total_records"] / elapsed
+            expected_per_core = throughput / grid["parallelism"]
+            if not math.isclose(throughput, expected_throughput, rel_tol=1e-12, abs_tol=0.0):
+                errors.append(
+                    f"{claim['id']}: record {index} {backend} throughput is not records/time"
+                )
+            if not math.isclose(per_core, expected_per_core, rel_tol=1e-12, abs_tol=0.0):
+                errors.append(
+                    f"{claim['id']}: record {index} {backend} per-core throughput is inconsistent"
+                )
+            throughputs[backend] = throughput
+        ratios.append(throughputs["forl0"] / throughputs["hashmap"])
+
+    missing_coordinates = expected_coordinates - observed_coordinates
+    if missing_coordinates:
+        errors.append(
+            f"{claim['id']}: grid is incomplete; missing {len(missing_coordinates)} coordinate(s)"
+        )
 
     try:
         tolerance = float(check.get("tolerance", 1e-9))
@@ -860,6 +1058,7 @@ def validate(index_path: Path) -> tuple[list[str], list[str], dict]:
         return ["index root must be a JSON object"], warnings, {}
     if index.get("schema_version") != 1:
         errors.append("schema_version must be 1")
+    validate_repository_binding(root, index, errors)
 
     policy = index.get("classification_policy", {})
     environment_classes = set(policy.get("environment_classes", {}))
@@ -906,6 +1105,12 @@ def validate(index_path: Path) -> tuple[list[str], list[str], dict]:
             errors.append(f"{claim_id}: unknown evidence_state {claim['evidence_state']!r}")
         if not COMMIT_RE.fullmatch(claim["code_commit"]):
             errors.append(f"{claim_id}: code_commit is not a full Git commit")
+        elif _resolve_git_object(
+            root, claim["code_commit"], "commit", errors, f"{claim_id}.code_commit"
+        ) is not None and claim["evidence_state"] == "fresh_verified":
+            indexed_head = index.get("repository", {}).get("head_commit")
+            if claim["code_commit"] != indexed_head:
+                errors.append(f"{claim_id}: fresh_verified code_commit differs from indexed head")
 
         for role in ("paper_locations", "figures"):
             if not isinstance(claim[role], list):
@@ -947,6 +1152,18 @@ def validate(index_path: Path) -> tuple[list[str], list[str], dict]:
             origin = artifact["origin_commit"]
             if origin is not None and not COMMIT_RE.fullmatch(origin):
                 errors.append(f"{claim_id}: invalid artifact origin_commit for {artifact['path']}")
+            elif origin is not None and _resolve_git_object(
+                root, origin, "commit", errors, f"{claim_id}.artifact origin_commit"
+            ) is not None:
+                committed = _git(root, "show", f"{origin}:{artifact['path']}")
+                if committed.returncode != 0:
+                    errors.append(
+                        f"{claim_id}: artifact is absent from origin_commit: {artifact['path']}"
+                    )
+                elif committed.stdout != path.read_bytes():
+                    errors.append(
+                        f"{claim_id}: artifact bytes differ from origin_commit: {artifact['path']}"
+                    )
 
         if claim["evidence_state"] in VERIFIED_STATES and raw_count == 0:
             errors.append(f"{claim_id}: verified claim requires at least one raw artifact")

@@ -3,6 +3,8 @@
   "generated_at": "2026-07-31T00:00:00+08:00",
   "repository": {
     "head_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+    "source_tree_path": "src/main",
+    "source_tree": "44b768e182ef1e507c641a642bf4688bbf30137f",
     "paper_source": "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex",
     "notes": "The pre-existing untracked ICDE_R2_GO_NO_GO_20260731.md is intentionally not treated as experimental evidence."
   },
@@ -57,7 +59,7 @@
           "role": "raw",
           "path": "research_paper/evidence/native_tests_20260731.txt",
           "sha256": "b675f48809fa7bf570521cf82372ea6ce75b46762d6efea5ff6666eecc79cb9e",
-          "origin_commit": null
+          "origin_commit": "7727be426a2f579a56650aeeededa0c7190ae930"
         }
       ],
       "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
@@ -127,6 +129,13 @@
       "quantitative_check": {
         "type": "wordcount_ratio_grid",
         "raw_path": "results/intel/wordcount_sweep/raw/wordcount_grid_sweep_20260423_025206_final.json",
+        "grid": {
+          "num_keys": [1000000, 2000000, 4000000, 6000000, 8000000, 10000000],
+          "skew_factors": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+          "benchmark": "wordcount",
+          "total_records": 2000000000,
+          "parallelism": 8
+        },
         "count": 36,
         "all_greater_than_one": true,
         "mean": 1.2700955665301288,
@@ -164,6 +173,13 @@
       "quantitative_check": {
         "type": "wordcount_ratio_grid",
         "raw_path": "results/kunpeng/wordcount_sweep/raw/wordcount_grid_sweep_20260422_042041_final.json",
+        "grid": {
+          "num_keys": [1000000, 2000000, 4000000, 6000000, 8000000, 10000000],
+          "skew_factors": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+          "benchmark": "wordcount",
+          "total_records": 2000000000,
+          "parallelism": 8
+        },
         "count": 36,
         "all_greater_than_one": false,
         "mean": 0.9632085397932311,

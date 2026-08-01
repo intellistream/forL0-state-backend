@@ -20,6 +20,7 @@ from validate_evidence_index import (  # noqa: E402
     validate_mechanism_claim_guards,
     validate_mechanism_contract,
     validate_provisional_claim_guards,
+    validate_ratio_grid,
 )
 
 
@@ -143,6 +144,68 @@ class EvidenceIndexValidatorTest(unittest.TestCase):
         claim["quantitative_check"] = {"type": "wordcount_ratio_grid"}
         errors, _, _ = self.validate_payload(payload)
         self.assertTrue(any("quantitative check missing fields" in error for error in errors))
+
+    def test_repository_and_artifact_commits_must_be_real_bound_git_objects(self) -> None:
+        payload = copy.deepcopy(self.canonical)
+        payload["repository"]["head_commit"] = "f" * 40
+        errors, _, _ = self.validate_payload(payload)
+        self.assertTrue(any("Git commit object does not exist" in error for error in errors))
+
+        payload = copy.deepcopy(self.canonical)
+        payload["repository"]["source_tree"] = "f" * 40
+        errors, _, _ = self.validate_payload(payload)
+        self.assertTrue(any("source_tree differs" in error for error in errors))
+
+        payload = copy.deepcopy(self.canonical)
+        payload["claims"][0]["artifacts"][0]["origin_commit"] = payload["repository"][
+            "head_commit"
+        ]
+        errors, _, _ = self.validate_payload(payload)
+        self.assertTrue(any("artifact is absent from origin_commit" in error for error in errors))
+
+    def validate_mutated_grid(self, mutate: object) -> list[str]:
+        claim = copy.deepcopy(
+            next(
+                item
+                for item in self.canonical["claims"]
+                if item["id"] == "intel-wordcount-grid-36"
+            )
+        )
+        raw = load_json(HERE.parent / claim["quantitative_check"]["raw_path"])
+        assert isinstance(raw, dict)
+        mutate(raw)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", dir=HERE, encoding="utf-8"
+        ) as handle:
+            json.dump(raw, handle)
+            handle.flush()
+            claim["quantitative_check"]["raw_path"] = (
+                f"research_paper/{Path(handle.name).name}"
+            )
+            errors: list[str] = []
+            validate_ratio_grid(HERE.parent, claim, errors)
+            return errors
+
+    def test_wordcount_grid_rejects_duplicate_or_missing_coordinates(self) -> None:
+        def duplicate(raw: dict) -> None:
+            raw["records"][-1]["num_keys"] = raw["records"][0]["num_keys"]
+            raw["records"][-1]["skew_factor"] = raw["records"][0]["skew_factor"]
+
+        errors = self.validate_mutated_grid(duplicate)
+        self.assertTrue(any("duplicate grid coordinate" in error for error in errors))
+
+    def test_wordcount_grid_rejects_workload_mismatch_and_bad_arithmetic(self) -> None:
+        def mismatch(raw: dict) -> None:
+            raw["records"][0]["results"]["forl0"]["parallelism"] = 7
+
+        errors = self.validate_mutated_grid(mismatch)
+        self.assertTrue(any("workload contract differs" in error for error in errors))
+
+        def arithmetic(raw: dict) -> None:
+            raw["records"][0]["results"]["forl0"]["throughput"] *= 2
+
+        errors = self.validate_mutated_grid(arithmetic)
+        self.assertTrue(any("throughput is not records/time" in error for error in errors))
 
     def test_nonexistent_forl0_state_map_cannot_be_implemented(self) -> None:
         payload = copy.deepcopy(self.canonical_contract)
