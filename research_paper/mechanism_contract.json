@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "purpose": "Fail-closed contract between paper mechanism claims and the implementation at the audited branch.",
+  "paper_sources": [
+    {
+      "path": "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex",
+      "protected_sections": [
+        {
+          "name": "full_manuscript",
+          "start": "\\documentclass",
+          "end": "\\end{document}"
+        }
+      ]
+    }
+  ],
+  "mechanisms": [
+    {
+      "id": "native_swiss_table_simd",
+      "status": "implemented",
+      "architecture_role": "native_state_table_with_group_probing",
+      "symbols": [
+        {
+          "path": "src/main/native/engine/swiss_table.h",
+          "literal": "class SwissTable",
+          "expected": "present"
+        },
+        {
+          "path": "src/main/native/platform/simd.h",
+          "literal": "struct ProbeSeq",
+          "expected": "present"
+        }
+      ],
+      "tests": [
+        {
+          "path": "src/main/native/test/swiss_table_test.cpp",
+          "literal": "TEST(SwissTableTest, AutomaticGrowth)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/main/native/platform/simd.h",
+          "literal": "static constexpr size_t kGroupWidth = 16;"
+        }
+      ],
+      "evidence_claims": [
+        {
+          "claim_id": "correctness-native-130",
+          "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+          "artifact_path": "research_paper/evidence/native_tests_20260731.txt",
+          "artifact_sha256": "b675f48809fa7bf570521cf82372ea6ce75b46762d6efea5ff6666eecc79cb9e"
+        }
+      ],
+      "paper_claim_patterns": [
+        "Swiss[- ]table",
+        "SwissTable"
+      ]
+    },
+    {
+      "id": "l0_hot_cache",
+      "status": "implemented",
+      "architecture_role": "cache_above_state_table",
+      "symbols": [
+        {
+          "path": "src/main/native/engine/hot_cache.h",
+          "literal": "class HotCacheManager",
+          "expected": "present"
+        },
+        {
+          "path": "src/main/native/engine/allocator.h",
+          "literal": "L0 is now a hot-key cache above StateTable",
+          "expected": "present"
+        }
+      ],
+      "tests": [
+        {
+          "path": "src/main/native/test/hot_cache_test.cpp",
+          "literal": "TEST(HotCacheLL, PutThenGet)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/main/native/engine/allocator.h",
+          "literal": "L0 is now a hot-key cache above StateTable"
+        }
+      ],
+      "evidence_claims": [
+        {
+          "claim_id": "correctness-native-130",
+          "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+          "artifact_path": "research_paper/evidence/native_tests_20260731.txt",
+          "artifact_sha256": "b675f48809fa7bf570521cf82372ea6ce75b46762d6efea5ff6666eecc79cb9e"
+        }
+      ],
+      "paper_claim_patterns": [
+        "HotCache",
+        "hot-key cache"
+      ]
+    },
+    {
+      "id": "cow_checkpoint",
+      "status": "implemented",
+      "architecture_role": "snapshot_consistency_overlay",
+      "symbols": [
+        {
+          "path": "src/main/native/engine/state_engine.h",
+          "literal": "uint64_t prepare_snapshot()",
+          "expected": "present"
+        },
+        {
+          "path": "src/main/native/checkpoint/checkpoint_writer.h",
+          "literal": "snapshot-consistent iteration (COW)",
+          "expected": "present"
+        }
+      ],
+      "tests": [
+        {
+          "path": "src/main/native/test/checkpoint_round_trip_test.cpp",
+          "literal": "TEST(CheckpointRoundTripTest, COWConsistency)"
+        },
+        {
+          "path": "src/main/native/test/state_table_cow_test.cpp",
+          "literal": "TEST(StateTableCOWTest, SnapshotSeesOldValues)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/main/native/checkpoint/checkpoint_writer.h",
+          "literal": "snapshot-consistent iteration (COW)"
+        }
+      ],
+      "evidence_claims": [
+        {
+          "claim_id": "correctness-native-130",
+          "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+          "artifact_path": "research_paper/evidence/native_tests_20260731.txt",
+          "artifact_sha256": "b675f48809fa7bf570521cf82372ea6ce75b46762d6efea5ff6666eecc79cb9e"
+        }
+      ],
+      "paper_claim_patterns": [
+        "copy-on-write",
+        "\\bCoW\\b"
+      ]
+    },
+    {
+      "id": "split_allocation_layout",
+      "status": "provisional",
+      "architecture_role": "test_only_allocator_extension_point",
+      "symbols": [
+        {
+          "path": "src/main/native/engine/allocator.h",
+          "literal": "struct SplitResult",
+          "expected": "present"
+        },
+        {
+          "path": "src/main/native/engine/swiss_table.h",
+          "literal": "allocate_split(cb, 64, slots_bytes, sa)",
+          "expected": "present"
+        }
+      ],
+      "tests": [
+        {
+          "path": "src/main/native/test/swiss_table_test.cpp",
+          "literal": "TEST(SwissTableSplitTest, GrowthTransitionUnifiedToSplit)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/main/native/engine/allocator.h",
+          "literal": "return SplitResult{p, static_cast<char*>(p) + ctrl_padded, false};"
+        }
+      ],
+      "evidence_claims": [
+        {
+          "claim_id": "correctness-native-130",
+          "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+          "artifact_path": "research_paper/evidence/native_tests_20260731.txt",
+          "artifact_sha256": "b675f48809fa7bf570521cf82372ea6ce75b46762d6efea5ff6666eecc79cb9e"
+        }
+      ],
+      "paper_claim_patterns": [
+        "split allocation",
+        "allocation split"
+      ]
+    },
+    {
+      "id": "incremental_extendible_hash_split",
+      "status": "absent",
+      "architecture_role": "absent_hash_growth_mechanism",
+      "symbols": [
+        {
+          "path": "src/main/native/engine/swiss_table.h",
+          "literal": "incremental_hash_split",
+          "expected": "absent"
+        }
+      ],
+      "tests": [
+        {
+          "path": "research_paper/test_validate_evidence_index.py",
+          "literal": "test_allocation_split_cannot_impersonate_hash_split"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/main/native/engine/swiss_table.h",
+          "literal": "Move all FULL entries from old to new"
+        }
+      ],
+      "evidence_claims": [],
+      "paper_claim_patterns": [
+        "incremental\\s+(?:extendible[- ]hash\\s+)?split",
+        "extendible\\s+hash(?:ing)?",
+        "split.{0,100}(?:growing\\s+)?hash[- ]table\\s+buckets?.{0,100}incremental",
+        "(?:hash[- ]table\\s+)?buckets?.{0,100}(?:split|grow).{0,100}director",
+        "director.{0,100}(?:split|grow).{0,100}(?:hash[- ]table\\s+)?buckets?",
+        "(?:does\\s+not\\s+lack|never\\s+lacks?|not\\s+without).{0,100}incremental.{0,100}director(?:y|ies)?[- ]based.{0,100}bucket(?:\\s+division|s)?"
+      ]
+    },
+    {
+      "id": "forl0_state_map",
+      "status": "absent",
+      "architecture_role": "absent_directory_router",
+      "symbols": [
+        {
+          "path": "src/main/java/org/apache/flink/state/forl0/ForL0StateMap.java",
+          "literal": "class ForL0StateMap",
+          "expected": "absent"
+        }
+      ],
+      "tests": [
+        {
+          "path": "research_paper/test_validate_evidence_index.py",
+          "literal": "test_nonexistent_forl0_state_map_cannot_be_implemented"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/main/java/org/apache/flink/state/forl0/ForL0KeyedStateBackend.java",
+          "literal": "class ForL0KeyedStateBackend"
+        }
+      ],
+      "evidence_claims": [],
+      "paper_claim_patterns": [
+        "ForL0StateMap"
+      ]
+    }
+  ]
+}
