@@ -15,6 +15,7 @@ sys.path.insert(0, str(HERE))
 
 from validate_evidence_index import (  # noqa: E402
     CANONICAL_PROTECTED_SECTIONS,
+    load_json,
     validate,
     validate_mechanism_claim_guards,
     validate_mechanism_contract,
@@ -67,6 +68,22 @@ class EvidenceIndexValidatorTest(unittest.TestCase):
         errors, warnings, _ = validate(HERE / "evidence_index.json")
         self.assertEqual([], errors)
         self.assertTrue(any("real-L0" in warning for warning in warnings))
+
+    def test_all_evidence_json_rejects_duplicate_keys_and_nonfinite_values(self) -> None:
+        mutations = (
+            ('{"claim":{"scope":"backend","scope":"hardware"}}', "duplicate JSON key"),
+            ('{"throughput":NaN}', "non-finite JSON constant"),
+            ('{"throughput":Infinity}', "non-finite JSON constant"),
+        )
+        for raw, message in mutations:
+            with self.subTest(raw=raw):
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".json", dir=HERE, encoding="utf-8"
+                ) as handle:
+                    handle.write(raw)
+                    handle.flush()
+                    with self.assertRaisesRegex(ValueError, message):
+                        load_json(Path(handle.name))
 
     def test_canonical_p1_result_and_causality_phrases_are_removed(self) -> None:
         paper = (

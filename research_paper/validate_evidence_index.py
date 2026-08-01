@@ -314,9 +314,26 @@ CANONICAL_ALLOWED_NEGATIVE_CLAUSES = {
 }
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key is forbidden: {key}")
+        value[key] = item
+    return value
+
+
 def load_json(path: Path) -> object:
     with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+        return json.load(
+            handle,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
 
 
 def repository_path(root: Path, value: str, errors: list[str], context: str) -> Path:
