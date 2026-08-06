@@ -1,0 +1,343 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-31T00:00:00+08:00",
+  "repository": {
+    "head_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+    "source_tree_path": "src/main",
+    "source_tree": "44b768e182ef1e507c641a642bf4688bbf30137f",
+    "paper_source": "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex",
+    "notes": "The pre-existing untracked ICDE_R2_GO_NO_GO_20260731.md is intentionally not treated as experimental evidence."
+  },
+  "classification_policy": {
+    "environment_classes": {
+      "real_l0": "Both an L0 device and runtime library are recorded for the measured run.",
+      "backend_native_no_l0": "ForL0 native/backend code ran, but no L0 device/runtime was present.",
+      "non_l0_platform": "The platform cannot establish an L0 hardware claim; results support backend/layout claims only.",
+      "l0_unverified": "The artifact does not record enough device/runtime facts to determine whether L0 was active.",
+      "mixed_unverified": "A derived artifact combines runs whose raw environment evidence is missing or heterogeneous."
+    },
+    "evidence_states": {
+      "fresh_verified": "Re-executed at repository HEAD in the current round.",
+      "raw_verified": "Tracked raw artifact exists and the quantitative check is reproducible.",
+      "documentary_only": "A report states the result, but the original machine output is absent.",
+      "derived_missing_raw": "A figure or script exists, but original run output is absent.",
+      "blocked": "The test or measurement could not be executed in the current environment.",
+      "gap": "No qualifying evidence artifact currently exists."
+    },
+    "real_l0_rule": "Only environment_class=real_l0 with device_present=true and runtime_library_present=true may support scope=real_l0_hardware. A backend name, Ascend host, JNI path, or hard-coded figure label is not sufficient."
+  },
+  "current_environment": {
+    "host": "host-192-168-0-84",
+    "architecture": "aarch64",
+    "java_available": false,
+    "maven_available": false,
+    "npu_used": false,
+    "l0": {
+      "device_present": false,
+      "runtime_library_present": false,
+      "checked_devices": [
+        "/dev/hisi_l0",
+        "/dev/l0"
+      ],
+      "checked_library_names": [
+        "libl0.so",
+        "libl0mempool.so"
+      ]
+    }
+  },
+  "claims": [
+    {
+      "id": "correctness-native-130",
+      "scope": "backend_correctness",
+      "claim": "All 130 native-engine tests pass at the indexed repository HEAD.",
+      "paper_locations": [
+        "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex"
+      ],
+      "figures": [],
+      "artifacts": [
+        {
+          "role": "raw",
+          "path": "research_paper/evidence/native_tests_20260731.txt",
+          "sha256": "b675f48809fa7bf570521cf82372ea6ce75b46762d6efea5ff6666eecc79cb9e",
+          "origin_commit": "7727be426a2f579a56650aeeededa0c7190ae930"
+        }
+      ],
+      "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+      "environment_class": "backend_native_no_l0",
+      "environment_evidence": {
+        "device_present": false,
+        "runtime_library_present": false,
+        "source": "research_paper/evidence/native_tests_20260731.txt"
+      },
+      "evidence_state": "fresh_verified",
+      "paper_use": "Usable as native correctness evidence, not as Java/Flink recovery or L0 acceleration evidence."
+    },
+    {
+      "id": "correctness-java-54-and-recovery",
+      "scope": "flink_integration_correctness",
+      "claim": "The delivery report states that 54 Java tests, including checkpoint/savepoint, snapshot consistency and rescaling tests, pass.",
+      "paper_locations": [
+        "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex",
+        "交付文档/测试用例及报告/ForL0 State Backend测试用例及报告v4.0.tex"
+      ],
+      "figures": [],
+      "artifacts": [
+        {
+          "role": "report",
+          "path": "交付文档/测试用例及报告/ForL0 State Backend测试用例及报告v4.0.tex",
+          "sha256": "75ea972c97774d9a0528466a61075cc06bf1f141e8564e4100d1d7ec243cfda2",
+          "origin_commit": "3274bfd49e66e204c07f1d78ed055c8acf3e8f39"
+        }
+      ],
+      "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+      "environment_class": "l0_unverified",
+      "environment_evidence": {
+        "device_present": null,
+        "runtime_library_present": null,
+        "source": "delivery report prose; target/surefire-reports and native build/Testing are absent"
+      },
+      "evidence_state": "blocked",
+      "paper_use": "Do not state fresh 184/184 verification. Native 130/130 is fresh; Java 54/54 remains documentary until JDK/Maven execution emits JUnit XML.",
+      "blocker": "java and mvn are not installed on the current host"
+    },
+    {
+      "id": "intel-wordcount-grid-36",
+      "scope": "backend_performance",
+      "claim": "On the Intel 36-point WordCount grid, ForL0 beats HashMap at every point; mean speedup is 1.270x and peak is 1.414x.",
+      "paper_locations": [
+        "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex"
+      ],
+      "figures": [
+        "results/intel/wordcount_sweep/figures/wordcount_grid_speedup.pdf",
+        "results/intel/wordcount_sweep/figures/wordcount_grid_hashmap.pdf",
+        "results/intel/wordcount_sweep/figures/wordcount_grid_forl0.pdf"
+      ],
+      "artifacts": [
+        {
+          "role": "raw",
+          "path": "results/intel/wordcount_sweep/raw/wordcount_grid_sweep_20260423_025206_final.json",
+          "sha256": "9c2277e74fcc52d48bb28a535f86b6ca59fffd65be651c02f9b2a917a33912cb",
+          "origin_commit": "90dc11bae494ebaca504352254aec9d2dbf615ce"
+        },
+        {
+          "role": "figure",
+          "path": "results/intel/wordcount_sweep/figures/wordcount_grid_speedup.pdf",
+          "sha256": "864e469d21286afcb0228d50a072132697608d6e2e327469a7d24bd7aace8721",
+          "origin_commit": "90dc11bae494ebaca504352254aec9d2dbf615ce"
+        }
+      ],
+      "quantitative_check": {
+        "type": "wordcount_ratio_grid",
+        "raw_path": "results/intel/wordcount_sweep/raw/wordcount_grid_sweep_20260423_025206_final.json",
+        "grid": {
+          "num_keys": [1000000, 2000000, 4000000, 6000000, 8000000, 10000000],
+          "skew_factors": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+          "benchmark": "wordcount",
+          "total_records": 2000000000,
+          "parallelism": 8
+        },
+        "count": 36,
+        "all_greater_than_one": true,
+        "mean": 1.2700955665301288,
+        "max": 1.414315026743018,
+        "tolerance": 1e-12
+      },
+      "code_commit": "90dc11bae494ebaca504352254aec9d2dbf615ce",
+      "environment_class": "non_l0_platform",
+      "environment_evidence": {
+        "device_present": false,
+        "runtime_library_present": false,
+        "source": "delivery report explicitly states Intel did not enable L0 hardware"
+      },
+      "evidence_state": "raw_verified",
+      "paper_use": "Strong backend/layout performance evidence; explicitly not an L0 hardware result."
+    },
+    {
+      "id": "kunpeng-wordcount-grid-36",
+      "scope": "backend_performance",
+      "claim": "On the indexed Kunpeng 36-point WordCount grid, mean ForL0/HashMap throughput ratio is 0.963x.",
+      "paper_locations": [
+        "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex"
+      ],
+      "figures": [
+        "results/kunpeng/wordcount_sweep/figures/wordcount_grid_speedup.pdf"
+      ],
+      "artifacts": [
+        {
+          "role": "raw",
+          "path": "results/kunpeng/wordcount_sweep/raw/wordcount_grid_sweep_20260422_042041_final.json",
+          "sha256": "f6de4425e5aaf06001904aa532d3a8911bd14f973db5ce1542b3a60075fd3145",
+          "origin_commit": "90dc11bae494ebaca504352254aec9d2dbf615ce"
+        }
+      ],
+      "quantitative_check": {
+        "type": "wordcount_ratio_grid",
+        "raw_path": "results/kunpeng/wordcount_sweep/raw/wordcount_grid_sweep_20260422_042041_final.json",
+        "grid": {
+          "num_keys": [1000000, 2000000, 4000000, 6000000, 8000000, 10000000],
+          "skew_factors": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+          "benchmark": "wordcount",
+          "total_records": 2000000000,
+          "parallelism": 8
+        },
+        "count": 36,
+        "all_greater_than_one": false,
+        "mean": 0.9632085397932311,
+        "max": 1.0259762024467907,
+        "tolerance": 1e-12
+      },
+      "code_commit": "90dc11bae494ebaca504352254aec9d2dbf615ce",
+      "environment_class": "l0_unverified",
+      "environment_evidence": {
+        "device_present": null,
+        "runtime_library_present": null,
+        "source": "raw JSON records workload/backend metrics but no detector output or library/device inventory"
+      },
+      "evidence_state": "raw_verified",
+      "paper_use": "Usable as Kunpeng backend performance evidence only; do not infer that L0 was active."
+    },
+    {
+      "id": "operator-jmh-13-of-14",
+      "scope": "backend_performance",
+      "claim": "The paper states that 13 of 14 retained state operations improve, including +132% list iteration and +110% map insertion.",
+      "paper_locations": [
+        "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex",
+        "research_paper/ICPP-demo/briskstate_demo.tex"
+      ],
+      "figures": [
+        "research_paper/ICPP-demo/flink_state_benchmark_intel.pdf"
+      ],
+      "artifacts": [
+        {
+          "role": "figure",
+          "path": "research_paper/ICPP-demo/flink_state_benchmark_intel.pdf",
+          "sha256": "ac631a801558b1341208cb2ff75474a82eb395e24159507a7a9b5ddc42dc0e71",
+          "origin_commit": "a4b7a047f185892d8aafdb343d7a83370fbb027c"
+        }
+      ],
+      "code_commit": "a4b7a047f185892d8aafdb343d7a83370fbb027c",
+      "environment_class": "non_l0_platform",
+      "environment_evidence": {
+        "device_present": false,
+        "runtime_library_present": false,
+        "source": "paper describes Intel platform; no raw JMH JSON/CSV is tracked"
+      },
+      "evidence_state": "derived_missing_raw",
+      "paper_use": "Keep provisional until JMH result JSON/CSV, command line, JVM metadata and repetitions are archived."
+    },
+    {
+      "id": "nexmark-runtime-comparison",
+      "scope": "backend_performance",
+      "claim": "The paper figure reports selected Kunpeng and Intel NexMark execution-time improvements.",
+      "paper_locations": [
+        "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex"
+      ],
+      "figures": [
+        "results/figures/nexmark_comparison.pdf",
+        "results/figures/nexmark_comparison.png"
+      ],
+      "artifacts": [
+        {
+          "role": "derived_source",
+          "path": "results/figures/plot_nexmark_comparison.py",
+          "sha256": "d70cff3ad058e4633b26d092fda379c04cfda94b90647778871ce92b70a2efa9",
+          "origin_commit": "9fd07c1125957060c3e913c8e85db5410a2132a2"
+        },
+        {
+          "role": "figure",
+          "path": "results/figures/nexmark_comparison.pdf",
+          "sha256": "493e13c3054eaba2d25946badfa41d37ca6b075d1f1ca9ba51afab5bb1a67e4e",
+          "origin_commit": "9fd07c1125957060c3e913c8e85db5410a2132a2"
+        }
+      ],
+      "code_commit": "9fd07c1125957060c3e913c8e85db5410a2132a2",
+      "environment_class": "mixed_unverified",
+      "environment_evidence": {
+        "device_present": null,
+        "runtime_library_present": null,
+        "source": "plot script hard-codes values and labels; it does not load raw run artifacts"
+      },
+      "evidence_state": "derived_missing_raw",
+      "paper_use": "Figure is presentation-only until each bar is linked to immutable raw run output and environment metadata. The literal 'w/ L0' label is not evidence."
+    },
+    {
+      "id": "vtune-memory-bound",
+      "scope": "backend_performance",
+      "claim": "The paper states Memory Bound falls from 48.1% to 15.3% and DRAM Bound from 30.8% to 2.2% on Intel.",
+      "paper_locations": [
+        "research_paper/TKDE-template/Conference-LaTeX-template_10-17-19/briskstate_tkde.tex",
+        "交付文档/测试用例及报告/ForL0 State Backend测试用例及报告v4.0.tex"
+      ],
+      "figures": [],
+      "artifacts": [
+        {
+          "role": "report",
+          "path": "交付文档/测试用例及报告/ForL0 State Backend测试用例及报告v4.0.tex",
+          "sha256": "75ea972c97774d9a0528466a61075cc06bf1f141e8564e4100d1d7ec243cfda2",
+          "origin_commit": "3274bfd49e66e204c07f1d78ed055c8acf3e8f39"
+        }
+      ],
+      "code_commit": "3274bfd49e66e204c07f1d78ed055c8acf3e8f39",
+      "environment_class": "non_l0_platform",
+      "environment_evidence": {
+        "device_present": false,
+        "runtime_library_present": false,
+        "source": "delivery report explicitly states Intel did not enable L0 hardware"
+      },
+      "evidence_state": "documentary_only",
+      "paper_use": "Do not treat the LaTeX table as raw profiler evidence; archive VTune result directories/CSV and exact collection commands."
+    },
+    {
+      "id": "ascend-july-backend-jni",
+      "scope": "backend_performance",
+      "claim": "July Ascend-host runs exercise the ForL0 backend/JNI/native-table path but not real L0 hardware acceleration.",
+      "paper_locations": [
+        "benchmark/results/run_logs/ascend_effect_drop_ab_20260711.md",
+        "benchmark/results/run_logs/forl0_profiler_native_attempts_20260711.md"
+      ],
+      "figures": [],
+      "artifacts": [
+        {
+          "role": "report",
+          "path": "benchmark/results/run_logs/ascend_effect_drop_ab_20260711.md",
+          "sha256": "7e6e72c71c717e86eca728768c4cd9cba8c3b9194da9b39c7464a8807ae9a2c7",
+          "origin_commit": "a6010d9b3f2e310d62918f61529d53373ebcc207"
+        },
+        {
+          "role": "report",
+          "path": "benchmark/results/run_logs/forl0_profiler_native_attempts_20260711.md",
+          "sha256": "ec8b0f6b8168f56e0b6f6a10df6f92998e4e9e41c4c8c1ffd215fa49aabe6a67",
+          "origin_commit": "64f0b4807caa062a0ac20dc17223f4dbf47e0e0d"
+        }
+      ],
+      "code_commit": "25526a0144bb4c3242cde355ffcca38afb905d4c",
+      "environment_class": "backend_native_no_l0",
+      "environment_evidence": {
+        "device_present": false,
+        "runtime_library_present": false,
+        "source": "both run notes explicitly say the L0 device and libl0mempool.so were absent"
+      },
+      "evidence_state": "documentary_only",
+      "paper_use": "May support backend/JNI observations only. Referenced benchmark/results/raw JSON files are absent from the repository."
+    },
+    {
+      "id": "real-l0-hardware-speedup",
+      "scope": "real_l0_hardware",
+      "claim": "No tracked artifact currently qualifies as real L0 hardware performance evidence.",
+      "paper_locations": [
+        "research_paper/ICDE_R2_GO_NO_GO_20260731.md"
+      ],
+      "figures": [],
+      "artifacts": [],
+      "code_commit": "03558094e43cb12612daf9544c33f49741f562f4",
+      "environment_class": "l0_unverified",
+      "environment_evidence": {
+        "device_present": null,
+        "runtime_library_present": null,
+        "source": "evidence inventory; qualifying artifact count is zero"
+      },
+      "evidence_state": "gap",
+      "paper_use": "Block all real-L0 speedup claims until a matched run archives detector output, device/library inventory, raw metrics and commit/environment metadata."
+    }
+  ]
+}

@@ -1,40 +1,43 @@
 # ForL0 State Backend
 
-ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现，采用 **Swiss Tables 架构**（对齐 Go 1.24），通过 SWAR 并行匹配和 Extendible Hashing 实现高效的状态访问。
+ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现。当前主线通过 JNI native StateEngine、SwissTable 风格的紧凑控制字节和分组匹配实现状态访问，并提供可选的 L0 HotCache 与 copy-on-write checkpoint 路径。
 
 ## 项目概述
 
-ForL0 State Backend 采用 Swiss Tables + Extendible Hashing 架构设计：
-- **SwissTable**：存储层，采用 SWAR 并行匹配（8 slots 同时比较），87.5% 负载因子
-- **ForL0StateMap**：Directory 路由层，实现 Extendible Hashing 动态扩容，支持增量 split
+当前实现的核心机制是：
+- **Native StateEngine / SwissTable**：按 key-group 和 namespace 管理 native 状态表，采用紧凑控制字节、分组匹配和 87.5% 最大负载因子；扩容时执行全表 rehash。
+- **L0 HotCache**：位于 StateTable 之上的可选热点键缓存；它不是 SwissTable 的底层 allocator。
+- **CoW checkpoint**：snapshot 期间保存首次修改前的值，并支持 native checkpoint round trip。
+
+`ForL0StateMap` directory router 与 incremental extendible-hash split **不在当前审计分支中**。若要重新把它们作为核心贡献，必须先由项目负责人确认方向，并补齐实现、正确性测试和机制消融证据。
 
 ### 运行模式
 
 系统支持两种运行模式，**运行时自动检测**：
 
-| 模式 | 条件 | 内存分配 | 适用场景 |
+| 模式 | 条件 | HotCache 后端 | 适用场景 |
 |------|------|----------|----------|
-| **L0 模式** | `/dev/hisi_l0` 存在且 `libl0mempool.so` 可加载 | L0 内存池 | 鲲鹏服务器生产环境 |
-| **模拟模式** | 其他情况 | 标准 malloc/free | 开发测试、无 L0 硬件环境 |
+| **L0 模式** | `/dev/hisi_l0` 存在且 `libl0mempool.so` 可加载 | L0 内存池中的热点集合 | 鲲鹏服务器硬件验证 |
+| **模拟/不可用模式** | 设备或运行库缺失 | HotCache 不得作为真实 L0 证据 | 开发测试、backend/native 路径验证 |
 
 ## 核心特性
 
 ### 🚀 性能优化
-- **SWAR 并行匹配**：8 个 slot 同时比较，对齐 Go 1.24 Swiss Tables
-- **Extendible Hashing**：增量 split 避免全局重哈希，仅迁移 50% 数据
-- **Hash 存储优化**：存储完整 64 位 hash，split/grow 时无需重新计算
+- **SWAR 并行匹配**：每个 control group 包含 16 个字节，具体匹配实现随构建架构选择
+- **全表扩容**：达到增长阈值时容量翻倍并迁移所有 FULL entry；当前没有增量 hash split
+- **分配器扩展点**：生产路径的 `DefaultAllocator` 使用统一分配；ctrl/slots 分离仅由测试分配器覆盖，不是生产贡献，也不等同于 hash-table split
 - **高负载因子**：87.5% 负载因子，空间利用率优于传统哈希表
 
 ### 🔧 架构特点
-- **2 层架构**：ForL0StateMap (Directory) → SwissTable (存储)
-- **堆内对象存储**：状态对象直接存储在堆内，零序列化开销
+- **Key-group/namespace 路由**：native StateEngine 将状态访问路由到对应 StateTable
+- **Native 状态存储**：SwissTable slots 存储 typed 或 serialized native values
 - **控制字节设计**：EMPTY=0x80, DELETED=0xFE, FULL=h2 (低 7 位)
-- **JNI Native 内存**：支持 L0 硬件加速（鲲鹏 CPU）
-- **状态快照**：完整支持 Flink 的检查点机制
+- **可选 L0 HotCache**：仅缓存支持的热点键值类型，SwissTable 仍为 source of truth
+- **状态快照**：native CoW 和 checkpoint round-trip 已有 fresh tests；Java/Flink 集成恢复证据需单独复跑
 
 ### 📊 监控统计
-- **Table 统计**：条目数、负载因子、split 次数
-- **模式检测**：运行时可查询当前 L0/模拟模式状态
+- **Table 统计**：条目数等 native state 指标
+- **HotCache 统计**：active、容量、使用量、lookup、hit 和 invalidation
 
 ## 快速开始
 
@@ -266,7 +269,7 @@ make clean && make
 cp target/flink-statebackend-forL0-1.0-SNAPSHOT.jar $FLINK_HOME/lib/
 
 # Linux 服务器：将 native 库放到系统路径
-sudo cp src/main/native/libforl0_native.so /usr/lib/
+sudo cp src/main/native/libforl0_engine.so /usr/lib/
 sudo ldconfig
 ```
 
@@ -277,7 +280,7 @@ sudo ldconfig
 在 `config.yaml` 中添加：
 
 ```yaml
-state.backend: org.apache.flink.runtime.state.heap.ForL0StateBackendFactory
+state.backend: org.apache.flink.state.forl0.ForL0StateBackendFactory
 
 # ========== L0 Hot-Key Cache (可选) ==========
 # 只有两个开关：enabled 与 size。容量过大会在 cache_tuner_init 阶段被内核
@@ -313,23 +316,19 @@ cache forcibly disabled.
 **编程方式配置：**
 
 ```java
-import org.apache.flink.runtime.state.heap.ForL0StateBackend;
-import org.apache.flink.runtime.state.heap.ForL0StateBackendConfig;
+import org.apache.flink.state.forl0.ForL0StateBackend;
 
 // 使用默认配置
 ForL0StateBackend stateBackend = new ForL0StateBackend();
 
-// 或使用自定义配置
-ForL0StateBackendConfig config = ForL0StateBackendConfig.builder()
-    .build();
-ForL0StateBackend stateBackend = new ForL0StateBackend(config);
-
 env.setStateBackend(stateBackend);
 ```
 
+自定义参数请通过上面的 Flink 配置项设置。
+
 #### 配置项说明
 
-> 注意：SwissMap 架构使用自适应增量扩容，无需手动配置负载因子等参数。
+> 注意：当前 SwissTable 达到增长阈值后执行全表 rehash；没有增量扩容路径。
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
@@ -347,8 +346,8 @@ grep -E "ForL0|L0 mode" $FLINK_HOME/log/flink-*-taskexecutor-*.log
 # [ForL0] L0 device detected (/dev/hisi_l0)
 # [ForL0] Running in L0 MODE
 
-# 模拟模式显示：
-# [ForL0] Running in SIMULATION MODE (malloc/free)
+# L0 不可用或初始化失败时显示 WARN，HotCache 被禁用；StateTable 继续运行：
+# [ForL0-HotCache] WARN: L0 hardware not available (...); cache forcibly disabled.
 ```
 
 #### 4. 使用状态 API
@@ -370,46 +369,27 @@ MapState<String, Integer> mapState = getRuntimeContext().getMapState(mapDescript
 
 ## 架构设计
 
-### 内存分配架构
+### 当前运行时架构
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        ForL0StateMap                            │
-├────────────────────────────────┬────────────────────────────────┤
-│         MainTable              │           L0Table              │
-│    (MemoryManagerAllocator)    │    (NativeL0MemoryAllocator)   │
-├────────────────────────────────┼────────────────────────────────┤
-│    Flink MemoryManager         │        JNI Native Memory       │
-│    (Off-heap managed memory)   │  (L0 mode / Simulation mode)   │
-├────────────────────────────────┴────────────────────────────────┤
-│                      HeapEntryStore (堆内)                       │
-│              Object[] 数组存储 HeapStateEntry 对象               │
-│                   (零序列化，直接对象引用)                        │
-└─────────────────────────────────────────────────────────────────┘
+Flink state API
+       │
+       ▼
+ForL0KeyedStateBackend ──JNI──▶ native StateEngine
+                                      │
+                                      ├── key-group / namespace StateTable
+                                      │          └── SwissTable (source of truth)
+                                      │
+                                      ├── optional L0 HotCache (supported hot keys)
+                                      │
+                                      └── CoW snapshot + checkpoint reader/writer
 ```
 
-### 数据结构布局
-
-#### L0 Table 结构
-```
-桶大小: 64 字节 (缓存行对齐)
-槽位数: 4 个槽位/桶
-槽位结构 (16B):
-├── Tag (2B): 键的哈希摘要
-├── Valid (1B): 有效位标记
-├── Extension (5B): 扩展字段 (LRU/LFU/CLOCK 数据)
-└── Pointer (8B): Entry 指针
-```
-
-#### Main Table 结构
-```
-桶大小: 64 字节
-槽位数: 6 个槽位/桶 + 4 个扩展指针
-槽位结构 (10B):
-├── Tag (2B): 键的哈希摘要
-└── Pointer (8B): Entry 指针
-扩展指针: 4 个扩展桶指针 (1B each)
-```
+`SwissTable` 通过 `Allocator::allocate_split` 保留分配器扩展点，但生产路径的
+`DefaultAllocator` 返回统一分配；只有测试中的 `ForceSplitAllocator` 验证了
+ctrl/slots 分离布局。因此该路径目前是 provisional、test-only，不构成生产
+机制或论文贡献。当前增长路径会创建更大的表并迁移所有 FULL entries。
+HotCache 是 StateTable 上方的独立缓存，不改变这条增长语义。
 
 ### 核心组件
 
@@ -417,112 +397,102 @@ MapState<String, Integer> mapState = getRuntimeContext().getMapState(mapDescript
 |------|------|
 | `ForL0StateBackend` | StateBackend 工厂入口 |
 | `ForL0KeyedStateBackend` | KeyedStateBackend 实现 |
-| `ForL0StateMap` | StateMap 接口 + Directory 路由 + Extendible Hashing |
+| `StateEngine` / `StateTable` | native key-group、namespace 路由和状态存储 |
 | `SwissTable` | SWAR 并行匹配的哈希表存储层 |
-| `NativeL0Memory` | JNI 桥接，L0/模拟模式切换 |
+| `HotCacheManager` | StateTable 上方的可选 L0 热点缓存 |
+| checkpoint reader/writer | native CoW snapshot 的序列化与恢复 |
 
 ## 性能特性
 
 ### 查找操作流程 (SWAR 并行匹配)
-1. 计算 hash，通过 `hash >>> globalShift` 定位 SwissTable
-2. 计算 H1 (`hash >>> 7`) 确定探测起始 group
-3. 加载 8 字节 ctrl word，SWAR 并行匹配 H2 (`hash & 0x7F`)
-4. 对匹配的 slot 进行 key/namespace equals 验证
-5. 未找到则线性探测下一个 group
+1. StateEngine 依据 key-group 和 namespace 定位 StateTable。
+2. 计算 H1 (`hash >> 7`) 确定 SwissTable 探测起始 group。
+3. 加载 ctrl group，并行匹配 H2 (`hash & 0x7F`)。
+4. 对匹配的 slot 进行完整 key equality 验证。
+5. 未命中时按 triangular probe sequence 继续探测。
 
 ### SWAR 算法
-```java
-// 8 slots 同时比较 (Single Word, All Results)
-static long matchH2(long ctrlWord, int h2) {
-    long pattern = LSB * (h2 & 0xFFL);  // 0x0101010101010101L * h2
-    long x = ctrlWord ^ pattern;
-    return (x - LSB) & ~x & MSB;         // MSB = 0x8080808080808080L
-}
-```
 
-### Extendible Hashing
-- **增量扩容**：split 仅迁移 50% 数据到新表
-- **Directory 翻倍**：当 localDepth > globalDepth 时 directory 翻倍
-- **Go 风格去重**：`if (t.index == i) t.index = 2 * i` 避免重复处理
+当前 native `platform/simd.h` 为 aarch64、x86-64 和 portable fallback
+提供 control-group matching，并由 `ProbeSeq` 实现 triangular probing。
+论文中应使用 “group probing/matching” 描述；具体 lane 宽度应绑定构建架构，
+不应把旧 Java 示例当作当前实现证据。
+
+### 增长与 split 术语边界
+
+- **SwissTable growth**：容量翻倍并全表 rehash。
+- **Tombstone reclamation**：必要时按原容量全表 rehash。
+- **Allocation split extension**：仅测试分配器覆盖 ctrl/slots 分离；生产
+  `DefaultAllocator` 使用统一分配，也不是 hash bucket split。
+- **Incremental extendible-hash split**：当前实现不存在，不能作为论文核心机制。
 
 ## 运行时 API
 
-### 模式检测
+### HotCache 可观测性
 
-```java
-import org.apache.flink.runtime.state.heap.space.NativeL0Memory;
-
-// 检查是否为 L0 模式
-boolean isL0 = NativeL0Memory.isL0Mode();
-
-// 获取模式描述
-String mode = NativeL0Memory.getModeDescription();
-// "L0 mode (libl0mempool.so)" 或 "Simulation mode (malloc/free)"
-
-// 获取模式代码
-int modeCode = NativeL0Memory.getMode();
-// 0 = 未初始化, 1 = 模拟模式, 2 = L0 模式
-```
+启用 `forL0.metricsCollector.enabled` 后，backend 通过
+`NativeEngine.getHotCacheManagerStats` 注册 manager-level gauges。真实 L0
+实验仍必须同时归档 device、runtime library 和 detector 输出；配置项或
+backend 名称本身不能证明 L0 硬件已激活。
 
 ## 测试
 
 ### 运行单元测试
 
 ```bash
-# 运行所有测试
+# 运行 Java/Flink 测试（需要 JDK/Maven）
 mvn test
 
-# 运行 SwissTable 测试
-mvn test -Dtest=SwissTableTest
+# native mini-gtest 的独立 g++ 命令见：
+# research_paper/evidence/native_tests_20260731.txt
 
-# 运行 ForL0StateMap 测试
-mvn test -Dtest=ForL0StateMapTest
-
-# 运行 Native 内存测试
-mvn test -Dtest=NativeL0MemoryTest
+# 运行论文 evidence/mechanism gate
+python3 research_paper/validate_evidence_index.py
+python3 -m unittest research_paper/test_validate_evidence_index.py
 ```
 
 ## 项目状态
 
 ### ✅ 已实现功能
 - Swiss Tables 架构 (对齐 Go 1.24)
-- SWAR 并行匹配 (8 slots 同时比较)
-- Extendible Hashing 增量扩容
-- Hash 存储优化 (split/grow 无需重新计算)
-- JNI Native 内存分配
-- L0 硬件支持 (libl0mempool.so)
-- 运行时模式自动检测
+- native control-group 并行匹配与 triangular probing
+- 全表 rehash/grow；生产 `DefaultAllocator` 使用统一分配
+- JNI native StateEngine
+- 可选 L0 HotCache（真实硬件性能仍需独立环境证据）
 - Flink StateBackend 集成
-- Checkpoint/Savepoint 支持
+- native CoW checkpoint round trip
 
 ### 🔄 待优化项
 - 配置文件系统
 - 动态配置调整
 - 更多性能调优选项
+- 若经负责人决策恢复：incremental extendible-hash split 与对应消融实验
 
 ## 文件结构
 
 ```
 forL0-state-backend/
 ├── src/main/
-│   ├── java/org/apache/flink/runtime/state/heap/
-│   │   ├── ForL0StateBackend.java      # StateBackend 入口
-│   │   ├── ForL0StateMap.java          # 核心双层索引实现
-│   │   ├── L0Table.java                # 热点缓存
-│   │   ├── MainTable.java              # 主索引表
-│   │   ├── HeapEntryStore.java         # 堆内对象存储
-│   │   ├── HeapStateEntry.java         # 状态条目 (key/ns/state)
-│   │   └── space/                      # 内存分配器
-│   │       ├── NativeL0Memory.java     # JNI 桥接
-│   │       └── NativeL0MemoryAllocator.java
+│   ├── java/org/apache/flink/state/forl0/
+│   │   ├── ForL0StateBackend.java       # StateBackend 入口
+│   │   ├── ForL0KeyedStateBackend.java  # keyed backend 与 native handles
+│   │   ├── ForL0SnapshotStrategy.java   # Flink snapshot 集成
+│   │   └── NativeEngine.java            # JNI API
 │   ├── native/
-│   │   ├── forl0_native.c              # C 实现 (L0/模拟模式)
-│   │   └── Makefile
+│   │   ├── engine/swiss_table.h         # native SwissTable
+│   │   ├── engine/hot_cache.h           # optional L0 HotCache
+│   │   ├── engine/state_engine.h        # StateEngine/StateTable + CoW
+│   │   ├── checkpoint/                  # native checkpoint reader/writer
+│   │   ├── jni/                         # JNI bridge
+│   │   └── test/                        # native correctness tests
 │   └── resources/native/
-│       └── libforl0_native.{dylib|so}  # 预编译库
+│       └── libforl0_engine.{dylib|so}   # native library
+├── research_paper/
+│   ├── evidence_index.json              # claim-to-artifact contract
+│   └── mechanism_contract.json          # mechanism-to-code contract
 ├── dev_notes/                           # 开发笔记
 ├── reference/                           # 参考实现
-│   └── l0_docs/                         # L0 内存库 API 文档
+│   └── go_maps/                          # 非当前主线的参考实现
 └── ForL0-State-Backend设计说明书.md     # 详细设计文档
 ```
 
@@ -539,4 +509,6 @@ forL0-state-backend/
 
 ---
 
-**注意**: 在没有 L0 硬件的环境下，系统会自动使用模拟模式运行，功能完全一致，仅性能有所差异。
+**注意**：没有 L0 设备或运行库时，backend/native table 可以继续运行，但
+HotCache 会被禁用。这类运行只能验证对应的软件路径，不能证明真实 L0 的
+功能等价性或性能收益。
