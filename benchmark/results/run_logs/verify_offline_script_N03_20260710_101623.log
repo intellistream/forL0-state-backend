@@ -1,0 +1,97 @@
+
+==> Preparing full repository runtime
+============================================================
+  ForL0 仓库一键部署
+============================================================
+  仓库路径:   /home/shuhao/forL0-state-backend
+  FLINK_HOME: /home/shuhao/flink-1.20.3
+  Docker:     sudo -n docker
+
+      ⚠ 未找到 unit-test benchmark JAR；apps/nexmark/wordcount/client_usecase 运行不依赖该产物
+[1/4] 跳过 Docker 镜像加载
+
+[2/4] 检查 L0 环境...
+      ✗ libl0mempool.so 不存在 (/usr/lib64/libl0mempool.so)
+      ✓ libnuma.so.1 存在 (/lib/aarch64-linux-gnu/libnuma.so.1)
+      ✗ /dev/l0 和 /dev/hisi_l0 都不存在
+      ⚠ 当前不会使用真实 L0 硬件加速
+
+[3/4] 安装预编译产物到 Flink...
+      ✓ backend JAR 已安装到 /home/shuhao/flink-1.20.3/lib/
+      ✓ NexMark JAR 已安装到 /home/shuhao/flink-1.20.3/lib/
+      ✓ native 库已安装到 /home/shuhao/flink-1.20.3/native/
+      ✓ WordCount benchmark 已就绪
+      ✓ Client usecase benchmark 已就绪
+      ✓ 环境文件已写入 /home/shuhao/forL0-state-backend/docker/forl0-local.env
+      ⚠ async-profiler 未就绪，--profile cpu 可能无法产出火焰图
+        可将 async-profiler-4.4-linux-*.tar.gz 放到 offline-packages/ 后重试
+
+[4/4] 启动 Docker 集群...
+      已跳过启动。手工执行：
+      source /home/shuhao/forL0-state-backend/docker/forl0-local.env
+      cd /home/shuhao/forL0-state-backend/docker && ./docker_run.sh start
+
+============================================================
+  完成
+============================================================
+  查看状态: source /home/shuhao/forL0-state-backend/docker/forl0-local.env && cd /home/shuhao/forL0-state-backend/docker && ./docker_run.sh status
+  查看日志: source /home/shuhao/forL0-state-backend/docker/forl0-local.env && cd /home/shuhao/forL0-state-backend/docker && ./docker_run.sh logs tm1
+  全量运行 apps: cd /home/shuhao/forL0-state-backend/docker && ./run_all_apps.sh
+  只跑 WordCount: cd /home/shuhao/forL0-state-backend/docker && ./run_all_apps.sh --test wordcount
+
+==> Runtime summary
+  app root:    /home/shuhao/forL0-state-backend
+  runtime:     /home/shuhao/forL0-state-backend
+  FLINK_HOME:  /home/shuhao/flink-1.20.3
+  backend:     all
+  profile:     --no-profile
+  pressure:    forl0_tps_probe
+  workloads:   N03
+  expected TM: 2
+  expected slots: 8
+
+==> Preflight check
+Command: /home/shuhao/forL0-state-backend/docker/run_all_apps.sh --offline --preflight-only --test apps --backend all --expected-taskmanagers 2 --expected-slots 8
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /home/shuhao/forL0-state-backend
+  Test:        apps
+  Backend:     all
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   99987dbbada2c6d9446fb486393af35eeb1a7d34
+  Date:        2026-07-10 10:16:23 +0800
+
+[preflight] 检查 Flink 与 benchmark 产物
+      ✓ FLINK_HOME: /home/shuhao/flink-1.20.3
+      ✓ benchmark config: /home/shuhao/forL0-state-backend/benchmark/config/benchmark.yaml
+      ✓ benchmark entry: /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py
+      ✓ requirements: /home/shuhao/forL0-state-backend/benchmark/requirements.txt
+      ✓ WordCount JAR: /home/shuhao/forL0-state-backend/docker/deploy/wordcount-benchmark-1.0-SNAPSHOT.jar
+      ✓ NexMark JAR: /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink-0.3-SNAPSHOT.jar
+      ✓ Client usecase JAR: /home/shuhao/forL0-state-backend/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar
+      ✓ Client hotspot-drift JAR: /home/shuhao/forL0-state-backend/docker/deploy/client-drift-benchmark-1.0-SNAPSHOT.jar
+      ✓ ForL0 backend JAR in Flink lib: /home/shuhao/flink-1.20.3/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+      ✓ native library: /home/shuhao/flink-1.20.3/native/libforl0_engine.so
+[3/5] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+      ✓ config loaded
+      ✓ nexmark queries: q4,q5,q8,q9,q11,q18,q19,q20
+      ✓ client scenarios: contract_baseline,forl0_optimized,state_pressure_300k,state_pressure_1m,hotspot_drift_300k,hotspot_drift_1m,hotspot_state_left_2m,hotspot_state_join_2m,scalar_state_probe_1m,scalar_state_probe_2m_ops64,scalar_state_probe_2m_ops16,scalar_state_probe_2m_ops16_fused,scalar_state_probe_2m_ops16_batch,scalar_value_probe_5m_ops16,scalar_value_probe_20m_ops16
+[preflight] 检查通过。
+[2/5] Flink REST 已就绪，检查 TaskManager/slot 健康状态
+✗ Flink 集群不满足实验健康条件。
+  期望 TaskManagers >= 2, slots >= 8, running jobs = 0
+  当前状态:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=0
+JOBS_RUNNING=1
+TM 172.18.0.4:46397-7b397b slots=4 free=0 heartbeatMs=1783649782972
+TM 172.18.0.3:33751-054d2e slots=4 free=0 heartbeatMs=1783649782972
+
+  建议在离线实验前执行：
+    ./docker/run_all_apps.sh --flink-home "/home/shuhao/flink-1.20.3" --offline --restart-cluster --preflight-only

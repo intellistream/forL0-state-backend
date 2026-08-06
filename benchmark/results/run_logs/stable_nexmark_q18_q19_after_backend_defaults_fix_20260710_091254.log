@@ -1,0 +1,207 @@
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /home/shuhao/forL0-state-backend
+  Test:        nexmark
+  Backend:     all
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   99987dbbada2c6d9446fb486393af35eeb1a7d34
+  Date:        2026-07-10 09:12:54 +0800
+
+[2/5] 按要求重启 Flink 集群
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /home/shuhao/flink-1.20.3
+  NATIVE:     /home/shuhao/flink-1.20.3/native
+  CONF:       /home/shuhao/forL0-state-backend/docker/conf
+  Docker:     sudo -n docker
+  JM memory:  8g
+  TM memory:  16g
+  libnuma:    /lib/aarch64-linux-gnu/libnuma.so.1 -> /lib/aarch64-linux-gnu/libnuma.so.1
+
+a56e7be7bc3b6b5e20556be0b838562a3c9d6c0aa0714ffbfb4a1cd8f0538e3b
+[1/3] 启动 JobManager...
+78116c37ab305cc8c050b4a94bd9954681763bf6cb9cd4e31f121a7169f7a641
+      JobManager IP: 172.18.0.2
+[2/3] 启动 TaskManager-1...
+52f1eff0b9442c7b192d01b80de6c1d0dbe4f1000d98a8ec067b9c2bf979c98e
+[3/3] 启动 TaskManager-2...
+944b36f27ad3c1378673864affd0fa237496aacf7dd2ef62719f9673efa5f96c
+
+等待 JobManager 就绪...
+....
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+  TaskManagers: 2
+  Slots:        8
+
+  查看 TaskManager 日志: /home/shuhao/forL0-state-backend/docker/docker_run.sh logs tm1
+  提交作业:     /home/shuhao/flink-1.20.3/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+      ✓ Flink 集群健康:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 172.18.0.3:33955-6387e8 slots=4 free=4 heartbeatMs=0
+TM 172.18.0.4:38675-9cc4ff slots=4 free=4 heartbeatMs=0
+[3/5] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/5] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test nexmark --backend all --scenario forl0_tps_probe --query q18,q19
+[NexMark] Scenario: forl0_tps_probe — Non-contract probe: per-query NexMark steady-state TPS mode with sink throughput
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: hashmap, forl0
+NexMark Queries: q18,q19
+NexMark Scenario: forl0_tps_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q18', 'q19']
+Backends: ['hashmap', 'forl0']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: hashmap
+============================================================
+
+=== Running Nexmark Q18 (hashmap backend) ===
+Events: 0, TPS: 5000000
+Proportions: Person(1):Auction(49):Bid(50)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-o8v7lou9/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-o8v7lou9/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q18 --category forl0
+
+Benchmark Queries: [q18]
+==================================================================
+Start to run query q18 with workload [tps=5 M, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
+Monitor metrics after 10 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q18[8]__Writer.numRecordsInPerSecond
+Current Throughput=41.59 K, Cores=23.73 (2 TMs)
+Current Throughput=41.59 K, Cores=26.54 (2 TMs)
+Current Throughput=41.59 K, Cores=23.8 (2 TMs)
+Current Throughput=111.19 K, Cores=20.41 (2 TMs)
+Current Throughput=111.19 K, Cores=25.92 (2 TMs)
+Current Throughput=177.35 K, Cores=22 (2 TMs)
+Current Throughput=177.35 K, Cores=25.47 (2 TMs)
+Current Throughput=250.14 K, Cores=28.24 (2 TMs)
+Current Throughput=250.14 K, Cores=26.29 (2 TMs)
+Current Throughput=320.81 K, Cores=25.21 (2 TMs)
+Current Throughput=320.81 K, Cores=23.05 (2 TMs)
+Current Throughput=391.6 K, Cores=26.89 (2 TMs)
+Summary Average: Throughput=186.28 K, Cores=24.79
+Stop job query q18
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q18   |186.28 K         |24.79    |7.51 K           |
+|Total |-                |-        |7.51 K           |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 186,280.00 events/sec
+
+=== Running Nexmark Q19 (hashmap backend) ===
+Events: 0, TPS: 1000000
+Proportions: Person(1):Auction(1):Bid(98)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-lfrwiozi/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-lfrwiozi/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q19 --category forl0
+
+  ERROR: Flink job failed during NexMark run: 545611e8632702e528b066afacd7ee3a insert-into_default_catalog.default_database.nexmark_q19
+Benchmark Queries: [q19]
+==================================================================
+Start to run query q19 with workload [tps=1 M, eventsNum=0, percentage=bid:98,auction:1,person:1,kafkaServers:null]
+Monitor metrics after 50 seconds.
+
+[NexMark fail-fast] Flink job failed during NexMark run: 545611e8632702e528b066afacd7ee3a insert-into_default_catalog.default_database.nexmark_q19
+
+  ERROR: NexMark benchmark driver failed
+
+--- hashmap Summary ---
+  q18: 186,280 events/sec (7,514/core)
+  Failed: ['q19']
+
+============================================================
+Backend: forl0
+============================================================
+
+=== Running Nexmark Q18 (forl0 backend) ===
+Events: 0, TPS: 5000000
+Proportions: Person(1):Auction(49):Bid(50)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-ka2dm01a/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-ka2dm01a/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q18 --category forl0
+
+  ERROR: Flink job failed during NexMark run: 545611e8632702e528b066afacd7ee3a insert-into_default_catalog.default_database.nexmark_q19
+
+[NexMark fail-fast] Flink job failed during NexMark run: 545611e8632702e528b066afacd7ee3a insert-into_default_catalog.default_database.nexmark_q19
+
+  ERROR: NexMark benchmark driver failed
+
+=== Running Nexmark Q19 (forl0 backend) ===
+Events: 0, TPS: 1000000
+Proportions: Person(1):Auction(1):Bid(98)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-7hn5l3p1/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-7hn5l3p1/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q19 --category forl0
+
+  ERROR: Flink job failed during NexMark run: 545611e8632702e528b066afacd7ee3a insert-into_default_catalog.default_database.nexmark_q19
+
+[NexMark fail-fast] Flink job failed during NexMark run: 545611e8632702e528b066afacd7ee3a insert-into_default_catalog.default_database.nexmark_q19
+
+  ERROR: NexMark benchmark driver failed
+
+--- forl0 Summary ---
+  Failed: ['q18', 'q19']
+
+[Nexmark] Results saved to: /home/shuhao/forL0-state-backend/benchmark/results/nexmark_20260710_091307/nexmark_results.json
+
+============================================================
+Backend Comparison
+============================================================
+
+forl0 vs hashmap:
+  q18: 0 vs 186,280 (-100.0%, throughput)
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)     hashmap proc eps     report eps     (/core)    forl0 proc eps     report eps     (/core)    Improv
+----------------------------------------------------------------------------------------------------------------------
+Q18                       186.28 K/s     186.28 K/s    7.51 K/s              0 /s           0 /s        0 /s   -100.0%
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/

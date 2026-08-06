@@ -1,0 +1,130 @@
+{
+  "timestamp": "2026-07-01T20:45:22.025787",
+  "mode": "benchmark",
+  "scenario_name": "contract_baseline",
+  "selected_queries": [
+    "q19",
+    "q20"
+  ],
+  "cli_args": {
+    "backend": "all",
+    "queries": "q19,q20",
+    "profile": null,
+    "repeat": null,
+    "scenario": "contract_baseline"
+  },
+  "nexmark_config": {
+    "queries": "q19,q20",
+    "q4_events": 80000000,
+    "q5_events": 80000000,
+    "q8_events": 100000000,
+    "q9_events": 40000000,
+    "q11_events": 80000000,
+    "q18_events": 80000000,
+    "q19_events": 80000000,
+    "q20_events": 60000000,
+    "tps": 0,
+    "warmup_events": 0,
+    "warmup_duration": 0,
+    "min_profile_cpu_cores": 0.05,
+    "person_proportion": 1,
+    "auction_proportion": 3,
+    "bid_proportion": 46
+  },
+  "results": {
+    "hashmap": {
+      "query_results": {
+        "q19": {
+          "events_num": 80000000,
+          "cpu": 0.016,
+          "time_seconds": 601.014,
+          "cores_multiply_time_seconds": 9.617,
+          "throughput": 133110.0,
+          "throughput_per_core": 8320000.0,
+          "process_elapsed_seconds": 614.524974368047,
+          "process_throughput": 130181.85319851128,
+          "benchmark": "nexmark",
+          "backend": "hashmap",
+          "query": "q19",
+          "parallelism": 2,
+          "checkpoint_interval": 10000,
+          "person_proportion": 1,
+          "auction_proportion": 3,
+          "bid_proportion": 46,
+          "configured_tps": 0,
+          "metric_tps_vertex": null,
+          "metric_monitor_duration": null
+        },
+        "q20": {
+          "events_num": 60000000,
+          "cpu": 0.01,
+          "time_seconds": 604.476,
+          "cores_multiply_time_seconds": 5.768,
+          "throughput": 99260.0,
+          "throughput_per_core": 10400000.0,
+          "process_elapsed_seconds": 617.7416060629766,
+          "process_throughput": 97127.98913188827,
+          "benchmark": "nexmark",
+          "backend": "hashmap",
+          "query": "q20",
+          "parallelism": 2,
+          "checkpoint_interval": 10000,
+          "person_proportion": 1,
+          "auction_proportion": 3,
+          "bid_proportion": 46,
+          "configured_tps": 0,
+          "metric_tps_vertex": null,
+          "metric_monitor_duration": null
+        }
+      },
+      "failed_queries": []
+    },
+    "forl0": {
+      "query_results": {
+        "q19": {
+          "events_num": 80000000,
+          "cpu": 0.007,
+          "time_seconds": 605.001,
+          "cores_multiply_time_seconds": 4.505,
+          "throughput": 132230.0,
+          "throughput_per_core": 17760000.0,
+          "process_elapsed_seconds": 618.1337493651081,
+          "process_throughput": 129421.82833758692,
+          "benchmark": "nexmark",
+          "backend": "forl0",
+          "query": "q19",
+          "parallelism": 2,
+          "checkpoint_interval": 10000,
+          "person_proportion": 1,
+          "auction_proportion": 3,
+          "bid_proportion": 46,
+          "configured_tps": 0,
+          "metric_tps_vertex": null,
+          "metric_monitor_duration": null
+        },
+        "q20": {
+          "events_num": 60000000,
+          "cpu": 0.039,
+          "time_seconds": 601.48,
+          "cores_multiply_time_seconds": 23.284,
+          "throughput": 99750.0,
+          "throughput_per_core": 2580000.0,
+          "process_elapsed_seconds": 615.0792320067994,
+          "process_throughput": 97548.4082013953,
+          "benchmark": "nexmark",
+          "backend": "forl0",
+          "query": "q20",
+          "parallelism": 2,
+          "checkpoint_interval": 10000,
+          "person_proportion": 1,
+          "auction_proportion": 3,
+          "bid_proportion": 46,
+          "configured_tps": 0,
+          "metric_tps_vertex": null,
+          "metric_monitor_duration": null
+        }
+      },
+      "failed_queries": []
+    }
+  }
+}

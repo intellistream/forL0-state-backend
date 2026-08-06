@@ -1,0 +1,52 @@
+{
+  "benchmark": "wordcount",
+  "total_time_seconds": 48.113248109817505,
+  "total_records": 200000000,
+  "parallelism": 8,
+  "throughput": 4156859.240588041,
+  "throughput_per_core": 519607.4050735051,
+  "job_id": "42199df720fd4630a5e4f586f725c40b",
+  "job_state": "FINISHED",
+  "auto_stopped": false,
+  "latency_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "max": null
+  },
+  "backend": "hashmap",
+  "repeat_index": 3,
+  "scenario": "stateful_counter_fastpath",
+  "scenario_description": "Bounded primitive ValueState counter (2M Long keys, 200M records, ForL0 fused addAndGet path)",
+  "repeat_runs": 3,
+  "repeat_policy": "best",
+  "repeat_samples": [
+    {
+      "repeat_index": 1,
+      "job_id": "6caa2694ffef21bf6e19105656002396",
+      "throughput": 3559221.908822475,
+      "throughput_per_core": 444902.7386028094,
+      "total_time_seconds": 56.19205689430237
+    },
+    {
+      "repeat_index": 2,
+      "job_id": "a4ef2fe5500a9053c6f42179c8a598c8",
+      "throughput": 4155016.6760959257,
+      "throughput_per_core": 519377.0845119907,
+      "total_time_seconds": 48.134584188461304
+    },
+    {
+      "repeat_index": 3,
+      "job_id": "42199df720fd4630a5e4f586f725c40b",
+      "throughput": 4156859.240588041,
+      "throughput_per_core": 519607.4050735051,
+      "total_time_seconds": 48.113248109817505
+    }
+  ],
+  "_metadata": {
+    "test_name": "wordcount",
+    "backend": "hashmap",
+    "timestamp": "20260711_054351",
+    "datetime": "2026-07-11T05:43:51.248560"
+  }
+}

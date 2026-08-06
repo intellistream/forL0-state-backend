@@ -1,0 +1,83 @@
+{
+  "timestamp": "2026-06-30T14:08:30.689353",
+  "mode": "benchmark",
+  "nexmark_config": {
+    "queries": "q4,q5,q18,q8",
+    "q4_events": 1000000000,
+    "q5_events": 1000000000,
+    "q8_events": 800000000,
+    "q9_events": 40000000,
+    "q11_events": 80000000,
+    "q18_events": 1000000000,
+    "q19_events": 80000000,
+    "q20_events": 60000000,
+    "tps": 0,
+    "warmup_events": 0,
+    "warmup_duration": 30,
+    "min_profile_cpu_cores": 0.0,
+    "person_proportion": 1,
+    "auction_proportion": 49,
+    "bid_proportion": 50,
+    "timeout_seconds": 21600,
+    "max_attempts_per_query": 1,
+    "repeat_per_query": 1,
+    "min_success_samples": 1,
+    "min_cpu_cores": 0.0,
+    "flink_config_overrides": {
+      "parallelism.default": 4,
+      "taskmanager.numberOfTaskSlots": 4,
+      "table.exec.mini-batch.enabled": false,
+      "table.optimizer.distinct-agg.split.enabled": false,
+      "execution.checkpointing.checkpoints-after-tasks-finish.enabled": false,
+      "pipeline.object-reuse": true
+    }
+  },
+  "results": {
+    "hashmap": {
+      "query_results": {
+        "q5": {
+          "events_num": 1000000000,
+          "cpu": 0.043,
+          "time_seconds": 36.188,
+          "cores_multiply_time_seconds": 1.562,
+          "throughput": 27630000.0,
+          "throughput_per_core": 640030000.0,
+          "process_elapsed_seconds": 49.975981291849166,
+          "process_throughput": 20009612.100665145,
+          "benchmark": "nexmark",
+          "backend": "hashmap",
+          "query": "q5",
+          "parallelism": 4,
+          "checkpoint_interval": 0,
+          "person_proportion": 1,
+          "auction_proportion": 49,
+          "bid_proportion": 50
+        }
+      },
+      "failed_queries": []
+    },
+    "forl0": {
+      "query_results": {
+        "q5": {
+          "events_num": 1000000000,
+          "cpu": 0.054,
+          "time_seconds": 36.15,
+          "cores_multiply_time_seconds": 1.965,
+          "throughput": 27660000.0,
+          "throughput_per_core": 508860000.0,
+          "process_elapsed_seconds": 49.42727835709229,
+          "process_throughput": 20231743.143439952,
+          "benchmark": "nexmark",
+          "backend": "forl0",
+          "query": "q5",
+          "parallelism": 4,
+          "checkpoint_interval": 0,
+          "person_proportion": 1,
+          "auction_proportion": 49,
+          "bid_proportion": 50
+        }
+      },
+      "failed_queries": []
+    }
+  }
+}
