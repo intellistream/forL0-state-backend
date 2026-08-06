@@ -1,0 +1,79 @@
+{
+  "timestamp": "2026-07-01T17:46:11.096162",
+  "mode": "benchmark",
+  "nexmark_config": {
+    "queries": "q5,q8,q11,q19",
+    "q4_events": 80000000,
+    "q5_events": 0,
+    "q8_events": 0,
+    "q9_events": 40000000,
+    "q11_events": 0,
+    "q18_events": 80000000,
+    "q19_events": 0,
+    "q20_events": 60000000,
+    "tps": 2000000,
+    "warmup_events": 0,
+    "warmup_duration": 0,
+    "min_profile_cpu_cores": 0.0,
+    "person_proportion": 1,
+    "auction_proportion": 49,
+    "bid_proportion": 50,
+    "timeout_seconds": 21600,
+    "max_attempts_per_query": 1,
+    "repeat_per_query": 1,
+    "min_success_samples": 1,
+    "min_cpu_cores": 0.0,
+    "flink_config_overrides": {
+      "parallelism.default": 4,
+      "taskmanager.numberOfTaskSlots": 4,
+      "table.exec.mini-batch.enabled": false,
+      "table.optimizer.distinct-agg.split.enabled": false,
+      "execution.checkpointing.checkpoints-after-tasks-finish.enabled": false,
+      "pipeline.object-reuse": true
+    },
+    "metric_monitor_delay": "20s",
+    "metric_monitor_interval": "5s",
+    "metric_monitor_duration": "60s",
+    "metric_tps_vertex": "sink",
+    "query_overrides": {
+      "q5": {
+        "tps": 5000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "metric_monitor_delay": "20s"
+      },
+      "q8": {
+        "tps": 2000000,
+        "person_proportion": 45,
+        "auction_proportion": 45,
+        "bid_proportion": 10,
+        "metric_monitor_delay": "20s"
+      },
+      "q11": {
+        "tps": 1000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "metric_monitor_delay": "30s",
+        "metric_monitor_duration": "120s"
+      },
+      "q19": {
+        "tps": 1000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "metric_monitor_delay": "20s"
+      }
+    },
+    "category": "forl0"
+  },
+  "results": {
+    "hashmap": {
+      "query_results": {},
+      "failed_queries": [
+        "q8"
+      ]
+    }
+  }
+}

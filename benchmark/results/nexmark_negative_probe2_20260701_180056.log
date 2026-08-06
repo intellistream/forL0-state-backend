@@ -1,0 +1,643 @@
+===== 2026-07-01 18:00:56 START hashmap q5 =====
+[2/3] Flink 集群未运行，启动 docker_run.sh
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /home/shuhao/flink-1.20.3
+  NATIVE:     /home/shuhao/flink-1.20.3/native
+  Docker:     sudo -n docker
+  libnuma:    /lib/aarch64-linux-gnu/libnuma.so.1 -> /lib/aarch64-linux-gnu/libnuma.so.1
+
+✗ Docker 镜像 eclipse-temurin:8-jre 不存在，请先: docker load -i images/eclipse-temurin-8-jre.tar
+      Docker 启动失败，尝试本机 Flink standalone: /home/shuhao/flink-1.20.3
+      ✓ 使用 standalone Flink 配置: /home/shuhao/forL0-state-backend/docker/generated/flink-standalone-conf
+      ✓ 自动设置 JAVA_HOME=/usr/lib/jvm/java-11-openjdk-arm64
+Starting cluster.
+Starting standalonesession daemon on host host-192-168-0-6.
+Starting taskexecutor daemon on host host-192-168-0-6.
+.[3/4] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/4] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_negative_probe --query q5
+[NexMark] Scenario: forl0_negative_probe — Exploratory non-contract probe for NexMark queries that were flat or slightly negative
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: hashmap
+NexMark Queries: q5
+NexMark Scenario: forl0_negative_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q5']
+Backends: ['hashmap']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: hashmap
+============================================================
+
+=== Running Nexmark Q5 (hashmap backend) ===
+Events: 0, TPS: 5000000
+Proportions: Person(1):Auction(49):Bid(50)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-nn5b8t9g/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-nn5b8t9g/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q5 --category forl0
+
+  Started host CpuMetricSender (pid=949528)
+Benchmark Queries: [q5]
+==================================================================
+Start to run query q5 with workload [tps=5 M, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
+Monitor metrics after 20 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q5[8]__Writer.numRecordsInPerSecond
+Current Throughput=0, Cores=5.99 (1 TMs)
+Current Throughput=0, Cores=10.62 (1 TMs)
+Current Throughput=0, Cores=5.47 (1 TMs)
+Current Throughput=876, Cores=31.53 (1 TMs)
+Current Throughput=876, Cores=25.24 (1 TMs)
+Current Throughput=19.03 K, Cores=54.8 (1 TMs)
+Current Throughput=19.03 K, Cores=82 (1 TMs)
+Current Throughput=34.69 K, Cores=48.98 (1 TMs)
+Current Throughput=34.69 K, Cores=30.25 (1 TMs)
+Current Throughput=40.4 K, Cores=82.09 (1 TMs)
+Current Throughput=40.4 K, Cores=86.07 (1 TMs)
+Current Throughput=99.64 K, Cores=95.89 (1 TMs)
+Summary Average: Throughput=24.14 K, Cores=46.58
+Stop job query q5
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q5    |24.14 K          |46.58    |518              |
+|Total |-                |-        |518              |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 24,140.00 events/sec
+
+--- hashmap Summary ---
+  q5: 24,140 events/sec (518/core)
+
+[Nexmark] Results saved to: /home/shuhao/forL0-state-backend/benchmark/results/nexmark_20260701_180106/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)     hashmap proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q5                         24.14 K/s      24.14 K/s      518 /s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+===== 2026-07-01 18:02:42 END hashmap q5 =====
+===== 2026-07-01 18:02:42 START forl0 q5 =====
+[2/3] Flink 集群已就绪
+[3/4] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/4] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_negative_probe --query q5
+[NexMark] Scenario: forl0_negative_probe — Exploratory non-contract probe for NexMark queries that were flat or slightly negative
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: forl0
+NexMark Queries: q5
+NexMark Scenario: forl0_negative_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q5']
+Backends: ['forl0']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: forl0
+============================================================
+
+=== Running Nexmark Q5 (forl0 backend) ===
+Events: 0, TPS: 5000000
+Proportions: Person(1):Auction(49):Bid(50)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-5jqrt6or/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-5jqrt6or/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q5 --category forl0
+
+  Started host CpuMetricSender (pid=953049)
+Benchmark Queries: [q5]
+==================================================================
+Start to run query q5 with workload [tps=5 M, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
+Monitor metrics after 20 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q5[8]__Writer.numRecordsInPerSecond
+Current Throughput=0, Cores=6.15 (1 TMs)
+Current Throughput=0, Cores=13.71 (1 TMs)
+Current Throughput=0, Cores=8.42 (1 TMs)
+Current Throughput=0, Cores=18.33 (1 TMs)
+Current Throughput=0, Cores=25.77 (1 TMs)
+Current Throughput=18.84 K, Cores=21.43 (1 TMs)
+Current Throughput=18.84 K, Cores=40.77 (1 TMs)
+Current Throughput=25.72 K, Cores=68.18 (1 TMs)
+Current Throughput=25.72 K, Cores=83.27 (1 TMs)
+Current Throughput=70.64 K, Cores=65.45 (1 TMs)
+Current Throughput=70.64 K, Cores=61.47 (1 TMs)
+Current Throughput=72.8 K, Cores=75.71 (1 TMs)
+Summary Average: Throughput=25.27 K, Cores=40.72
+Stop job query q5
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q5    |25.27 K          |40.72    |620              |
+|Total |-                |-        |620              |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 25,270.00 events/sec
+
+--- forl0 Summary ---
+  q5: 25,270 events/sec (621/core)
+
+[Nexmark] Results saved to: /home/shuhao/forL0-state-backend/benchmark/results/nexmark_20260701_180243/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)       forl0 proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q5                         25.27 K/s      25.27 K/s      621 /s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+===== 2026-07-01 18:04:18 END forl0 q5 =====
+===== 2026-07-01 18:04:18 START hashmap q8 =====
+[2/3] Flink 集群已就绪
+[3/4] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/4] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_negative_probe --query q8
+[NexMark] Scenario: forl0_negative_probe — Exploratory non-contract probe for NexMark queries that were flat or slightly negative
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: hashmap
+NexMark Queries: q8
+NexMark Scenario: forl0_negative_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q8']
+Backends: ['hashmap']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: hashmap
+============================================================
+
+=== Running Nexmark Q8 (hashmap backend) ===
+Events: 0, TPS: 2000000
+Proportions: Person(25):Auction(25):Bid(50)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-tfdfucd7/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-tfdfucd7/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q8 --category forl0
+
+  Started host CpuMetricSender (pid=956681)
+Benchmark Queries: [q8]
+==================================================================
+Start to run query q8 with workload [tps=2 M, eventsNum=0, percentage=bid:50,auction:25,person:25,kafkaServers:null]
+Monitor metrics after 20 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=Calc[17].numRecordsInPerSecond
+Current Throughput=1.55 K, Cores=22.05 (1 TMs)
+Current Throughput=1.55 K, Cores=16.15 (1 TMs)
+Current Throughput=1.55 K, Cores=46.03 (1 TMs)
+Current Throughput=1.55 K, Cores=27.33 (1 TMs)
+Current Throughput=1.55 K, Cores=35.74 (1 TMs)
+Current Throughput=1.55 K, Cores=46.41 (1 TMs)
+Current Throughput=1.55 K, Cores=35.06 (1 TMs)
+Current Throughput=1.55 K, Cores=55.47 (1 TMs)
+Current Throughput=1.55 K, Cores=74.66 (1 TMs)
+Current Throughput=1.55 K, Cores=73.21 (1 TMs)
+Current Throughput=1.55 K, Cores=82.22 (1 TMs)
+Current Throughput=1.55 K, Cores=83.64 (1 TMs)
+Summary Average: Throughput=1.55 K, Cores=49.83
+Stop job query q8
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q8    |1.55 K           |49.83    |31               |
+|Total |-                |-        |31               |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 1,550.00 events/sec
+
+--- hashmap Summary ---
+  q8: 1,550 events/sec (31/core)
+
+[Nexmark] Results saved to: /home/shuhao/forL0-state-backend/benchmark/results/nexmark_20260701_180420/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)     hashmap proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q8                          1.55 K/s       1.55 K/s       31 /s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+===== 2026-07-01 18:05:55 END hashmap q8 =====
+===== 2026-07-01 18:05:55 START forl0 q8 =====
+[2/3] Flink 集群已就绪
+[3/4] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/4] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_negative_probe --query q8
+[NexMark] Scenario: forl0_negative_probe — Exploratory non-contract probe for NexMark queries that were flat or slightly negative
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: forl0
+NexMark Queries: q8
+NexMark Scenario: forl0_negative_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q8']
+Backends: ['forl0']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: forl0
+============================================================
+
+=== Running Nexmark Q8 (forl0 backend) ===
+Events: 0, TPS: 2000000
+Proportions: Person(25):Auction(25):Bid(50)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-6jai_h3x/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-6jai_h3x/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q8 --category forl0
+
+  Started host CpuMetricSender (pid=960592)
+Benchmark Queries: [q8]
+==================================================================
+Start to run query q8 with workload [tps=2 M, eventsNum=0, percentage=bid:50,auction:25,person:25,kafkaServers:null]
+Monitor metrics after 20 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=Calc[17].numRecordsInPerSecond
+Current Throughput=0, Cores=22 (1 TMs)
+Current Throughput=0, Cores=34.73 (1 TMs)
+Current Throughput=0, Cores=19.81 (1 TMs)
+Current Throughput=3.93 K, Cores=23.37 (1 TMs)
+Current Throughput=3.93 K, Cores=24.42 (1 TMs)
+Current Throughput=3.93 K, Cores=28.76 (1 TMs)
+Current Throughput=3.93 K, Cores=31.16 (1 TMs)
+Current Throughput=3.93 K, Cores=26.8 (1 TMs)
+Current Throughput=3.93 K, Cores=53.01 (1 TMs)
+Current Throughput=3.93 K, Cores=49.1 (1 TMs)
+Current Throughput=3.93 K, Cores=55.46 (1 TMs)
+Current Throughput=3.93 K, Cores=26.97 (1 TMs)
+Summary Average: Throughput=2.95 K, Cores=32.97
+Stop job query q8
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q8    |2.95 K           |32.97    |89               |
+|Total |-                |-        |89               |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 2,950.00 events/sec
+
+--- forl0 Summary ---
+  q8: 2,950 events/sec (89/core)
+
+[Nexmark] Results saved to: /home/shuhao/forL0-state-backend/benchmark/results/nexmark_20260701_180557/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)       forl0 proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q8                          2.95 K/s       2.95 K/s       89 /s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+===== 2026-07-01 18:07:33 END forl0 q8 =====
+===== 2026-07-01 18:07:33 START hashmap q19 =====
+[2/3] Flink 集群已就绪
+[3/4] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/4] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_negative_probe --query q19
+[NexMark] Scenario: forl0_negative_probe — Exploratory non-contract probe for NexMark queries that were flat or slightly negative
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: hashmap
+NexMark Queries: q19
+NexMark Scenario: forl0_negative_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q19']
+Backends: ['hashmap']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: hashmap
+============================================================
+
+=== Running Nexmark Q19 (hashmap backend) ===
+Events: 0, TPS: 2000000
+Proportions: Person(1):Auction(1):Bid(98)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-260hbq_1/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-260hbq_1/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q19 --category forl0
+
+  Started host CpuMetricSender (pid=964384)
+Benchmark Queries: [q19]
+==================================================================
+Start to run query q19 with workload [tps=2 M, eventsNum=0, percentage=bid:98,auction:1,person:1,kafkaServers:null]
+Monitor metrics after 20 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q19[8]__Writer.numRecordsInPerSecond
+Current Throughput=321.52 K, Cores=10.43 (1 TMs)
+Current Throughput=321.52 K, Cores=12.82 (1 TMs)
+Current Throughput=321.52 K, Cores=13.11 (1 TMs)
+Current Throughput=484.78 K, Cores=15.01 (1 TMs)
+Current Throughput=484.78 K, Cores=18.99 (1 TMs)
+Current Throughput=642.79 K, Cores=23.07 (1 TMs)
+Current Throughput=642.79 K, Cores=28.41 (1 TMs)
+Current Throughput=786.25 K, Cores=32.3 (1 TMs)
+Current Throughput=786.25 K, Cores=35.06 (1 TMs)
+Current Throughput=907.42 K, Cores=38.92 (1 TMs)
+Current Throughput=907.42 K, Cores=59.11 (1 TMs)
+Current Throughput=821.33 K, Cores=64.5 (1 TMs)
+Summary Average: Throughput=619.03 K, Cores=29.31
+Stop job query q19
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q19   |619.03 K         |29.31    |21.12 K          |
+|Total |-                |-        |21.12 K          |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 619,030.00 events/sec
+
+--- hashmap Summary ---
+  q19: 619,030 events/sec (21,120/core)
+
+[Nexmark] Results saved to: /home/shuhao/forL0-state-backend/benchmark/results/nexmark_20260701_180735/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)     hashmap proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q19                       619.03 K/s     619.03 K/s   21.12 K/s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+===== 2026-07-01 18:09:09 END hashmap q19 =====
+===== 2026-07-01 18:09:09 START forl0 q19 =====
+[2/3] Flink 集群已就绪
+[3/4] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/4] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_negative_probe --query q19
+[NexMark] Scenario: forl0_negative_probe — Exploratory non-contract probe for NexMark queries that were flat or slightly negative
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: forl0
+NexMark Queries: q19
+NexMark Scenario: forl0_negative_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q19']
+Backends: ['forl0']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: forl0
+============================================================
+
+=== Running Nexmark Q19 (forl0 backend) ===
+Events: 0, TPS: 2000000
+Proportions: Person(1):Auction(1):Bid(98)
+Command: java -Dlog.file=/home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-du55cu5e/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-du55cu5e/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -cp /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink/lib/*:/home/shuhao/flink-1.20.3/lib/* com.github.nexmark.flink.Benchmark --location /home/shuhao/forL0-state-backend/docker/deploy/nexmark-flink --queries q19 --category forl0
+
+  Started host CpuMetricSender (pid=967639)
+Benchmark Queries: [q19]
+==================================================================
+Start to run query q19 with workload [tps=2 M, eventsNum=0, percentage=bid:98,auction:1,person:1,kafkaServers:null]
+Monitor metrics after 20 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q19[8]__Writer.numRecordsInPerSecond
+Current Throughput=315.96 K, Cores=7.44 (1 TMs)
+Current Throughput=315.96 K, Cores=7.64 (1 TMs)
+Current Throughput=315.96 K, Cores=7.62 (1 TMs)
+Current Throughput=504.08 K, Cores=7.54 (1 TMs)
+Current Throughput=504.08 K, Cores=7.61 (1 TMs)
+Current Throughput=694.8 K, Cores=7.71 (1 TMs)
+Current Throughput=694.8 K, Cores=7.68 (1 TMs)
+Current Throughput=885.69 K, Cores=7.74 (1 TMs)
+Current Throughput=885.69 K, Cores=7.6 (1 TMs)
+Current Throughput=1.08 M, Cores=7.67 (1 TMs)
+Current Throughput=1.08 M, Cores=7.64 (1 TMs)
+Current Throughput=1.14 M, Cores=7.69 (1 TMs)
+Summary Average: Throughput=700.81 K, Cores=7.63
+Stop job query q19
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q19   |700.81 K         |7.63     |91.83 K          |
+|Total |-                |-        |91.83 K          |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 700,810.00 events/sec
+
+--- forl0 Summary ---
+  q19: 700,810 events/sec (91,849/core)
+
+[Nexmark] Results saved to: /home/shuhao/forL0-state-backend/benchmark/results/nexmark_20260701_180910/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)       forl0 proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q19                       700.81 K/s     700.81 K/s   91.85 K/s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+===== 2026-07-01 18:10:45 END forl0 q19 =====

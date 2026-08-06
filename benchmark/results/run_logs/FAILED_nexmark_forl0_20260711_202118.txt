@@ -1,0 +1,21 @@
+ForL0 benchmark failed
+date=2026-07-11 20:21:18 +0800
+repo=/home/shuhao/forL0-state-backend
+test=nexmark
+backend=forl0
+status=1
+profile=disabled
+expected_taskmanagers=2
+expected_slots=8
+extra_args=--scenario forl0_no_full_gc_lateq_deep --query q18
+
+cluster_summary:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=4
+JOBS_RUNNING=0
+TM 172.18.0.3:42039-538e48 slots=4 free=4 heartbeatMs=1783772471119
+TM 172.18.0.4:43331-e3c23f slots=4 free=0 heartbeatMs=1783772441117
+
+running_or_recent_jobs:
+{'jid': 'e3e3dd4ea35cbce87e21c30f428fa993', 'name': 'insert-into_default_catalog.default_database.nexmark_q18', 'start-time': 1783772357923, 'end-time': 1783772476309, 'duration': 118386, 'state': 'FAILED', 'last-modification': 1783772476309, 'tasks': {'running': 0, 'canceling': 0, 'canceled': 15, 'total': 16, 'created': 0, 'scheduled': 0, 'deploying': 0, 'reconciling': 0, 'finished': 0, 'initializing': 0, 'failed': 1}}

@@ -1,0 +1,42 @@
+{
+  "benchmark": "client-usecase",
+  "backend": "hashmap",
+  "job_id": "a5db72437efa9571a0065f1f8940e535",
+  "job_state": "AUTO_STOPPED",
+  "auto_stopped": true,
+  "config": {
+    "num_records": 2000000,
+    "left_num_records_target": 1800000,
+    "right_num_records_target": 200000,
+    "left_num_records_per_subtask": 450000,
+    "right_num_records_per_subtask": 50000,
+    "left_record_percent": 90,
+    "estimated_actual_total_records": 2000000,
+    "parallelism": 4,
+    "checkpoint_interval": 0,
+    "driver": "hotspot_drift",
+    "hot_key_count": 4096,
+    "cold_key_count": 500000,
+    "hot_traffic_percent": 80,
+    "drift_interval_records": 50000,
+    "drift_step": 2048,
+    "right_delay_ms": 1,
+    "payload_mode": "lightweight",
+    "timestamp_mode": "hot_bucket",
+    "timestamp_hot_buckets": 65536,
+    "timestamp_key_space": 1000000,
+    "timestamp_drift_interval_records": 50000,
+    "timestamp_drift_step": 32768
+  },
+  "total_input_records": 2000000,
+  "desired_total_input_records": 2000000,
+  "wall_time_seconds": 56.275089263916016,
+  "throughput": 35539.70373321849,
+  "throughput_per_core": 8884.925933304623,
+  "_metadata": {
+    "test_name": "client_usecase",
+    "backend": "hashmap",
+    "timestamp": "20260702_175539",
+    "datetime": "2026-07-02T17:55:39.933734"
+  }
+}

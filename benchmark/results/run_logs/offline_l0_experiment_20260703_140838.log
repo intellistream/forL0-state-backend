@@ -1,0 +1,342 @@
+============================================================
+  Offline L0 one-click experiment
+============================================================
+  Repo:       /home/shuhao/forL0-state-backend
+  Test:       client_usecase
+  Backend:    all
+  Profile:    cpu
+  Started:    2026-07-03 14:08:38 +0800
+  Log:        /home/shuhao/forL0-state-backend/benchmark/results/run_logs/offline_l0_experiment_20260703_140838.log
+
+
+[1/4] Deploy repository-local artifacts and run preflight
+============================================================
+  ForL0 仓库一键部署
+============================================================
+  仓库路径:   /home/shuhao/forL0-state-backend
+  FLINK_HOME: /home/shuhao/flink-1.20.3
+  Docker:     sudo -n docker
+
+      ⚠ 未找到 unit-test benchmark JAR；apps/nexmark/wordcount/client_usecase 运行不依赖该产物
+[1/4] 跳过 Docker 镜像加载
+
+[2/4] 检查 L0 环境...
+      ✗ libl0mempool.so 不存在 (/usr/lib64/libl0mempool.so)
+      ✓ libnuma.so.1 存在 (/lib/aarch64-linux-gnu/libnuma.so.1)
+      ✗ /dev/l0 和 /dev/hisi_l0 都不存在
+      ⚠ 当前不会使用真实 L0 硬件加速
+
+[3/4] 安装预编译产物到 Flink...
+      ✓ backend JAR 已安装到 /home/shuhao/flink-1.20.3/lib/
+      ✓ NexMark JAR 已安装到 /home/shuhao/flink-1.20.3/lib/
+      ✓ native 库已安装到 /home/shuhao/flink-1.20.3/native/
+      ✓ WordCount benchmark 已就绪
+      ✓ Client usecase benchmark 已就绪
+      ✓ 环境文件已写入 /home/shuhao/forL0-state-backend/docker/forl0-local.env
+      ⚠ async-profiler 未就绪，--profile cpu 可能无法产出火焰图
+        可将 async-profiler-4.4-linux-*.tar.gz 放到 offline-packages/ 后重试
+
+[4/4] 启动 Docker 集群...
+      已跳过启动。手工执行：
+      source /home/shuhao/forL0-state-backend/docker/forl0-local.env
+      cd /home/shuhao/forL0-state-backend/docker && ./docker_run.sh start
+
+============================================================
+  完成
+============================================================
+  查看状态: source /home/shuhao/forL0-state-backend/docker/forl0-local.env && cd /home/shuhao/forL0-state-backend/docker && ./docker_run.sh status
+  查看日志: source /home/shuhao/forL0-state-backend/docker/forl0-local.env && cd /home/shuhao/forL0-state-backend/docker && ./docker_run.sh logs tm1
+  全量运行 apps: cd /home/shuhao/forL0-state-backend/docker && ./run_all_apps.sh
+  只跑 WordCount: cd /home/shuhao/forL0-state-backend/docker && ./run_all_apps.sh --test wordcount
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /home/shuhao/forL0-state-backend
+  Test:        client_usecase
+  Backend:     all
+  Profile:     disabled
+  Offline:     true
+  GitCommit:   bb0b6233cc04a1cd540db2a1840a24dd96f36c85
+  Date:        2026-07-03 14:08:39 +0800
+
+[preflight] 检查 Flink 与 benchmark 产物
+      ✓ FLINK_HOME: /home/shuhao/flink-1.20.3
+      ✓ benchmark config: /home/shuhao/forL0-state-backend/benchmark/config/benchmark.yaml
+      ✓ benchmark entry: /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py
+      ✓ requirements: /home/shuhao/forL0-state-backend/benchmark/requirements.txt
+      ✓ Client usecase JAR: /home/shuhao/forL0-state-backend/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar
+      ✓ Client hotspot-drift JAR: /home/shuhao/forL0-state-backend/docker/deploy/client-drift-benchmark-1.0-SNAPSHOT.jar
+      ✓ ForL0 backend JAR in Flink lib: /home/shuhao/flink-1.20.3/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+      ✓ native library: /home/shuhao/flink-1.20.3/native/libforl0_engine.so
+[3/5] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+      ✓ config loaded
+      ✓ nexmark queries: q4,q5,q8,q9,q11,q18,q19,q20
+      ✓ client scenarios: contract_baseline,forl0_optimized,state_pressure_300k,state_pressure_1m,hotspot_drift_300k,hotspot_drift_1m,hotspot_state_left_2m,hotspot_state_join_2m
+[preflight] 检查通过。
+
+[cluster] Start from a clean Flink Docker cluster
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /home/shuhao/flink-1.20.3
+  NATIVE:     /home/shuhao/flink-1.20.3/native
+  Docker:     sudo -n docker
+  libnuma:    /lib/aarch64-linux-gnu/libnuma.so.1 -> /lib/aarch64-linux-gnu/libnuma.so.1
+
+13f79779684c3f72c7e16a1e128f3a178dcc0aac5b014e6b60637b4a4f10b78e
+[1/3] 启动 JobManager...
+f995616a8760d052ea967475bbfe2416edd940923e9296570a6ecc8f30ec5351
+      JobManager IP: 172.18.0.2
+[2/3] 启动 TaskManager-1...
+9097f37d94572d0408faa1cb7bd037939bee38e73ff85914da159c198999d091
+[3/3] 启动 TaskManager-2...
+db7b1bd3787ca8a698e4fc0f33370f0f4383f7ff4cf4c4be5dff509896ec608f
+
+等待 JobManager 就绪...
+...
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+
+  查看 TaskManager 日志: /home/shuhao/forL0-state-backend/docker/docker_run.sh logs tm1
+  提交作业:     /home/shuhao/flink-1.20.3/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+
+[2/4] Run complete suite without profiling and without report
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /home/shuhao/forL0-state-backend
+  Test:        client_usecase
+  Backend:     all
+  Profile:     disabled
+  Offline:     true
+  GitCommit:   bb0b6233cc04a1cd540db2a1840a24dd96f36c85
+  Date:        2026-07-03 14:08:53 +0800
+
+[2/5] Flink 集群已就绪
+[3/5] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+[4/5] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test client_usecase --backend all --scenario contract_baseline
+[Client Usecase] Scenario: contract_baseline — Contract rule: original record volume, default settings
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: client_usecase
+Backends: hashmap, forl0
+Client Usecase Scenario: contract_baseline
+============================================================
+
+============================================================
+Running Client Usecase Benchmark
+============================================================
+
+=== Running Client Usecase Benchmark (hashmap backend) ===
+
+Flink cluster: http://localhost:8081
+Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, leftStreamTarget=150, rightStreamTarget=150, leftPerSubtask=75, rightPerSubtask=75, estimatedActualTotal=300, checkpointInterval=0
+Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
+Command: /home/shuhao/flink-1.20.3/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /home/shuhao/forL0-state-backend/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
+
+Job has been submitted with JobID 1092fc618b5ffc4ff1d02f0cdd98b902
+
+  Job submitted: 1092fc618b5ffc4ff1d02f0cdd98b902
+  Job state: RUNNING
+  All sources finished; cancelling job for clean bounded benchmark shutdown...
+  Job state: CANCELED
+Result saved to: /home/shuhao/forL0-state-backend/benchmark/results/raw/client_usecase_hashmap_20260703_140906.json
+
+=== Running Client Usecase Benchmark (forl0 backend) ===
+
+Flink cluster: http://localhost:8081
+Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, leftStreamTarget=150, rightStreamTarget=150, leftPerSubtask=75, rightPerSubtask=75, estimatedActualTotal=300, checkpointInterval=0
+Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
+Command: /home/shuhao/flink-1.20.3/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=512 -Dstate.backend.forl0.max-table-capacity=8192 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=128mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=true /home/shuhao/forL0-state-backend/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
+
+Job has been submitted with JobID 1faba12790e2fb2c24f46d856732c1da
+
+  Job submitted: 1faba12790e2fb2c24f46d856732c1da
+  Job state: RUNNING
+  All sources finished; cancelling job for clean bounded benchmark shutdown...
+  Job state: CANCELED
+Result saved to: /home/shuhao/forL0-state-backend/benchmark/results/raw/client_usecase_forl0_20260703_140918.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+hashmap             :              37 records/s/core
+forl0               :              37 records/s/core
+Improvement         :             1.2%
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+
+[3/4] Run complete suite with profiling and generate report
+[profiler] using bundled async-profiler: /home/shuhao/forL0-state-backend/tools/async-profiler-4.4-linux-arm64
+Async-profiler 4.4 built on Apr 15 2026
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /home/shuhao/forL0-state-backend
+  Test:        client_usecase
+  Backend:     all
+  Profile:     cpu
+  Offline:     true
+  GitCommit:   bb0b6233cc04a1cd540db2a1840a24dd96f36c85
+  Date:        2026-07-03 14:09:18 +0800
+
+[2/5] Flink 集群已就绪
+[3/5] 复用已有 benchmark Python 虚拟环境
+      ✓ benchmark Python 依赖已满足
+      ✓ 自动发现 async-profiler: /home/shuhao/forL0-state-backend/tools/async-profiler-4.4-linux-arm64
+[4/5] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /home/shuhao/forL0-state-backend/.venv-benchmark/bin/python /home/shuhao/forL0-state-backend/benchmark/scripts/run_benchmark.py --test client_usecase --backend all --profile cpu --scenario contract_baseline
+[Client Usecase] Scenario: contract_baseline — Contract rule: original record volume, default settings
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: client_usecase
+Backends: hashmap, forl0
+Client Usecase Scenario: contract_baseline
+Profiling: CPU flame graphs (async-profiler)
+============================================================
+
+============================================================
+Running Client Usecase Benchmark
+============================================================
+
+=== Running Client Usecase Benchmark (hashmap backend) ===
+
+Flink cluster: http://localhost:8081
+Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, leftStreamTarget=150, rightStreamTarget=150, leftPerSubtask=75, rightPerSubtask=75, estimatedActualTotal=300, checkpointInterval=0
+Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
+Command: /home/shuhao/flink-1.20.3/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /home/shuhao/forL0-state-backend/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
+
+Found 2 TaskManager process(es) using pgrep
+  Starting profiler: cpu -> flamegraph_cpu_hashmap_client_usecase_20260703_140920.html
+    WARNING: Profiler start failed: Failed to change credentials to match the target process: Operation not permitted
+
+    INFO: Started profiler in container flink-taskmanager-1
+  Started cpu profiling on TaskManager PID 3589099
+Job has been submitted with JobID 62947c3ba45b198c8a953c950beb5863
+
+  Job submitted: 62947c3ba45b198c8a953c950beb5863
+  Job state: RUNNING
+  All sources finished; cancelling job for clean bounded benchmark shutdown...
+  Job state: CANCELED
+  Stopping profiler for PID 3589099...
+    Stopping cpu profiler -> flamegraph_cpu_hashmap_client_usecase_20260703_140920.html
+    SUCCESS: Flame graph saved to flamegraph_cpu_hashmap_client_usecase_20260703_140920.html
+  Profiler output files: ['cpu']
+Result saved to: /home/shuhao/forL0-state-backend/benchmark/results/raw/client_usecase_hashmap_20260703_140932.json
+
+=== Running Client Usecase Benchmark (forl0 backend) ===
+
+Flink cluster: http://localhost:8081
+Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, leftStreamTarget=150, rightStreamTarget=150, leftPerSubtask=75, rightPerSubtask=75, estimatedActualTotal=300, checkpointInterval=0
+Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
+Command: /home/shuhao/flink-1.20.3/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=512 -Dstate.backend.forl0.max-table-capacity=8192 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=128mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=true /home/shuhao/forL0-state-backend/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
+
+Found 2 TaskManager process(es) using pgrep
+  Starting profiler: cpu -> flamegraph_cpu_forl0_client_usecase_20260703_140932.html
+    WARNING: Profiler start failed: Failed to change credentials to match the target process: Operation not permitted
+
+    INFO: Started profiler in container flink-taskmanager-1
+  Started cpu profiling on TaskManager PID 3589099
+Job has been submitted with JobID 35192ad20dd4d22bdce89c07671221d3
+
+  Job submitted: 35192ad20dd4d22bdce89c07671221d3
+  Job state: RUNNING
+  All sources finished; cancelling job for clean bounded benchmark shutdown...
+  Job state: CANCELED
+  Stopping profiler for PID 3589099...
+    Stopping cpu profiler -> flamegraph_cpu_forl0_client_usecase_20260703_140932.html
+    SUCCESS: Flame graph saved to flamegraph_cpu_forl0_client_usecase_20260703_140932.html
+  Profiler output files: ['cpu']
+Result saved to: /home/shuhao/forL0-state-backend/benchmark/results/raw/client_usecase_forl0_20260703_140944.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+hashmap             :              37 records/s/core
+forl0               :              37 records/s/core
+Improvement         :             0.1%
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: benchmark/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: benchmark/results/reports/
+[5/5] 生成 benchmark 报告
+============================================================
+Generating Benchmark Report
+============================================================
+
+Loading results...
+
+Generating figures...
+Saved: /home/shuhao/forL0-state-backend/benchmark/results/figures/wordcount_throughput.pdf
+Warning: No NexMark queries found in results
+Saved: /home/shuhao/forL0-state-backend/benchmark/results/figures/improvement_summary.pdf
+
+Generating benchset figures (if available)...
+No benchset results available for figure generation
+
+Generating L0Table metrics figures (if available)...
+No L0Table metrics available for plotting
+No metrics available for valid slots plotting
+
+Generating hardware metrics figures (if available)...
+No memory metrics available for plotting
+
+Generating report...
+Saved: /home/shuhao/forL0-state-backend/benchmark/results/reports/benchmark_report.html
+
+============================================================
+Report generation complete!
+Figures: /home/shuhao/forL0-state-backend/benchmark/results/figures
+Report:  /home/shuhao/forL0-state-backend/benchmark/results/reports/benchmark_report.html
+============================================================
+
+[4/4] Verify regenerated report and latest profiled artifacts
+      report: /home/shuhao/forL0-state-backend/benchmark/results/reports/benchmark_report.html
+      report_mtime: 1783058987
+      profiled_raw: client_usecase_forl0_20260703_140944.json (forl0, 20260703_140944)
+      profile: flamegraph_cpu_forl0_client_usecase_20260703_140932.html
+      profiled_raw: client_usecase_hashmap_20260703_140932.json (hashmap, 20260703_140932)
+      profile: flamegraph_cpu_hashmap_client_usecase_20260703_140920.html
+      verification: PASS
+
+============================================================
+  Offline L0 experiment completed
+============================================================
+  Report: /home/shuhao/forL0-state-backend/benchmark/results/reports/benchmark_report.html
+  Log:    /home/shuhao/forL0-state-backend/benchmark/results/run_logs/offline_l0_experiment_20260703_140838.log
+  Flink cluster is intentionally left running for inspection.

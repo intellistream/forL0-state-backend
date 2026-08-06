@@ -1,0 +1,21 @@
+ForL0 benchmark failed
+date=2026-07-10 20:22:43 +0800
+repo=/home/shuhao/forL0-state-backend
+test=client_usecase
+backend=hashmap
+status=130
+profile=disabled
+expected_taskmanagers=2
+expected_slots=8
+extra_args=--scenario scalar_state_probe_2m_ops128_batch
+
+cluster_summary:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=4
+JOBS_RUNNING=1
+TM 172.18.0.3:39383-419730 slots=4 free=0 heartbeatMs=1783686147912
+TM 172.18.0.4:36009-b788ee slots=4 free=4 heartbeatMs=1783686155264
+
+running_or_recent_jobs:
+{'jid': 'a66c104873879a91b52d6b154a3dab66', 'name': 'client-usecase-scalar-state-probe', 'start-time': 1783685873208, 'end-time': -1, 'duration': 290731, 'state': 'RUNNING', 'last-modification': 1783685876908, 'tasks': {'running': 12, 'canceling': 0, 'canceled': 0, 'total': 16, 'created': 0, 'scheduled': 0, 'deploying': 0, 'reconciling': 0, 'finished': 4, 'initializing': 0, 'failed': 0}}
