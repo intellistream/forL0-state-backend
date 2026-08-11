@@ -191,6 +191,9 @@ fi
 [[ -n "$NEXMARK_JAR" && -f "$NEXMARK_JAR" ]] && cp "$NEXMARK_JAR" "${INSTALL_DIR}/docker/deploy/"
 rm -rf "${INSTALL_DIR}/docker/deploy/nexmark-flink"
 cp -a "$NEXMARK_DIST" "${INSTALL_DIR}/docker/deploy/nexmark-flink"
+rm -f "${INSTALL_DIR}/docker/deploy/nexmark-flink/lib/"nexmark-flink-*.jar
+cp -f "$NEXMARK_JAR" \
+    "${INSTALL_DIR}/docker/deploy/nexmark-flink/lib/$(basename "$NEXMARK_JAR")"
 chmod +x "${INSTALL_DIR}/docker/deploy/nexmark-flink/bin/"*.sh 2>/dev/null || true
 
 rm -rf "${INSTALL_DIR}/benchmark/config" "${INSTALL_DIR}/benchmark/scripts" "${INSTALL_DIR}/benchmark/offline-packages"

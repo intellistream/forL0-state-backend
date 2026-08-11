@@ -612,6 +612,15 @@ sync_runtime_control_plane() {
             "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/"
         chmod +x "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/bin/"*.sh 2>/dev/null || true
     fi
+
+    local nexmark_jar
+    nexmark_jar="$(compgen -G "${CONTROL_ROOT}/docker/deploy/nexmark-flink-*.jar" | head -n 1 || true)"
+    if [[ -n "$nexmark_jar" ]]; then
+        cp -f "$nexmark_jar" "${RUNTIME_ROOT}/docker/deploy/"
+        rm -f "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/lib/"nexmark-flink-*.jar
+        cp -f "$nexmark_jar" "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/lib/"
+        echo "      ✓ Synced Java 8 NexMark JAR into runtime distribution"
+    fi
 }
 
 RUNTIME_ROOT=""
@@ -649,9 +658,7 @@ if [[ ${#RUNNER_EXTRA_ARGS[@]} -gt 0 ]]; then
 fi
 
 preflight_test="apps"
-if [[ "$RUN_SMOKE" == "true" && "$RUN_APPS" == "false" && "$RUN_NEXMARK_PRESSURE" == "false" && "$RUN_ASCEND_REPRO" == "false" ]]; then
-    preflight_test="client_usecase"
-elif [[ "$RUN_NEXMARK_PRESSURE" == "true" && "$RUN_APPS" == "false" && "$RUN_SMOKE" == "false" && "$RUN_ASCEND_REPRO" == "false" ]]; then
+if [[ "$RUN_NEXMARK_PRESSURE" == "true" && "$RUN_APPS" == "false" && "$RUN_SMOKE" == "false" && "$RUN_ASCEND_REPRO" == "false" ]]; then
     preflight_test="nexmark"
 fi
 PREFLIGHT_RUNNER_ARGS=("${COMMON_RUNNER_ARGS[@]}")

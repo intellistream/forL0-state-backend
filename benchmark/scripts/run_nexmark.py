@@ -926,6 +926,15 @@ class NexmarkRunner:
             shutil.copy(self.nexmark_jar, flink_lib_jar)
             print('[Nexmark] Synced NexMark JAR to Flink lib')
 
+        driver_lib_dir = self.nexmark_home / 'lib'
+        driver_lib_dir.mkdir(parents=True, exist_ok=True)
+        driver_lib_jar = driver_lib_dir / self.nexmark_jar.name
+        if not driver_lib_jar.exists() or driver_lib_jar.read_bytes() != self.nexmark_jar.read_bytes():
+            for stale_jar in driver_lib_dir.glob('nexmark-flink-*.jar'):
+                stale_jar.unlink()
+            shutil.copy(self.nexmark_jar, driver_lib_jar)
+            print('[Nexmark] Synced Java-compatible NexMark JAR to driver distribution')
+
     def _write_nexmark_conf(
         self,
         query: str,

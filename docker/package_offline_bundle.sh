@@ -161,6 +161,9 @@ copy_nexmark_distribution() {
     fi
     rm -rf "$destination/nexmark-flink"
     cp -a "$distribution" "$destination/nexmark-flink"
+    rm -f "$destination/nexmark-flink/lib/"nexmark-flink-*.jar
+    cp -f "$destination/nexmark-flink-0.3-SNAPSHOT.jar" \
+        "$destination/nexmark-flink/lib/nexmark-flink-0.3-SNAPSHOT.jar"
     chmod +x "$destination/nexmark-flink/bin/"*.sh 2>/dev/null || true
     echo "      ✓ NexMark 分发目录: $distribution"
 }

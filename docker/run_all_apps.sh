@@ -104,6 +104,30 @@ check_glob() {
     return 1
 }
 
+check_nexmark_java8_jar() {
+    local label="$1"
+    local jar_path="$2"
+    python3 - "$label" "$jar_path" <<'PY'
+import sys
+import zipfile
+
+label, jar_path = sys.argv[1:]
+class_name = 'com/github/nexmark/flink/Benchmark.class'
+try:
+    with zipfile.ZipFile(jar_path) as archive:
+        data = archive.read(class_name)
+except Exception as exc:
+    print(f"      ✗ {label}: cannot inspect {jar_path}: {exc}")
+    raise SystemExit(1)
+
+major = int.from_bytes(data[6:8], 'big')
+if major > 52:
+    print(f"      ✗ {label}: class major {major}, requires Java 11+; offline runtime requires <=52 (Java 8)")
+    raise SystemExit(1)
+print(f"      ✓ {label}: class major {major} (Java 8 compatible)")
+PY
+}
+
 preflight_check() {
     local failed=0
 
@@ -123,7 +147,19 @@ preflight_check() {
         check_glob "WordCount JAR" "${REPO_ROOT}/docker/deploy/wordcount-benchmark-*.jar" || failed=1
     fi
     if [[ "$TEST_NAME" == "nexmark" || "$TEST_NAME" == "apps" || "$TEST_NAME" == "all" ]]; then
+        local nexmark_top_jar nexmark_driver_jar
         check_glob "NexMark JAR" "${REPO_ROOT}/docker/deploy/nexmark-flink-*.jar" || failed=1
+        nexmark_top_jar="$(compgen -G "${REPO_ROOT}/docker/deploy/nexmark-flink-*.jar" | head -n 1 || true)"
+        nexmark_driver_jar="$(compgen -G "${REPO_ROOT}/docker/deploy/nexmark-flink/lib/nexmark-flink-*.jar" | head -n 1 || true)"
+        if [[ -n "$nexmark_top_jar" ]]; then
+            check_nexmark_java8_jar "NexMark top-level JAR" "$nexmark_top_jar" || failed=1
+        fi
+        if [[ -n "$nexmark_driver_jar" ]]; then
+            check_nexmark_java8_jar "NexMark driver JAR" "$nexmark_driver_jar" || failed=1
+        else
+            echo "      ✗ NexMark driver JAR: missing under docker/deploy/nexmark-flink/lib"
+            failed=1
+        fi
         for required_dir in bin conf queries; do
             if [[ -d "${REPO_ROOT}/docker/deploy/nexmark-flink/${required_dir}" ]]; then
                 echo "      ✓ NexMark ${required_dir}: ${REPO_ROOT}/docker/deploy/nexmark-flink/${required_dir}"
