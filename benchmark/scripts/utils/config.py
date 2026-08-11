@@ -176,7 +176,10 @@ def save_result(result, test_name, backend):
         'test_name': test_name,
         'backend': backend,
         'timestamp': timestamp,
-        'datetime': datetime.now().isoformat()
+        'datetime': datetime.now().isoformat(),
+        'run_id': os.environ.get('FORL0_RUN_ID', '').strip() or None,
+        'run_started_epoch': int(os.environ['FORL0_RUN_STARTED_EPOCH'])
+        if os.environ.get('FORL0_RUN_STARTED_EPOCH', '').isdigit() else None,
     }
     
     with open(filepath, 'w') as f:

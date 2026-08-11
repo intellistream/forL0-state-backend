@@ -5,6 +5,7 @@ Generate paper-quality figures and reports from benchmark results.
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -96,15 +97,42 @@ def get_throughput(data, parallelism=None):
     return 0
 
 
-def load_results():
-    """Load all benchmark results from raw directory and nexmark directories."""
+def discover_latest_run_id():
+    """Return the newest explicit run ID, ignoring unscoped historical data."""
+    candidates = set()
+    for filepath in get_results_dir('raw').glob('*.json'):
+        try:
+            data = json.loads(filepath.read_text())
+            run_id = data.get('_metadata', {}).get('run_id')
+            if run_id:
+                candidates.add(str(run_id))
+        except Exception:
+            continue
+    for filepath in get_results_dir('').glob('nexmark_*/nexmark_results.json'):
+        try:
+            run_id = json.loads(filepath.read_text()).get('run_id')
+            if run_id:
+                candidates.add(str(run_id))
+        except Exception:
+            continue
+    return max(candidates) if candidates else None
+
+
+def load_results(run_id=None):
+    """Load results from one run, never backfilling it with another campaign."""
     results_dir = get_results_dir('raw')
     benchmark_results_dir = get_results_dir('')  # Parent results directory
+    run_id = run_id or os.environ.get('FORL0_RUN_ID', '').strip() or discover_latest_run_id()
     results = {
         'wordcount': {'hashmap': None, 'forl0': None},
         'nexmark': {'hashmap': {}, 'forl0': {}},
-        'client_usecase': {'hashmap': None, 'forl0': None}
+        'client_usecase': {},
+        '_run_id': run_id,
     }
+    if run_id:
+        print(f"Report scope: run_id={run_id}")
+    else:
+        print("Warning: no run_id metadata found; loading legacy unscoped results")
     
     # Load WordCount results from raw directory
     for filepath in results_dir.glob('*.json'):
@@ -113,6 +141,8 @@ def load_results():
                 data = json.load(f)
             
             metadata = data.get('_metadata', {})
+            if run_id and metadata.get('run_id') != run_id:
+                continue
             test_name = metadata.get('test_name', '')
             backend = metadata.get('backend', data.get('backend', ''))
             
@@ -127,13 +157,14 @@ def load_results():
                         if new_ts > existing_ts:
                             results['wordcount'][backend] = data
 
-            if test_name == 'client_usecase' or data.get('benchmark') == 'client-usecase':
-                if backend in results['client_usecase']:
-                    current = results['client_usecase'][backend]
-                    current_ts = '' if current is None else current.get('_metadata', {}).get('timestamp', '')
-                    new_ts = metadata.get('timestamp', '')
-                    if current is None or new_ts > current_ts:
-                        results['client_usecase'][backend] = data
+            if test_name.startswith('client_usecase') or data.get('benchmark') == 'client-usecase':
+                scenario = test_name[len('client_usecase_'):] if test_name.startswith('client_usecase_') else 'default'
+                scenario_results = results['client_usecase'].setdefault(scenario, {})
+                current = scenario_results.get(backend)
+                current_ts = '' if current is None else current.get('_metadata', {}).get('timestamp', '')
+                new_ts = metadata.get('timestamp', '')
+                if backend in BACKEND_LABELS and (current is None or new_ts > current_ts):
+                    scenario_results[backend] = data
         
         except Exception as e:
             print(f"Warning: Could not load {filepath}: {e}")
@@ -143,6 +174,7 @@ def load_results():
     # cluster, so one complete suite produces many small result directories.
     nexmark_dirs = sorted(benchmark_results_dir.glob('nexmark_*'), reverse=True)
     loaded_nexmark_dirs = 0
+    nexmark_candidates = {}
     for nexmark_dir in nexmark_dirs:
         nexmark_results_file = nexmark_dir / 'nexmark_results.json'
         if not nexmark_results_file.exists():
@@ -151,6 +183,9 @@ def load_results():
             with open(nexmark_results_file, 'r') as f:
                 nexmark_data = json.load(f)
 
+            if run_id and nexmark_data.get('run_id') != run_id:
+                continue
+
             loaded_from_dir = False
             for backend in ['hashmap', 'forl0']:
                 if backend not in nexmark_data.get('results', {}):
@@ -158,15 +193,17 @@ def load_results():
                 backend_results = nexmark_data['results'][backend]
                 query_results = backend_results.get('query_results', {})
                 for query, qdata in query_results.items():
-                    if query in results['nexmark'][backend]:
+                    scenario_name = nexmark_data.get('scenario_name', '') or 'default'
+                    pair = nexmark_candidates.setdefault((scenario_name, query), {})
+                    if backend in pair:
                         continue
-                    results['nexmark'][backend][query] = {
+                    pair[backend] = {
                         'query': query,
                         'throughput': qdata.get('throughput', qdata.get('events_per_sec', 0)),
                         'throughput_per_core': qdata.get('throughput_per_core', 0),
                         'time_seconds': qdata.get('time_seconds', 0),
                         'events_num': qdata.get('events_num', 0),
-                        'scenario_name': nexmark_data.get('scenario_name', ''),
+                        'scenario_name': scenario_name,
                         'source_dir': nexmark_dir.name,
                     }
                     loaded_from_dir = True
@@ -174,8 +211,22 @@ def load_results():
                 loaded_nexmark_dirs += 1
         except Exception as e:
             print(f"Warning: Could not load NexMark results from {nexmark_dir.name}: {e}")
+    # A query may appear in multiple scenarios. Select only a complete pair
+    # from one scenario, preferring the newest pair; never compare backends
+    # collected under different workload parameters.
+    paired_by_query = {}
+    for (scenario_name, query), pair in nexmark_candidates.items():
+        if not pair.get('hashmap') or not pair.get('forl0'):
+            continue
+        rank = max(pair['hashmap']['source_dir'], pair['forl0']['source_dir'])
+        current = paired_by_query.get(query)
+        if current is None or rank > current[0]:
+            paired_by_query[query] = (rank, scenario_name, pair)
+    for query, (_, _, pair) in paired_by_query.items():
+        results['nexmark']['hashmap'][query] = pair['hashmap']
+        results['nexmark']['forl0'][query] = pair['forl0']
     if loaded_nexmark_dirs:
-        print(f"Loaded NexMark results from {loaded_nexmark_dirs} directories")
+        print(f"Loaded {len(paired_by_query)} matched NexMark query pair(s) from {loaded_nexmark_dirs} directories")
     
     return results
 
@@ -1486,6 +1537,7 @@ def generate_report(results, output_dir):
             <h1>📊 ForL0 StateBackend Benchmark Report</h1>
             <p class="subtitle">Performance Comparison: ForL0StateBackend vs HashMapStateBackend</p>
             <p class="timestamp">Generated: {{ timestamp }}</p>
+            <p class="timestamp">Run ID: {{ run_id or 'legacy-unscoped' }}</p>
         </div>
     </header>
     
@@ -1499,8 +1551,8 @@ def generate_report(results, output_dir):
         <!-- Quick Stats -->
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="value">{{ mode | upper }}</div>
-                <div class="label">Test Mode</div>
+                <div class="value">{{ run_id or 'LEGACY' }}</div>
+                <div class="label">Run ID</div>
             </div>
             <div class="stat-card">
                 <div class="value">{{ parallelism }}</div>
@@ -1575,44 +1627,41 @@ def generate_report(results, output_dir):
         <div class="section">
             <h2>Client Usecase Benchmark</h2>
             <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                Latest contract_baseline run for the customer dual-stream join workload. The table uses the most recent raw result per backend, including the profiled run when available.
+                Results are grouped by named scenario within this run. Deltas are calculated only from matched HashMap/ForL0 pairs in the same scenario.
             </p>
             <table>
                 <thead>
                     <tr>
+                        <th>Scenario</th>
                         <th>Backend</th>
                         <th>Timestamp</th>
                         <th>Records</th>
                         <th>Throughput</th>
                         <th>Throughput/Core</th>
                         <th>Wall Time</th>
+                        <th>ForL0 Delta</th>
                         <th>Profile</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for row in client_rows %}
                     <tr>
+                        <td><strong>{{ row.scenario }}</strong></td>
                         <td><strong>{{ row.backend }}</strong></td>
                         <td>{{ row.timestamp }}</td>
                         <td class="value-cell">{{ row.records }}</td>
                         <td class="value-cell">{{ row.throughput }}</td>
                         <td class="value-cell">{{ row.throughput_per_core }}</td>
                         <td class="value-cell">{{ row.wall_time }}</td>
+                        <td class="value-cell">{{ row.delta }}</td>
                         <td>{{ row.profile }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
-            {% if client_improvement != 'N/A' %}
-            <div style="text-align: center; margin: 1rem 0;">
-                <span class="improvement-badge {{ client_badge_class }}">
-                    {{ client_imp_sign }}{{ client_improvement }}% Client Usecase Improvement
-                </span>
-            </div>
             <p style="color: var(--text-secondary);">
-                Analysis: ForL0 and HashMap both completed the bounded customer workload and wrote raw results. The latest profiled run shows {{ client_analysis }}. Flame graph links below correspond to the same latest profiled run.
+                Analysis: {{ client_analysis }}
             </p>
-            {% endif %}
         </div>
         {% endif %}
 
@@ -1914,10 +1963,15 @@ def generate_report(results, output_dir):
     
     # Prepare data
     config = load_config()
-    wc_config = config.get('wordcount', {})
-    
     wc_hashmap = results.get('wordcount', {}).get('hashmap', {})
     wc_forl0 = results.get('wordcount', {}).get('forl0', {})
+    wc_scenario = wc_hashmap.get('scenario') or wc_forl0.get('scenario')
+    wc_config = dict(config.get('wordcount', {}))
+    if wc_scenario:
+        for scenario in config.get('wordcount_scenarios', []):
+            if scenario.get('name') == wc_scenario:
+                wc_config.update(scenario)
+                break
     
     # Calculate metrics
     wc_hashmap_tpc = wc_hashmap.get('throughput_per_core', 0)
@@ -1937,6 +1991,7 @@ def generate_report(results, output_dir):
     
     # NexMark data
     nexmark_descriptions = {
+        'q3': 'Local Item Suggestion',
         'q4': 'Average Selling Price by Category',
         'q5': 'Hot Items',
         'q8': 'Monitor New Users',
@@ -2029,19 +2084,22 @@ def generate_report(results, output_dir):
                 'passed': passed
             })
     
-    if total_benchmarks == 0:
-        total_benchmarks = 1
-    
     # Summary and conclusion
-    if all_pass:
+    if not verification_rows:
+        all_pass = False
+        summary = "No complete same-run WordCount or NexMark backend pair is available for comparison."
+        conclusion = "This run does not yet support a comparative performance conclusion. Inspect failed workloads and rerun missing backend pairs."
+    elif all_pass:
         summary = "All benchmarks PASSED! ForL0StateBackend achieves ≥60% improvement in throughput per core compared to HashMapStateBackend."
-        conclusion = "The ForL0 StateBackend successfully meets the performance target of 60% improvement over the HashMapStateBackend baseline. The implementation is ready for production deployment on 鲲鹏 servers with L0 Cache hardware."
+        conclusion = "All complete same-run comparison pairs met the configured 60% throughput target. Validate repeat stability and provenance before using these values as paper claims."
     else:
         summary = f"Benchmarks completed. {sum(1 for r in verification_rows if r['passed'])}/{len(verification_rows)} tests passed the 60% improvement target."
         conclusion = "Further optimization or production environment testing may be needed to achieve the 60% improvement target across all benchmarks."
     
     # [BENCHMARK_TEST] Load L0Table metrics for report
-    l0_metrics = load_l0table_metrics()
+    # Legacy metric files do not carry a run ID. Never attach them to a scoped
+    # campaign, because doing so would silently mix evidence from older runs.
+    l0_metrics = None if results.get('_run_id') else load_l0table_metrics()
     l0_sources = 'None'
     l0_sample_count = 0
     l0_query_stats = []  # Per-query statistics
@@ -2126,60 +2184,62 @@ def generate_report(results, output_dir):
                     'samples': len(l0_samples)
                 })
     
-    # Client Usecase latest result summary
+    # Client Usecase scenario-paired summary
     client_results = results.get('client_usecase', {})
     client_rows = []
-    client_tpc = {}
-    for backend in ['hashmap', 'forl0']:
-        data = client_results.get(backend)
-        if not data:
-            continue
-        meta = data.get('_metadata', {})
-        tpc = get_throughput(data, data.get('config', {}).get('parallelism'))
-        client_tpc[backend] = tpc
-        profiles = data.get('profiler_files') or {}
-        profile_links = []
-        for event, path in profiles.items():
-            name = Path(path).name
-            profile_links.append(f'<a href="../profiles/{name}" target="_blank">{event}</a>')
-        client_rows.append({
-            'backend': BACKEND_LABELS.get(backend, backend),
-            'timestamp': meta.get('timestamp', 'N/A'),
-            'records': f"{data.get('total_input_records', data.get('desired_total_input_records', 0)):,}",
-            'throughput': f"{data.get('throughput', 0):,.2f}",
-            'throughput_per_core': f"{tpc:,.2f}" if tpc else 'N/A',
-            'wall_time': f"{data.get('wall_time_seconds', 0):.2f}s",
-            'profile': ', '.join(profile_links) if profile_links else 'not collected',
-        })
+    client_pair_deltas = []
+    for scenario, scenario_results in sorted(client_results.items()):
+        scenario_tpc = {
+            backend: get_throughput(data, data.get('config', {}).get('parallelism'))
+            for backend, data in scenario_results.items()
+        }
+        delta = None
+        if scenario_tpc.get('hashmap') and scenario_tpc.get('forl0'):
+            delta = (scenario_tpc['forl0'] - scenario_tpc['hashmap']) / scenario_tpc['hashmap'] * 100
+            client_pair_deltas.append((scenario, delta))
+        for backend in ['hashmap', 'forl0']:
+            data = scenario_results.get(backend)
+            if not data:
+                continue
+            meta = data.get('_metadata', {})
+            tpc = scenario_tpc.get(backend, 0)
+            profiles = data.get('profiler_files') or {}
+            profile_links = []
+            for event, path in profiles.items():
+                name = Path(path).name
+                profile_links.append(f'<a href="../profiles/{name}" target="_blank">{event}</a>')
+            client_rows.append({
+                'scenario': scenario,
+                'backend': BACKEND_LABELS.get(backend, backend),
+                'timestamp': meta.get('timestamp', 'N/A'),
+                'records': f"{data.get('total_input_records', data.get('desired_total_input_records', 0)):,}",
+                'throughput': f"{data.get('throughput', 0):,.2f}",
+                'throughput_per_core': f"{tpc:,.2f}" if tpc else 'N/A',
+                'wall_time': f"{data.get('wall_time_seconds', 0):.2f}s",
+                'delta': f'{delta:+.1f}%' if backend == 'forl0' and delta is not None else '—',
+                'profile': ', '.join(profile_links) if profile_links else 'not collected',
+            })
 
-    client_improvement = 'N/A'
-    client_badge_class = 'neutral'
-    client_imp_sign = ''
-    client_analysis = 'no complete HashMap/ForL0 pair is available'
-    if client_tpc.get('hashmap') and client_tpc.get('forl0'):
-        client_imp_value = (client_tpc['forl0'] - client_tpc['hashmap']) / client_tpc['hashmap'] * 100
-        client_improvement = f'{client_imp_value:.1f}'
-        client_badge_class = 'positive' if client_imp_value >= 0 else 'negative'
-        client_imp_sign = '+' if client_imp_value >= 0 else ''
-        client_analysis = (
-            f"ForL0 reached {client_tpc['forl0']:.2f} records/s/core versus "
-            f"HashMap at {client_tpc['hashmap']:.2f} records/s/core, "
-            f"a {client_imp_sign}{client_improvement}% delta on this small contract baseline"
-        )
+    if client_pair_deltas:
+        delta_text = ', '.join(f'{scenario} {delta:+.1f}%' for scenario, delta in client_pair_deltas)
+        client_analysis = f'{len(client_pair_deltas)} matched scenario pair(s): {delta_text}.'
+    else:
+        client_analysis = 'No complete same-scenario HashMap/ForL0 pair is available.'
 
     if client_rows:
-        total_benchmarks += 1
         summary += (
-            f" Latest Client Usecase contract_baseline profile run completed for both backends; "
-            f"ForL0 vs HashMap delta was {client_imp_sign}{client_improvement}%."
+            f" Client Usecase produced {len(client_pair_deltas)} matched same-scenario pair(s)."
         )
         conclusion += (
-            f" The Client Usecase section reports the latest profiled run and links the matching CPU flame graphs; "
-            f"{client_analysis}."
+            f" The Client Usecase section reports every named scenario in this run; {client_analysis}"
         )
 
     # [BENCHMARK_TEST] Load hardware metrics for report
-    hw_metrics = load_hardware_metrics(str(get_results_dir('hardware')))
+    hw_metrics = (
+        {'cache': {}, 'memory': {}}
+        if results.get('_run_id')
+        else load_hardware_metrics(str(get_results_dir('hardware')))
+    )
     hw_cache_data = hw_metrics.get('cache', {})
     hw_memory_data = hw_metrics.get('memory', {})
     
@@ -2234,29 +2294,23 @@ def generate_report(results, output_dir):
     
     # [BENCHMARK_TEST] Scan for profiler flame graph files
     import platform
-    profiles_dir = get_results_dir('profiles')
     profiler_files = []
-    if profiles_dir.exists():
-        for html_file in sorted(profiles_dir.glob('*.html')):
-            # Parse filename: flamegraph_<event>_<backend>_<timestamp>.html
-            # or: cache_<event>_<backend>_<timestamp>.html
-            parts = html_file.stem.split('_')
-            if len(parts) >= 3:
-                if parts[0] == 'flamegraph':
-                    event = parts[1]
-                    backend = parts[2]
-                elif parts[0] == 'cache':
-                    event = '_'.join(parts[1:-2]) if len(parts) > 4 else parts[1]
-                    backend = parts[-2] if len(parts) > 3 else parts[2]
-                else:
-                    continue
-                
-                profiler_files.append({
-                    'backend': backend,
-                    'event': event,
-                    'filename': html_file.name,
-                    'path': f'../profiles/{html_file.name}'
-                })
+    active_result_data = [wc_hashmap, wc_forl0]
+    for scenario_results in client_results.values():
+        active_result_data.extend(scenario_results.values())
+    seen_profiles = set()
+    for data in active_result_data:
+        for event, profile_path in (data.get('profiler_files') or {}).items():
+            profile_file = Path(profile_path)
+            if profile_file.name in seen_profiles:
+                continue
+            seen_profiles.add(profile_file.name)
+            profiler_files.append({
+                'backend': data.get('backend', data.get('_metadata', {}).get('backend', 'unknown')),
+                'event': event,
+                'filename': profile_file.name,
+                'path': f'../profiles/{profile_file.name}'
+            })
     
     cache_supported = platform.system() == 'Linux'
     
@@ -2266,9 +2320,10 @@ def generate_report(results, output_dir):
     template = Template(html_template)
     report = template.render(
         timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        run_id=results.get('_run_id'),
         summary=summary,
         all_pass=all_pass,
-        parallelism=runtime_config.get('parallelism', 8),
+        parallelism=wc_hashmap.get('parallelism', wc_forl0.get('parallelism', runtime_config.get('parallelism', 8))),
         total_benchmarks=total_benchmarks,
         wc_config=wc_config,
         wc_hashmap_tpc=f'{wc_hashmap_tpc:,.0f}' if wc_hashmap_tpc else 'N/A',
@@ -2279,9 +2334,6 @@ def generate_report(results, output_dir):
         wc_negative_class=wc_negative_class,
         nexmark_rows=nexmark_rows,
         client_rows=client_rows,
-        client_improvement=client_improvement,
-        client_badge_class=client_badge_class,
-        client_imp_sign=client_imp_sign,
         client_analysis=client_analysis,
         verification_rows=verification_rows,
         conclusion=conclusion,
@@ -2315,6 +2367,8 @@ def generate_report(results, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Generate benchmark report and figures')
+    parser.add_argument('--run-id', default=None,
+                       help='Only include results carrying this run ID; defaults to FORL0_RUN_ID or latest tagged run')
     parser.add_argument('--format', choices=['pdf', 'png', 'both'], default='both',
                        help='Figure output format')
     parser.add_argument('--include-benchset-artifacts', action='store_true',
@@ -2332,7 +2386,7 @@ def main():
     
     # Load results
     print("\nLoading results...")
-    results = load_results()
+    results = load_results(args.run_id)
     
     # Generate figures
     print("\nGenerating figures...")
@@ -2347,12 +2401,18 @@ def main():
     
     # [BENCHMARK_TEST] Generate L0Table metrics figures if available
     print("\nGenerating L0Table metrics figures (if available)...")
-    plot_l0table_timeline(figures_dir)
-    plot_state_entries_timeline(figures_dir)
+    if not results.get('_run_id'):
+        plot_l0table_timeline(figures_dir)
+        plot_state_entries_timeline(figures_dir)
+    else:
+        print("Skipping unscoped legacy L0Table metrics for a run-scoped report")
     
     # [BENCHMARK_TEST] Generate hardware metrics figures if available
     print("\nGenerating hardware metrics figures (if available)...")
-    plot_memory_usage_timeline(figures_dir)
+    if not results.get('_run_id'):
+        plot_memory_usage_timeline(figures_dir)
+    else:
+        print("Skipping unscoped legacy hardware metrics for a run-scoped report")
     
     # Generate report
     print("\nGenerating report...")

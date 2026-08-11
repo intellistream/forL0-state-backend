@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import os
+import statistics
 from pathlib import Path
 from typing import Optional
 
@@ -932,6 +933,14 @@ def run_wordcount_scenario(config: dict, scenario: dict, backend: str,
 
     if repeat_policy == 'best' and samples:
         result = max(samples, key=lambda item: item.get('throughput_per_core') or item.get('throughput') or 0)
+    elif repeat_policy == 'median' and samples:
+        result = dict(samples[-1])
+        for field in ('throughput', 'throughput_per_core', 'total_time_seconds'):
+            values = [sample.get(field) for sample in samples]
+            numeric_values = [value for value in values if isinstance(value, (int, float))]
+            if numeric_values:
+                result[field] = float(statistics.median(numeric_values))
+        result['repeat_aggregate'] = 'median'
     else:
         result = samples[-1] if samples else None
     if result:

@@ -349,7 +349,8 @@ Examples:
                 )
             if result:
                 results['wordcount'][backend] = result
-                save_result(result, 'wordcount', backend)
+                wordcount_tag = f'wordcount_{args.scenario}' if args.scenario else 'wordcount'
+                save_result(result, wordcount_tag, backend)
             else:
                 print(f"\n[Error] WordCount failed for backend: {backend}")
                 sys.exit(1)
@@ -411,7 +412,8 @@ Examples:
             )
             if result:
                 results['client_usecase'][backend] = result
-                save_result(result, 'client_usecase', backend)
+                client_tag = f'client_usecase_{args.scenario}' if args.scenario else 'client_usecase'
+                save_result(result, client_tag, backend)
     
     # Run Benchset (seven paper workloads)
     if args.test == 'benchset' or run_app_suite:

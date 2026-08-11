@@ -76,6 +76,7 @@ print_provenance() {
     else
         echo "  GitCommit:   unavailable"
     fi
+    echo "  RunID:       ${FORL0_RUN_ID:-unassigned}"
     echo "  Date:        $(date '+%Y-%m-%d %H:%M:%S %z')"
     echo ""
 }

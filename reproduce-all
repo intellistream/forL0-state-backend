@@ -16,9 +16,12 @@ if [[ "${1:-}" == "--worker" ]]; then
     trap cleanup EXIT INT TERM
 
     export FORL0_OFFLINE_ONLY=true
+    export FORL0_RUN_ID="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+    export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
     export FORL0_RUN_LOG="$RUN_LOG"
     cd "$PROJECT_ROOT"
 
+    echo "RUN_ID=${FORL0_RUN_ID}" | tee "$RUN_LOG"
     bash ./reproduce-smoke
     echo "SMOKE PASSED: starting the complete W01-W02, N01-N14, C01-C08 suite" | tee -a "$RUN_LOG"
 
