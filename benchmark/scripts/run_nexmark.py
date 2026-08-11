@@ -33,8 +33,12 @@ from typing import Optional, Dict, List
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import requests_shim as requests  # type: ignore[assignment]
 from utils.config import (
-    FORL0_CONFIG_MAPPING, get_results_dir, load_config,
-    parse_json_from_output, render_forl0_config_args,
+    get_results_dir, load_config, parse_json_from_output,
+)
+from utils.forl0_config import (
+    FORL0_CONFIG_MAPPING, build_forl0_config_args,
+    get_forl0_effective_config as resolve_forl0_effective_config,
+    render_forl0_config_args,
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 from utils.flamegraph_quality import analyze_flamegraph_quality
@@ -301,45 +305,20 @@ def full_gc_delta(before: dict[str, dict[str, int]], after: dict[str, dict[str, 
 
 
 def get_forl0_effective_config(config: dict, backend: str, query: Optional[str] = None) -> dict:
-    """Get the effective ForL0 StateBackend configuration for a workload/query.
-
-    Supports optional per-query overrides under:
-        backends[].config.query_overrides.<query_name>.*
-    """
-    if backend != 'forl0':
-        return {}
-    
-    backend_config = None
-    for b in config.get('backends', []):
-        if b.get('name') == 'forl0':
-            backend_config = b.get('config', {})
-            break
-    
-    if not backend_config:
-        return {}
-    
-    effective_config = dict(backend_config)
-
-    workload_overrides = backend_config.get('workload_overrides', {})
-    if isinstance(workload_overrides, dict):
-        nexmark_cfg = workload_overrides.get('nexmark', {})
-        if isinstance(nexmark_cfg, dict):
-            effective_config.update(nexmark_cfg)
-
-    query_overrides = backend_config.get('query_overrides', {})
-    if query and isinstance(query_overrides, dict):
-        query_cfg = query_overrides.get(query, {})
-        if isinstance(query_cfg, dict):
-            effective_config.update(query_cfg)
-
-    return effective_config
+    """Get the effective ForL0 configuration for NexMark/query wrappers."""
+    return resolve_forl0_effective_config(
+        config, backend, workload_key='nexmark', query=query)
 
 
 def get_forl0_config_args(config: dict, backend: str, query: Optional[str] = None) -> list:
     """Get ForL0 StateBackend configuration as JVM -D arguments."""
-    effective_config = get_forl0_effective_config(config, backend, query)
-    return render_forl0_config_args(
-        effective_config, config.get('runtime', {}).get('parallelism', 1))
+    # Preserve the historical NexMark command shape: unlike the other two
+    # runners it emitted the harmless expected-engine property for HashMap.
+    if backend != 'forl0':
+        return render_forl0_config_args(
+            {}, config.get('runtime', {}).get('parallelism', 1))
+    return build_forl0_config_args(
+        config, backend, workload_key='nexmark', query=query)
 
 
 def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str) -> bool:
@@ -640,6 +619,30 @@ class NexmarkRunner:
         except Exception:
             return set()
 
+    def _failed_job_detail(self, job_id: str) -> str:
+        """Return a compact Flink REST exception for a failed job."""
+        try:
+            response = requests.get(
+                f"{self.rest_url}/jobs/{job_id}/exceptions?maxExceptions=8",
+                timeout=5,
+            )
+            if response.status_code != 200:
+                return f"exception endpoint HTTP {response.status_code}"
+            payload = response.json()
+            messages = []
+            root = payload.get('root-exception')
+            if root:
+                messages.append(str(root))
+            history = payload.get('exceptionHistory', {})
+            for entry in history.get('entries', []) if isinstance(history, dict) else []:
+                message = entry.get('exception') if isinstance(entry, dict) else None
+                if message and str(message) not in messages:
+                    messages.append(str(message))
+            compact = ' | '.join(' '.join(message.split()) for message in messages)
+            return compact[:4000] if compact else 'Flink returned no exception text'
+        except Exception as exc:
+            return f"cannot query job exception: {exc}"
+
     def _cluster_health_issue(self) -> Optional[str]:
         """Return a fail-fast reason if the Flink cluster or active jobs are unhealthy."""
         try:
@@ -666,9 +669,11 @@ class NexmarkRunner:
             for job in jobs_resp.json().get('jobs', []):
                 jid = str(job.get('jid')) if job.get('jid') else ''
                 if job.get('state') == 'FAILED' and jid not in self.baseline_failed_job_ids:
+                    detail = self._failed_job_detail(jid)
                     return (
                         "Flink job failed during NexMark run: "
-                        f"{job.get('jid')} {job.get('name', 'unknown')}"
+                        f"{job.get('jid')} {job.get('name', 'unknown')}\n"
+                        f"Flink failure detail: {detail}"
                     )
         except Exception as exc:
             return f"Cannot query Flink jobs overview: {exc}"
@@ -1558,6 +1563,7 @@ class NexmarkRunner:
             'run_started_epoch': int(os.environ['FORL0_RUN_STARTED_EPOCH'])
             if os.environ.get('FORL0_RUN_STARTED_EPOCH', '').isdigit() else None,
             'variant': os.environ.get('FORL0_VARIANT', '').strip() or None,
+            'control_revision': os.environ.get('FORL0_CONTROL_REVISION', '').strip() or None,
             'mode': self.mode,
             'scenario_name': self.nexmark_config.get('scenario_name'),
             'selected_queries': getattr(self, 'selected_queries', []),

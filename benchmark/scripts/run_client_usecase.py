@@ -22,34 +22,14 @@ from utils import requests_shim as requests  # type: ignore[assignment]
 
 from utils.config import (
     get_results_dir, load_config, get_flink_home, save_result,
-    render_forl0_config_args,
 )
+from utils.forl0_config import build_forl0_config_args
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
 def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'client_usecase') -> list:
     """Get ForL0 backend config args and merge workload-specific overrides."""
-    if backend != 'forl0':
-        return []
-
-    backend_config = None
-    for b in config.get('backends', []):
-        if b.get('name') == 'forl0':
-            backend_config = b.get('config', {})
-            break
-
-    if not backend_config:
-        return []
-
-    effective_config = dict(backend_config)
-    workload_overrides = backend_config.get('workload_overrides', {})
-    if isinstance(workload_overrides, dict):
-        workload_cfg = workload_overrides.get(workload_key, {})
-        if isinstance(workload_cfg, dict):
-            effective_config.update(workload_cfg)
-
-    return render_forl0_config_args(
-        effective_config, config.get('runtime', {}).get('parallelism', 1))
+    return build_forl0_config_args(config, backend, workload_key=workload_key)
 
 
 def get_client_usecase_jar(driver: str = 'csv_replay') -> Optional[str]:

@@ -22,6 +22,10 @@ from jinja2 import Template  # type: ignore[import-untyped]
 
 from utils.config import get_benchmark_root, get_results_dir, load_config
 from utils.hardware_metrics import load_hardware_metrics
+from utils.result_selection import (
+    newest_complete_pair, scoped_nexmark_workload_identity,
+    wordcount_workload_identity,
+)
 
 # Use non-interactive backend for server environments
 matplotlib.use('Agg')
@@ -132,9 +136,15 @@ def load_results(run_id=None):
     if run_id:
         print(f"Report scope: run_id={run_id}")
     else:
-        print("Warning: no run_id metadata found; loading legacy unscoped results")
+        print(
+            "Warning: no run_id metadata found; excluding cross-file raw "
+            "comparisons and only accepting same-directory legacy NexMark pairs"
+        )
     
-    # Load WordCount results from raw directory
+    # Load raw results. WordCount candidates are paired by effective workload
+    # identity below; independently selecting the newest backend files can
+    # silently compare different scenarios or repeat policies.
+    wordcount_candidates = {}
     for filepath in results_dir.glob('*.json'):
         try:
             with open(filepath, 'r') as f:
@@ -147,17 +157,24 @@ def load_results(run_id=None):
             backend = metadata.get('backend', data.get('backend', ''))
             
             if 'wordcount' in test_name or data.get('benchmark') == 'wordcount':
+                if not run_id:
+                    # Legacy raw files were emitted independently and carry no
+                    # campaign identity, so cross-file backend pairing is not
+                    # scientifically attributable.
+                    continue
                 if backend in results['wordcount']:
-                    # Keep the latest result
-                    if results['wordcount'][backend] is None:
-                        results['wordcount'][backend] = data
-                    else:
-                        existing_ts = results['wordcount'][backend].get('_metadata', {}).get('timestamp', '')
-                        new_ts = metadata.get('timestamp', '')
-                        if new_ts > existing_ts:
-                            results['wordcount'][backend] = data
+                    identity = wordcount_workload_identity(data)
+                    pair = wordcount_candidates.setdefault(identity, {})
+                    candidate = dict(data)
+                    candidate['_selection_rank'] = metadata.get('timestamp', filepath.name)
+                    current = pair.get(backend)
+                    if (current is None or
+                            candidate['_selection_rank'] > current['_selection_rank']):
+                        pair[backend] = candidate
 
             if test_name.startswith('client_usecase') or data.get('benchmark') == 'client-usecase':
+                if not run_id:
+                    continue
                 scenario = test_name[len('client_usecase_'):] if test_name.startswith('client_usecase_') else 'default'
                 scenario_results = results['client_usecase'].setdefault(scenario, {})
                 current = scenario_results.get(backend)
@@ -168,6 +185,13 @@ def load_results(run_id=None):
         
         except Exception as e:
             print(f"Warning: Could not load {filepath}: {e}")
+
+    wordcount_pair = newest_complete_pair(wordcount_candidates)
+    for backend in ('hashmap', 'forl0'):
+        if backend in wordcount_pair:
+            selected = dict(wordcount_pair[backend])
+            selected.pop('_selection_rank', None)
+            results['wordcount'][backend] = selected
     
     # Load NexMark results from all nexmark_* directories.  The Ascend
     # reproduction suite intentionally runs each query/backend in an isolated
@@ -194,7 +218,12 @@ def load_results(run_id=None):
                 query_results = backend_results.get('query_results', {})
                 for query, qdata in query_results.items():
                     scenario_name = nexmark_data.get('scenario_name', '') or 'default'
-                    pair = nexmark_candidates.setdefault((scenario_name, query), {})
+                    # Tagged runs may pair isolated backend invocations by
+                    # run_id. Legacy unscoped data may only pair backends that
+                    # were written into the same NexMark result directory.
+                    identity = scoped_nexmark_workload_identity(
+                        run_id, nexmark_dir.name, scenario_name, query, qdata)
+                    pair = nexmark_candidates.setdefault(identity, {})
                     if backend in pair:
                         continue
                     pair[backend] = {
@@ -205,6 +234,7 @@ def load_results(run_id=None):
                         'events_num': qdata.get('events_num', 0),
                         'scenario_name': scenario_name,
                         'source_dir': nexmark_dir.name,
+                        '_selection_rank': nexmark_dir.name,
                     }
                     loaded_from_dir = True
             if loaded_from_dir:
@@ -215,16 +245,18 @@ def load_results(run_id=None):
     # from one scenario, preferring the newest pair; never compare backends
     # collected under different workload parameters.
     paired_by_query = {}
-    for (scenario_name, query), pair in nexmark_candidates.items():
-        if not pair.get('hashmap') or not pair.get('forl0'):
+    by_query = {}
+    for identity, pair in nexmark_candidates.items():
+        by_query.setdefault(identity[2], {})[identity] = pair
+    for query, candidates in by_query.items():
+        pair = newest_complete_pair(candidates)
+        if not pair:
             continue
-        rank = max(pair['hashmap']['source_dir'], pair['forl0']['source_dir'])
-        current = paired_by_query.get(query)
-        if current is None or rank > current[0]:
-            paired_by_query[query] = (rank, scenario_name, pair)
-    for query, (_, _, pair) in paired_by_query.items():
-        results['nexmark']['hashmap'][query] = pair['hashmap']
-        results['nexmark']['forl0'][query] = pair['forl0']
+        paired_by_query[query] = pair
+        for backend in ('hashmap', 'forl0'):
+            selected = dict(pair[backend])
+            selected.pop('_selection_rank', None)
+            results['nexmark'][backend][query] = selected
     if loaded_nexmark_dirs:
         print(f"Loaded {len(paired_by_query)} matched NexMark query pair(s) from {loaded_nexmark_dirs} directories")
     

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
@@ -96,6 +97,33 @@ class NexmarkCategoryCompatibilityTest(unittest.TestCase):
         self.assertFalse(is_benign_post_summary_cancel_conflict(benign.replace('409', '500')))
         self.assertFalse(is_benign_post_summary_cancel_conflict(
             benign + 'OutOfMemoryError: native allocation failed\n'))
+
+    @patch('run_nexmark.requests.get')
+    def test_failed_job_health_issue_includes_rest_exception(self, mock_get) -> None:
+        class Response:
+            def __init__(self, payload):
+                self.status_code = 200
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        mock_get.side_effect = [
+            Response({'taskmanagers': 2, 'slots-total': 8}),
+            Response({'jobs': [{
+                'jid': 'deadbeef', 'name': 'nexmark_q18', 'state': 'FAILED',
+            }]}),
+            Response({'root-exception': 'NoResourceAvailableException: no slots'}),
+        ]
+        self.runner.baseline_failed_job_ids = set()
+        with patch.dict('os.environ', {
+            'FORL0_EXPECTED_TASKMANAGERS': '2',
+            'FORL0_EXPECTED_SLOTS': '8',
+        }):
+            issue = self.runner._cluster_health_issue()
+
+        self.assertIn('deadbeef', issue)
+        self.assertIn('NoResourceAvailableException: no slots', issue)
 
 
 if __name__ == '__main__':

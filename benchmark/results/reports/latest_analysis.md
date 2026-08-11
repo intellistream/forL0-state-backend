@@ -8,6 +8,33 @@
 报告类型：`derived-artifact`。本报告从已提交的 raw JSON、NexMark JSON 和 `.logs`
 重新核算；没有在本机伪造或重跑 L0 硬件实验。
 
+## 2026-08-11 18:42 批次校验（不作为有效性能批次）
+
+远端提交 `2bd0bee` 中的新日志来自 18:42 开始的实验，而本轮 L0 归因、NexMark
+cancel-409 和结果作用域修复直到 18:55 的 `3e190fe` 才提交。因此该实验实际运行的
+是旧控制面：日志中 `GitCommit: unavailable`、`RunID: unassigned`，WordCount 仍显示
+`best` 并使用旧的 `l0-cache.size` / `l0-memory.max-size` 属性，NexMark preflight 也没有
+验证 cancel-409 修复。日志在 N04 启动中途结束，说明上传的是仍在运行的部分批次。
+
+- q18 TPS 的 HashMap 作业在 116 ms 内进入 `FAILED`，没有产生可用 sample；ForL0 的
+  601,870 events/s 因此没有匹配 baseline，不能计算提升。N03 HashMap 在完整 summary
+  后 cancel 返回 409（1.12M events/s），属于旧 driver 的清理竞态；它也不能与缺失的
+  N04 结果组成配对。
+- HTML 中 q8 的 **+1492.5%** 不是本批次新结果。旧报告错误地把
+  `forl0_no_full_gc_q8_q11_deep` 的 HashMap 10,400 events/s 与
+  `contract_baseline` 的 ForL0 165,620 events/s 跨场景拼接。该数字无效。相同目录、
+  相同 `contract_baseline` 的历史值实际是 165,690 vs 165,620，约 -0.04%，但同样不是
+  本轮真实 L0 结论。
+- WordCount 的 +0.1% 来自旧配置的 best-of-3。三次 HashMap 为
+  4.981M / 4.156M / 4.535M records/s，ForL0 为 4.984M / 4.987M / 4.533M；样本呈现
+  明显双峰。best 得到 +0.1%，median 会得到约 +9.9%，二者差异本身说明这组运行存在
+  顺序/热身噪声，不能挑一个聚合方式当成稳定提升。
+
+代码现已将报告限制为同一 `run_id`、同一有效 workload identity（场景、TPS、事件
+比例、parallelism、monitor 配置）的完整 backend pair；无 `run_id` 的独立 raw 文件
+不再跨文件比较。新结果还会记录 `control_revision`。因此上述 q8 拼接和旧 WordCount
+best 选择不会进入下一轮正式报告。
+
 ## 结论
 
 最新批次修复了先前的 NexMark category/path 问题，q3/q4/q9/q18/q19/q20 已经

@@ -8,6 +8,37 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${PROJECT_ROOT}/.reproduce-all.pid"
 RUN_LOG="${PROJECT_ROOT}/benchmark/results/.logs"
 
+stop_process_tree() {
+    local parent_pid="$1"
+    local child_pid
+    while read -r child_pid; do
+        [[ -n "$child_pid" ]] || continue
+        stop_process_tree "$child_pid"
+    done < <(pgrep -P "$parent_pid" 2>/dev/null || true)
+    kill -TERM "$parent_pid" 2>/dev/null || true
+}
+
+if [[ "${1:-}" == "--stop" ]]; then
+    if [[ -f "$PID_FILE" ]]; then
+        worker_pid="$(tr -d '[:space:]' < "$PID_FILE")"
+        worker_command="$(ps -p "$worker_pid" -o args= 2>/dev/null || true)"
+        if [[ "$worker_pid" =~ ^[0-9]+$ && "$worker_command" == *reproduce-all*--worker* ]]; then
+            echo "Stopping reproduce-all worker PID=${worker_pid}"
+            stop_process_tree "$worker_pid"
+        else
+            echo "Ignoring stale reproduce-all PID file: ${worker_pid:-empty}"
+        fi
+        rm -f "$PID_FILE"
+    else
+        echo "No active reproduce-all PID file found"
+    fi
+    if command -v docker >/dev/null 2>&1; then
+        docker stop flink-taskmanager-1 flink-taskmanager-2 flink-jobmanager >/dev/null 2>&1 || true
+    fi
+    echo "reproduce-all stopped"
+    exit 0
+fi
+
 if [[ "${1:-}" == "--worker" ]]; then
     printf '%s\n' "$$" > "$PID_FILE"
     cleanup() {
@@ -24,6 +55,7 @@ if [[ "${1:-}" == "--worker" ]]; then
     export FORL0_OFFLINE_ONLY=true
     export FORL0_RUN_ID="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
     export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
+    export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
     export FORL0_RUN_LOG=/dev/null
     # A formal L0-server run must fail visibly instead of silently falling
     # back when one parallel engine cannot obtain its assigned L0 quota.
@@ -31,7 +63,7 @@ if [[ "${1:-}" == "--worker" ]]; then
     cd "$PROJECT_ROOT"
 
     echo ""
-    echo "=== reproduce-all RUN_ID=${FORL0_RUN_ID} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
+    echo "=== reproduce-all RUN_ID=${FORL0_RUN_ID} REVISION=${FORL0_CONTROL_REVISION} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
     bash ./reproduce-smoke
     echo "SMOKE PASSED: starting the complete W01-W02, N01-N14, C01-C08 suite"
 
@@ -44,7 +76,9 @@ fi
 
 if [[ -f "$PID_FILE" ]]; then
     existing_pid="$(tr -d '[:space:]' < "$PID_FILE")"
-    if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+    existing_command="$(ps -p "$existing_pid" -o args= 2>/dev/null || true)"
+    if [[ "$existing_pid" =~ ^[0-9]+$ && "$existing_command" == *reproduce-all*--worker* ]] && \
+            kill -0 "$existing_pid" 2>/dev/null; then
         echo "完整性能测试已在运行，PID=${existing_pid}"
         echo "日志：${RUN_LOG}"
         exit 0
@@ -54,6 +88,7 @@ fi
 
 nohup "$0" --worker >/dev/null 2>&1 &
 worker_pid=$!
+printf '%s\n' "$worker_pid" > "$PID_FILE"
 
 echo "完整性能测试已后台启动，PID=${worker_pid}（先 smoke，通过后自动跑全量）"
 echo "日志：${RUN_LOG}"

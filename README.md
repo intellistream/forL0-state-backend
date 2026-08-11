@@ -1,5 +1,8 @@
 # ForL0 State Backend
 
+Repository ownership and entry-point layout are documented in
+[`docs/REPOSITORY_STRUCTURE.md`](docs/REPOSITORY_STRUCTURE.md).
+
 ForL0 State Backend 是一个为 Apache Flink 设计的高性能状态后端实现。当前主线通过 JNI native StateEngine、SwissTable 风格的紧凑控制字节和分组匹配实现状态访问，并提供可选的 L0 HotCache 与 copy-on-write checkpoint 路径。
 
 ## 项目概述

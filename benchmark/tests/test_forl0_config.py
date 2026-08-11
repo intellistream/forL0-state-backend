@@ -12,6 +12,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from utils.config import render_forl0_config_args  # noqa: E402
+from utils.forl0_config import (  # noqa: E402
+    build_forl0_config_args, get_forl0_effective_config,
+)
 
 
 class ForL0ConfigTest(unittest.TestCase):
@@ -38,6 +41,39 @@ class ForL0ConfigTest(unittest.TestCase):
         self.assertIn('-Dstate.backend.forl0.l0-cache.strict-allocation=true', args)
         self.assertIn('-Dstate.backend.forl0.l0-cache.expected-engines=4', args)
         self.assertIn('-Dstate.backend.forl0.l0-cache.total-size=64mb', args)
+
+    def test_effective_config_precedence_is_explicit(self) -> None:
+        config = {
+            'backends': [{
+                'name': 'forl0',
+                'config': {
+                    'initial_table_capacity': 64,
+                    'workload_overrides': {
+                        'nexmark': {'initial_table_capacity': 128},
+                    },
+                    'query_overrides': {
+                        'q18': {'initial_table_capacity': 256},
+                    },
+                },
+            }],
+            'nexmark': {
+                'forl0_overrides': {'initial_table_capacity': 512},
+            },
+        }
+
+        nexmark = get_forl0_effective_config(
+            config, 'forl0', workload_key='nexmark', query='q18')
+        scenario = get_forl0_effective_config(
+            config, 'forl0', workload_key='nexmark', query='q18',
+            include_workload_section=True)
+
+        self.assertEqual(256, nexmark['initial_table_capacity'])
+        self.assertEqual(512, scenario['initial_table_capacity'])
+        self.assertEqual({}, get_forl0_effective_config(config, 'hashmap', 'nexmark'))
+
+    def test_non_forl0_runner_args_stay_empty(self) -> None:
+        config = {'runtime': {'parallelism': 8}, 'backends': []}
+        self.assertEqual([], build_forl0_config_args(config, 'hashmap', 'wordcount'))
 
 
 if __name__ == '__main__':

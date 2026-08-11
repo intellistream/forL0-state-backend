@@ -1,0 +1,67 @@
+# Repository structure
+
+This repository separates runtime code, benchmark orchestration, offline
+deployment, and measured evidence. Keep changes within the owning layer so the
+offline server remains reproducible.
+
+## Runtime
+
+- `src/main/java/org/apache/flink/state/forl0/`: Flink StateBackend API,
+  serializers, keyed-state implementations, configuration, metrics, and JNI
+  declarations.
+- `src/main/native/engine/`: SwissTable, allocation, state tables, and L0 hot
+  cache policy.
+- `src/main/native/jni/`: JNI lifecycle and state-operation adapters.
+- `src/main/native/checkpoint/`: native checkpoint encoding and decoding.
+- `src/test/` and `src/main/native/test/`: Java integration and native unit
+  tests. Runtime changes should add coverage in the closest layer.
+
+## Benchmark control plane
+
+- `benchmark/config/benchmark.yaml`: workload definitions and tuning values.
+- `benchmark/scripts/run_*.py`: workload-specific execution and parsing.
+- `benchmark/scripts/utils/forl0_config.py`: the only owner of ForL0 benchmark
+  configuration precedence, environment overrides, and JVM-property mapping.
+- `benchmark/scripts/utils/result_selection.py`: pure workload-identity and
+  complete-pair selection rules used by reports.
+- `benchmark/scripts/utils/config.py`: general paths, result persistence, and
+  configuration-file loading.
+- `docker/run_all_apps.sh`: cluster/preflight orchestration and the stable
+  workload entry point.
+- `docker/lib/benchmark_evidence.sh`: failure markers, TaskManager evidence,
+  and L0 proof gates.
+
+## One-command entry points
+
+- `./reproduce-smoke`: correctness and output-path gate.
+- `./reproduce-l0-ablation`: HashMap, ForL0-L0-off, and proven ForL0-L0-on.
+- `./reproduce-all`: disconnect-safe smoke followed by the full numbered suite;
+  `./reproduce-all --stop` stops its worker tree and benchmark Flink containers.
+- `./stop-reproduce-all`: short stop alias for operators on constrained terminals.
+
+These root entry points are intentionally small and stable. Put reusable shell
+logic in `docker/lib/` rather than growing the wrappers.
+
+## Offline deployment
+
+- `run-forl0-offline.sh`: archive bootstrap and verification.
+- `forl0-offline-app.sh`: installed-runtime control plane and numbered suite.
+- `docker/package_offline_bundle.sh`: builds a new complete bundle.
+- `docker/install_offline_bundle.sh`: installs a bundle on the target host.
+
+When a new benchmark utility or Docker library is introduced, update
+`sync_runtime_control_plane()` in `forl0-offline-app.sh`. The full packager
+copies the complete `benchmark/scripts/` and `docker/lib/` trees.
+
+## Evidence and generated artifacts
+
+- `benchmark/results/`: measured and derived experiment evidence. Do not remove
+  or relocate it during code cleanup.
+- `docker/deploy/`: runnable JAR/native artifacts consumed by offline scripts.
+- `docker/generated/`: generated bundle snapshots and cluster configuration;
+  do not treat copied source files here as canonical implementation files.
+- `target/` and native `.o` files: build outputs, even where historical files
+  are tracked. Never edit them by hand.
+
+The canonical implementation is always under `src/`, `benchmark/scripts/`, or
+`docker/lib/`; generated copies must be rebuilt or synchronized from there.

@@ -267,7 +267,11 @@ nexmark_scenarios:
     warmup_duration: 0
     repeat_per_query: 1
     min_success_samples: 1
-    max_attempts_per_query: 1
+    # A freshly restarted Flink cluster can reject the first submission before
+    # any task is scheduled. Retry once, while still accepting only one valid
+    # measured sample.
+    max_attempts_per_query: 2
+    retry_backoff_seconds: 10
     min_cpu_cores: 0.0
     min_profile_cpu_cores: 0.0
     timeout_seconds: 21600

@@ -32,8 +32,9 @@ from datetime import datetime
 from utils.config import (
     load_config, get_benchmark_root,
     get_wordcount_jar, get_flink_home, get_results_dir,
-    get_timestamp, parse_json_from_output, save_result, render_forl0_config_args
+    get_timestamp, parse_json_from_output, save_result
 )
+from utils.forl0_config import build_forl0_config_args
 from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
 from utils.vtune_profiler import VTuneProfiler, get_profiler_summary as get_vtune_summary
 from utils.hardware_metrics import HardwareMetricsCollector
@@ -438,43 +439,10 @@ def parse_taskmanager_log(flink_home: str, wc_config: dict, runtime_config: dict
 
 
 def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'wordcount') -> list:
-    """
-    Get ForL0 StateBackend configuration as Flink -D arguments.
-    
-    Args:
-        config: Full benchmark config
-        backend: Backend name ('hashmap' or 'forl0')
-        
-    Returns:
-        List of -D arguments for flink run command
-    """
-    if backend != 'forl0':
-        return []
-    
-    # Find forl0 backend config
-    backend_config = None
-    for b in config.get('backends', []):
-        if b.get('name') == 'forl0':
-            backend_config = b.get('config', {})
-            break
-    
-    if not backend_config:
-        return []
-    
-    effective_config = dict(backend_config)
-    workload_overrides = backend_config.get('workload_overrides', {})
-    if isinstance(workload_overrides, dict):
-        workload_cfg = workload_overrides.get(workload_key, {})
-        if isinstance(workload_cfg, dict):
-            effective_config.update(workload_cfg)
-    workload_section = config.get(workload_key, {})
-    if isinstance(workload_section, dict):
-        scenario_overrides = workload_section.get('forl0_overrides', {})
-        if isinstance(scenario_overrides, dict):
-            effective_config.update(scenario_overrides)
-
-    return render_forl0_config_args(
-        effective_config, config.get('runtime', {}).get('parallelism', 1))
+    """Get effective ForL0 arguments for a WordCount workload."""
+    return build_forl0_config_args(
+        config, backend, workload_key=workload_key,
+        include_workload_section=True)
 
 
 def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str) -> bool:

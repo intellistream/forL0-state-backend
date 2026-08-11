@@ -587,7 +587,10 @@ prepare_runtime() {
 sync_runtime_control_plane() {
     if [[ "$CONTROL_ROOT" != "$APP_ROOT" ]]; then
         info "Syncing current repository control scripts into installed runtime"
-        mkdir -p "${RUNTIME_ROOT}/benchmark/config" "${RUNTIME_ROOT}/benchmark/scripts/utils" "${RUNTIME_ROOT}/docker/deploy"
+        mkdir -p "${RUNTIME_ROOT}/benchmark/config" \
+            "${RUNTIME_ROOT}/benchmark/scripts/utils" \
+            "${RUNTIME_ROOT}/docker/deploy" \
+            "${RUNTIME_ROOT}/docker/lib"
 
         local script
         for script in \
@@ -603,10 +606,16 @@ sync_runtime_control_plane() {
         done
         cp "${CONTROL_ROOT}/benchmark/scripts/utils/config.py" \
             "${RUNTIME_ROOT}/benchmark/scripts/utils/config.py"
+        cp "${CONTROL_ROOT}/benchmark/scripts/utils/forl0_config.py" \
+            "${RUNTIME_ROOT}/benchmark/scripts/utils/forl0_config.py"
+        cp "${CONTROL_ROOT}/benchmark/scripts/utils/result_selection.py" \
+            "${RUNTIME_ROOT}/benchmark/scripts/utils/result_selection.py"
         cp "${CONTROL_ROOT}/benchmark/config/benchmark.yaml" \
             "${RUNTIME_ROOT}/benchmark/config/benchmark.yaml"
         cp "${CONTROL_ROOT}/docker/run_all_apps.sh" \
             "${RUNTIME_ROOT}/docker/run_all_apps.sh"
+        cp "${CONTROL_ROOT}/docker/lib/benchmark_evidence.sh" \
+            "${RUNTIME_ROOT}/docker/lib/benchmark_evidence.sh"
         chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh"
 
         local backend_jar="${CONTROL_ROOT}/docker/deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
@@ -646,6 +655,7 @@ sync_runtime_control_plane() {
 RUNTIME_ROOT=""
 prepare_runtime
 sync_runtime_control_plane
+export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$CONTROL_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
 RUNNER="${RUNTIME_ROOT}/docker/run_all_apps.sh"
 [[ -x "$RUNNER" ]] || die "run_all_apps.sh is not executable: $RUNNER"
 if [[ "$RESULTS_DIR" != /* ]]; then
@@ -668,6 +678,7 @@ if [[ "$RUN_ASCEND_REPRO" == "true" ]]; then
 fi
 echo "  expected TM: ${EXPECTED_TASKMANAGERS}"
 echo "  expected slots: ${EXPECTED_SLOTS}"
+echo "  control rev: ${FORL0_CONTROL_REVISION}"
 
 COMMON_RUNNER_ARGS=(--expected-taskmanagers "$EXPECTED_TASKMANAGERS" --expected-slots "$EXPECTED_SLOTS")
 if [[ "$RESTART_CLUSTER" == "true" ]]; then
@@ -732,6 +743,7 @@ if [[ "$RUN_ASCEND_REPRO" == "true" ]]; then
     {
         printf "# run_id=%s\n" "${FORL0_RUN_ID:-unassigned}"
         printf "# run_started_epoch=%s\n" "${FORL0_RUN_STARTED_EPOCH:-unassigned}"
+        printf "# control_revision=%s\n" "${FORL0_CONTROL_REVISION:-unavailable}"
         printf "id\tname\tdescription\n"
         for entry in "${ASCEND_REPRO_WORKLOADS[@]}"; do
             IFS='|' read -r id name description <<< "$entry"
