@@ -4090,7 +4090,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --preflight-only -
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:01:04 +0800
+  Date:        2026-08-11 18:41:30 +0800
 
 [preflight] 检查 Flink 与 benchmark 产物
       ✓ FLINK_HOME: /root/flink_home
@@ -4135,14 +4135,14 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-ddcc0ec709644f51cb2e16edd8b9bab5924aedca6b1d9d190738ad61cfb2aea4
+f42f4b32da85baa0ef3192eb613846e201937a2eb7ab632d5e6b764eb0b6db41
 [1/3] 启动 JobManager...
-b7feac243a177ea7e5eba0eccb308a3ef607f6a2a696b4528550ef0505aa2117
-      JobManager IP: 192.168.192.2
+4ca1631c7c04a177b5e37623920fc3d339d3d7436d87028b3af2ea6d4af58179
+      JobManager IP: 192.168.160.2
 [2/3] 启动 TaskManager-1...
-c94ee6712ac3f7717b14e8c7ca286461b33e2d181e70c6a4cd16acb0c8188cfa
+6e6ba475cb968a7f93428f10ce8b5adba73f9a2a6fe9e3fdffbc17d3d06b3546
 [3/3] 启动 TaskManager-2...
-33461171e71b0090756401fa2e6639b063a38b2221a4d4caccf9f1a629be014a
+0efd60a9e1180c98873ae2157dcd4c1da29c369e1ac58aff35af3407043fe7e2
 
 等待 JobManager 就绪...
 ...
@@ -4158,8 +4158,8 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 192.168.192.4:45627-db9ce5 slots=4 free=4 heartbeatMs=0
-TM 192.168.192.3:35259-4e6c73 slots=4 free=4 heartbeatMs=0
+TM 192.168.160.3:35935-9f4d40 slots=4 free=4 heartbeatMs=0
+TM 192.168.160.4:36565-7a1276 slots=4 free=4 heartbeatMs=0
 
 ==> Smoke test: client_usecase contract_baseline
 Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario contract_baseline --backend all --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8
@@ -4175,7 +4175,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usec
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:01:15 +0800
+  Date:        2026-08-11 18:41:41 +0800
 
 [2/5] Flink REST 已就绪，检查 TaskManager/slot 健康状态
       ✓ Flink 集群健康:
@@ -4183,8 +4183,8 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 192.168.192.4:45627-db9ce5 slots=4 free=4 heartbeatMs=0
-TM 192.168.192.3:35259-4e6c73 slots=4 free=4 heartbeatMs=0
+TM 192.168.160.3:35935-9f4d40 slots=4 free=4 heartbeatMs=0
+TM 192.168.160.4:36565-7a1276 slots=4 free=4 heartbeatMs=0
 [3/5] 检查离线 wheel 与 Python/架构兼容性...
         wheel ABI:    cp310
         wheel arch:   aarch64
@@ -4213,18 +4213,18 @@ Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, left
 Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
 
-Job has been submitted with JobID da86a3abcdc1ecec2e82a00f7a629696
+Job has been submitted with JobID c66f01582784f5e356562b33653cd123
 SLF4J: Class path contains multiple SLF4J bindings.
 SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
 SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
 SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
 SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
 
-  Job submitted: da86a3abcdc1ecec2e82a00f7a629696
+  Job submitted: c66f01582784f5e356562b33653cd123
   Job state: RUNNING
   All sources finished; cancelling job for clean bounded benchmark shutdown...
   Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_contract_baseline_hashmap_20260811_170127.json
+Result saved to: /root/forL0/benchmark/results/raw/client_usecase_contract_baseline_hashmap_20260811_184153.json
 
 === Running Client Usecase Benchmark (forl0 backend) ===
 
@@ -4233,18 +4233,18 @@ Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, left
 Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=512 -Dstate.backend.forl0.max-table-capacity=8192 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=128mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
 
-Job has been submitted with JobID 2fec0b3596da885aa3a0005b3b3b7c5d
+Job has been submitted with JobID 8667a1f8d2e132e1788276140089fac0
 SLF4J: Class path contains multiple SLF4J bindings.
 SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
 SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
 SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
 SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
 
-  Job submitted: 2fec0b3596da885aa3a0005b3b3b7c5d
+  Job submitted: 8667a1f8d2e132e1788276140089fac0
   Job state: RUNNING
   All sources finished; cancelling job for clean bounded benchmark shutdown...
   Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_contract_baseline_forl0_20260811_170138.json
+Result saved to: /root/forL0/benchmark/results/raw/client_usecase_contract_baseline_forl0_20260811_184204.json
 
 ======================================================================
                     BENCHMARK SUMMARY
@@ -4259,8 +4259,8 @@ Result saved to: /root/forL0/benchmark/results/raw/client_usecase_contract_basel
 ## Client Usecase Benchmark
 --------------------------------------------------
 hashmap             :              37 records/s/core
-forl0               :              36 records/s/core
-Improvement         :            -2.2%
+forl0               :              37 records/s/core
+Improvement         :             0.4%
 
 ======================================================================
 
@@ -4283,7 +4283,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --report-only --no
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:01:38 +0800
+  Date:        2026-08-11 18:42:04 +0800
 
 [3/5] 检查离线 wheel 与 Python/架构兼容性...
         wheel ABI:    cp310
@@ -8425,7 +8425,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --preflight-only -
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:01:47 +0800
+  Date:        2026-08-11 18:42:13 +0800
 
 [preflight] 检查 Flink 与 benchmark 产物
       ✓ FLINK_HOME: /root/flink_home
@@ -8470,14 +8470,14 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-2cf9324d466534f3e9df93f666c34e94b6b614f50b0b8ae807a3a6a3eea015d2
+3621912383ebf6153c61e08175b5c5b9431ea9b1b42b77b06c245ddff968d3e4
 [1/3] 启动 JobManager...
-da2112af52da1dc575e525a92d824d0f02ab3f65d28244f17db9b18eb50f6a87
-      JobManager IP: 192.168.208.2
+89beb700930c8696c73548f7570a4fcfdc44f9b7a16f2416431b94add144d32a
+      JobManager IP: 192.168.176.2
 [2/3] 启动 TaskManager-1...
-bd3249300ed9991e0cec4890aec0d7fd9cbfd7ebb1ccf7a30030cda64d61be65
+28f7ea5d7423d861dbefa5571584ab15589285e8d60188fbbf80d3b3053adb97
 [3/3] 启动 TaskManager-2...
-a6a0a1afeb2f85745878000e65a9d426dba9313eb6456f3b3088836d7b8c7a6a
+17e70da775f8eab22357217068f6434a63d4a73471506d9bc20f9e556306b8b5
 
 等待 JobManager 就绪...
 ..
@@ -8493,9 +8493,9 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 192.168.208.3:37909-c292de slots=4 free=4 heartbeatMs=0
-TM 192.168.208.4:45517-9d3350 slots=4 free=4 heartbeatMs=0
-Ascend reproduction manifest: /root/forL0/benchmark/results/run_logs/ascend_reproduction_20260811_170156.tsv
+TM 192.168.176.3:46045-94e9a3 slots=4 free=4 heartbeatMs=0
+TM 192.168.176.4:39115-3ab081 slots=4 free=4 heartbeatMs=0
+Ascend reproduction manifest: /root/forL0/benchmark/results/run_logs/ascend_reproduction_20260811_184222.tsv
 
 ==> Ascend reproduction W01: wordcount_stateful_counter_p4_hashmap
 Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test wordcount --scenario stateful_counter_p4_probe --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
@@ -8511,7 +8511,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test wordcount -
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:01:56 +0800
+  Date:        2026-08-11 18:42:22 +0800
 
 [2/5] 按要求重启 Flink 集群
 === 停止 BriskState Flink Docker 集群 ===
@@ -8530,17 +8530,17 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-fbade471d9d65f83bf1768e635ac3abaed40ea8da412cc4ef8c0d75e30ddd2f1
+318e72d4cc2c53296e296bf1ad9537dbe0c8fe8967b6f5e02a67562bb2317306
 [1/3] 启动 JobManager...
-eb3e32014dfe7f6e15ede9b149447f9bde498b3717ab4b8fa1958ab712bb07ec
-      JobManager IP: 192.168.224.2
+3b12f6a68cdd3f6e1ae5b9e38e69473aad130d496ebbae4b3b5282b0a1296510
+      JobManager IP: 192.168.192.2
 [2/3] 启动 TaskManager-1...
-5140c129f95a4c9a1aeadae50ec762cf5df8fd4a9ff1986fd4df35822a448198
+f9aa504f2d3b157d9e2cc38fe2bd1cdc86b752066293a2612df68b0d7e101961
 [3/3] 启动 TaskManager-2...
-467aa9aa677319f47ea47fea9ea45599b4b37a0c4633217bcf814a7220a9c723
+70765440b5d70b4a99fe31b5ae934279621d34473bdb31c833c25e2a4225e3cb
 
 等待 JobManager 就绪...
-...
+..
 === 集群启动成功! ===
   Web UI: http://localhost:8081
   TaskManagers: 2
@@ -8553,8 +8553,8 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 192.168.224.3:45817-483d3d slots=4 free=4 heartbeatMs=0
-TM 192.168.224.4:32781-e93525 slots=4 free=4 heartbeatMs=0
+TM 192.168.192.3:40997-c60921 slots=4 free=4 heartbeatMs=0
+TM 192.168.192.4:37429-dec273 slots=4 free=4 heartbeatMs=0
 [3/5] 检查离线 wheel 与 Python/架构兼容性...
         wheel ABI:    cp310
         wheel arch:   aarch64
@@ -8582,7 +8582,7 @@ Running WordCount Benchmark
 Flink cluster: http://localhost:8081
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /root/forl0-runtime/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar --numKeys 2000000 --numRecords 200000000 --arrivalRate 0 --skewFactor 0 --workloadMode stateful_counter --keyType long --windowSize 5 --slideSize 200 --parallelism 4 --checkpointInterval 0 --backend hashmap
 
-  Job submitted: 567283e094d725d68877ca1ae448178b
+  Job submitted: 554f31dcdddf920ce11e76f90d24bb6f
   Job state: RUNNING
   Job state: FINISHED
 
@@ -8593,7 +8593,7 @@ Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.ru
 Flink cluster: http://localhost:8081
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /root/forl0-runtime/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar --numKeys 2000000 --numRecords 200000000 --arrivalRate 0 --skewFactor 0 --workloadMode stateful_counter --keyType long --windowSize 5 --slideSize 200 --parallelism 4 --checkpointInterval 0 --backend hashmap
 
-  Job submitted: f9549bb6df1780ae70313cdac398692a
+  Job submitted: 14b4a10c31daaa50fff1098b089b99d1
   Job state: RUNNING
   Job state: FINISHED
 
@@ -8604,10 +8604,10 @@ Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.ru
 Flink cluster: http://localhost:8081
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /root/forl0-runtime/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar --numKeys 2000000 --numRecords 200000000 --arrivalRate 0 --skewFactor 0 --workloadMode stateful_counter --keyType long --windowSize 5 --slideSize 200 --parallelism 4 --checkpointInterval 0 --backend hashmap
 
-  Job submitted: 3f93fe11773bf454246dbedaef3bf49a
+  Job submitted: ada84aaed0b1cd363cef2c1393e03e57
   Job state: RUNNING
   Job state: FINISHED
-Result saved to: /root/forL0/benchmark/results/raw/wordcount_stateful_counter_p4_probe_hashmap_20260811_170422.json
+Result saved to: /root/forL0/benchmark/results/raw/wordcount_stateful_counter_p4_probe_hashmap_20260811_184450.json
 
 ======================================================================
                     BENCHMARK SUMMARY
@@ -8618,7 +8618,7 @@ Result saved to: /root/forL0/benchmark/results/raw/wordcount_stateful_counter_p4
 
 ## WordCount Benchmark
 --------------------------------------------------
-hashmap             :       1,245,366 records/s/core
+hashmap             :       1,245,352 records/s/core
 
 ## Client Usecase Benchmark
 --------------------------------------------------
@@ -8644,7 +8644,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test wordcount -
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:04:22 +0800
+  Date:        2026-08-11 18:44:50 +0800
 
 [2/5] 按要求重启 Flink 集群
 === 停止 BriskState Flink Docker 集群 ===
@@ -8663,14 +8663,14 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-d0533022a4d541e96de2c1e3f8b62195693fa9f59541576f4ca0f254e6791c37
+03569c87807261668a41e2ce772cd0be632dfd0ad2dd546ebeb671fc71d02977
 [1/3] 启动 JobManager...
-05fcfc0ebd5371dc3d25e489c23d31d4c80317369207dd03be2c038370a15844
-      JobManager IP: 192.168.240.2
+10250c88840c7382caaad0aacde6f4f0bf67b9a84d0841b9e793a2539f91cad7
+      JobManager IP: 192.168.208.2
 [2/3] 启动 TaskManager-1...
-1f0a60285ac7595f1ec4299929b2665798cebd09cc267fe93aa9fe410b96be55
+64b803c6ee44c1ee4dc1ece11d301f4e601c245571c3c1213aa05ce70ae6bf83
 [3/3] 启动 TaskManager-2...
-eedc36a1a3b007daf8694d11972d79390e59187daa15ce40087e1ce65192e4b2
+242a65d262b1e98144b5d4bebc991c66857af639c4af453408413cbbecc6075e
 
 等待 JobManager 就绪...
 ..
@@ -8686,8 +8686,8 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 192.168.240.4:34993-ae998c slots=4 free=4 heartbeatMs=0
-TM 192.168.240.3:38659-28bbbd slots=4 free=4 heartbeatMs=0
+TM 192.168.208.4:39475-290fa8 slots=4 free=4 heartbeatMs=0
+TM 192.168.208.3:41803-4d7d55 slots=4 free=4 heartbeatMs=0
 [3/5] 检查离线 wheel 与 Python/架构兼容性...
         wheel ABI:    cp310
         wheel arch:   aarch64
@@ -8715,7 +8715,7 @@ Running WordCount Benchmark
 Flink cluster: http://localhost:8081
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=8192 -Dstate.backend.forl0.max-table-capacity=262144 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=512mb -Dstate.backend.forl0.l0-memory.max-size=1024mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false /root/forl0-runtime/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar --numKeys 2000000 --numRecords 200000000 --arrivalRate 0 --skewFactor 0 --workloadMode stateful_counter --keyType long --windowSize 5 --slideSize 200 --parallelism 4 --checkpointInterval 0 --backend forl0
 
-  Job submitted: 3a13e2e28916bf584dd2fa7ef0556d24
+  Job submitted: 874da6ee6a7be87c51e69a034b326422
   Job state: RUNNING
   Job state: FINISHED
 
@@ -8726,7 +8726,7 @@ Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.st
 Flink cluster: http://localhost:8081
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=8192 -Dstate.backend.forl0.max-table-capacity=262144 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=512mb -Dstate.backend.forl0.l0-memory.max-size=1024mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false /root/forl0-runtime/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar --numKeys 2000000 --numRecords 200000000 --arrivalRate 0 --skewFactor 0 --workloadMode stateful_counter --keyType long --windowSize 5 --slideSize 200 --parallelism 4 --checkpointInterval 0 --backend forl0
 
-  Job submitted: b1e6baa06d8339f2313bf36ae3d83345
+  Job submitted: 32df2a2e567ddb9e55ef585f93f2f9e0
   Job state: RUNNING
   Job state: FINISHED
 
@@ -8737,10 +8737,10 @@ Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.st
 Flink cluster: http://localhost:8081
 Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=8192 -Dstate.backend.forl0.max-table-capacity=262144 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=512mb -Dstate.backend.forl0.l0-memory.max-size=1024mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false /root/forl0-runtime/artifacts/wordcount-benchmark-1.0-SNAPSHOT.jar --numKeys 2000000 --numRecords 200000000 --arrivalRate 0 --skewFactor 0 --workloadMode stateful_counter --keyType long --windowSize 5 --slideSize 200 --parallelism 4 --checkpointInterval 0 --backend forl0
 
-  Job submitted: 165d0594d5087ab21f2583f5c87a74ab
+  Job submitted: 841a2a2b01183b5723b2a4b80da143d8
   Job state: RUNNING
   Job state: FINISHED
-Result saved to: /root/forL0/benchmark/results/raw/wordcount_stateful_counter_p4_probe_forl0_20260811_170646.json
+Result saved to: /root/forL0/benchmark/results/raw/wordcount_stateful_counter_p4_probe_forl0_20260811_184710.json
 
 ======================================================================
                     BENCHMARK SUMMARY
@@ -8751,7 +8751,7 @@ Result saved to: /root/forL0/benchmark/results/raw/wordcount_stateful_counter_p4
 
 ## WordCount Benchmark
 --------------------------------------------------
-forl0               :       1,246,761 records/s/core
+forl0               :       1,246,660 records/s/core
 
 ## Client Usecase Benchmark
 --------------------------------------------------
@@ -8777,7 +8777,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --s
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:06:46 +0800
+  Date:        2026-08-11 18:47:10 +0800
 
 [2/5] 按要求重启 Flink 集群
 === 停止 BriskState Flink Docker 集群 ===
@@ -8796,14 +8796,14 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-cf2eabcdf6cd3d5c4fc4a0668d9a3ec743971d4fcf57babcc42918578da5eda2
+62a50b3dea7a9a13ed2ba1be8393ae3201dea0703a70f80037eb0c30ec48eb20
 [1/3] 启动 JobManager...
-0460828de002ae08200f057edf18376ed33beae8795098fe198bee388e810709
-      JobManager IP: 172.18.0.2
+5399298c217b28e4a80df547ad4c28096ce2022ab485a6d95dffc7e906221437
+      JobManager IP: 192.168.224.2
 [2/3] 启动 TaskManager-1...
-ca35aa6ebb4a16170b96351d02638a30c97880d7aac1dacf0a710b646aab92fa
+27e844d3dafe25cb31420595836a1940da85b6c5d995c96220082a206b34d365
 [3/3] 启动 TaskManager-2...
-9d0b47af6c8255f371303511b0eaad8735eec84cb7e932c3c289416a37f37b15
+8073e7662ffa22b5c4527866e54f72fdc23e94b7a0e84723850a67213282122d
 
 等待 JobManager 就绪...
 ...
@@ -8819,8 +8819,8 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 172.18.0.3:40443-9f7818 slots=4 free=4 heartbeatMs=0
-TM 172.18.0.4:34505-ee09c3 slots=4 free=4 heartbeatMs=0
+TM 192.168.224.3:36717-66c971 slots=4 free=4 heartbeatMs=0
+TM 192.168.224.4:36545-594240 slots=4 free=4 heartbeatMs=0
 [3/5] 检查离线 wheel 与 Python/架构兼容性...
         wheel ABI:    cp310
         wheel arch:   aarch64
@@ -8858,31 +8858,31 @@ Mode: benchmark
 Backend: hashmap
 ============================================================
 [Nexmark] Synced NexMark JAR to Flink lib
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-5ohggn2t/nexmark-home/queries)
+[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-0hs4ai2h/nexmark-home/queries)
 
 === Running Nexmark Q18 (hashmap backend) ===
 Events: 0, TPS: 5000000
 Proportions: Person(1):Auction(49):Bid(50)
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-5ohggn2t/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-5ohggn2t/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-5ohggn2t/nexmark-home --queries q18 --category oa
+Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-0hs4ai2h/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-0hs4ai2h/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-0hs4ai2h/nexmark-home --queries q18 --category oa
 
-  ERROR: Flink job failed during NexMark run: 1a44204cf3594974d58f63d256e1fa28 insert-into_default_catalog.default_database.nexmark_q18
+  ERROR: Flink job failed during NexMark run: b61f37f70686cf181ad8d5790480514c insert-into_default_catalog.default_database.nexmark_q18
 Benchmark Queries: [q18]
 ==================================================================
 Start to run query q18 with workload [tps=5 M, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
 Monitor metrics after 10 seconds.
 
-[NexMark fail-fast] Flink job failed during NexMark run: 1a44204cf3594974d58f63d256e1fa28 insert-into_default_catalog.default_database.nexmark_q18
+[NexMark fail-fast] Flink job failed during NexMark run: b61f37f70686cf181ad8d5790480514c insert-into_default_catalog.default_database.nexmark_q18
 
   ERROR: NexMark benchmark driver failed
 
 --- hashmap Summary ---
   Failed: ['q18']
 
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_170656/nexmark_results.json
+[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_184720/nexmark_results.json
 
 [Error] NexMark failed queries: {'hashmap': ['q18']}
 [cleanup] Benchmark command exited with status 1; canceling orphan Flink jobs.
-[cleanup] Wrote failure marker: /root/forL0/benchmark/results/run_logs/FAILED_nexmark_hashmap_20260811_170707.txt
+[cleanup] Wrote failure marker: /root/forL0/benchmark/results/run_logs/FAILED_nexmark_hashmap_20260811_184731.txt
 WARN: command failed but --keep-going is enabled: Ascend reproduction N01: nexmark_q18_tps_hashmap
 
 ==> Ascend reproduction N02: nexmark_q18_tps_forl0
@@ -8899,7 +8899,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --s
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:07:07 +0800
+  Date:        2026-08-11 18:47:31 +0800
 
 [2/5] 按要求重启 Flink 集群
 === 停止 BriskState Flink Docker 集群 ===
@@ -8918,14 +8918,14 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-5edce0526ceff3d85849111ba38884c8c56f32e6ef43b7f2fcc7fb936a834b15
+0dd2a69582afabfae053fed2969dfe048229d8346820ce7d52cf258d8827236b
 [1/3] 启动 JobManager...
-6f5fc85050f840252f8ec4fac0f9cd45234634f369de20f52f0fd6ee204a28ce
-      JobManager IP: 172.19.0.2
+65f56a3c53cd9fb5e16977a4b80d61aef57f0d49b074ff28833ce6eefcd733a1
+      JobManager IP: 192.168.240.2
 [2/3] 启动 TaskManager-1...
-4b56bcebe4cb0e6ad4d7835653ec721b47e470bc66694c47a349b8a3ef1b5420
+16b7e0705d6f08c1355bb6ad0c96d62c8f82135f7f375cacb02c4cb228e49d24
 [3/3] 启动 TaskManager-2...
-ec786220bc1245aa71cc854059848cab2c7b479884fc109f8389486e15d20961
+134aad245fe89bf79a3a664fd1851785e26cf6c7bddec385f4b91b31f4b162d9
 
 等待 JobManager 就绪...
 ..
@@ -8941,8 +8941,8 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 172.19.0.3:46585-906d9f slots=4 free=4 heartbeatMs=0
-TM 172.19.0.4:39889-a06990 slots=4 free=4 heartbeatMs=0
+TM 192.168.240.4:44501-618052 slots=4 free=4 heartbeatMs=0
+TM 192.168.240.3:35499-18543f slots=4 free=4 heartbeatMs=0
 [3/5] 检查离线 wheel 与 Python/架构兼容性...
         wheel ABI:    cp310
         wheel arch:   aarch64
@@ -8979,49 +8979,49 @@ Mode: benchmark
 ============================================================
 Backend: forl0
 ============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-fost6a9p/nexmark-home/queries)
+[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-s8n9dvgj/nexmark-home/queries)
 
 === Running Nexmark Q18 (forl0 backend) ===
 Events: 0, TPS: 5000000
 Proportions: Person(1):Auction(49):Bid(50)
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-fost6a9p/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-fost6a9p/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-fost6a9p/nexmark-home --queries q18 --category oa
+Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-s8n9dvgj/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-s8n9dvgj/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-s8n9dvgj/nexmark-home --queries q18 --category oa
 
 Benchmark Queries: [q18]
 ==================================================================
 Start to run query q18 with workload [tps=5 M, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
 Monitor metrics after 10 seconds.
 Start to monitor metrics for 60 seconds.
-Current Throughput=188.45 K, Cores=10.87 (2 TMs)
-Current Throughput=188.45 K, Cores=5.77 (2 TMs)
-Current Throughput=188.45 K, Cores=5.63 (2 TMs)
-Current Throughput=405.23 K, Cores=5.64 (2 TMs)
-Current Throughput=405.23 K, Cores=5.66 (2 TMs)
-Current Throughput=620.9 K, Cores=5.62 (2 TMs)
-Current Throughput=620.9 K, Cores=5.54 (2 TMs)
-Current Throughput=838.24 K, Cores=5.66 (2 TMs)
-Current Throughput=838.24 K, Cores=5.51 (2 TMs)
-Current Throughput=1.05 M, Cores=5.57 (2 TMs)
-Current Throughput=1.05 M, Cores=5.65 (2 TMs)
-Current Throughput=1.26 M, Cores=5.57 (2 TMs)
-Summary Average: Throughput=637.86 K, Cores=6.06
+Current Throughput=193.91 K, Cores=7.7 (2 TMs)
+Current Throughput=193.91 K, Cores=5.61 (2 TMs)
+Current Throughput=193.91 K, Cores=5.65 (2 TMs)
+Current Throughput=390.09 K, Cores=5.44 (2 TMs)
+Current Throughput=390.09 K, Cores=5.41 (2 TMs)
+Current Throughput=584.98 K, Cores=5.46 (2 TMs)
+Current Throughput=584.98 K, Cores=5.5 (2 TMs)
+Current Throughput=780.09 K, Cores=5.48 (2 TMs)
+Current Throughput=780.09 K, Cores=5.63 (2 TMs)
+Current Throughput=979.36 K, Cores=5.44 (2 TMs)
+Current Throughput=979.36 K, Cores=5.35 (2 TMs)
+Current Throughput=1.17 M, Cores=5.39 (2 TMs)
+Summary Average: Throughput=601.87 K, Cores=5.67
 Stop job query q18
 -------------------------------- Nexmark Results --------------------------------
 
 +------+-----------------+---------+-----------------+
 | Query| Throughput (r/s)| Cores   | Throughput/Cores|
 +------+-----------------+---------+-----------------+
-|q18   |637.86 K         |6.06     |105.31 K         |
-|Total |-                |-        |105.31 K         |
+|q18   |601.87 K         |5.67     |106.1 K          |
+|Total |-                |-        |106.1 K          |
 +------+-----------------+---------+-----------------+
 
 
 
-  Result: 637,860.00 events/sec
+  Result: 601,870.00 events/sec
 
 --- forl0 Summary ---
-  q18: 637,860 events/sec (105,257/core)
+  q18: 601,870 events/sec (106,150/core)
 
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_170716/nexmark_results.json
+[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_184740/nexmark_results.json
 
 ======================================================================
                     BENCHMARK SUMMARY
@@ -9040,7 +9040,7 @@ Stop job query q18
 --------------------------------------------------
 Query   Proc(s)       forl0 proc eps     report eps     (/core)
 ---------------------------------------------------------------
-Q18                       637.86 K/s     637.86 K/s  105.26 K/s
+Q18                       601.87 K/s     601.87 K/s  106.15 K/s
 
 ======================================================================
 
@@ -9063,7 +9063,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --s
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:08:37 +0800
+  Date:        2026-08-11 18:49:01 +0800
 
 [2/5] 按要求重启 Flink 集群
 === 停止 BriskState Flink Docker 集群 ===
@@ -9082,17 +9082,17 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-546c3848cfb593db295fef670d50a563129c814485e694c92095dd9c2b1d03fd
+273e4f216bfe7b3f59b50c8ea0b0b53861d99fd1299466cb57c4b50f5922b721
 [1/3] 启动 JobManager...
-6c11f34b5bf2065e16d7cbc71a166f125091ce5cd7da5d75883448ea16e159db
-      JobManager IP: 172.20.0.2
+45e8ac83ab43aed151fd7948ec708c36578b5c13877bcc9ca253038b7442ead8
+      JobManager IP: 172.18.0.2
 [2/3] 启动 TaskManager-1...
-004e60f2aa500d477a94a114193b2532cdc7b6c99740bab3bf902b6f184bc509
+0cbb218c9b36e11c360d22599cb9bbb42d1888c7e77e51c279f90c64e2049736
 [3/3] 启动 TaskManager-2...
-c68771e0320e1597c61da8e3441adf59333564b3efbeae1ca08ebb684797db1b
+f34d7060c147f829d5513c9a6819bdcf8e6ac22b3830a295b1a734c9187cf7d2
 
 等待 JobManager 就绪...
-...
+..
 === 集群启动成功! ===
   Web UI: http://localhost:8081
   TaskManagers: 2
@@ -9105,8 +9105,8 @@ TASKMANAGERS=2
 SLOTS_TOTAL=8
 SLOTS_AVAILABLE=8
 JOBS_RUNNING=0
-TM 172.20.0.4:37511-9ef143 slots=4 free=4 heartbeatMs=0
-TM 172.20.0.3:42729-37ce5b slots=4 free=4 heartbeatMs=0
+TM 172.18.0.3:43543-62cc5c slots=4 free=4 heartbeatMs=0
+TM 172.18.0.4:46571-b4acf9 slots=4 free=4 heartbeatMs=0
 [3/5] 检查离线 wheel 与 Python/架构兼容性...
         wheel ABI:    cp310
         wheel arch:   aarch64
@@ -9143,23 +9143,23 @@ Mode: benchmark
 ============================================================
 Backend: hashmap
 ============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-bvkcxxbv/nexmark-home/queries)
+[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-2znimzye/nexmark-home/queries)
 
 === Running Nexmark Q18 (hashmap backend) ===
 Events: 0, TPS: 12000000
 Proportions: Person(1):Auction(9):Bid(90)
 Hot ratios: bid.auctions=24, bid.bidders=24
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-bvkcxxbv/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-bvkcxxbv/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-bvkcxxbv/nexmark-home --queries q18 --category oa
+Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-2znimzye/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-2znimzye/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-2znimzye/nexmark-home --queries q18 --category oa
 
 Benchmark Queries: [q18]
 ==================================================================
 Start to run query q18 with workload [tps=12 M, eventsNum=0, percentage=bid:90,auction:9,person:1,kafkaServers:null]
 Monitor metrics after 30 seconds.
 Start to monitor metrics for 60 seconds.
-Current Throughput=1.05 M, Cores=44.26 (2 TMs)
-Current Throughput=1.05 M, Cores=49.54 (2 TMs)
-Current Throughput=1.05 M, Cores=44.1 (2 TMs)
-Summary Average: Throughput=1.05 M, Cores=45.97
+Current Throughput=1.12 M, Cores=48.36 (2 TMs)
+Current Throughput=1.12 M, Cores=43.86 (2 TMs)
+Current Throughput=1.12 M, Cores=60.76 (2 TMs)
+Summary Average: Throughput=1.12 M, Cores=50.99
 Stop job query q18
 Exception in thread "main" java.lang.RuntimeException: java.lang.RuntimeException: http execute failed,status code is 409
 	at com.github.nexmark.flink.metric.FlinkRestClient.patch(FlinkRestClient.java:217)
@@ -9175,12 +9175,12 @@ Caused by: java.lang.RuntimeException: http execute failed,status code is 409
 
   WARNING: NexMark driver failed after printing summary; keeping parsed sample
 
-  Result: 1,050,000.00 events/sec
+  Result: 1,120,000.00 events/sec
 
 --- hashmap Summary ---
-  q18: 1,050,000 events/sec (22,841/core)
+  q18: 1,120,000 events/sec (21,965/core)
 
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_170847/nexmark_results.json
+[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_184909/nexmark_results.json
 
 ======================================================================
                     BENCHMARK SUMMARY
@@ -9199,7 +9199,7 @@ Caused by: java.lang.RuntimeException: http execute failed,status code is 409
 --------------------------------------------------
 Query   Proc(s)     hashmap proc eps     report eps     (/core)
 ---------------------------------------------------------------
-Q18                         1.05 M/s       1.05 M/s   22.84 K/s
+Q18                         1.12 M/s       1.12 M/s   21.97 K/s
 
 ======================================================================
 
@@ -9222,7 +9222,7 @@ Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --s
   Expect TMs:  2
   Expect slots:8
   GitCommit:   unavailable
-  Date:        2026-08-11 17:09:43 +0800
+  Date:        2026-08-11 18:50:05 +0800
 
 [2/5] 按要求重启 Flink 集群
 === 停止 BriskState Flink Docker 集群 ===
@@ -9241,2784 +9241,14 @@ flink-net
   libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
   libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
 
-4caa023b9adc4cd93deb25bf49f7a3ae8181bb61d8c82f0e376c9a8d9964acb5
+162c308ff0f4bb5e62a6d7e0773556cfe92c9ee9a5adc161a341773790b0d311
 [1/3] 启动 JobManager...
-3bb2cc88c972aae35f6bbe8bc399196879696aba8ad761df709aec0400ff655e
-      JobManager IP: 172.21.0.2
+f08efaaccd452fd60edbbd8bf1dfda85a7447baff0e754262b768163cb01be4a
+      JobManager IP: 172.19.0.2
 [2/3] 启动 TaskManager-1...
-6f6a043684b284724db65ff1a2fa7856a9a099fa04efbc8ca7b5860fc3b26c36
+bdf6fbfeccf3c2a713857e277b1c6dd9106e18a725ef693b95cb5e028c3c3493
 [3/3] 启动 TaskManager-2...
-e7f089f6e437a11bd762655606cfedaf9bf8ffc7d32ece2f2becd5b802d24aea
+7df96d4708ca7016bd1b9824ec28220f6e59ec06f15e7dbfbf637ec2499514e9
 
 等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.21.0.3:36853-e91a29 slots=4 free=4 heartbeatMs=0
-TM 172.21.0.4:33227-a74274 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_no_full_gc_lateq_deep --query q18
-[NexMark] Scenario: forl0_no_full_gc_lateq_deep — Non-contract retry: q18/q19/q20 deeper state-pressure shaping under no-Full-GC acceptance
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: forl0
-NexMark Queries: q18
-NexMark Scenario: forl0_no_full_gc_lateq_deep
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q18']
-Backends: ['forl0']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: forl0
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-rac_xush/nexmark-home/queries)
-
-=== Running Nexmark Q18 (forl0 backend) ===
-Events: 0, TPS: 12000000
-Proportions: Person(1):Auction(9):Bid(90)
-Hot ratios: bid.auctions=24, bid.bidders=24
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-rac_xush/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-rac_xush/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-rac_xush/nexmark-home --queries q18 --category oa
-
-Benchmark Queries: [q18]
-==================================================================
-Start to run query q18 with workload [tps=12 M, eventsNum=0, percentage=bid:90,auction:9,person:1,kafkaServers:null]
-Monitor metrics after 30 seconds.
-Start to monitor metrics for 60 seconds.
-Current Throughput=1.17 M, Cores=14.38 (2 TMs)
-Current Throughput=1.17 M, Cores=14.75 (2 TMs)
-Current Throughput=1.17 M, Cores=14.65 (2 TMs)
-Current Throughput=1.6 M, Cores=13.65 (2 TMs)
-Current Throughput=1.6 M, Cores=13.88 (2 TMs)
-Current Throughput=2.02 M, Cores=13.92 (2 TMs)
-Summary Average: Throughput=1.45 M, Cores=14.21
-Stop job query q18
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q18   |1.45 M           |14.21    |102.2 K          |
-|Total |-                |-        |102.2 K          |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 1,450,000.00 events/sec
-
---- forl0 Summary ---
-  q18: 1,450,000 events/sec (102,041/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_170952/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)       forl0 proc eps     report eps     (/core)
----------------------------------------------------------------
-Q18                         1.45 M/s       1.45 M/s  102.04 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N05: nexmark_q19_tps_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_tps_probe --query q19 --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:11:03 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-5338d4be48ef5867d861917b6508295565d31058eb9f5bd2a5247ac29fdbe285
-[1/3] 启动 JobManager...
-249e1f21e9e0653f607fb86c5a22c66572ad9dad728cce165743b8ff59858488
-      JobManager IP: 172.22.0.2
-[2/3] 启动 TaskManager-1...
-585b8824242818150f7a6258f165f7fbe412cdd266905b51980f1955063e3af9
-[3/3] 启动 TaskManager-2...
-65ef9b63bda79d58e99f848c551f91b3c1458a57411b7c39db1fad47d2d469a0
-
-等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.22.0.4:42577-34d154 slots=4 free=4 heartbeatMs=0
-TM 172.22.0.3:37533-41145e slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_tps_probe --query q19
-[NexMark] Scenario: forl0_tps_probe — Non-contract probe: per-query NexMark steady-state TPS mode with sink throughput
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: hashmap
-NexMark Queries: q19
-NexMark Scenario: forl0_tps_probe
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q19']
-Backends: ['hashmap']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: hashmap
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-j0id6f5c/nexmark-home/queries)
-
-=== Running Nexmark Q19 (hashmap backend) ===
-Events: 0, TPS: 1000000
-Proportions: Person(1):Auction(1):Bid(98)
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-j0id6f5c/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-j0id6f5c/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-j0id6f5c/nexmark-home --queries q19 --category oa
-
-Benchmark Queries: [q19]
-==================================================================
-Start to run query q19 with workload [tps=1 M, eventsNum=0, percentage=bid:98,auction:1,person:1,kafkaServers:null]
-Monitor metrics after 50 seconds.
-Start to monitor metrics for 60 seconds.
-Current Throughput=822.77 K, Cores=8.88 (2 TMs)
-Current Throughput=822.77 K, Cores=12.26 (2 TMs)
-Current Throughput=822.77 K, Cores=7.44 (2 TMs)
-Current Throughput=989.3 K, Cores=8.78 (2 TMs)
-Current Throughput=989.3 K, Cores=11.81 (2 TMs)
-Current Throughput=1 M, Cores=7.46 (2 TMs)
-Current Throughput=1 M, Cores=9.84 (2 TMs)
-Current Throughput=1 M, Cores=11.28 (2 TMs)
-Current Throughput=1 M, Cores=7.19 (2 TMs)
-Current Throughput=1 M, Cores=9.86 (2 TMs)
-Current Throughput=1 M, Cores=10.97 (2 TMs)
-Current Throughput=1 M, Cores=6.89 (2 TMs)
-Current Throughput=1 M, Cores=9.68 (2 TMs)
-Summary Average: Throughput=957.64 K, Cores=9.41
-Stop job query q19
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q19   |957.64 K         |9.41     |101.75 K         |
-|Total |-                |-        |101.75 K         |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 957,640.00 events/sec
-
---- hashmap Summary ---
-  q19: 957,640 events/sec (101,768/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_171111/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)     hashmap proc eps     report eps     (/core)
----------------------------------------------------------------
-Q19                       957.64 K/s     957.64 K/s  101.77 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N06: nexmark_q19_tps_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_tps_probe --query q19 --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:13:12 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-9cda6f3a5d8a042c07f09cac99979a7f5690152fd186b65bc7d95fe44b3b71f0
-[1/3] 启动 JobManager...
-044dd6beabf40cd3e60a6152776c96b80435eb75339f1b78a99ff4ce6f41b3fc
-      JobManager IP: 172.23.0.2
-[2/3] 启动 TaskManager-1...
-812e726d8a396979e8ca0bb7212e0f2354ef172767fa803b30e8334fc6f09101
-[3/3] 启动 TaskManager-2...
-6fb28877acb8b4fd526953d04e6e12a69e64e40f574cd716071ff507eeef073a
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.23.0.3:41277-24e332 slots=4 free=4 heartbeatMs=0
-TM 172.23.0.4:46009-b97e39 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_tps_probe --query q19
-[NexMark] Scenario: forl0_tps_probe — Non-contract probe: per-query NexMark steady-state TPS mode with sink throughput
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: forl0
-NexMark Queries: q19
-NexMark Scenario: forl0_tps_probe
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q19']
-Backends: ['forl0']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: forl0
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-rveehff6/nexmark-home/queries)
-
-=== Running Nexmark Q19 (forl0 backend) ===
-Events: 0, TPS: 1000000
-Proportions: Person(1):Auction(1):Bid(98)
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-rveehff6/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-rveehff6/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-rveehff6/nexmark-home --queries q19 --category oa
-
-Benchmark Queries: [q19]
-==================================================================
-Start to run query q19 with workload [tps=1 M, eventsNum=0, percentage=bid:98,auction:1,person:1,kafkaServers:null]
-Monitor metrics after 50 seconds.
-Start to monitor metrics for 60 seconds.
-Current Throughput=792.07 K, Cores=5.55 (2 TMs)
-Current Throughput=792.07 K, Cores=5.48 (2 TMs)
-Current Throughput=792.07 K, Cores=5.36 (2 TMs)
-Current Throughput=958.75 K, Cores=5.43 (2 TMs)
-Current Throughput=958.75 K, Cores=5.36 (2 TMs)
-Current Throughput=1 M, Cores=5.44 (2 TMs)
-Current Throughput=1 M, Cores=5.4 (2 TMs)
-Current Throughput=1 M, Cores=5.46 (2 TMs)
-Current Throughput=1 M, Cores=5.4 (2 TMs)
-Current Throughput=1 M, Cores=5.65 (2 TMs)
-Current Throughput=1 M, Cores=5.41 (2 TMs)
-Current Throughput=1 M, Cores=5.6 (2 TMs)
-Summary Average: Throughput=941.19 K, Cores=5.46
-Stop job query q19
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q19   |941.19 K         |5.46     |172.36 K         |
-|Total |-                |-        |172.36 K         |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 941,190.00 events/sec
-
---- forl0 Summary ---
-  q19: 941,190 events/sec (172,379/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_171322/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)       forl0 proc eps     report eps     (/core)
----------------------------------------------------------------
-Q19                       941.19 K/s     941.19 K/s  172.38 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N07: nexmark_q20_lateq_deep_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_lateq_deep --query q20 --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:15:23 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-d92b8d3a94f7748666d5ab92830e84c4e03e8025c911846166b56f8e23535c94
-[1/3] 启动 JobManager...
-cec0c9abd167db727c6f513feb3294f1310356ed60c2fdcbafae14ef94e4911f
-      JobManager IP: 172.24.0.2
-[2/3] 启动 TaskManager-1...
-e65cc354ced1b5b36a9724bd1569fde330a52d62a36b45cc9007ff613437a32c
-[3/3] 启动 TaskManager-2...
-dc0d34193345cda7290fe0ffd56782aec5822a1780a94f46fdc15855f0e311cb
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.24.0.4:39295-62ffef slots=4 free=4 heartbeatMs=0
-TM 172.24.0.3:37569-20168d slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_no_full_gc_lateq_deep --query q20
-[NexMark] Scenario: forl0_no_full_gc_lateq_deep — Non-contract retry: q18/q19/q20 deeper state-pressure shaping under no-Full-GC acceptance
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: hashmap
-NexMark Queries: q20
-NexMark Scenario: forl0_no_full_gc_lateq_deep
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q20']
-Backends: ['hashmap']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: hashmap
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-tozzrt36/nexmark-home/queries)
-
-=== Running Nexmark Q20 (hashmap backend) ===
-Events: 0, TPS: 700000
-Proportions: Person(1):Auction(49):Bid(50)
-Hot ratios: bid.auctions=24, bid.bidders=default
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-tozzrt36/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-tozzrt36/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-tozzrt36/nexmark-home --queries q20 --category oa
-
-Benchmark Queries: [q20]
-==================================================================
-Start to run query q20 with workload [tps=700 K, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
-Monitor metrics after 25 seconds.
-Start to monitor metrics for 60 seconds.
-Current Throughput=258.69 K, Cores=12.42 (2 TMs)
-Current Throughput=258.69 K, Cores=15.57 (2 TMs)
-Current Throughput=258.69 K, Cores=13.66 (2 TMs)
-Current Throughput=375.37 K, Cores=16.06 (2 TMs)
-Current Throughput=375.37 K, Cores=23.45 (2 TMs)
-Current Throughput=492.04 K, Cores=16.79 (2 TMs)
-Current Throughput=492.04 K, Cores=17.11 (2 TMs)
-Current Throughput=608.72 K, Cores=15.67 (2 TMs)
-Current Throughput=608.72 K, Cores=16.21 (2 TMs)
-Summary Average: Throughput=414.26 K, Cores=16.33
-Stop job query q20
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q20   |414.26 K         |16.33    |25.37 K          |
-|Total |-                |-        |25.37 K          |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 414,260.00 events/sec
-
---- hashmap Summary ---
-  q20: 414,260 events/sec (25,368/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_171534/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)     hashmap proc eps     report eps     (/core)
----------------------------------------------------------------
-Q20                       414.26 K/s     414.26 K/s   25.37 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N08: nexmark_q20_lateq_deep_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_lateq_deep --query q20 --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:16:55 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-be77fab852831b465bb2d7485191c690e482b5abefb741297194f661c8d2c4af
-[1/3] 启动 JobManager...
-cf81a6190f519e782beabfb56fe4d9d63c6e4a318c534c9519a84f2f03c6637f
-      JobManager IP: 172.25.0.2
-[2/3] 启动 TaskManager-1...
-dab965c42305073e230a9012b1047ea083e189baaa803ada4c16d39a842d64d2
-[3/3] 启动 TaskManager-2...
-ab26a971eb913a42b1e3c051fb70db1501575eaad6f63ce112f811ef7549843b
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.25.0.3:41851-23a968 slots=4 free=4 heartbeatMs=0
-TM 172.25.0.4:39557-c69531 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_no_full_gc_lateq_deep --query q20
-[NexMark] Scenario: forl0_no_full_gc_lateq_deep — Non-contract retry: q18/q19/q20 deeper state-pressure shaping under no-Full-GC acceptance
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: forl0
-NexMark Queries: q20
-NexMark Scenario: forl0_no_full_gc_lateq_deep
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q20']
-Backends: ['forl0']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: forl0
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-6p7we57s/nexmark-home/queries)
-
-=== Running Nexmark Q20 (forl0 backend) ===
-Events: 0, TPS: 700000
-Proportions: Person(1):Auction(49):Bid(50)
-Hot ratios: bid.auctions=24, bid.bidders=default
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-6p7we57s/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-6p7we57s/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-6p7we57s/nexmark-home --queries q20 --category oa
-
-Benchmark Queries: [q20]
-==================================================================
-Start to run query q20 with workload [tps=700 K, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
-Monitor metrics after 25 seconds.
-Start to monitor metrics for 60 seconds.
-Current Throughput=236.5 K, Cores=12.68 (2 TMs)
-Current Throughput=236.5 K, Cores=10.23 (2 TMs)
-Current Throughput=236.5 K, Cores=11.26 (2 TMs)
-Current Throughput=353.11 K, Cores=7.7 (2 TMs)
-Current Throughput=353.11 K, Cores=9.41 (2 TMs)
-Current Throughput=469.85 K, Cores=7.32 (2 TMs)
-Current Throughput=469.85 K, Cores=8.69 (2 TMs)
-Current Throughput=586.53 K, Cores=8.49 (2 TMs)
-Current Throughput=586.53 K, Cores=7.3 (2 TMs)
-Current Throughput=703.2 K, Cores=9.57 (2 TMs)
-Current Throughput=703.2 K, Cores=7.03 (2 TMs)
-Current Throughput=700.05 K, Cores=8.98 (2 TMs)
-Summary Average: Throughput=469.58 K, Cores=9.06
-Stop job query q20
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q20   |469.58 K         |9.06     |51.85 K          |
-|Total |-                |-        |51.85 K          |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 469,580.00 events/sec
-
---- forl0 Summary ---
-  q20: 469,580 events/sec (51,830/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_171705/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)       forl0 proc eps     report eps     (/core)
----------------------------------------------------------------
-Q20                       469.58 K/s     469.58 K/s   51.83 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N09: nexmark_q9_allq_pressure_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_allq_pressure --query q9 --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:18:41 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-8c577a2ad179e108af3a65d5591449169061f1be1e45fa9d79672d222a6c892b
-[1/3] 启动 JobManager...
-2b1e31e2d49006ce3f7dee856746b7e8fbd3ba3aa89b0cc7f07f3f715dc7c658
-      JobManager IP: 172.26.0.2
-[2/3] 启动 TaskManager-1...
-19a16a6b8321927c41c7d49dea67cda6a7e31a39b0a3d5c806bc3186eea5c930
-[3/3] 启动 TaskManager-2...
-da0b73f978fa70cd3699334458027187bc0f6652b51820a81b8e6d0b0d0cdedf
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.26.0.4:38865-1fbfe1 slots=4 free=4 heartbeatMs=0
-TM 172.26.0.3:36507-07827e slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_no_full_gc_allq_pressure --query q9
-[NexMark] Scenario: forl0_no_full_gc_allq_pressure — Non-contract pressure sweep: tune every stateful NexMark query under no-Full-GC acceptance
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: hashmap
-NexMark Queries: q9
-NexMark Scenario: forl0_no_full_gc_allq_pressure
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q9']
-Backends: ['hashmap']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: hashmap
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-phb3rscj/nexmark-home/queries)
-
-=== Running Nexmark Q9 (hashmap backend) ===
-Events: 0, TPS: 200000
-Proportions: Person(1):Auction(49):Bid(50)
-Hot ratios: bid.auctions=16, bid.bidders=default
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-phb3rscj/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-phb3rscj/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-phb3rscj/nexmark-home --queries q9 --category oa
-
-Benchmark Queries: [q9]
-==================================================================
-Start to run query q9 with workload [tps=200 K, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
-Monitor metrics after 25 seconds.
-Start to monitor metrics for 45 seconds.
-Current Throughput=74.32 K, Cores=8.49 (2 TMs)
-Current Throughput=74.32 K, Cores=7.02 (2 TMs)
-Current Throughput=74.32 K, Cores=7.56 (2 TMs)
-Current Throughput=107.65 K, Cores=6.07 (2 TMs)
-Current Throughput=107.65 K, Cores=9.04 (2 TMs)
-Current Throughput=107.65 K, Cores=9.05 (2 TMs)
-Current Throughput=107.65 K, Cores=9.05 (2 TMs)
-Current Throughput=107.65 K, Cores=9.04 (2 TMs)
-Current Throughput=107.65 K, Cores=9.04 (2 TMs)
-Summary Average: Throughput=96.54 K, Cores=8.26
-Stop job query q9
-Exception in thread "main" java.lang.RuntimeException: java.lang.RuntimeException: http execute failed,status code is 409
-	at com.github.nexmark.flink.metric.FlinkRestClient.patch(FlinkRestClient.java:217)
-	at com.github.nexmark.flink.metric.FlinkRestClient.cancelJob(FlinkRestClient.java:133)
-	at com.github.nexmark.flink.QueryRunner.cancelJob(QueryRunner.java:113)
-	at com.github.nexmark.flink.QueryRunner.run(QueryRunner.java:89)
-	at com.github.nexmark.flink.Benchmark.executeQueries(Benchmark.java:206)
-	at com.github.nexmark.flink.Benchmark.runQueries(Benchmark.java:112)
-	at com.github.nexmark.flink.Benchmark.main(Benchmark.java:83)
-Caused by: java.lang.RuntimeException: http execute failed,status code is 409
-	at com.github.nexmark.flink.metric.FlinkRestClient.patch(FlinkRestClient.java:213)
-	... 6 more
-
-  WARNING: NexMark driver failed after printing summary; keeping parsed sample
-
-  Result: 96,540.00 events/sec
-
---- hashmap Summary ---
-  q9: 96,540 events/sec (11,688/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_171851/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)     hashmap proc eps     report eps     (/core)
----------------------------------------------------------------
-Q9                         96.54 K/s      96.54 K/s   11.69 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N10: nexmark_q9_allq_pressure_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_allq_pressure --query q9 --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:20:07 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-2446f0815ec581ed8c164a4f9e774ff0653c659dbe3d796b430a7f612edec272
-[1/3] 启动 JobManager...
-7418f3fac4ec0de76d4c99b55aed7461ffd2849b820e1c3a5135a8209fcf629f
-      JobManager IP: 172.27.0.2
-[2/3] 启动 TaskManager-1...
-c014197c552fc24cba435aa75e408ae2f909fb0bf3256a2449207898149994d1
-[3/3] 启动 TaskManager-2...
-26b438993269f30faa878742baa3ddfdeaf9d0336dae05992cc1a494e7fb16cc
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.27.0.4:40857-7d347f slots=4 free=4 heartbeatMs=0
-TM 172.27.0.3:44799-50284a slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_no_full_gc_allq_pressure --query q9
-[NexMark] Scenario: forl0_no_full_gc_allq_pressure — Non-contract pressure sweep: tune every stateful NexMark query under no-Full-GC acceptance
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: forl0
-NexMark Queries: q9
-NexMark Scenario: forl0_no_full_gc_allq_pressure
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q9']
-Backends: ['forl0']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: forl0
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-zylmzthv/nexmark-home/queries)
-
-=== Running Nexmark Q9 (forl0 backend) ===
-Events: 0, TPS: 200000
-Proportions: Person(1):Auction(49):Bid(50)
-Hot ratios: bid.auctions=16, bid.bidders=default
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-zylmzthv/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-zylmzthv/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-zylmzthv/nexmark-home --queries q9 --category oa
-
-Benchmark Queries: [q9]
-==================================================================
-Start to run query q9 with workload [tps=200 K, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
-Monitor metrics after 25 seconds.
-Start to monitor metrics for 45 seconds.
-Current Throughput=67.14 K, Cores=9.1 (2 TMs)
-Current Throughput=67.14 K, Cores=13.84 (2 TMs)
-Current Throughput=67.14 K, Cores=14.96 (2 TMs)
-Current Throughput=100.47 K, Cores=11.29 (2 TMs)
-Current Throughput=100.47 K, Cores=10.91 (2 TMs)
-Current Throughput=134.09 K, Cores=10.36 (2 TMs)
-Current Throughput=134.09 K, Cores=12.69 (2 TMs)
-Current Throughput=167.43 K, Cores=11.76 (2 TMs)
-Current Throughput=167.43 K, Cores=11.75 (2 TMs)
-Summary Average: Throughput=111.71 K, Cores=11.85
-Stop job query q9
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q9    |111.71 K         |11.85    |9.43 K           |
-|Total |-                |-        |9.43 K           |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 111,710.00 events/sec
-
---- forl0 Summary ---
-  q9: 111,710 events/sec (9,427/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_172017/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)       forl0 proc eps     report eps     (/core)
----------------------------------------------------------------
-Q9                        111.71 K/s     111.71 K/s    9.43 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N11: nexmark_q4_pressure_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_pressure --query q4 --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:21:38 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-71d048be84d8aa19fad4b3489da1fad925bd06bbd1f49ceec1c8eb9ce37788aa
-[1/3] 启动 JobManager...
-ee43d04f2685c90cd37d4dee3ea3b84e574aefb9aa7da316bee9b1dd9e811aac
-      JobManager IP: 172.28.0.2
-[2/3] 启动 TaskManager-1...
-48c9562c1a2374e5f0fdbcbe3531db1628da4ccff420c224a526be5bedfb085d
-[3/3] 启动 TaskManager-2...
-14ab1efa95bb6ed646af14dd2535bd5733a58c17c9967b3c752c88f897cf2943
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.28.0.3:40577-71c999 slots=4 free=4 heartbeatMs=0
-TM 172.28.0.4:33195-5d357e slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_no_full_gc_pressure --query q4
-[NexMark] Scenario: forl0_no_full_gc_pressure — Non-contract pressure probe: keep no-Full-GC acceptance while preserving high NexMark state pressure
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: hashmap
-NexMark Queries: q4
-NexMark Scenario: forl0_no_full_gc_pressure
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q4']
-Backends: ['hashmap']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: hashmap
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-q5rvgh_o/nexmark-home/queries)
-
-=== Running Nexmark Q4 (hashmap backend) ===
-Events: 0, TPS: 600000
-Proportions: Person(1):Auction(49):Bid(50)
-Hot ratios: bid.auctions=8, bid.bidders=default
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-q5rvgh_o/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-q5rvgh_o/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-q5rvgh_o/nexmark-home --queries q4 --category oa
-
-Benchmark Queries: [q4]
-==================================================================
-Start to run query q4 with workload [tps=600 K, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
-Monitor metrics after 20 seconds.
-Start to monitor metrics for 45 seconds.
-Current Throughput=172.48 K, Cores=20.53 (2 TMs)
-Current Throughput=172.48 K, Cores=22.73 (2 TMs)
-Current Throughput=172.48 K, Cores=19.7 (2 TMs)
-Current Throughput=172.48 K, Cores=19.7 (2 TMs)
-Current Throughput=172.48 K, Cores=19.7 (2 TMs)
-Current Throughput=172.48 K, Cores=19.69 (2 TMs)
-Current Throughput=172.48 K, Cores=19.7 (2 TMs)
-Current Throughput=172.48 K, Cores=19.7 (2 TMs)
-Current Throughput=172.48 K, Cores=19.7 (2 TMs)
-Current Throughput=172.48 K, Cores=19.69 (2 TMs)
-Summary Average: Throughput=172.48 K, Cores=20.08
-Stop job query q4
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q4    |172.48 K         |20.08    |8.59 K           |
-|Total |-                |-        |8.59 K           |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 172,480.00 events/sec
-
---- hashmap Summary ---
-  q4: 172,480 events/sec (8,590/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_172149/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)     hashmap proc eps     report eps     (/core)
----------------------------------------------------------------
-Q4                        172.48 K/s     172.48 K/s    8.59 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N12: nexmark_q4_pressure_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_pressure --query q4 --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:23:04 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-30c723f126d80bd5f1850f9f64226157ed5fe5a2750b0247fd7ab7730e82d71e
-[1/3] 启动 JobManager...
-019bec24ddfe7b49216007a1d1666d112059e272d7acbaaa065da886d4262f50
-      JobManager IP: 172.29.0.2
-[2/3] 启动 TaskManager-1...
-903323470e9e22c1c5fc8cfb622a155390134f08ababcf14413ad40edda33ac4
-[3/3] 启动 TaskManager-2...
-2bcd62d80626dbb22c9fd4377ec0a3491b0370e6d6198c9ac1595d4ae4ff3ef5
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 172.29.0.3:40577-c51203 slots=4 free=4 heartbeatMs=0
-TM 172.29.0.4:44273-22ec34 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_no_full_gc_pressure --query q4
-[NexMark] Scenario: forl0_no_full_gc_pressure — Non-contract pressure probe: keep no-Full-GC acceptance while preserving high NexMark state pressure
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: forl0
-NexMark Queries: q4
-NexMark Scenario: forl0_no_full_gc_pressure
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q4']
-Backends: ['forl0']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: forl0
-============================================================
-[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-knvgzrep/nexmark-home/queries)
-
-=== Running Nexmark Q4 (forl0 backend) ===
-Events: 0, TPS: 600000
-Proportions: Person(1):Auction(49):Bid(50)
-Hot ratios: bid.auctions=8, bid.bidders=default
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-knvgzrep/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-knvgzrep/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-knvgzrep/nexmark-home --queries q4 --category oa
-
-Benchmark Queries: [q4]
-==================================================================
-Start to run query q4 with workload [tps=600 K, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
-Monitor metrics after 20 seconds.
-Start to monitor metrics for 45 seconds.
-Current Throughput=146 K, Cores=25.98 (2 TMs)
-Current Throughput=146 K, Cores=32.24 (2 TMs)
-Current Throughput=146 K, Cores=32.71 (2 TMs)
-Current Throughput=248.19 K, Cores=26.68 (2 TMs)
-Current Throughput=248.19 K, Cores=33.86 (2 TMs)
-Current Throughput=346.99 K, Cores=33.44 (2 TMs)
-Current Throughput=346.99 K, Cores=25.68 (2 TMs)
-Current Throughput=346.99 K, Cores=25.68 (2 TMs)
-Current Throughput=346.99 K, Cores=25.68 (2 TMs)
-Current Throughput=346.99 K, Cores=25.68 (2 TMs)
-Summary Average: Throughput=266.93 K, Cores=28.76
-Stop job query q4
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q4    |266.93 K         |28.76    |9.28 K           |
-|Total |-                |-        |9.28 K           |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 266,930.00 events/sec
-
---- forl0 Summary ---
-  q4: 266,930 events/sec (9,281/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_172315/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)       forl0 proc eps     report eps     (/core)
----------------------------------------------------------------
-Q4                        266.93 K/s     266.93 K/s    9.28 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N13: nexmark_q3_extra_sql_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_extra_sql --query q3 --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:24:31 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-9db3126965bf13be21c17b5bd5779017db06900b45ddc18efea4064d94eee77a
-[1/3] 启动 JobManager...
-47ceaa5268122c3816f2ff03a8e0cbe8fef30f4e77c5e721498287a57edda620
-      JobManager IP: 192.168.0.2
-[2/3] 启动 TaskManager-1...
-ae8b79290573f6b6663a78279a0c6751462b9a8fcbbcd05be4a26b1bfe96b6a8
-[3/3] 启动 TaskManager-2...
-82f842804f86cc8d7d03b5b9bad16828487e4ac336c438b78d237617b196007c
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.0.3:38943-3e48ea slots=4 free=4 heartbeatMs=0
-TM 192.168.0.4:45275-dcdcc8 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_no_full_gc_extra_sql --query q3
-[NexMark] Scenario: forl0_no_full_gc_extra_sql — Non-contract sweep: additional NexMark SQL queries under no-Full-GC acceptance
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: hashmap
-NexMark Queries: q3
-NexMark Scenario: forl0_no_full_gc_extra_sql
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q3']
-Backends: ['hashmap']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: hashmap
-============================================================
-
-=== Running Nexmark Q3 (hashmap backend) ===
-Events: 0, TPS: 1000000
-Proportions: Person(50):Auction(50):Bid(0)
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-30tpv835/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-30tpv835/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /root/forl0-runtime/docker/deploy/nexmark-flink --queries q3 --category oa
-
-Benchmark Queries: [q3]
-==================================================================
-Start to run query q3 with workload [tps=1 M, eventsNum=0, percentage=bid:0,auction:50,person:50,kafkaServers:null]
-Monitor metrics after 20 seconds.
-Start to monitor metrics for 60 seconds.
-Current Throughput=271.37 K, Cores=13.59 (2 TMs)
-Current Throughput=271.37 K, Cores=11.94 (2 TMs)
-Current Throughput=271.37 K, Cores=12.03 (2 TMs)
-Current Throughput=427.8 K, Cores=15.3 (2 TMs)
-Current Throughput=427.8 K, Cores=15.66 (2 TMs)
-Current Throughput=577.26 K, Cores=13.96 (2 TMs)
-Current Throughput=577.26 K, Cores=15.22 (2 TMs)
-Current Throughput=728.41 K, Cores=13.69 (2 TMs)
-Current Throughput=728.41 K, Cores=13.7 (2 TMs)
-Current Throughput=728.41 K, Cores=13.69 (2 TMs)
-Current Throughput=728.41 K, Cores=13.7 (2 TMs)
-Current Throughput=728.41 K, Cores=13.69 (2 TMs)
-Summary Average: Throughput=538.86 K, Cores=13.85
-Stop job query q3
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q3    |538.86 K         |13.85    |38.92 K          |
-|Total |-                |-        |38.92 K          |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 538,860.00 events/sec
-
---- hashmap Summary ---
-  q3: 538,860 events/sec (38,907/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_172441/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)     hashmap proc eps     report eps     (/core)
----------------------------------------------------------------
-Q3                        538.86 K/s     538.86 K/s   38.91 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction N14: nexmark_q3_extra_sql_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_extra_sql --query q3 --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        nexmark
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:26:12 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-b09a9aa8ff8960d1c7a04902ad240e8e031d8f8ecdd706937af11602b58eb401
-[1/3] 启动 JobManager...
-7b62b551fe6965eeeb3a7cdbf81ee35e61676bc4eecdde5945dce07c7126ad5d
-      JobManager IP: 192.168.16.2
-[2/3] 启动 TaskManager-1...
-2e112a2ced95263cad35ae544c8a58094e7069edcb6ec1f6759b86525e978c0f
-[3/3] 启动 TaskManager-2...
-06eec315285c354c38b5628a9f52b20d1b1ea63febc7d12438a4a310c820313c
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.16.3:41729-c82b86 slots=4 free=4 heartbeatMs=0
-TM 192.168.16.4:41101-b26666 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_no_full_gc_extra_sql --query q3
-[NexMark] Scenario: forl0_no_full_gc_extra_sql — Non-contract sweep: additional NexMark SQL queries under no-Full-GC acceptance
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: nexmark
-Backends: forl0
-NexMark Queries: q3
-NexMark Scenario: forl0_no_full_gc_extra_sql
-============================================================
-
-============================================================
-Running NexMark Benchmark
-============================================================
-
-============================================================
-Nexmark DataStream Benchmark
-============================================================
-Queries: ['q3']
-Backends: ['forl0']
-Repeat per query: 1
-Min successful samples: 1
-Mode: benchmark
-============================================================
-
-
-============================================================
-Backend: forl0
-============================================================
-
-=== Running Nexmark Q3 (forl0 backend) ===
-Events: 0, TPS: 1000000
-Proportions: Person(50):Auction(50):Bid(0)
-Command: java -Dlog.file=/root/forl0-runtime/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-6xejjf3h/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-6xejjf3h/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false -cp /root/forl0-runtime/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /root/forl0-runtime/docker/deploy/nexmark-flink --queries q3 --category oa
-
-Benchmark Queries: [q3]
-==================================================================
-Start to run query q3 with workload [tps=1 M, eventsNum=0, percentage=bid:0,auction:50,person:50,kafkaServers:null]
-Monitor metrics after 20 seconds.
-Start to monitor metrics for 60 seconds.
-Current Throughput=239.89 K, Cores=9.25 (2 TMs)
-Current Throughput=239.89 K, Cores=9.77 (2 TMs)
-Current Throughput=239.89 K, Cores=8.89 (2 TMs)
-Current Throughput=398.1 K, Cores=9.6 (2 TMs)
-Current Throughput=398.1 K, Cores=9.81 (2 TMs)
-Current Throughput=557.61 K, Cores=8.38 (2 TMs)
-Current Throughput=557.61 K, Cores=9.16 (2 TMs)
-Current Throughput=720.2 K, Cores=9.19 (2 TMs)
-Current Throughput=720.2 K, Cores=9.03 (2 TMs)
-Current Throughput=877.13 K, Cores=9.95 (2 TMs)
-Current Throughput=877.13 K, Cores=9.23 (2 TMs)
-Current Throughput=949.16 K, Cores=10.04 (2 TMs)
-Summary Average: Throughput=564.57 K, Cores=9.36
-Stop job query q3
--------------------------------- Nexmark Results --------------------------------
-
-+------+-----------------+---------+-----------------+
-| Query| Throughput (r/s)| Cores   | Throughput/Cores|
-+------+-----------------+---------+-----------------+
-|q3    |564.57 K         |9.36     |60.33 K          |
-|Total |-                |-        |60.33 K          |
-+------+-----------------+---------+-----------------+
-
-
-
-  Result: 564,570.00 events/sec
-
---- forl0 Summary ---
-  q3: 564,570 events/sec (60,317/core)
-
-[Nexmark] Results saved to: /root/forL0/benchmark/results/nexmark_20260811_172622/nexmark_results.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-
-## NexMark Benchmark
---------------------------------------------------
-Query   Proc(s)       forl0 proc eps     report eps     (/core)
----------------------------------------------------------------
-Q3                        564.57 K/s     564.57 K/s   60.32 K/s
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C01: client_contract_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario contract_baseline --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:27:53 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-238a48f7c70c49c6c22d274f54d1d193c8ed866e22954670f69093d9fd5ec57a
-[1/3] 启动 JobManager...
-c2e46053279f019664346ca08617f72db39128052187218d65d56f68f5c2c83b
-      JobManager IP: 192.168.32.2
-[2/3] 启动 TaskManager-1...
-ca57aba4ffa0cffd6fb96b6a05e04c1d45af762c98b9c8f38c50990a3576ee59
-[3/3] 启动 TaskManager-2...
-77b2feac06bd91ed5d35a35b7e21e19f9376d48d90f33fe752e98393fd408c1c
-
-等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.32.4:43199-259f30 slots=4 free=4 heartbeatMs=0
-TM 192.168.32.3:44009-eaf7c4 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend hashmap --scenario contract_baseline
-[Client Usecase] Scenario: contract_baseline — Contract rule: original record volume, default settings
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: hashmap
-Client Usecase Scenario: contract_baseline
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (hashmap backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, leftStreamTarget=150, rightStreamTarget=150, leftPerSubtask=75, rightPerSubtask=75, estimatedActualTotal=300, checkpointInterval=0
-Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
-
-Job has been submitted with JobID 07f758ff0000e38d7d5277ee43f97e4c
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: 07f758ff0000e38d7d5277ee43f97e4c
-  Job state: RUNNING
-  All sources finished; cancelling job for clean bounded benchmark shutdown...
-  Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_contract_baseline_hashmap_20260811_172812.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-hashmap             :              37 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C02: client_contract_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario contract_baseline --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:28:12 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-cb869f806faa7e6c16284456639a9e442177386d9af027c6fea7e38faa2f3612
-[1/3] 启动 JobManager...
-37211909984e666055155c0f6457e98fa827d8394b4b7fea3cbb66437d4c2239
-      JobManager IP: 192.168.48.2
-[2/3] 启动 TaskManager-1...
-6a02f47119e540c07976a16e9c5cbb658c7bf61f0705f521dde72b7605a645e5
-[3/3] 启动 TaskManager-2...
-c83ec1c8444aee724dcbb59d1b906da8a495dbe99357f27c9df90c59c37c4369
-
-等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.48.3:46025-3df72a slots=4 free=4 heartbeatMs=0
-TM 192.168.48.4:42829-aaf5ce slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend forl0 --scenario contract_baseline
-[Client Usecase] Scenario: contract_baseline — Contract rule: original record volume, default settings
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: forl0
-Client Usecase Scenario: contract_baseline
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (forl0 backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=csv_replay, desiredTotalInputRecords=300, parallelism=2, leftStreamTarget=150, rightStreamTarget=150, leftPerSubtask=75, rightPerSubtask=75, estimatedActualTotal=300, checkpointInterval=0
-Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=512 -Dstate.backend.forl0.max-table-capacity=8192 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=128mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 75 --rightNumRecords 75 --parallelism 2 --checkpointInterval 0
-
-Job has been submitted with JobID f19ccaa57724256208261adce4938d7f
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: f19ccaa57724256208261adce4938d7f
-  Job state: RUNNING
-  All sources finished; cancelling job for clean bounded benchmark shutdown...
-  Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_contract_baseline_forl0_20260811_172831.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-forl0               :              37 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C03: client_forl0_optimized_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario forl0_optimized --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:28:31 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-19bff3c285e449cbf8a188e25789a46ce093ddf27e434203f1b8c3f5a33a73d1
-[1/3] 启动 JobManager...
-d4d99a76d8105c92d953bbd2551341fa5da11cd9bbf25a7809927571a1c93f68
-      JobManager IP: 192.168.64.2
-[2/3] 启动 TaskManager-1...
-c7e815dc27acc14430615843561a736ea5d6342ff187619a8e1a361c1fde5048
-[3/3] 启动 TaskManager-2...
-7e86b1c382a0c59c9e94b22ceb7670049a34a195b147fd1461b3c353255f9553
-
-等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.64.3:36317-c0c99c slots=4 free=4 heartbeatMs=0
-TM 192.168.64.4:39059-9f9e10 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend hashmap --scenario forl0_optimized
-[Client Usecase] Scenario: forl0_optimized — ForL0-tuned: higher volume, larger L0 cache, no checkpoint
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: hashmap
-Client Usecase Scenario: forl0_optimized
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (hashmap backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=csv_replay, desiredTotalInputRecords=3000, parallelism=2, leftStreamTarget=1500, rightStreamTarget=1500, leftPerSubtask=750, rightPerSubtask=750, estimatedActualTotal=3000, checkpointInterval=0
-Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 750 --rightNumRecords 750 --parallelism 2 --checkpointInterval 0
-
-Job has been submitted with JobID d359d5b21cbfa0907c3a6558f5767e72
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: d359d5b21cbfa0907c3a6558f5767e72
-  Job state: RUNNING
-  All sources finished; cancelling job for clean bounded benchmark shutdown...
-  Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_forl0_optimized_hashmap_20260811_172850.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-hashmap             :             372 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C04: client_forl0_optimized_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario forl0_optimized --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:28:50 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-1ff2af5e46f93746d554ae1c78d2c8c466e9a1e3ea7abb35916d0db777335900
-[1/3] 启动 JobManager...
-2f4fa25e05a5ffe634f90a230eab433b1a89eab658414052a2a3c7a56cef4a47
-      JobManager IP: 192.168.80.2
-[2/3] 启动 TaskManager-1...
-8bf0f11dd711713939288dedb8fb2a027d9c2c736365fd1748759e800c6aa96c
-[3/3] 启动 TaskManager-2...
-0f1741fcead1131acc11f6a4869b77a1b1603e54036c6fc854dcb978a235fb90
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.80.4:33827-86e5e3 slots=4 free=4 heartbeatMs=0
-TM 192.168.80.3:42991-34f9b9 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend forl0 --scenario forl0_optimized
-[Client Usecase] Scenario: forl0_optimized — ForL0-tuned: higher volume, larger L0 cache, no checkpoint
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: forl0
-Client Usecase Scenario: forl0_optimized
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (forl0 backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=csv_replay, desiredTotalInputRecords=3000, parallelism=2, leftStreamTarget=1500, rightStreamTarget=1500, leftPerSubtask=750, rightPerSubtask=750, estimatedActualTotal=3000, checkpointInterval=0
-Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=512 -Dstate.backend.forl0.max-table-capacity=8192 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=128mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 750 --rightNumRecords 750 --parallelism 2 --checkpointInterval 0
-
-Job has been submitted with JobID c312a93184bbf6485737915db02713f3
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: c312a93184bbf6485737915db02713f3
-  Job state: RUNNING
-  All sources finished; cancelling job for clean bounded benchmark shutdown...
-  Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_forl0_optimized_forl0_20260811_172911.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-forl0               :             371 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C05: client_state_pressure_300k_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario state_pressure_300k --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:29:11 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-caa29c60e4db8b8435806d7069b9827c571b5315b0400d0329a10d73104b3265
-[1/3] 启动 JobManager...
-1be35d0eafe9cb450c93b4353c00dfc0777420d1ba445375215b33bc60646196
-      JobManager IP: 192.168.96.2
-[2/3] 启动 TaskManager-1...
-66c62d2db89ff843677f7f075eecd315dc97ee42b6a69b365eb179c8ffc4ef1f
-[3/3] 启动 TaskManager-2...
-f9e501c90c7fe39e9ebd317ea6b3da1a367d86132a398ab594264ba3abc2e34f
-
-等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.96.3:42665-d637d0 slots=4 free=4 heartbeatMs=0
-TM 192.168.96.4:40193-73d428 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend hashmap --scenario state_pressure_300k
-[Client Usecase] Scenario: state_pressure_300k — Non-contract: 300k records, no checkpoint, high state pressure for MapState/ValueState paths
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: hashmap
-Client Usecase Scenario: state_pressure_300k
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (hashmap backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=csv_replay, desiredTotalInputRecords=300000, parallelism=4, leftStreamTarget=150000, rightStreamTarget=150000, leftPerSubtask=37500, rightPerSubtask=37500, estimatedActualTotal=300000, checkpointInterval=0
-Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 37500 --rightNumRecords 37500 --parallelism 4 --checkpointInterval 0
-
-Job has been submitted with JobID 90b6abe25ddfa0298bbb8289384b1641
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: 90b6abe25ddfa0298bbb8289384b1641
-  Job state: RUNNING
-  All sources finished; cancelling job for clean bounded benchmark shutdown...
-  Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_state_pressure_300k_hashmap_20260811_173046.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-hashmap             :             934 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C06: client_state_pressure_300k_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario state_pressure_300k --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:30:46 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-646307780bc6213bb9d3855ec611f4066ef0524b760d5b6bfa0ea0b07d67e226
-[1/3] 启动 JobManager...
-21d2ac2ed95c5e9b8f0cc8065ff7d5135f345c65712bb70c4074bef7dd06c547
-      JobManager IP: 192.168.112.2
-[2/3] 启动 TaskManager-1...
-87af60784adca322af5ec45462395ba119daac8643b7123a4ae6f774c195f0ac
-[3/3] 启动 TaskManager-2...
-e67a46d14bb18a5f2851219deb32b70cce504c09fef3183d53fbb5e3070f5a90
-
-等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.112.4:36425-96e0df slots=4 free=4 heartbeatMs=0
-TM 192.168.112.3:44267-630a09 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend forl0 --scenario state_pressure_300k
-[Client Usecase] Scenario: state_pressure_300k — Non-contract: 300k records, no checkpoint, high state pressure for MapState/ValueState paths
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: forl0
-Client Usecase Scenario: state_pressure_300k
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (forl0 backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=csv_replay, desiredTotalInputRecords=300000, parallelism=4, leftStreamTarget=150000, rightStreamTarget=150000, leftPerSubtask=37500, rightPerSubtask=37500, estimatedActualTotal=300000, checkpointInterval=0
-Warning: customer source applies env parallelism to each source instance and uses event-time timers without watermark emission. This runner compensates the record count at submission time, but long-running jobs can still accumulate state faster than expected.
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=2048 -Dstate.backend.forl0.max-table-capacity=65536 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=256mb -Dstate.backend.forl0.l0-memory.max-size=512mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false /root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar --leftNumRecords 37500 --rightNumRecords 37500 --parallelism 4 --checkpointInterval 0
-
-Job has been submitted with JobID 3c3851687de5fb9891117fea2b0212f5
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: 3c3851687de5fb9891117fea2b0212f5
-  Job state: RUNNING
-  All sources finished; cancelling job for clean bounded benchmark shutdown...
-  Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_state_pressure_300k_forl0_20260811_173222.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-forl0               :             935 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C07: client_scalar_ops64_batch_hashmap
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     hashmap
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:32:22 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-344bb95da8360ec72541432a013f4cee990b4ea662796860c42a8245d096748b
-[1/3] 启动 JobManager...
-a56b5445268f8623a9f45f6d9a3cb5d965c581dc98155284ec839e963925f20d
-      JobManager IP: 192.168.128.2
-[2/3] 启动 TaskManager-1...
-14d4b2fe6763489e8668f84a433bfe2574f2c3a7db29e8dd40a354a1d1e2bb7b
-[3/3] 启动 TaskManager-2...
-69cdd369ebb072b46b3545498115ff3d3d7940bdb174ce7d668157d57a3d7f7b
-
-等待 JobManager 就绪...
-..
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.128.3:39883-b8d3b9 slots=4 free=4 heartbeatMs=0
-TM 192.168.128.4:46531-ef0e7e slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend hashmap --scenario scalar_state_probe_2m_ops64_batch
-[Client Usecase] Scenario: scalar_state_probe_2m_ops64_batch — Non-contract: stronger scalar-state pressure with 64 MapState<Long,Long> updates batched by ForL0
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: hashmap
-Client Usecase Scenario: scalar_state_probe_2m_ops64_batch
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (hashmap backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=scalar_state, desiredTotalInputRecords=2000000, parallelism=4, leftStreamTarget=1800000, rightStreamTarget=200000, leftPerSubtask=450000, rightPerSubtask=50000, estimatedActualTotal=2000000, checkpointInterval=0
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -C file:///root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar /root/forl0-runtime/docker/deploy/client-drift-benchmark-1.0-SNAPSHOT.jar --leftNumRecords 450000 --rightNumRecords 50000 --parallelism 4 --checkpointInterval 0 --mode scalar_state --hotKeyCount 4096 --coldKeyCount 500000 --hotTrafficPercent 80 --driftIntervalRecords 50000 --driftStep 2048 --rightDelayMs 0 --timestampMode hot_bucket --timestampHotBuckets 65536 --timestampKeySpace 1000000 --timestampDriftIntervalRecords 50000 --timestampDriftStep 32768 --scalarOpsPerRecord 64 --mapKeyModulo 262144 --scalarShape map_batch
-
-Job has been submitted with JobID 2aab363b60f7c3004baa5866f3a3b9f8
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: 2aab363b60f7c3004baa5866f3a3b9f8
-  Job state: RUNNING
-  All sources finished; cancelling job for clean bounded benchmark shutdown...
-  Job state: CANCELLING
-  Job state: CANCELED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_scalar_state_probe_2m_ops64_batch_hashmap_20260811_173256.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-hashmap             :          62,068 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Ascend reproduction C08: client_scalar_ops64_batch_forl0
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --test client_usecase --scenario scalar_state_probe_2m_ops64_batch --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        client_usecase
-  Backend:     forl0
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:32:57 +0800
-
-[2/5] 按要求重启 Flink 集群
-=== 停止 BriskState Flink Docker 集群 ===
-flink-taskmanager-2
-flink-taskmanager-1
-flink-jobmanager
-flink-net
-已停止
-=== 启动 BriskState Flink Docker 集群 ===
-  FLINK_HOME: /root/flink_home
-  NATIVE:     /root/flink_home/native
-  CONF:       /root/forl0-runtime/docker/conf
-  Docker:     docker
-  JM memory:  8g
-  TM memory:  16g
-  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
-  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
-
-07092df4e2ea28b3b602adaa3826dce567fa823f39ce2ea296faa13aa9cb3c9b
-[1/3] 启动 JobManager...
-19e92f145ef52dc311fdf94648ef8158205dedea129ac4aacc53f5d64a4a0598
-      JobManager IP: 192.168.144.2
-[2/3] 启动 TaskManager-1...
-38c8af2abad0ee5d4a2d3b0e484e510ba05854fc0c716f6e5c041836a75b6b5d
-[3/3] 启动 TaskManager-2...
-f5759a4a924fcdab64388abf23f329cc876e278e9556366fcdf238ff018803f1
-
-等待 JobManager 就绪...
-...
-=== 集群启动成功! ===
-  Web UI: http://localhost:8081
-  TaskManagers: 2
-  Slots:        8
-
-  查看 TaskManager 日志: /root/forl0-runtime/docker/docker_run.sh logs tm1
-  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
-      ✓ Flink 集群健康:
-TASKMANAGERS=2
-SLOTS_TOTAL=8
-SLOTS_AVAILABLE=8
-JOBS_RUNNING=0
-TM 192.168.144.3:37533-079c76 slots=4 free=4 heartbeatMs=0
-TM 192.168.144.4:40771-6cb966 slots=4 free=4 heartbeatMs=0
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[4/5] 开始运行 benchmark/scripts/run_benchmark.py
-Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forl0-runtime/benchmark/scripts/run_benchmark.py --test client_usecase --backend forl0 --scenario scalar_state_probe_2m_ops64_batch
-[Client Usecase] Scenario: scalar_state_probe_2m_ops64_batch — Non-contract: stronger scalar-state pressure with 64 MapState<Long,Long> updates batched by ForL0
-============================================================
-ForL0 StateBackend Benchmark
-============================================================
-Test: client_usecase
-Backends: forl0
-Client Usecase Scenario: scalar_state_probe_2m_ops64_batch
-============================================================
-
-============================================================
-Running Client Usecase Benchmark
-============================================================
-
-=== Running Client Usecase Benchmark (forl0 backend) ===
-
-Flink cluster: http://localhost:8081
-Parameters: driver=scalar_state, desiredTotalInputRecords=2000000, parallelism=4, leftStreamTarget=1800000, rightStreamTarget=200000, leftPerSubtask=450000, rightPerSubtask=50000, estimatedActualTotal=2000000, checkpointInterval=0
-Command: /root/flink_home/bin/flink run -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=8192 -Dstate.backend.forl0.max-table-capacity=524288 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.size=512mb -Dstate.backend.forl0.l0-memory.max-size=1024mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.8 -DforL0.metricsCollector.enabled=false -C file:///root/forl0-runtime/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar /root/forl0-runtime/docker/deploy/client-drift-benchmark-1.0-SNAPSHOT.jar --leftNumRecords 450000 --rightNumRecords 50000 --parallelism 4 --checkpointInterval 0 --mode scalar_state --hotKeyCount 4096 --coldKeyCount 500000 --hotTrafficPercent 80 --driftIntervalRecords 50000 --driftStep 2048 --rightDelayMs 0 --timestampMode hot_bucket --timestampHotBuckets 65536 --timestampKeySpace 1000000 --timestampDriftIntervalRecords 50000 --timestampDriftStep 32768 --scalarOpsPerRecord 64 --mapKeyModulo 262144 --scalarShape map_batch
-
-Job has been submitted with JobID 3d2779158f117c59c72b4964c863e4fa
-SLF4J: Class path contains multiple SLF4J bindings.
-SLF4J: Found binding in [jar:file:/root/flink_home/lib/log4j-slf4j-impl-2.24.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: Found binding in [jar:file:/usr/local/hadoop-3.2.0/share/hadoop/common/lib/slf4j-log4j12-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
-SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
-SLF4J: Actual binding is of type [org.apache.logging.slf4j.Log4jLoggerFactory]
-
-  Job submitted: 3d2779158f117c59c72b4964c863e4fa
-  Job state: RUNNING
-  Job state: FINISHED
-Result saved to: /root/forL0/benchmark/results/raw/client_usecase_scalar_state_probe_2m_ops64_batch_forl0_20260811_173317.json
-
-======================================================================
-                    BENCHMARK SUMMARY
-======================================================================
-
-## Unit Test Benchmark
---------------------------------------------------
-
-## WordCount Benchmark
---------------------------------------------------
-
-## Client Usecase Benchmark
---------------------------------------------------
-forl0               :          62,160 records/s/core
-
-======================================================================
-
-Next steps:
-  1. Review raw results in: /root/forL0/benchmark/results/raw/
-  2. Generate report: python scripts/generate_report.py
-  3. View report in: /root/forL0/benchmark/results/reports/
-
-==> Generate benchmark HTML report
-Command: /root/forl0-runtime/docker/run_all_apps.sh --offline --report-only --no-profile
-============================================================
-  ForL0 benchmark run context
-============================================================
-  Repo:        /root/forl0-runtime
-  Results:     /root/forL0/benchmark/results
-  Test:        apps
-  Backend:     all
-  Profile:     disabled
-  Offline:     true
-  Expect TMs:  2
-  Expect slots:8
-  GitCommit:   unavailable
-  Date:        2026-08-11 17:33:17 +0800
-
-[3/5] 检查离线 wheel 与 Python/架构兼容性...
-        wheel ABI:    cp310
-        wheel arch:   aarch64
-        Python:       /root/forl0-runtime/tools/python/bin/python3.10 (3.10)
-      复用已有 benchmark Python 虚拟环境: /root/forl0-runtime/.venv-benchmark-cp310
-      ✓ benchmark Python 依赖已满足
-[5/5] 生成 benchmark 报告
-============================================================
-Generating Benchmark Report
-============================================================
-
-Loading results...
-Loaded NexMark results from 23 directories
-
-Generating figures...
-Saved: /root/forL0/benchmark/results/figures/wordcount_throughput.pdf
-Saved: /root/forL0/benchmark/results/figures/nexmark_throughput.pdf
-Saved: /root/forL0/benchmark/results/figures/improvement_summary.pdf
-
-Skipping benchset figures (opt in with --include-benchset-artifacts)
-
-Generating L0Table metrics figures (if available)...
-No L0Table metrics available for plotting
-No metrics available for valid slots plotting
-
-Generating hardware metrics figures (if available)...
-  Plotting Memory Usage timeline for queries: ['wordcount']
-Saved: /root/forL0/benchmark/results/figures/memory_usage_timeline.pdf
-
-Generating report...
-Saved: /root/forL0/benchmark/results/reports/benchmark_report.html
-
-============================================================
-Report generation complete!
-Figures: /root/forL0/benchmark/results/figures
-Report:  /root/forL0/benchmark/results/reports/benchmark_report.html
-============================================================
-
-==> Done
-Report:
-  /root/forL0/benchmark/results/reports/benchmark_report.html
-Raw results:
-  /root/forL0/benchmark/results/raw/
-NexMark runs:
-  /root/forL0/benchmark/results/nexmark_*/
-ERROR: one or more workloads failed; inspect /root/forL0/benchmark/results/run_logs/FAILED_*
+.
