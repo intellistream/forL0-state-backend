@@ -113,6 +113,7 @@ struct StateHandle {
     // MapState InnerMap specialization kind
     enum class MapInnerKind : uint8_t { STRING_STRING, LONG_LONG, LONG_STRING, STRING_LONG };
 
+    std::string state_name;
     StateEngine* engine;
     int64_t table_id;       // StateEngine table registration id
     KeyType key_type;

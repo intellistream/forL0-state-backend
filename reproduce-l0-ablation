@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# One-command three-arm L0 attribution run for an offline Ascend server.
+# Arms: HashMap, ForL0 with L0 disabled, ForL0 with L0 enabled and proven.
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESULTS_ROOT="${PROJECT_ROOT}/benchmark/results"
+RUN_LOG="${RESULTS_ROOT}/.logs"
+SCENARIO="${FORL0_ABLATION_SCENARIO:-scalar_value_probe_5m_ops16}"
+L0_TOTAL_SIZE="${FORL0_ABLATION_L0_TOTAL_SIZE:-64mb}"
+
+mkdir -p "$RESULTS_ROOT"
+cd "$PROJECT_ROOT"
+export FORL0_RESULTS_DIR="$RESULTS_ROOT"
+export FORL0_RUN_ID="${FORL0_RUN_ID:-l0_ablation_$(date '+%Y%m%d_%H%M%S')}"
+export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
+
+run_arm() {
+    local variant="$1"
+    local backend="$2"
+    local l0_mode="$3"
+    local require_proof="$4"
+    echo "=== L0 ABLATION ${variant} ===" | tee -a "$RUN_LOG"
+    FORL0_VARIANT="$variant" \
+    FORL0_L0_CACHE_OVERRIDE="$l0_mode" \
+    FORL0_L0_STRICT_OVERRIDE="$require_proof" \
+    FORL0_L0_TOTAL_SIZE_OVERRIDE="$L0_TOTAL_SIZE" \
+    FORL0_REQUIRE_L0_PROOF="$require_proof" \
+      bash ./docker/run_all_apps.sh --offline --restart-cluster --no-profile \
+        --test client_usecase --scenario "$SCENARIO" --backend "$backend" --no-report \
+        2>&1 | tee -a "$RUN_LOG"
+}
+
+run_arm hashmap hashmap off false
+run_arm forl0_l0_off forl0 off false
+run_arm forl0_l0_on forl0 on true
+
+bash ./docker/run_all_apps.sh --offline --report-only 2>&1 | tee -a "$RUN_LOG"
+echo "L0 ABLATION PASSED: ${SCENARIO}; results=${RESULTS_ROOT}" | tee -a "$RUN_LOG"

@@ -6,8 +6,63 @@ Utility functions for benchmark scripts.
 import os
 import yaml  # type: ignore[import-untyped]
 import subprocess
+import re
 from pathlib import Path
 from datetime import datetime
+
+
+FORL0_CONFIG_MAPPING = {
+    'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
+    'max_table_capacity': 'state.backend.forl0.max-table-capacity',
+    'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
+    # This is a job-wide budget. The backend divides it by the expected
+    # number of parallel keyed StateBackend instances.
+    'l0_cache_size': 'state.backend.forl0.l0-cache.total-size',
+    'l0_cache_expected_engines': 'state.backend.forl0.l0-cache.expected-engines',
+    'l0_cache_strict_allocation': 'state.backend.forl0.l0-cache.strict-allocation',
+    'l0_cache_state_size': 'state.backend.forl0.l0-cache.state-size',
+    'l0_cache_write_bypass_threshold': 'state.backend.forl0.l0-cache.write-bypass-threshold',
+    'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
+    'l0_memory_max_size': 'state.backend.forl0.native-memory.max-size',
+    'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
+    'metrics_collector_enabled': 'forL0.metricsCollector.enabled',
+}
+
+
+def render_forl0_config_args(effective_config, expected_engines=1):
+    """Render one canonical set of ForL0 JVM properties.
+
+    Environment overrides are intentionally narrow so the one-click ablation
+    runner can switch L0 without editing benchmark.yaml on an offline host.
+    """
+    effective = dict(effective_config or {})
+    effective.setdefault('l0_cache_expected_engines', max(1, int(expected_engines)))
+    env_enabled = os.environ.get('FORL0_L0_CACHE_OVERRIDE', '').strip().lower()
+    if env_enabled in ('on', 'true', '1'):
+        effective['l0_cache_enabled'] = True
+    elif env_enabled in ('off', 'false', '0'):
+        effective['l0_cache_enabled'] = False
+    env_strict = os.environ.get('FORL0_L0_STRICT_OVERRIDE', '').strip().lower()
+    if env_strict in ('on', 'true', '1'):
+        effective['l0_cache_strict_allocation'] = True
+    elif env_strict in ('off', 'false', '0'):
+        effective['l0_cache_strict_allocation'] = False
+    env_engines = os.environ.get('FORL0_L0_EXPECTED_ENGINES_OVERRIDE', '').strip()
+    if env_engines:
+        effective['l0_cache_expected_engines'] = max(1, int(env_engines))
+    env_total_size = os.environ.get('FORL0_L0_TOTAL_SIZE_OVERRIDE', '').strip()
+    if env_total_size:
+        effective['l0_cache_size'] = env_total_size
+
+    args = []
+    for yaml_key, flink_key in FORL0_CONFIG_MAPPING.items():
+        if yaml_key not in effective:
+            continue
+        value = effective[yaml_key]
+        if isinstance(value, bool):
+            value = 'true' if value else 'false'
+        args.append(f'-D{flink_key}={value}')
+    return args
 
 
 def get_benchmark_root():
@@ -168,7 +223,9 @@ def save_result(result, test_name, backend):
     
     results_dir = get_results_dir('raw')
     timestamp = get_timestamp()
-    filename = f"{test_name}_{backend}_{timestamp}.json"
+    variant = os.environ.get('FORL0_VARIANT', '').strip()
+    safe_variant = re.sub(r'[^A-Za-z0-9_.-]+', '_', variant) if variant else ''
+    filename = f"{test_name}_{backend}{'_' + safe_variant if safe_variant else ''}_{timestamp}.json"
     filepath = results_dir / filename
     
     # Add metadata
@@ -180,6 +237,7 @@ def save_result(result, test_name, backend):
         'run_id': os.environ.get('FORL0_RUN_ID', '').strip() or None,
         'run_started_epoch': int(os.environ['FORL0_RUN_STARTED_EPOCH'])
         if os.environ.get('FORL0_RUN_STARTED_EPOCH', '').isdigit() else None,
+        'variant': variant or None,
     }
     
     with open(filepath, 'w') as f:

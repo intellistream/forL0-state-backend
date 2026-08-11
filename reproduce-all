@@ -15,15 +15,25 @@ if [[ "${1:-}" == "--worker" ]]; then
     }
     trap cleanup EXIT INT TERM
 
+    # Capture the complete worker lifecycle, including failures that happen
+    # before run-forl0-offline.sh installs its own tee. Nested launchers write
+    # to /dev/null and flow through this single append-only stream, avoiding
+    # duplicated log lines and preserving earlier runs.
+    mkdir -p "$(dirname "$RUN_LOG")"
+    exec >>"$RUN_LOG" 2>&1
     export FORL0_OFFLINE_ONLY=true
     export FORL0_RUN_ID="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
     export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
-    export FORL0_RUN_LOG="$RUN_LOG"
+    export FORL0_RUN_LOG=/dev/null
+    # A formal L0-server run must fail visibly instead of silently falling
+    # back when one parallel engine cannot obtain its assigned L0 quota.
+    export FORL0_L0_STRICT_OVERRIDE="${FORL0_L0_STRICT_OVERRIDE:-true}"
     cd "$PROJECT_ROOT"
 
-    echo "RUN_ID=${FORL0_RUN_ID}" | tee "$RUN_LOG"
+    echo ""
+    echo "=== reproduce-all RUN_ID=${FORL0_RUN_ID} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
     bash ./reproduce-smoke
-    echo "SMOKE PASSED: starting the complete W01-W02, N01-N14, C01-C08 suite" | tee -a "$RUN_LOG"
+    echo "SMOKE PASSED: starting the complete W01-W02, N01-N14, C01-C08 suite"
 
     FORL0_RUN_LOG_MODE=append bash ./run-forl0-offline.sh \
         --reproduce-ascend \

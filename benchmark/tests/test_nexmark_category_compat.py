@@ -11,7 +11,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from run_nexmark import NexmarkRunner  # noqa: E402
+from run_nexmark import NexmarkRunner, is_benign_post_summary_cancel_conflict  # noqa: E402
 
 
 class NexmarkCategoryCompatibilityTest(unittest.TestCase):
@@ -84,6 +84,18 @@ class NexmarkCategoryCompatibilityTest(unittest.TestCase):
         self.runner.nexmark_config['category'] = '../forl0'
         with self.assertRaisesRegex(ValueError, 'Invalid NexMark query category'):
             self.runner._get_query_category()
+
+    def test_only_post_summary_cancel_409_is_benign(self) -> None:
+        benign = (
+            'Summary Average: Throughput=1.05 M, Cores=45.97\n'
+            'Stop job query q18\n'
+            'RuntimeException: http execute failed,status code is 409\n'
+            'at com.github.nexmark.flink.QueryRunner.cancelJob(QueryRunner.java:113)\n'
+        )
+        self.assertTrue(is_benign_post_summary_cancel_conflict(benign))
+        self.assertFalse(is_benign_post_summary_cancel_conflict(benign.replace('409', '500')))
+        self.assertFalse(is_benign_post_summary_cancel_conflict(
+            benign + 'OutOfMemoryError: native allocation failed\n'))
 
 
 if __name__ == '__main__':

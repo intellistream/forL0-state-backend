@@ -174,10 +174,10 @@ static inline double hotcache_val_to_double(int64_t bits) noexcept {
 //  multi-column key. We fold such composites into a single int64 that can
 //  feed HotCacheLL directly.
 //
-//  Correctness: `fold_tw_key` and `fold_fixed_row_key` are injective "enough"
-//  for Zipf-ish workloads: distinct inputs almost always produce distinct
-//  folded values, and a stray collision merely triggers a cache miss (the
-//  SwissTable lookup below will catch it) — it never returns wrong data.
+//  These helpers are retained for hashing/experimentation only. They are not
+//  safe cache identities: a 64-bit fold can collide and a cache hit would then
+//  bypass the authoritative SwissTable. Composite-key cache attachment stays
+//  disabled until entries can retain and verify the complete key.
 // ---------------------------------------------------------------------------
 static inline int64_t hotcache_fold_tw_key(int64_t key, int64_t ns_start, int64_t ns_end) noexcept {
     uint64_t h = hotcache_mix64(static_cast<uint64_t>(ns_start));
@@ -203,8 +203,10 @@ static inline int64_t hotcache_fold_fixed_row_key(const int64_t* cols, size_t n)
 class HotCacheLL {
 public:
     // num_sets MUST be a power of two; HotCacheManager::acquire_ll guarantees this.
-    HotCacheLL(HotSet* sets, uint32_t num_sets) noexcept
-        : sets_(sets), set_mask_(num_sets - 1), num_sets_(num_sets) {
+    HotCacheLL(HotSet* sets, uint32_t num_sets,
+               uint64_t write_only_bypass_threshold = (1u << 20)) noexcept
+        : sets_(sets), set_mask_(num_sets - 1), num_sets_(num_sets),
+          write_only_bypass_threshold_(write_only_bypass_threshold) {
         for (uint32_t i = 0; i < num_sets; ++i) sets_[i].init_empty();
     }
 
@@ -219,8 +221,19 @@ public:
     uint64_t misses()        const noexcept { return misses_.load(std::memory_order_relaxed); }
     uint64_t lookups()       const noexcept { return hits() + misses(); }
     uint64_t invalidations() const noexcept { return invalidations_.load(std::memory_order_relaxed); }
+    uint64_t writes()        const noexcept { return writes_.load(std::memory_order_relaxed); }
+    uint64_t bypass_events() const noexcept { return bypass_events_.load(std::memory_order_relaxed); }
+    bool write_bypassed()    const noexcept { return write_bypassed_.load(std::memory_order_relaxed); }
 
     bool get(int64_t key, int64_t* out) noexcept {
+        // A cache that observed a long write-only phase may contain skipped
+        // updates. The first later read must miss and re-learn from SwissTable.
+        if (write_bypassed_.exchange(false, std::memory_order_relaxed)) {
+            writes_since_lookup_.store(0, std::memory_order_relaxed);
+            misses_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        writes_since_lookup_.store(0, std::memory_order_relaxed);
         uint64_t h  = hotcache_mix64(static_cast<uint64_t>(key));
         uint8_t  h2 = static_cast<uint8_t>(h & 0x7F);
         HotSet*  s  = &sets_[(h >> 7) & set_mask_];
@@ -238,6 +251,16 @@ public:
     }
 
     void put(int64_t key, int64_t val) noexcept {
+        writes_.fetch_add(1, std::memory_order_relaxed);
+        if (write_bypassed_.load(std::memory_order_relaxed)) return;
+        uint64_t write_run = writes_since_lookup_.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (write_only_bypass_threshold_ > 0
+            && write_run >= write_only_bypass_threshold_) {
+            clear();
+            write_bypassed_.store(true, std::memory_order_relaxed);
+            bypass_events_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         uint64_t h  = hotcache_mix64(static_cast<uint64_t>(key));
         uint8_t  h2 = static_cast<uint8_t>(h & 0x7F);
         HotSet*  s  = &sets_[(h >> 7) & set_mask_];
@@ -308,6 +331,11 @@ private:
     std::atomic<uint64_t> hits_{0};
     std::atomic<uint64_t> misses_{0};
     std::atomic<uint64_t> invalidations_{0};
+    std::atomic<uint64_t> writes_{0};
+    std::atomic<uint64_t> bypass_events_{0};
+    std::atomic<uint64_t> writes_since_lookup_{0};
+    std::atomic<bool> write_bypassed_{false};
+    uint64_t write_only_bypass_threshold_;
     uint64_t last_rebalance_lookups_ = 0;   // baseline for rebalance_if_needed
 };
 
@@ -450,7 +478,9 @@ bool default_l0_bindings_loader(L0LibBindings* out, std::string* reason);
 class HotCacheManager {
 public:
     HotCacheManager(size_t requested_capacity_bytes,
-                    L0BindingsLoader loader = nullptr);
+                    L0BindingsLoader loader = nullptr,
+                    bool strict_allocation = false,
+                    uint64_t write_only_bypass_threshold = (1u << 20));
     ~HotCacheManager();
 
     HotCacheManager(const HotCacheManager&) = delete;
@@ -458,6 +488,7 @@ public:
 
     bool   is_active()        const noexcept { return active_; }
     size_t capacity_bytes()   const noexcept { return capacity_bytes_; }
+    size_t requested_capacity_bytes() const noexcept { return requested_capacity_bytes_; }
     size_t used_bytes()       const noexcept;
     uint32_t total_sets()     const noexcept { return total_sets_; }
     uint32_t free_sets()      const noexcept;
@@ -471,6 +502,9 @@ public:
     uint64_t total_lookups()       const noexcept;
     uint64_t total_hits()          const noexcept;
     uint64_t total_invalidations() const noexcept;
+    uint64_t total_writes()        const noexcept;
+    uint64_t total_bypass_events() const noexcept;
+    uint32_t cache_count()         const noexcept { return static_cast<uint32_t>(owned_.size()); }
 
     // Phase C §6.3 adaptive rebalancer.
     //
@@ -500,10 +534,13 @@ private:
     void*         raw_base_        = nullptr;   // ptr returned by l0_mem_alloc (for free)
     void*         l0_base_         = nullptr;   // 64B-aligned region used as HotSet[]
     size_t        capacity_bytes_  = 0;
+    size_t        requested_capacity_bytes_ = 0;
     uint32_t      total_sets_      = 0;
     uint32_t      bump_next_       = 0;        // next set id to hand out from the unused tail
     bool          active_          = false;
     std::string   failure_reason_;
+    bool          strict_allocation_ = false;
+    uint64_t      write_only_bypass_threshold_ = (1u << 20);
 
     struct Owned {
         HotCacheLL* cache;

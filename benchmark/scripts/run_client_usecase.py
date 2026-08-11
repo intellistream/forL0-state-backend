@@ -20,7 +20,10 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import requests_shim as requests  # type: ignore[assignment]
 
-from utils.config import get_results_dir, load_config, get_flink_home, save_result
+from utils.config import (
+    get_results_dir, load_config, get_flink_home, save_result,
+    render_forl0_config_args,
+)
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 
 
@@ -45,26 +48,8 @@ def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'clien
         if isinstance(workload_cfg, dict):
             effective_config.update(workload_cfg)
 
-    config_mapping = {
-        'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
-        'max_table_capacity': 'state.backend.forl0.max-table-capacity',
-        'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
-        'l0_cache_size': 'state.backend.forl0.l0-cache.size',
-        'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
-        'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
-        'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
-        'metrics_collector_enabled': 'forL0.metricsCollector.enabled',
-    }
-
-    args = []
-    for yaml_key, flink_key in config_mapping.items():
-        if yaml_key in effective_config:
-            value = effective_config[yaml_key]
-            if isinstance(value, bool):
-                value = 'true' if value else 'false'
-            args.append(f'-D{flink_key}={value}')
-
-    return args
+    return render_forl0_config_args(
+        effective_config, config.get('runtime', {}).get('parallelism', 1))
 
 
 def get_client_usecase_jar(driver: str = 'csv_replay') -> Optional[str]:

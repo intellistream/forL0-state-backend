@@ -39,6 +39,8 @@ EXPECTED_SLOTS="${FORL0_EXPECTED_SLOTS:-8}"
 RESTART_CLUSTER=false
 CLEANUP_ON_EXIT=false
 USER_FLINK_TASKMANAGER_CONTAINER="${FLINK_TASKMANAGER_CONTAINER:-}"
+EVIDENCE_LOG=""
+EVIDENCE_SINCE_EPOCH=""
 
 load_local_env() {
     local env_file="${REPO_ROOT}/docker/forl0-local.env"
@@ -114,9 +116,11 @@ import zipfile
 
 label, jar_path = sys.argv[1:]
 class_name = 'com/github/nexmark/flink/Benchmark.class'
+rest_client_name = 'com/github/nexmark/flink/metric/FlinkRestClient.class'
 try:
     with zipfile.ZipFile(jar_path) as archive:
         data = archive.read(class_name)
+        rest_client = archive.read(rest_client_name)
 except Exception as exc:
     print(f"      ✗ {label}: cannot inspect {jar_path}: {exc}")
     raise SystemExit(1)
@@ -125,8 +129,29 @@ major = int.from_bytes(data[6:8], 'big')
 if major > 52:
     print(f"      ✗ {label}: class major {major}, requires Java 11+; offline runtime requires <=52 (Java 8)")
     raise SystemExit(1)
-print(f"      ✓ {label}: class major {major} (Java 8 compatible)")
+# Corrected driver treats REST cancel HTTP 409 as an already-finished job.
+# javac emits `sipush 409` as bytes 0x11 0x01 0x99.
+if b'\x11\x01\x99' not in rest_client:
+    print(f"      ✗ {label}: stale NexMark driver (missing cancel HTTP 409 handling)")
+    raise SystemExit(1)
+print(f"      ✓ {label}: Java 8 compatible and cancel-409 fix present")
 PY
+}
+
+sync_backend_artifacts() {
+    local backend_jar="${REPO_ROOT}/docker/deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
+    local native_lib="${REPO_ROOT}/docker/deploy/libforl0_engine.so"
+    [[ -n "${FLINK_HOME:-}" && -d "${FLINK_HOME}" ]] || return 0
+    if [[ -f "$backend_jar" ]]; then
+        mkdir -p "${FLINK_HOME}/lib"
+        rm -f "${FLINK_HOME}/lib/"flink-statebackend-forl0-*.jar \
+              "${FLINK_HOME}/lib/"flink-statebackend-forL0-*.jar
+        cp -f "$backend_jar" "${FLINK_HOME}/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
+    fi
+    if [[ -f "$native_lib" ]]; then
+        mkdir -p "${FLINK_HOME}/native"
+        cp -f "$native_lib" "${FLINK_HOME}/native/libforl0_engine.so"
+    fi
 }
 
 preflight_check() {
@@ -464,6 +489,8 @@ write_failed_marker() {
         echo "expected_taskmanagers=${EXPECTED_TASKMANAGERS}"
         echo "expected_slots=${EXPECTED_SLOTS}"
         echo "extra_args=${EXTRA_ARGS[*]:-}"
+        echo "taskmanager_evidence=${EVIDENCE_LOG:-unavailable}"
+        echo "evidence_since_epoch=${EVIDENCE_SINCE_EPOCH:-unavailable}"
         echo ""
         echo "cluster_summary:"
         flink_cluster_summary || true
@@ -484,8 +511,59 @@ PY
     echo "[cleanup] Wrote failure marker: $marker"
 }
 
+capture_taskmanager_evidence() {
+    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
+    local log_dir="${results_dir}/run_logs"
+    mkdir -p "$log_dir"
+    EVIDENCE_LOG="${log_dir}/taskmanager_${TEST_NAME}_${BACKEND}_$(date '+%Y%m%d_%H%M%S').log"
+    : > "$EVIDENCE_LOG"
+    # Scope proof to this command. Reusing the suite-wide start time would let
+    # an earlier workload's state_attach line satisfy a later workload's gate.
+    local since_arg="${EVIDENCE_SINCE_EPOCH:-${FORL0_RUN_STARTED_EPOCH:-0}}"
+    local container
+    for container in flink-taskmanager-1 flink-taskmanager-2; do
+        if ! docker inspect "$container" >/dev/null 2>&1; then
+            continue
+        fi
+        {
+            echo "=== ${container} ==="
+            docker logs --since "$since_arg" "$container" 2>&1 || true
+        } | grep -E "^(===|.*\[ForL0-(HotCache|Memory)\]|.*(OutOfMemoryError|exit code 137|TaskManager.*(lost|disconnect)|Job execution failed|Caused by:))" \
+          >> "$EVIDENCE_LOG" || true
+    done
+    echo "[evidence] TaskManager evidence: ${EVIDENCE_LOG}"
+    if [[ -s "$EVIDENCE_LOG" ]]; then
+        sed -n '1,240p' "$EVIDENCE_LOG"
+    fi
+}
+
+validate_l0_proof() {
+    [[ "${FORL0_REQUIRE_L0_PROOF:-false}" == "true" ]] || return 0
+    [[ "$BACKEND" == "forl0" || "$BACKEND" == "all" ]] || return 0
+    if [[ ! -s "$EVIDENCE_LOG" ]]; then
+        echo "✗ L0 proof required, but no TaskManager evidence was captured."
+        return 1
+    fi
+    if grep -Eq "hardware not available|active=0|strict L0 allocation|state_attach_failed" "$EVIDENCE_LOG"; then
+        echo "✗ L0 proof failed: hardware fallback or strict allocation failure detected."
+        return 1
+    fi
+    if ! grep -Eq "\[ForL0-HotCache\] engine_start .*active=1" "$EVIDENCE_LOG"; then
+        echo "✗ L0 proof failed: no active engine_start record found."
+        return 1
+    fi
+    if ! grep -Eq "\[ForL0-HotCache\] state_attach " "$EVIDENCE_LOG"; then
+        echo "✗ L0 proof failed: no eligible state was attached to the L0 pool."
+        return 1
+    fi
+    echo "✓ L0 proof passed: active native L0 engine records captured."
+}
+
 on_exit() {
     local status=$?
+    if [[ "$CLEANUP_ON_EXIT" == "true" && -z "$EVIDENCE_LOG" ]]; then
+        capture_taskmanager_evidence || true
+    fi
     if [[ "$CLEANUP_ON_EXIT" == "true" && "$status" -ne 0 ]]; then
         echo "[cleanup] Benchmark command exited with status ${status}; canceling orphan Flink jobs."
         write_failed_marker "$status"
@@ -686,6 +764,9 @@ done
 
 load_local_env
 
+export FORL0_RUN_ID="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
+
 if [[ -n "$FLINK_DIR" ]]; then
     export FLINK_HOME="$FLINK_DIR"
 fi
@@ -713,6 +794,7 @@ if [[ ! -f "${REPO_ROOT}/docker/forl0-local.env" ]]; then
 fi
 
 if [[ "$PREFLIGHT_ONLY" == "true" ]]; then
+    sync_backend_artifacts
     preflight_check
     if curl -sf http://localhost:8081/overview >/dev/null 2>&1 || [[ "$RESTART_CLUSTER" == "true" ]]; then
         ensure_healthy_cluster
@@ -720,6 +802,7 @@ if [[ "$PREFLIGHT_ONLY" == "true" ]]; then
     exit 0
 fi
 
+sync_backend_artifacts
 ensure_healthy_cluster
 
 bootstrap_benchmark_python
@@ -739,8 +822,11 @@ export REPO_ROOT
 export FORL0_EXPECTED_TASKMANAGERS="$EXPECTED_TASKMANAGERS"
 export FORL0_EXPECTED_SLOTS="$EXPECTED_SLOTS"
 echo "Command: ${cmd[*]}"
+EVIDENCE_SINCE_EPOCH="$(date '+%s')"
 CLEANUP_ON_EXIT=true
 "${cmd[@]}"
+capture_taskmanager_evidence
+validate_l0_proof
 CLEANUP_ON_EXIT=false
 
 generate_benchmark_report

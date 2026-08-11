@@ -114,6 +114,37 @@ TEST(SwissTableTest, AutomaticGrowth) {
     }
 }
 
+TEST(SwissTableTest, MaxCapacityFailsClosedWithoutLosingEntries) {
+    SwissTable<int64_t, int64_t> table(
+        16, &DefaultAllocator::instance(), 16, 0.75);
+    for (int64_t i = 0; i < 12; ++i) table.insert_or_assign(i, i * 10);
+    ASSERT_THROW(table.insert_or_assign(12, 120), std::length_error);
+    ASSERT_EQ(table.size(), 12u);
+    for (int64_t i = 0; i < 12; ++i) ASSERT_EQ(*table.find(i), i * 10);
+}
+
+TEST(SwissTableTest, CountingAllocatorEnforcesAndReleasesBudget) {
+    CountingAllocator allocator(96);
+    void* first = allocator.allocate(64, 16);
+    ASSERT_EQ(allocator.used_bytes(), 64u);
+    ASSERT_THROW(allocator.allocate(64, 16), std::bad_alloc);
+    ASSERT_EQ(allocator.used_bytes(), 64u);
+    allocator.deallocate(first, 64);
+    ASSERT_EQ(allocator.used_bytes(), 0u);
+    ASSERT_EQ(allocator.peak_bytes(), 64u);
+}
+
+TEST(SwissTableTest, RejectedGrowthLeavesExistingTableUsable) {
+    CountingAllocator allocator(500);
+    SwissTable<int64_t, int64_t> table(16, &allocator, 0, 0.75);
+    for (int64_t i = 0; i < 12; ++i) table.insert_or_assign(i, i * 10);
+    ASSERT_THROW(table.insert_or_assign(12, 120), std::bad_alloc);
+    ASSERT_EQ(table.size(), 12u);
+    for (int64_t i = 0; i < 12; ++i) ASSERT_EQ(*table.find(i), i * 10);
+    table.insert_or_assign(5, 999);
+    ASSERT_EQ(*table.find(5), 999);
+}
+
 TEST(SwissTableTest, TombstoneReclamation) {
     SwissTable<int64_t, int64_t> table(16);
 

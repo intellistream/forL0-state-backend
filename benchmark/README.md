@@ -94,6 +94,16 @@ cd /path/to/forL0-state-backend/docker
 - `benchmark/results/profiles/`：第二遍 CPU profiling flame graph。
 - `benchmark/results/reports/benchmark_report.html`：重新生成并校验过的 HTML 报告。
 - `benchmark/results/run_logs/`：一键脚本日志。
+- `benchmark/results/.logs`：`reproduce-*` 的持续合并输出，可直接 `tail -f`。
+
+L0 硬件归因使用三路一键消融（HashMap / ForL0-L0-off / ForL0-L0-on）：
+
+```bash
+./reproduce-l0-ablation
+```
+
+L0-on 路径强制严格分配，并将每个 TaskManager 的 `engine_start`、state/engine
+summary、native 内存峰值保存到 `benchmark/results/run_logs/`；缺少激活证据会使脚本失败。
 
 如只想先做依赖检查，可运行：
 

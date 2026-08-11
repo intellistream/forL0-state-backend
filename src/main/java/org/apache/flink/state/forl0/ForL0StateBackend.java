@@ -63,6 +63,12 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
     private final int initialTableCapacity;
+    private final int maxTableCapacity;
+    private final double mainTableLoadFactor;
+    private final long nativeMemoryMaxSize;
+    private final boolean l0CacheStrictAllocation;
+    private final long l0CacheStateSize;
+    private final long l0CacheWriteBypassThreshold;
     private final boolean hotCacheMetricsEnabled;
 
     // -----------------------------------------------------------------------
@@ -84,6 +90,12 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         this.l0CacheEnabled = ForL0Options.L0_CACHE_ENABLED.defaultValue();
         this.l0CacheSize = ForL0Options.L0_CACHE_SIZE.defaultValue().getBytes();
         this.initialTableCapacity = ForL0Options.INITIAL_TABLE_CAPACITY.defaultValue();
+        this.maxTableCapacity = ForL0Options.MAX_TABLE_CAPACITY.defaultValue();
+        this.mainTableLoadFactor = ForL0Options.MAIN_TABLE_LOAD_FACTOR.defaultValue();
+        this.nativeMemoryMaxSize = ForL0Options.NATIVE_MEMORY_MAX_SIZE.defaultValue().getBytes();
+        this.l0CacheStrictAllocation = ForL0Options.L0_CACHE_STRICT_ALLOCATION.defaultValue();
+        this.l0CacheStateSize = ForL0Options.L0_CACHE_STATE_SIZE.defaultValue().getBytes();
+        this.l0CacheWriteBypassThreshold = ForL0Options.L0_CACHE_WRITE_BYPASS_THRESHOLD.defaultValue();
         this.hotCacheMetricsEnabled = ForL0Options.HOT_CACHE_METRICS_ENABLED.defaultValue();
         LOG.info("[ForL0] ForL0StateBackend created (asyncSnapshots={})", asyncSnapshots);
     }
@@ -97,11 +109,38 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
         // Configure L0 Cache
         this.l0CacheEnabled = config.getOptional(ForL0Options.L0_CACHE_ENABLED)
                 .orElse(original.l0CacheEnabled);
-        this.l0CacheSize = config.getOptional(ForL0Options.L0_CACHE_SIZE)
+        int expectedEngines = config.getOptional(ForL0Options.L0_CACHE_EXPECTED_ENGINES)
+                .orElse(ForL0Options.L0_CACHE_EXPECTED_ENGINES.defaultValue());
+        if (expectedEngines <= 0) {
+            throw new IllegalConfigurationException("ForL0 l0-cache.expected-engines must be > 0");
+        }
+        long configuredPerEngine = config.getOptional(ForL0Options.L0_CACHE_SIZE)
                 .map(MemorySize::getBytes)
                 .orElse(original.l0CacheSize);
+        this.l0CacheSize = config.getOptional(ForL0Options.L0_CACHE_TOTAL_SIZE)
+                .map(MemorySize::getBytes)
+                .map(total -> total / expectedEngines)
+                .orElse(configuredPerEngine);
         this.initialTableCapacity = config.getOptional(ForL0Options.INITIAL_TABLE_CAPACITY)
                 .orElse(original.initialTableCapacity);
+        this.maxTableCapacity = config.getOptional(ForL0Options.MAX_TABLE_CAPACITY)
+                .orElse(original.maxTableCapacity);
+        this.mainTableLoadFactor = config.getOptional(ForL0Options.MAIN_TABLE_LOAD_FACTOR)
+                .orElse(original.mainTableLoadFactor);
+        // The canonical key wins even when explicitly set to 0 (unlimited).
+        // Only consult the deprecated alias when the canonical key is absent.
+        this.nativeMemoryMaxSize = config.getOptional(ForL0Options.NATIVE_MEMORY_MAX_SIZE)
+                .map(MemorySize::getBytes)
+                .orElseGet(() -> config.getOptional(ForL0Options.LEGACY_L0_MEMORY_MAX_SIZE)
+                        .map(MemorySize::getBytes)
+                        .orElse(original.nativeMemoryMaxSize));
+        this.l0CacheStrictAllocation = config.getOptional(ForL0Options.L0_CACHE_STRICT_ALLOCATION)
+                .orElse(original.l0CacheStrictAllocation);
+        this.l0CacheStateSize = config.getOptional(ForL0Options.L0_CACHE_STATE_SIZE)
+                .map(MemorySize::getBytes)
+                .orElse(original.l0CacheStateSize);
+        this.l0CacheWriteBypassThreshold = config.getOptional(ForL0Options.L0_CACHE_WRITE_BYPASS_THRESHOLD)
+                .orElse(original.l0CacheWriteBypassThreshold);
         this.hotCacheMetricsEnabled = config.getOptional(ForL0Options.HOT_CACHE_METRICS_ENABLED)
                 .orElse(original.hotCacheMetricsEnabled);
         if (!ForL0Options.isValidTableCapacity(initialTableCapacity)) {
@@ -109,6 +148,24 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                     "Invalid ForL0 initial table capacity: " + initialTableCapacity
                             + ". It must be a power of 2 and at least "
                             + ForL0Options.MIN_TABLE_CAPACITY + ".");
+        }
+        if (!ForL0Options.isValidMaxTableCapacity(maxTableCapacity)
+                || (maxTableCapacity > 0 && maxTableCapacity < initialTableCapacity)) {
+            throw new IllegalConfigurationException(
+                    "Invalid ForL0 max table capacity: " + maxTableCapacity
+                            + ". It must be 0 or a power of 2 >= initial capacity.");
+        }
+        if (mainTableLoadFactor < 0.5 || mainTableLoadFactor > 0.875) {
+            throw new IllegalConfigurationException(
+                    "ForL0 main-table.load-factor-threshold must be in [0.5, 0.875]");
+        }
+        if (l0CacheEnabled && l0CacheSize < 192) {
+            throw new IllegalConfigurationException(
+                    "ForL0 per-engine L0 quota is too small after budget division: " + l0CacheSize);
+        }
+        if (l0CacheStateSize < 192 || l0CacheWriteBypassThreshold < 0) {
+            throw new IllegalConfigurationException(
+                    "Invalid ForL0 HotCache state-size or write-bypass-threshold");
         }
     }
 
@@ -167,6 +224,12 @@ public class ForL0StateBackend extends AbstractStateBackend implements Configura
                     l0CacheEnabled,
                     l0CacheSize,
                     initialTableCapacity,
+                    maxTableCapacity,
+                    mainTableLoadFactor,
+                    nativeMemoryMaxSize,
+                    l0CacheStrictAllocation,
+                    l0CacheStateSize,
+                    l0CacheWriteBypassThreshold,
                     hotCacheMetricsEnabled,
                     parameters.getCancelStreamRegistry(),
                     parameters.getMetricGroup())

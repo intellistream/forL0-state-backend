@@ -26,6 +26,7 @@
 #include <cstring>
 #include <functional>
 #include <new>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
@@ -79,12 +80,18 @@ public:
     // --- Construction / destruction ---
 
     explicit SwissTable(size_t initial_capacity = 16,
-                        Allocator* alloc = &DefaultAllocator::instance())
+                        Allocator* alloc = &DefaultAllocator::instance(),
+                        size_t max_capacity = 0,
+                        double max_load_factor = 0.875)
         : alloc_(alloc), size_(0), capacity_(0), growth_left_(0),
-          ctrl_(nullptr), slots_(nullptr), split_{nullptr, nullptr, false} {
+          ctrl_(nullptr), slots_(nullptr), split_{nullptr, nullptr, false},
+          max_capacity_(max_capacity), max_load_factor_(max_load_factor) {
         // Ensure power of 2 and >= kGroupWidth
         size_t cap = kGroupWidth;
         while (cap < initial_capacity) cap <<= 1;
+        if (max_capacity_ > 0 && cap > max_capacity_) {
+            throw std::invalid_argument("initial SwissTable capacity exceeds configured maximum");
+        }
         allocate_and_init(cap);
     }
 
@@ -97,7 +104,8 @@ public:
     SwissTable(SwissTable&& other) noexcept
         : alloc_(other.alloc_), size_(other.size_), capacity_(other.capacity_),
           growth_left_(other.growth_left_), ctrl_(other.ctrl_),
-          slots_(other.slots_), split_(other.split_) {
+          slots_(other.slots_), split_(other.split_),
+          max_capacity_(other.max_capacity_), max_load_factor_(other.max_load_factor_) {
         other.size_ = 0;
         other.capacity_ = 0;
         other.growth_left_ = 0;
@@ -117,6 +125,8 @@ public:
             ctrl_ = other.ctrl_;
             slots_ = other.slots_;
             split_ = other.split_;
+            max_capacity_ = other.max_capacity_;
+            max_load_factor_ = other.max_load_factor_;
             other.size_ = 0;
             other.capacity_ = 0;
             other.ctrl_ = nullptr;
@@ -285,9 +295,11 @@ private:
 
     static bool is_full(int8_t c) { return c >= 0; }  // H2 values are 0x00..0x7F
 
-    static size_t growth_budget(size_t capacity) {
-        // 7/8 load factor = capacity - capacity/8
-        return capacity - capacity / 8;
+    size_t growth_budget(size_t capacity) const {
+        size_t budget = static_cast<size_t>(static_cast<double>(capacity) * max_load_factor_);
+        if (budget == 0) budget = 1;
+        if (budget >= capacity) budget = capacity - 1;
+        return budget;
     }
 
     size_t wrap(size_t idx) const {
@@ -368,7 +380,14 @@ private:
             rehash(capacity_);
         } else {
             // Grow 2x
-            rehash(capacity_ * 2);
+            if (max_capacity_ > 0 && capacity_ >= max_capacity_) {
+                throw std::length_error("ForL0 SwissTable reached configured max-table-capacity");
+            }
+            size_t next_capacity = capacity_ * 2;
+            if (max_capacity_ > 0 && next_capacity > max_capacity_) {
+                next_capacity = max_capacity_;
+            }
+            rehash(next_capacity);
         }
     }
 
@@ -406,27 +425,23 @@ private:
     }
 
     void allocate_and_init(size_t cap) {
-        capacity_ = cap;
-        growth_left_ = growth_budget(cap);
-
         size_t cb = ctrl_bytes(cap);
         size_t sa = slot_align<slot_type>();
         if (sa < 64) sa = 64;  // Cache-line aligned
         size_t slots_bytes = cap * sizeof(slot_type);
 
-        split_ = alloc_->allocate_split(cb, 64, slots_bytes, sa);
+        // Allocate into locals first. If a configured memory limit rejects a
+        // growth allocation, the existing table must remain fully usable.
+        SplitResult new_split = alloc_->allocate_split(cb, 64, slots_bytes, sa);
+        int8_t* new_ctrl = reinterpret_cast<int8_t*>(new_split.ctrl_ptr);
+        slot_type* new_slots = reinterpret_cast<slot_type*>(new_split.slots_ptr);
+        init_ctrl(new_ctrl, cap);
 
-        ctrl_ = reinterpret_cast<int8_t*>(split_.ctrl_ptr);
-        std::memset(ctrl_, 0, cb);
-        init_ctrl(ctrl_, cap);
-
-        slots_ = reinterpret_cast<slot_type*>(split_.slots_ptr);
-        if (!split_.is_split) {
-            // Unified allocation — slots memory is already zeroed by the gap
-            // between ctrl and slots (padding), but zero the slots portion.
-            std::memset(slots_, 0, slots_bytes);
-        }
-        // Split allocation: slots already zeroed in allocate_split.
+        split_ = new_split;
+        ctrl_ = new_ctrl;
+        slots_ = new_slots;
+        capacity_ = cap;
+        growth_left_ = growth_budget(cap);
     }
 
     void destroy_all_slots() {
@@ -458,6 +473,8 @@ private:
     int8_t* ctrl_;
     slot_type* slots_;
     SplitResult split_;   // tracks allocation for deallocation
+    size_t max_capacity_; // 0 = unlimited
+    double max_load_factor_;
     Hash hash_;
     KeyEqual eq_;
 };

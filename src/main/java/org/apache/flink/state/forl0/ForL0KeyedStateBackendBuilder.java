@@ -73,6 +73,12 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     private final boolean l0CacheEnabled;
     private final long l0CacheSize;
     private final int initialTableCapacity;
+    private final int maxTableCapacity;
+    private final double mainTableLoadFactor;
+    private final long nativeMemoryMaxSize;
+    private final boolean l0CacheStrictAllocation;
+    private final long l0CacheStateSize;
+    private final long l0CacheWriteBypassThreshold;
     private final boolean hotCacheMetricsEnabled;
     /** Optional metric group for registering HotCache gauges. May be null in tests. */
     private final MetricGroup metricGroup;
@@ -146,6 +152,44 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             boolean hotCacheMetricsEnabled,
             CloseableRegistry cancelStreamRegistry,
             MetricGroup metricGroup) {
+        this(kvStateRegistry, keySerializer, userCodeClassLoader, numberOfKeyGroups,
+                keyGroupRange, executionConfig, ttlTimeProvider, latencyTrackingStateConfig,
+                stateHandles, keyGroupCompressionDecorator, priorityQueueSetFactory,
+                asynchronousSnapshots, l0CacheEnabled, l0CacheSize, initialTableCapacity,
+                ForL0Options.MAX_TABLE_CAPACITY.defaultValue(),
+                ForL0Options.MAIN_TABLE_LOAD_FACTOR.defaultValue(),
+                ForL0Options.NATIVE_MEMORY_MAX_SIZE.defaultValue().getBytes(),
+                ForL0Options.L0_CACHE_STRICT_ALLOCATION.defaultValue(),
+                ForL0Options.L0_CACHE_STATE_SIZE.defaultValue().getBytes(),
+                ForL0Options.L0_CACHE_WRITE_BYPASS_THRESHOLD.defaultValue(),
+                hotCacheMetricsEnabled, cancelStreamRegistry, metricGroup);
+    }
+
+    public ForL0KeyedStateBackendBuilder(
+            TaskKvStateRegistry kvStateRegistry,
+            TypeSerializer<K> keySerializer,
+            ClassLoader userCodeClassLoader,
+            int numberOfKeyGroups,
+            KeyGroupRange keyGroupRange,
+            ExecutionConfig executionConfig,
+            TtlTimeProvider ttlTimeProvider,
+            LatencyTrackingStateConfig latencyTrackingStateConfig,
+            @Nonnull Collection<KeyedStateHandle> stateHandles,
+            StreamCompressionDecorator keyGroupCompressionDecorator,
+            HeapPriorityQueueSetFactory priorityQueueSetFactory,
+            boolean asynchronousSnapshots,
+            boolean l0CacheEnabled,
+            long l0CacheSize,
+            int initialTableCapacity,
+            int maxTableCapacity,
+            double mainTableLoadFactor,
+            long nativeMemoryMaxSize,
+            boolean l0CacheStrictAllocation,
+            long l0CacheStateSize,
+            long l0CacheWriteBypassThreshold,
+            boolean hotCacheMetricsEnabled,
+            CloseableRegistry cancelStreamRegistry,
+            MetricGroup metricGroup) {
         super(
                 kvStateRegistry,
                 keySerializer,
@@ -163,6 +207,12 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         this.l0CacheEnabled = l0CacheEnabled;
         this.l0CacheSize = l0CacheSize;
         this.initialTableCapacity = initialTableCapacity;
+        this.maxTableCapacity = maxTableCapacity;
+        this.mainTableLoadFactor = mainTableLoadFactor;
+        this.nativeMemoryMaxSize = nativeMemoryMaxSize;
+        this.l0CacheStrictAllocation = l0CacheStrictAllocation;
+        this.l0CacheStateSize = l0CacheStateSize;
+        this.l0CacheWriteBypassThreshold = l0CacheWriteBypassThreshold;
         this.hotCacheMetricsEnabled = hotCacheMetricsEnabled;
         this.metricGroup = metricGroup;
     }
@@ -206,10 +256,14 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         int numKeyGroups = keyGroupRange.getNumberOfKeyGroups();
         long engineHandle = NativeEngine.createEngine(
                 startKeyGroup, numKeyGroups, numberOfKeyGroups,
-                l0CacheEnabled, l0CacheSize, initialTableCapacity);
-        LOG.info("[ForL0] C++ engine created: handle={}, keyGroups=[{}, {}), total={}, l0Enabled={}, initialTableCapacity={}",
+                l0CacheEnabled, l0CacheSize, l0CacheStrictAllocation,
+                l0CacheStateSize, l0CacheWriteBypassThreshold,
+                initialTableCapacity, maxTableCapacity, mainTableLoadFactor,
+                nativeMemoryMaxSize);
+        LOG.info("[ForL0] C++ engine created: handle={}, keyGroups=[{}, {}), total={}, l0Enabled={}, l0QuotaBytes={}, strictL0={}, initialTableCapacity={}, maxTableCapacity={}, nativeMemoryMaxBytes={}",
                 engineHandle, startKeyGroup, startKeyGroup + numKeyGroups, numberOfKeyGroups,
-                l0CacheEnabled, initialTableCapacity);
+                l0CacheEnabled, l0CacheSize, l0CacheStrictAllocation,
+                initialTableCapacity, maxTableCapacity, nativeMemoryMaxSize);
 
         if (hotCacheMetricsEnabled && metricGroup != null) {
             registerHotCacheMetrics(metricGroup, engineHandle);
@@ -772,8 +826,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         try {
             MetricGroup g = parent.addGroup("forl0").addGroup("hotcache");
             // Snapshot cache every query; the values are atomic counters / plain
-            // longs in C++. Nine-slot scratch buffer avoids per-call allocation.
-            final long[] buf = new long[9];
+            // longs in C++. Reuse scratch buffers to avoid per-call allocation.
+            final long[] buf = new long[12];
             g.gauge("active",             () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[0]; });
             g.gauge("bytesCapacity",      () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[1]; });
             g.gauge("bytesUsed",          () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[2]; });
@@ -782,6 +836,16 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             g.gauge("lookups",            () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[5]; });
             g.gauge("hits",               () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[6]; });
             g.gauge("invalidations",      () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[7]; });
+            g.gauge("bytesRequested",     () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[8]; });
+            g.gauge("writes",             () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[9]; });
+            g.gauge("writeBypassEvents",  () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[10]; });
+            g.gauge("stateCaches",        () -> { NativeEngine.getHotCacheManagerStats(engineHandle, buf); return buf[11]; });
+
+            MetricGroup memory = parent.addGroup("forl0").addGroup("nativeMemory");
+            final long[] memoryBuf = new long[3];
+            memory.gauge("bytesUsed", () -> { NativeEngine.getEngineMemoryStats(engineHandle, memoryBuf); return memoryBuf[0]; });
+            memory.gauge("bytesPeak", () -> { NativeEngine.getEngineMemoryStats(engineHandle, memoryBuf); return memoryBuf[1]; });
+            memory.gauge("bytesLimit", () -> { NativeEngine.getEngineMemoryStats(engineHandle, memoryBuf); return memoryBuf[2]; });
         } catch (Throwable t) {
             // Metric registration is best-effort; don't fail backend build.
             LOG.warn("[ForL0] Failed to register HotCache metrics: {}", t.getMessage());

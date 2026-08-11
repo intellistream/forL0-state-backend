@@ -32,7 +32,10 @@ from typing import Optional, Dict, List
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import requests_shim as requests  # type: ignore[assignment]
-from utils.config import get_results_dir, load_config, parse_json_from_output
+from utils.config import (
+    FORL0_CONFIG_MAPPING, get_results_dir, load_config,
+    parse_json_from_output, render_forl0_config_args,
+)
 from utils.profiler import AsyncProfiler, find_taskmanager_pids
 from utils.flamegraph_quality import analyze_flamegraph_quality
 
@@ -188,6 +191,25 @@ def parse_nexmark_summary(output: str) -> Optional[dict]:
     return None
 
 
+def is_benign_post_summary_cancel_conflict(output: str) -> bool:
+    """Accept only the known race where an already-finished job returns 409 on cancel."""
+    lowered = output.lower()
+    required = (
+        'summary average:' in lowered,
+        'stop job query' in lowered,
+        'status code is 409' in lowered,
+        'canceljob' in lowered,
+    )
+    fatal_markers = (
+        'job execution failed',
+        'taskmanager lost',
+        'outofmemoryerror',
+        'container killed',
+        'exit code 137',
+    )
+    return all(required) and not any(marker in lowered for marker in fatal_markers)
+
+
 def parse_taskmanager_log(flink_home: str) -> Optional[dict]:
     """Parse benchmark results from TaskManager stdout (.out file)."""
     log_pattern = f"{flink_home}/log/*taskexecutor*.out"
@@ -313,31 +335,11 @@ def get_forl0_effective_config(config: dict, backend: str, query: Optional[str] 
     return effective_config
 
 
-FORL0_CONFIG_MAPPING = {
-    'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
-    'max_table_capacity': 'state.backend.forl0.max-table-capacity',
-    'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
-    'l0_cache_size': 'state.backend.forl0.l0-cache.size',
-    'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
-    'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
-    'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
-    'metrics_collector_enabled': 'forL0.metricsCollector.enabled',
-}
-
-
 def get_forl0_config_args(config: dict, backend: str, query: Optional[str] = None) -> list:
     """Get ForL0 StateBackend configuration as JVM -D arguments."""
     effective_config = get_forl0_effective_config(config, backend, query)
-    args = []
-    
-    for yaml_key, flink_key in FORL0_CONFIG_MAPPING.items():
-        if yaml_key in effective_config:
-            value = effective_config[yaml_key]
-            if isinstance(value, bool):
-                value = 'true' if value else 'false'
-            args.append(f'-D{flink_key}={value}')
-    
-    return args
+    return render_forl0_config_args(
+        effective_config, config.get('runtime', {}).get('parallelism', 1))
 
 
 def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str) -> bool:
@@ -1040,9 +1042,11 @@ class NexmarkRunner:
             set_config_line(str(key), value)
 
         effective_forl0 = get_forl0_effective_config(self.config, backend, query)
-        for yaml_key, flink_key in FORL0_CONFIG_MAPPING.items():
-            if yaml_key in effective_forl0:
-                set_config_line(flink_key, effective_forl0[yaml_key])
+        rendered_forl0 = render_forl0_config_args(
+            effective_forl0, self.runtime_config.get('parallelism', 1))
+        for argument in rendered_forl0:
+            key, value = argument[2:].split('=', 1)
+            set_config_line(key, value)
 
         config_yaml_path.write_text('\n'.join(config_lines) + '\n')
 
@@ -1288,80 +1292,83 @@ class NexmarkRunner:
                     )
 
                     parsed = parse_nexmark_summary(output)
-                    if returncode != 0 and not parsed:
-                        print('  ERROR: NexMark benchmark driver failed')
-                        should_retry = retryable_error
-                    else:
-                        if returncode != 0 and parsed:
-                            print('  WARNING: NexMark driver failed after printing summary; keeping parsed sample')
-                        if parsed:
-                            events_num = parsed.get('events_num') or num_events
-                            if process_elapsed > 0 and events_num:
-                                parsed['process_elapsed_seconds'] = process_elapsed
-                                parsed['process_throughput'] = float(events_num) / process_elapsed
-
-                            # Filter clearly invalid samples from noisy metric reporter runs.
-                            cpu = parsed.get('cpu', 0)
-                            tpc = parsed.get('throughput_per_core', 0)
-                            invalid_sample = cpu <= 0 or tpc <= 0
-
-                            if min_cpu_cores > 0 and cpu < min_cpu_cores:
-                                print(
-                                    f'  WARNING: Sample too idle (cpu={cpu:.3f} < '
-                                    f'min_cpu_cores={min_cpu_cores:.3f}), retrying'
-                                )
-                                invalid_sample = True
-
-                            # For profiling runs, reject samples that are too idle to expose real hotspots.
-                            if profile_mode and profile_mode in ['cpu', 'cache'] and cpu < min_profile_cpu_cores:
-                                print(
-                                    f'  WARNING: Profile sample too idle (cpu={cpu:.3f} < '
-                                    f'min_profile_cpu_cores={min_profile_cpu_cores:.3f}), retrying'
-                                )
-                                invalid_sample = True
-
-                            if invalid_sample:
-                                print('  WARNING: Invalid sample detected (cpu/throughput too low), retrying')
-                                should_retry = True
-                            elif reject_full_gc and run_full_gc_delta > max_full_gc_delta:
-                                print(
-                                    f'  WARNING: Full GC detected during sample '
-                                    f'(delta={run_full_gc_delta}, max={max_full_gc_delta}), rejecting sample'
-                                )
-                                invalid_sample = True
-                                should_retry = True
-                            else:
-                                parsed.update({
-                                    'benchmark': 'nexmark',
-                                    'backend': backend,
-                                    'query': query,
-                                    'parallelism': parallelism,
-                                    'checkpoint_interval': checkpoint_interval,
-                                    'person_proportion': person_proportion,
-                                    'auction_proportion': auction_proportion,
-                                    'bid_proportion': bid_proportion,
-                                    'bid_hot_ratio_auctions': bid_hot_ratio_auctions,
-                                    'bid_hot_ratio_bidders': bid_hot_ratio_bidders,
-                                    'auction_hot_ratio_sellers': self._get_query_override(query, 'auction_hot_ratio_sellers'),
-                                    'configured_tps': tps,
-                                    'metric_tps_vertex': self._get_query_override(query, 'metric_tps_vertex'),
-                                    'metric_monitor_duration': self._get_query_override(query, 'metric_monitor_duration'),
-                                    'collect_full_gc': collect_full_gc,
-                                    'reject_full_gc': reject_full_gc,
-                                    'max_full_gc_delta': max_full_gc_delta,
-                                    'full_gc_delta': run_full_gc_delta,
-                                })
-                                print(f"\n  Result: {parsed.get('throughput', 0):,.2f} events/sec")
-                                if parsed.get('process_throughput'):
-                                    print(
-                                        "  Process wall-clock: "
-                                        f"{parsed['process_elapsed_seconds']:.2f}s, "
-                                        f"{parsed['process_throughput']:,.2f} events/sec"
-                                    )
-                                return parsed
+                    if returncode != 0:
+                        if parsed and is_benign_post_summary_cancel_conflict(output):
+                            print('  WARNING: NexMark cancel returned 409 after a complete summary; keeping parsed sample')
+                            parsed['driver_cleanup_conflict_409'] = True
                         else:
-                            print('  WARNING: Could not parse NexMark summary output')
+                            print('  ERROR: NexMark driver failed; rejecting sample even if a partial summary exists')
+                            parsed = None
                             should_retry = True
+                    if parsed:
+                        events_num = parsed.get('events_num') or num_events
+                        if process_elapsed > 0 and events_num:
+                            parsed['process_elapsed_seconds'] = process_elapsed
+                            parsed['process_throughput'] = float(events_num) / process_elapsed
+
+                        # Filter clearly invalid samples from noisy metric reporter runs.
+                        cpu = parsed.get('cpu', 0)
+                        tpc = parsed.get('throughput_per_core', 0)
+                        invalid_sample = cpu <= 0 or tpc <= 0
+
+                        if min_cpu_cores > 0 and cpu < min_cpu_cores:
+                            print(
+                                f'  WARNING: Sample too idle (cpu={cpu:.3f} < '
+                                f'min_cpu_cores={min_cpu_cores:.3f}), retrying'
+                            )
+                            invalid_sample = True
+
+                        # For profiling runs, reject samples that are too idle to expose real hotspots.
+                        if profile_mode and profile_mode in ['cpu', 'cache'] and cpu < min_profile_cpu_cores:
+                            print(
+                                f'  WARNING: Profile sample too idle (cpu={cpu:.3f} < '
+                                f'min_profile_cpu_cores={min_profile_cpu_cores:.3f}), retrying'
+                            )
+                            invalid_sample = True
+
+                        if invalid_sample:
+                            print('  WARNING: Invalid sample detected (cpu/throughput too low), retrying')
+                            should_retry = True
+                        elif reject_full_gc and run_full_gc_delta > max_full_gc_delta:
+                            print(
+                                f'  WARNING: Full GC detected during sample '
+                                f'(delta={run_full_gc_delta}, max={max_full_gc_delta}), rejecting sample'
+                            )
+                            invalid_sample = True
+                            should_retry = True
+                        else:
+                            parsed.update({
+                                'benchmark': 'nexmark',
+                                'backend': backend,
+                                'query': query,
+                                'parallelism': parallelism,
+                                'checkpoint_interval': checkpoint_interval,
+                                'person_proportion': person_proportion,
+                                'auction_proportion': auction_proportion,
+                                'bid_proportion': bid_proportion,
+                                'bid_hot_ratio_auctions': bid_hot_ratio_auctions,
+                                'bid_hot_ratio_bidders': bid_hot_ratio_bidders,
+                                'auction_hot_ratio_sellers': self._get_query_override(query, 'auction_hot_ratio_sellers'),
+                                'configured_tps': tps,
+                                'metric_tps_vertex': self._get_query_override(query, 'metric_tps_vertex'),
+                                'metric_monitor_duration': self._get_query_override(query, 'metric_monitor_duration'),
+                                'collect_full_gc': collect_full_gc,
+                                'reject_full_gc': reject_full_gc,
+                                'max_full_gc_delta': max_full_gc_delta,
+                                'full_gc_delta': run_full_gc_delta,
+                            })
+                            print(f"\n  Result: {parsed.get('throughput', 0):,.2f} events/sec")
+                            if parsed.get('process_throughput'):
+                                print(
+                                    "  Process wall-clock: "
+                                    f"{parsed['process_elapsed_seconds']:.2f}s, "
+                                    f"{parsed['process_throughput']:,.2f} events/sec"
+                                )
+                            return parsed
+                    else:
+                        if returncode == 0:
+                            print('  WARNING: Could not parse NexMark summary output')
+                        should_retry = True
 
                 except Exception as e:
                     print(f"  ERROR: {e}")
@@ -1550,6 +1557,7 @@ class NexmarkRunner:
             'run_id': os.environ.get('FORL0_RUN_ID', '').strip() or None,
             'run_started_epoch': int(os.environ['FORL0_RUN_STARTED_EPOCH'])
             if os.environ.get('FORL0_RUN_STARTED_EPOCH', '').isdigit() else None,
+            'variant': os.environ.get('FORL0_VARIANT', '').strip() or None,
             'mode': self.mode,
             'scenario_name': self.nexmark_config.get('scenario_name'),
             'selected_queries': getattr(self, 'selected_queries', []),

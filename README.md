@@ -283,35 +283,38 @@ sudo ldconfig
 state.backend: org.apache.flink.state.forl0.ForL0StateBackendFactory
 
 # ========== L0 Hot-Key Cache (可选) ==========
-# 只有两个开关：enabled 与 size。容量过大会在 cache_tuner_init 阶段被内核
-# 模块拒绝并自动降级为关闭（WARN 日志可查）。
+# total-size 是作业总预算，expected-engines 通常等于 keyed 算子并行实例数。
+# 正式实验建议打开 strict-allocation，任何硬件降级都会直接使运行失败。
 state.backend.forl0.l0-cache.enabled: false
-state.backend.forl0.l0-cache.size:    20mb
+state.backend.forl0.l0-cache.total-size: 20mb
+state.backend.forl0.l0-cache.expected-engines: 8
+state.backend.forl0.l0-cache.strict-allocation: true
+state.backend.forl0.native-memory.max-size: 1gb
 ```
 
-#### 多 slot 部署时的 l0-cache.size 公式
+#### 多并行实例部署时的 L0 预算
 
 L0 的物理上限来自内核模块参数 `max_numa_capacity`（默认 20 MB / NUMA node）。
 单台鲲鹏 920 双路有 8 个 NUMA node，整机实际可用 < 100 MB。
 **同一 NUMA node 上所有 TaskManager slot 共享该节点的 L0 预算**，后启的 slot
 一旦 `cache_tuner_init` 失败就会触发硬件门禁、走 WARN 降级路径。
 
-推荐计算：
+runner 会按实际 workload parallelism 自动设置 `expected-engines`。backend 使用：
 
 ```
-recommended_size = (max_numa_capacity - reserve) / slots_per_numa
-                 ≈ (20 MB - 4 MB) / slots_per_numa
+per_engine_size = total_size / expected_engines
 ```
 
-举例：单 NUMA 上 4 slots 共享 → 建议 `l0-cache.size: 4mb`；8 slots → `2mb`。
-若超分，晚启 slot 会看到：
+手工部署时也必须按 keyed StateBackend instance 数，而不是只按 TaskManager 数分配。
+`l0-cache.size` 仍作为兼容的“每实例容量”选项保留；新实验应使用
+`l0-cache.total-size`。若超分，严格模式会失败；非严格模式会看到：
 
 ```
 [ForL0-HotCache] WARN: L0 hardware not available (reason: cache_tuner_init ...);
 cache forcibly disabled.
 ```
 
-这不是错误；该 slot 上的 ValueState 仍然工作，只是没有 L0 加速。
+非严格模式下 ValueState 仍然工作，但该样本不能用于 L0 硬件归因。
 
 **编程方式配置：**
 
@@ -333,7 +336,14 @@ env.setStateBackend(stateBackend);
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `state.backend.forl0.l0-cache.enabled` | boolean | `false` | 是否请求开启 L0 Hot-Key Cache |
-| `state.backend.forl0.l0-cache.size` | MemorySize | `20mb` | 请求的 L0 容量；受 `max_numa_capacity` 与同 NUMA slot 数约束，实际值见 metric `forl0.hotcache.bytesCapacity` |
+| `state.backend.forl0.l0-cache.total-size` | MemorySize | 无 | 作业级 L0 总预算，由 expected-engines 均分 |
+| `state.backend.forl0.l0-cache.expected-engines` | int | `1` | 共享总预算的并行 StateEngine 数 |
+| `state.backend.forl0.l0-cache.strict-allocation` | boolean | `false` | 分配缩小或硬件不可用时直接失败 |
+| `state.backend.forl0.l0-cache.size` | MemorySize | `20mb` | 兼容选项：每个 StateEngine 的容量 |
+| `state.backend.forl0.l0-cache.state-size` | MemorySize | `1mb` | 每个可缓存 scalar ValueState 的申请额度 |
+| `state.backend.forl0.l0-cache.write-bypass-threshold` | long | `1048576` | 连续只写多少次后停止污染 L0；0 表示关闭 |
+| `state.backend.forl0.native-memory.max-size` | MemorySize | `0` | 每个 StateEngine 的 SwissTable native 内存上限；0 表示不限 |
+| `state.backend.forl0.max-table-capacity` | int | `0` | 每个 SwissTable 的最大容量；0 表示不限 |
 
 #### 3. 验证部署
 

@@ -33,19 +33,30 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
         JNIEnv* env, jclass, jint startKeyGroup, jint numKeyGroups, jint totalKeyGroups,
-        jboolean l0Enabled, jlong l0Capacity, jint initialTableCapacity) {
+        jboolean l0Enabled, jlong l0Capacity, jboolean l0StrictAllocation,
+        jlong l0StateCapacity, jlong l0WriteBypassThreshold,
+        jint initialTableCapacity, jint maxTableCapacity,
+        jdouble mainTableLoadFactor, jlong nativeMemoryMaxBytes) {
     JNI_ENTRY_RETURN(jlong, 0, {
-        Allocator* alloc = &DefaultAllocator::instance();
         std::unique_ptr<HotCacheManager> mgr;
         if (l0Enabled) {
             mgr = std::unique_ptr<HotCacheManager>(
-                new HotCacheManager(static_cast<size_t>(l0Capacity)));
+                new HotCacheManager(static_cast<size_t>(l0Capacity), nullptr,
+                                    l0StrictAllocation == JNI_TRUE,
+                                    static_cast<uint64_t>(l0WriteBypassThreshold)));
             // Hardware-gating telemetry per design §3.2.
             if (mgr->is_active()) {
                 fprintf(stderr,
-                        "[ForL0-HotCache] L0 cache enabled: capacity=%zuMB, total_sets=%u\n",
-                        mgr->capacity_bytes() / (1024 * 1024), mgr->total_sets());
+                        "[ForL0-HotCache] engine_start active=1 key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
+                        static_cast<int>(startKeyGroup),
+                        static_cast<int>(startKeyGroup + numKeyGroups),
+                        mgr->requested_capacity_bytes(), mgr->capacity_bytes(),
+                        mgr->total_sets(), l0StrictAllocation == JNI_TRUE ? 1 : 0);
             } else {
+                if (l0StrictAllocation == JNI_TRUE) {
+                    throw std::runtime_error(
+                        std::string("strict L0 allocation failed: ") + mgr->failure_reason());
+                }
                 fprintf(stderr,
                         "[ForL0-HotCache] WARN: L0 hardware not available (reason: %s); "
                         "cache forcibly disabled.\n",
@@ -56,8 +67,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
             fprintf(stderr, "[ForL0-HotCache] L0 cache disabled by config.\n");
         }
         auto* engine = new StateEngine(startKeyGroup, numKeyGroups, totalKeyGroups,
-                                       alloc, std::move(mgr),
-                                       static_cast<size_t>(initialTableCapacity));
+                                       std::move(mgr),
+                                       static_cast<size_t>(initialTableCapacity),
+                                       static_cast<size_t>(maxTableCapacity),
+                                       static_cast<double>(mainTableLoadFactor),
+                                       static_cast<size_t>(nativeMemoryMaxBytes),
+                                       static_cast<size_t>(l0StateCapacity));
         return to_handle(engine);
     })
 }
@@ -67,20 +82,41 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
         JNIEnv* env, jclass, jlong engineHandle) {
     JNI_ENTRY_VOID({
         auto* engine = from_handle<StateEngine>(engineHandle);
+        for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
+            const StateHandle* state = entry.second;
+            if (!state || !state->hot_cache_ll) continue;
+            fprintf(stderr,
+                    "[ForL0-HotCache] state_summary name=%s sets=%u lookups=%llu hits=%llu invalidations=%llu writes=%llu bypass_events=%llu bypassed=%d\n",
+                    state->state_name.c_str(), state->hot_cache_ll->num_sets(),
+                    static_cast<unsigned long long>(state->hot_cache_ll->lookups()),
+                    static_cast<unsigned long long>(state->hot_cache_ll->hits()),
+                    static_cast<unsigned long long>(state->hot_cache_ll->invalidations()),
+                    static_cast<unsigned long long>(state->hot_cache_ll->writes()),
+                    static_cast<unsigned long long>(state->hot_cache_ll->bypass_events()),
+                    state->hot_cache_ll->write_bypassed() ? 1 : 0);
+        }
         if (auto* mgr = engine->hot_cache_manager()) {
             fprintf(stderr,
-                    "[ForL0-HotCache] Shutdown: capacity=%zuMB, used_bytes=%zuKB, "
-                    "total_sets=%u, free_sets=%u\n",
-                    mgr->capacity_bytes() / (1024 * 1024),
-                    mgr->used_bytes() / 1024,
-                    mgr->total_sets(), mgr->free_sets());
+                    "[ForL0-HotCache] engine_summary requested_bytes=%zu actual_bytes=%zu used_bytes=%zu total_sets=%u free_sets=%u caches=%u lookups=%llu hits=%llu invalidations=%llu writes=%llu bypass_events=%llu\n",
+                    mgr->requested_capacity_bytes(), mgr->capacity_bytes(), mgr->used_bytes(),
+                    mgr->total_sets(), mgr->free_sets(), mgr->cache_count(),
+                    static_cast<unsigned long long>(mgr->total_lookups()),
+                    static_cast<unsigned long long>(mgr->total_hits()),
+                    static_cast<unsigned long long>(mgr->total_invalidations()),
+                    static_cast<unsigned long long>(mgr->total_writes()),
+                    static_cast<unsigned long long>(mgr->total_bypass_events()));
+        }
+        if (auto* allocator = engine->counting_allocator()) {
+            fprintf(stderr,
+                    "[ForL0-Memory] engine_summary used_bytes=%zu peak_bytes=%zu max_bytes=%zu\n",
+                    allocator->used_bytes(), allocator->peak_bytes(), allocator->max_bytes());
         }
         delete engine;
     })
 }
 
 // --- Hot-cache metrics (design §8) ---
-// Layout of the returned long[9]:
+// Layout of the returned long[12]:
 //   [0] active              (1 = L0 cache active, 0 = disabled / hw unavailable)
 //   [1] capacity_bytes      (actual bytes obtained from l0_mem_alloc)
 //   [2] used_bytes          (sets currently acquired × sizeof(HotSet))
@@ -89,8 +125,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
 //   [5] total_lookups       (sum across all attached caches)
 //   [6] total_hits          (sum across all attached caches)
 //   [7] total_invalidations (sum across all attached caches)
-//   [8] reserved (0)
-// Java callers must pass an array of length >= 9. Older 6-slot callers get
+//   [8] requested_capacity_bytes
+//   [9] total writes
+//   [10] write-only bypass events
+//   [11] attached cache count
+// Java callers should pass an array of length >= 12. Older 6-slot callers get
 // the first 6 fields populated exactly as before (forward-compatible).
 
 JNIEXPORT void JNICALL
@@ -99,7 +138,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_getHotCacheManagerStats(
     JNI_ENTRY_VOID({
         auto* engine = from_handle<StateEngine>(engineHandle);
         jsize n = env->GetArrayLength(out);
-        jlong buf[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+        jlong buf[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
         if (auto* mgr = engine->hot_cache_manager()) {
             buf[0] = mgr->is_active() ? 1 : 0;
             buf[1] = static_cast<jlong>(mgr->capacity_bytes());
@@ -109,31 +148,58 @@ Java_org_apache_flink_state_forl0_NativeEngine_getHotCacheManagerStats(
             buf[5] = static_cast<jlong>(mgr->total_lookups());
             buf[6] = static_cast<jlong>(mgr->total_hits());
             buf[7] = static_cast<jlong>(mgr->total_invalidations());
+            buf[8] = static_cast<jlong>(mgr->requested_capacity_bytes());
+            buf[9] = static_cast<jlong>(mgr->total_writes());
+            buf[10] = static_cast<jlong>(mgr->total_bypass_events());
+            buf[11] = static_cast<jlong>(mgr->cache_count());
         }
-        jsize toWrite = (n < 9) ? n : 9;
+        jsize toWrite = (n < 12) ? n : 12;
         env->SetLongArrayRegion(out, 0, toWrite, buf);
     })
 }
 
-// Layout of the returned long[4] for a single state's attached HotCacheLL:
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_getEngineMemoryStats(
+        JNIEnv* env, jclass, jlong engineHandle, jlongArray out) {
+    JNI_ENTRY_VOID({
+        auto* engine = from_handle<StateEngine>(engineHandle);
+        jlong buf[3] = {0, 0, 0};
+        if (auto* allocator = engine->counting_allocator()) {
+            buf[0] = static_cast<jlong>(allocator->used_bytes());
+            buf[1] = static_cast<jlong>(allocator->peak_bytes());
+            buf[2] = static_cast<jlong>(allocator->max_bytes());
+        }
+        jsize n = env->GetArrayLength(out);
+        env->SetLongArrayRegion(out, 0, n < 3 ? n : 3, buf);
+    })
+}
+
+// Layout of the returned long[7] for a single state's attached HotCacheLL:
 //   [0] attached (1 = cache attached, 0 = not attached)
 //   [1] lookups  (hits + misses)
 //   [2] hits
 //   [3] invalidations
+//   [4] writes
+//   [5] bypass events
+//   [6] sets
 
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_getHotCacheStats(
         JNIEnv* env, jclass, jlong stateHandle, jlongArray out) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        jlong buf[4] = {0, 0, 0, 0};
+        jlong buf[7] = {0, 0, 0, 0, 0, 0, 0};
         if (handle->hot_cache_ll) {
             buf[0] = 1;
             buf[1] = static_cast<jlong>(handle->hot_cache_ll->lookups());
             buf[2] = static_cast<jlong>(handle->hot_cache_ll->hits());
             buf[3] = static_cast<jlong>(handle->hot_cache_ll->invalidations());
+            buf[4] = static_cast<jlong>(handle->hot_cache_ll->writes());
+            buf[5] = static_cast<jlong>(handle->hot_cache_ll->bypass_events());
+            buf[6] = static_cast<jlong>(handle->hot_cache_ll->num_sets());
         }
-        env->SetLongArrayRegion(out, 0, 4, buf);
+        jsize n = env->GetArrayLength(out);
+        env->SetLongArrayRegion(out, 0, n < 7 ? n : 7, buf);
     })
 }
 
@@ -249,13 +315,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
                 table_id = engine->register_state<int64_t, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::INT64;
                 stored_value_type = StateHandle::ValueType::BYTES;
-            } else if (kind == StateHandle::StateKind::REDUCING && (valueTypeId == 2 || valueTypeId == 1)) {
-                // BYTES_TW: String/bytes key + long value ReducingState with TimeWindow ns.
-                // Stores <std::string, int64_t> so C++ can do builtin aggregation in-place.
-                table_id = engine->register_state<std::string, int64_t>(name, void_ns);
-                stored_key_type = StateHandle::KeyType::BYTES;
-                stored_value_type = StateHandle::ValueType::INT64;
             } else {
+                // Non-long keys use ForL0ReducingState's generic serialized-byte path,
+                // including TimeWindow namespaces.  Keep the native value type in sync
+                // with valuePutGeneric/reduceGetGeneric.
                 table_id = engine->register_state<std::string, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::BYTES;
                 stored_value_type = StateHandle::ValueType::BYTES;
@@ -362,13 +425,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
                 table_id = engine->register_state<int64_t, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::INT64;
                 stored_value_type = StateHandle::ValueType::BYTES;
-            } else if (is_reducing && (valueTypeId == 2 || valueTypeId == 1)) {
-                // String/bytes key + long value ReducingState (VoidNamespace).
-                // Stores <std::string, int64_t> so reduceAddGenericLong can do in-place aggregation.
-                table_id = engine->register_state<std::string, int64_t>(name, void_ns);
-                stored_key_type = StateHandle::KeyType::BYTES;
-                stored_value_type = StateHandle::ValueType::INT64;
             } else {
+                // The generic Java path always serializes accumulator values, even
+                // when the logical value type is Long or Integer.
                 table_id = engine->register_state<std::string, std::string>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::BYTES;
                 stored_value_type = StateHandle::ValueType::BYTES;
@@ -377,6 +436,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
 
         // Create a StateHandle with STORED types (matching actual table types)
         auto* handle = new StateHandle();
+        handle->state_name = name;
         handle->engine = engine;
         handle->table_id = table_id;
         handle->key_type = stored_key_type;
@@ -405,10 +465,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         // Phase B extends the fast-path to <int64,double>, <int32,int64>,
         // <int32,double> by bit-casting doubles to int64 and sign-extending
         // int32 keys — all bit-exact round-trips through HotCacheLL.
-        // Phase B also covers TimeWindow namespace (via `hotcache_fold_tw_key`
-        // to fold (key, nsStart, nsEnd) into a single int64) and FIXED_ROW
-        // keys (via `hotcache_fold_fixed_row_key`). A fold collision can only
-        // cause a cache miss — the SwissTable lookup below always confirms.
+        // Composite TimeWindow/FIXED_ROW keys are deliberately excluded: a
+        // lossy 64-bit fold cannot distinguish collisions on a cache hit and
+        // therefore cannot safely bypass the authoritative SwissTable lookup.
         // Variable-length values would require a pointer-mode cache with a
         // SwissTable rehash hook; deferred until that hook exists.
         if (auto* mgr = engine->hot_cache_manager()) {
@@ -418,19 +477,29 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
                 || stored_value_type == StateHandle::ValueType::FLOAT64;
             const bool cacheable_key =
                 stored_key_type == StateHandle::KeyType::INT64
-                || stored_key_type == StateHandle::KeyType::INT32
-                || stored_key_type == StateHandle::KeyType::FIXED_ROW;
+                || stored_key_type == StateHandle::KeyType::INT32;
             if (mgr->is_active()
                 && handle->kind == StateHandle::StateKind::VALUE
+                && handle->ns_type == StateHandle::NsType::VOID_NS
                 && cacheable_key
                 && scalar_value) {
-                // Default sets-per-state: 64 sets = 12 KB. acquire_ll rounds
-                // DOWN to a power of 2 if the manager is too full.
-                auto cache = mgr->acquire_ll(64);
+                size_t requested_bytes = engine->hot_cache_state_bytes();
+                uint32_t requested_sets = static_cast<uint32_t>(requested_bytes / sizeof(HotSet));
+                auto cache = mgr->acquire_ll(requested_sets);
                 if (cache) {
                     // Manager retains ownership; release the unique_ptr so
                     // the raw pointer survives until manager teardown.
                     handle->hot_cache_ll = cache.release();
+                    fprintf(stderr,
+                            "[ForL0-HotCache] state_attach name=%s requested_bytes=%zu actual_bytes=%zu sets=%u\n",
+                            name.c_str(), requested_bytes,
+                            static_cast<size_t>(handle->hot_cache_ll->num_sets()) * sizeof(HotSet),
+                            handle->hot_cache_ll->num_sets());
+                } else {
+                    fprintf(stderr,
+                            "[ForL0-HotCache] WARN state_attach_failed name=%s requested_bytes=%zu free_bytes=%zu\n",
+                            name.c_str(), requested_bytes,
+                            static_cast<size_t>(mgr->free_sets()) * sizeof(HotSet));
                 }
             }
         }

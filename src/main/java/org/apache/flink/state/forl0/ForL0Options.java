@@ -27,8 +27,26 @@ public class ForL0Options {
     public static final ConfigOption<Integer> MAX_TABLE_CAPACITY =
             ConfigOptions.key("state.backend.forl0.max-table-capacity")
                     .intType()
-                    .defaultValue(1024)
-                    .withDescription("Maximum capacity of each SwissTable before triggering split. Must be a power of 2.");
+                    .defaultValue(0)
+                    .withDescription("Maximum capacity of each SwissTable. 0 means unlimited; otherwise it must be a power of 2.");
+
+    public static final ConfigOption<Double> MAIN_TABLE_LOAD_FACTOR =
+            ConfigOptions.key("state.backend.forl0.main-table.load-factor-threshold")
+                    .doubleType()
+                    .defaultValue(0.875)
+                    .withDescription("Maximum SwissTable load factor before rehash/growth [0.5, 0.875].");
+
+    public static final ConfigOption<MemorySize> NATIVE_MEMORY_MAX_SIZE =
+            ConfigOptions.key("state.backend.forl0.native-memory.max-size")
+                    .memoryType()
+                    .defaultValue(MemorySize.ofMebiBytes(0))
+                    .withDescription("Per-StateEngine SwissTable native-memory limit. 0 means unlimited.");
+
+    public static final ConfigOption<MemorySize> LEGACY_L0_MEMORY_MAX_SIZE =
+            ConfigOptions.key("state.backend.forl0.l0-memory.max-size")
+                    .memoryType()
+                    .noDefaultValue()
+                    .withDescription("Deprecated alias of native-memory.max-size retained for old benchmark configs.");
 
     // ========== Snapshot Options ==========
 
@@ -53,6 +71,36 @@ public class ForL0Options {
                     .defaultValue(MemorySize.ofMebiBytes(20))
                     .withDescription("Size of L0 Cache memory pool. Examples: 20mb, 64mb.");
 
+    public static final ConfigOption<MemorySize> L0_CACHE_TOTAL_SIZE =
+            ConfigOptions.key("state.backend.forl0.l0-cache.total-size")
+                    .memoryType()
+                    .noDefaultValue()
+                    .withDescription("Host/device-wide L0 budget divided by l0-cache.expected-engines.");
+
+    public static final ConfigOption<Integer> L0_CACHE_EXPECTED_ENGINES =
+            ConfigOptions.key("state.backend.forl0.l0-cache.expected-engines")
+                    .intType()
+                    .defaultValue(1)
+                    .withDescription("Expected number of concurrent keyed StateEngines sharing the L0 device.");
+
+    public static final ConfigOption<Boolean> L0_CACHE_STRICT_ALLOCATION =
+            ConfigOptions.key("state.backend.forl0.l0-cache.strict-allocation")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription("Fail backend construction instead of silently shrinking or disabling an L0 quota.");
+
+    public static final ConfigOption<MemorySize> L0_CACHE_STATE_SIZE =
+            ConfigOptions.key("state.backend.forl0.l0-cache.state-size")
+                    .memoryType()
+                    .defaultValue(MemorySize.ofMebiBytes(1))
+                    .withDescription("Requested L0 quota for each eligible scalar ValueState.");
+
+    public static final ConfigOption<Long> L0_CACHE_WRITE_BYPASS_THRESHOLD =
+            ConfigOptions.key("state.backend.forl0.l0-cache.write-bypass-threshold")
+                    .longType()
+                    .defaultValue(1L << 20)
+                    .withDescription("Consecutive cache writes without a lookup before write-only admission bypass activates; 0 disables bypass.");
+
     public static final ConfigOption<Boolean> HOT_CACHE_METRICS_ENABLED =
             ConfigOptions.key("forL0.metricsCollector.enabled")
                     .booleanType()
@@ -75,5 +123,9 @@ public class ForL0Options {
      */
     public static boolean isValidTableCapacity(int capacity) {
         return capacity >= MIN_TABLE_CAPACITY && (capacity & (capacity - 1)) == 0;
+    }
+
+    public static boolean isValidMaxTableCapacity(int capacity) {
+        return capacity == 0 || isValidTableCapacity(capacity);
     }
 }

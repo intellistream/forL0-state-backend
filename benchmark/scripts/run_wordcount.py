@@ -32,7 +32,7 @@ from datetime import datetime
 from utils.config import (
     load_config, get_benchmark_root,
     get_wordcount_jar, get_flink_home, get_results_dir,
-    get_timestamp, parse_json_from_output, save_result
+    get_timestamp, parse_json_from_output, save_result, render_forl0_config_args
 )
 from utils.profiler import AsyncProfiler, find_taskmanager_pids, get_profiler_summary
 from utils.vtune_profiler import VTuneProfiler, get_profiler_summary as get_vtune_summary
@@ -473,29 +473,8 @@ def get_forl0_config_args(config: dict, backend: str, workload_key: str = 'wordc
         if isinstance(scenario_overrides, dict):
             effective_config.update(scenario_overrides)
 
-    args = []
-    
-    # Map YAML config keys to Flink configuration keys
-    config_mapping = {
-        'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
-        'max_table_capacity': 'state.backend.forl0.max-table-capacity',
-        'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
-        'l0_cache_size': 'state.backend.forl0.l0-cache.size',
-        'l0_cache_replacement_policy': 'state.backend.forl0.l0-cache.replacement-policy',
-        'l0_memory_max_size': 'state.backend.forl0.l0-memory.max-size',
-        'main_table_load_factor_threshold': 'state.backend.forl0.main-table.load-factor-threshold',
-        'metrics_collector_enabled': 'forL0.metricsCollector.enabled',
-    }
-    
-    for yaml_key, flink_key in config_mapping.items():
-        if yaml_key in effective_config:
-            value = effective_config[yaml_key]
-            # Convert Python bool to lowercase string
-            if isinstance(value, bool):
-                value = 'true' if value else 'false'
-            args.append(f'-D{flink_key}={value}')
-    
-    return args
+    return render_forl0_config_args(
+        effective_config, config.get('runtime', {}).get('parallelism', 1))
 
 
 def run_warmup_job(cmd: list, rest_url: str, warmup_duration: int, backend: str) -> bool:

@@ -93,7 +93,13 @@ public final class NativeEngine {
     /** Create a new StateEngine. Returns native handle. */
     public static native long createEngine(int startKeyGroup, int numKeyGroups, int totalKeyGroups,
                                            boolean l0Enabled, long l0CapacityBytes,
-                                           int initialTableCapacity);
+                                           boolean l0StrictAllocation,
+                                           long l0StateCapacityBytes,
+                                           long l0WriteBypassThreshold,
+                                           int initialTableCapacity,
+                                           int maxTableCapacity,
+                                           double mainTableLoadFactor,
+                                           long nativeMemoryMaxBytes);
 
     /** Destroy a StateEngine and free all native memory. */
     public static native void destroyEngine(long engineHandle);
@@ -111,6 +117,9 @@ public final class NativeEngine {
      * attached.
      */
     public static native void getHotCacheManagerStats(long engineHandle, long[] out);
+
+    /** Populate {@code out} with {@code [usedBytes, peakBytes, maxBytes]}. */
+    public static native void getEngineMemoryStats(long engineHandle, long[] out);
 
     /**
      * Populate {@code out} with per-state hot-cache stats:

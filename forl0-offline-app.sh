@@ -609,6 +609,22 @@ sync_runtime_control_plane() {
             "${RUNTIME_ROOT}/docker/run_all_apps.sh"
         chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh"
 
+        local backend_jar="${CONTROL_ROOT}/docker/deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
+        local native_lib="${CONTROL_ROOT}/docker/deploy/libforl0_engine.so"
+        if [[ -f "$backend_jar" ]]; then
+            cp -f "$backend_jar" "${RUNTIME_ROOT}/docker/deploy/"
+            rm -f "${FLINK_DIR}/lib/"flink-statebackend-forl0-*.jar \
+                  "${FLINK_DIR}/lib/"flink-statebackend-forL0-*.jar
+            cp -f "$backend_jar" "${FLINK_DIR}/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
+            echo "      ✓ Synced current ForL0 backend JAR into runtime and FLINK_HOME"
+        fi
+        if [[ -f "$native_lib" ]]; then
+            mkdir -p "${FLINK_DIR}/native"
+            cp -f "$native_lib" "${RUNTIME_ROOT}/docker/deploy/libforl0_engine.so"
+            cp -f "$native_lib" "${FLINK_DIR}/native/libforl0_engine.so"
+            echo "      ✓ Synced current ForL0 native library into runtime and FLINK_HOME"
+        fi
+
         if [[ -d "${CONTROL_ROOT}/docker/deploy/nexmark-flink" ]]; then
             mkdir -p "${RUNTIME_ROOT}/docker/deploy/nexmark-flink"
             cp -a "${CONTROL_ROOT}/docker/deploy/nexmark-flink/." \

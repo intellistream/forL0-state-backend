@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -90,6 +91,82 @@ public:
 
 private:
     DefaultAllocator() = default;
+};
+
+// Per-StateEngine native-memory accounting and admission control. SwissTable
+// backing allocations go through this wrapper so a TaskManager receives a
+// deterministic Java exception before native growth reaches the container's
+// OOM killer. Split allocations are kept separate to make byte accounting
+// exact (the default packed layout contains alignment padding that is not
+// represented in Allocator::deallocate_split's arguments).
+class CountingAllocator final : public Allocator {
+public:
+    explicit CountingAllocator(size_t max_bytes,
+                               Allocator* delegate = &DefaultAllocator::instance())
+        : delegate_(delegate), max_bytes_(max_bytes) {}
+
+    void* allocate(size_t size, size_t alignment) override {
+        reserve(size);
+        try {
+            return delegate_->allocate(size, alignment);
+        } catch (...) {
+            used_bytes_.fetch_sub(size, std::memory_order_relaxed);
+            throw;
+        }
+    }
+
+    void deallocate(void* ptr, size_t size) override {
+        if (!ptr) return;
+        delegate_->deallocate(ptr, size);
+        used_bytes_.fetch_sub(size, std::memory_order_relaxed);
+    }
+
+    SplitResult allocate_split(size_t ctrl_size, size_t ctrl_align,
+                               size_t slots_size, size_t slots_align) override {
+        void* ctrl = allocate(ctrl_size, ctrl_align);
+        try {
+            void* slots = allocate(slots_size, slots_align);
+            return SplitResult{ctrl, slots, true};
+        } catch (...) {
+            deallocate(ctrl, ctrl_size);
+            throw;
+        }
+    }
+
+    size_t used_bytes() const noexcept {
+        return used_bytes_.load(std::memory_order_relaxed);
+    }
+
+    size_t peak_bytes() const noexcept {
+        return peak_bytes_.load(std::memory_order_relaxed);
+    }
+
+    size_t max_bytes() const noexcept { return max_bytes_; }
+
+private:
+    void reserve(size_t size) {
+        size_t current = used_bytes_.load(std::memory_order_relaxed);
+        while (true) {
+            if (max_bytes_ > 0 && (current > max_bytes_ || size > max_bytes_ - current)) {
+                throw std::bad_alloc();
+            }
+            if (used_bytes_.compare_exchange_weak(
+                    current, current + size,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed)) {
+                break;
+            }
+        }
+        size_t peak = peak_bytes_.load(std::memory_order_relaxed);
+        const size_t updated = current + size;
+        while (updated > peak && !peak_bytes_.compare_exchange_weak(
+                peak, updated, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    }
+
+    Allocator* delegate_;
+    size_t max_bytes_;
+    std::atomic<size_t> used_bytes_{0};
+    std::atomic<size_t> peak_bytes_{0};
 };
 
 }  // namespace forl0

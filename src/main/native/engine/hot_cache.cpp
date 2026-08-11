@@ -72,7 +72,12 @@ bool default_l0_bindings_loader(L0LibBindings* out, std::string* reason) {
 //  Manager construction
 // ---------------------------------------------------------------------------
 HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
-                                 L0BindingsLoader loader) {
+                                 L0BindingsLoader loader,
+                                 bool strict_allocation,
+                                 uint64_t write_only_bypass_threshold)
+    : requested_capacity_bytes_(requested_capacity_bytes),
+      strict_allocation_(strict_allocation),
+      write_only_bypass_threshold_(write_only_bypass_threshold) {
     if (requested_capacity_bytes < sizeof(HotSet)) {
         failure_reason_ = "l0-cache.size too small (< one HotSet)";
         return;
@@ -93,14 +98,15 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
         return;
     }
 
-    // Probe: try the full size, then halve until at least one HotSet fits.
-    // We need extra padding (sizeof(HotSet) - 1) so that a 64B alignment
-    // adjustment can never push us past the allocated end.
-    size_t want = requested_capacity_bytes + sizeof(HotSet);
+    // Probe the configured quota without ever asking l0_mem_alloc for more
+    // than cache_tuner_init registered. Non-strict mode may halve on failure;
+    // strict mode makes exactly one full-quota attempt.
+    size_t want = requested_capacity_bytes;
     void* base = nullptr;
-    while (want >= sizeof(HotSet) * 2) {
+    while (want >= sizeof(HotSet)) {
         base = bindings_.l0_mem_alloc(tuner_, want);
         if (base) break;
+        if (strict_allocation_) break;
         want >>= 1;
     }
     if (!base) {
@@ -132,6 +138,24 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
     bump_next_      = 0;
     active_         = total_sets_ > 0;
     if (!active_) failure_reason_ = "no HotSet fits in usable region";
+    // A caller-provided pointer may need at most 63 bytes of 64B alignment
+    // padding. This deterministic loss is not quota shrinkage.
+    const size_t strict_usable_floor = requested_capacity_bytes_ > 63
+        ? ((requested_capacity_bytes_ - 63) / sizeof(HotSet)) * sizeof(HotSet)
+        : 0;
+    if (active_ && strict_allocation_ && capacity_bytes_ < strict_usable_floor) {
+        failure_reason_ = "strict L0 allocation returned less than requested quota";
+        bindings_.l0_mem_free(tuner_, raw_base_);
+        raw_base_ = nullptr;
+        l0_base_ = nullptr;
+        bindings_.cache_tuner_destroy(tuner_);
+        tuner_ = nullptr;
+        if (bindings_.lib_handle && bindings_.owns_lib_handle) dlclose(bindings_.lib_handle);
+        bindings_ = {};
+        total_sets_ = 0;
+        capacity_bytes_ = 0;
+        active_ = false;
+    }
 }
 
 HotCacheManager::~HotCacheManager() { shutdown(); }
@@ -208,7 +232,8 @@ std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t sets_requested)
     }
 
     HotSet* run_start = base_sets() + start;
-    auto cache = std::unique_ptr<HotCacheLL>(new HotCacheLL(run_start, n));
+    auto cache = std::unique_ptr<HotCacheLL>(
+        new HotCacheLL(run_start, n, write_only_bypass_threshold_));
     owned_.push_back(Owned{cache.get(), start, n});
     return cache;
 }
@@ -275,6 +300,18 @@ uint64_t HotCacheManager::total_hits() const noexcept {
 uint64_t HotCacheManager::total_invalidations() const noexcept {
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->invalidations();
+    return sum;
+}
+
+uint64_t HotCacheManager::total_writes() const noexcept {
+    uint64_t sum = 0;
+    for (const auto& o : owned_) sum += o.cache->writes();
+    return sum;
+}
+
+uint64_t HotCacheManager::total_bypass_events() const noexcept {
+    uint64_t sum = 0;
+    for (const auto& o : owned_) sum += o.cache->bypass_events();
     return sum;
 }
 

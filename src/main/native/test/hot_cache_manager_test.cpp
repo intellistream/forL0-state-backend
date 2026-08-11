@@ -31,11 +31,13 @@ static int s_alloc_calls   = 0;
 static int s_free_calls    = 0;
 static bool s_force_init_fail = false;
 static bool s_force_alloc_fail = false;
+static size_t s_max_alloc_bytes = 0;
 
 static void reset() {
     s_init_calls = s_destroy_calls = s_alloc_calls = s_free_calls = 0;
     s_force_init_fail = false;
     s_force_alloc_fail = false;
+    s_max_alloc_bytes = 0;
 }
 
 static int  fake_init(void** tuner_out, size_t cap) {
@@ -52,7 +54,7 @@ static int  fake_destroy(void* tuner) {
 }
 static void* fake_alloc(void* /*tuner*/, size_t bytes) {
     ++s_alloc_calls;
-    if (s_force_alloc_fail) return nullptr;
+    if (s_force_alloc_fail || (s_max_alloc_bytes > 0 && bytes > s_max_alloc_bytes)) return nullptr;
     void* p = nullptr;
     if (posix_memalign(&p, 64, bytes) != 0) return nullptr;
     std::memset(p, 0, bytes);
@@ -196,4 +198,39 @@ TEST(HotCacheManager, PowerOfTwoFloor) {
     ASSERT_EQ(HotCacheManager::pow2_floor(64), 64u);
     ASSERT_EQ(HotCacheManager::pow2_floor(65), 64u);
     ASSERT_EQ(HotCacheManager::pow2_floor(1023), 512u);
+}
+
+TEST(HotCacheManager, StrictAllocationNeverSilentlyHalvesQuota) {
+    fake_backend::reset();
+    const size_t requested = 64 * 192;
+    fake_backend::s_max_alloc_bytes = requested / 2;
+    HotCacheManager strict_mgr(requested, &fake_backend::loader, true);
+    ASSERT_FALSE(strict_mgr.is_active());
+    ASSERT_EQ(fake_backend::s_alloc_calls, 1);
+
+    fake_backend::reset();
+    fake_backend::s_max_alloc_bytes = requested / 2;
+    HotCacheManager permissive_mgr(requested, &fake_backend::loader, false);
+    ASSERT_TRUE(permissive_mgr.is_active());
+    ASSERT_GT(fake_backend::s_alloc_calls, 1);
+}
+
+TEST(HotCacheManager, ConsecutiveWriteOnlyPhaseBypassesCacheSafely) {
+    fake_backend::reset();
+    HotCacheManager mgr(64 * 192, &fake_backend::loader, false, 4);
+    auto cache = mgr.acquire_ll(8);
+    ASSERT_TRUE(cache != nullptr);
+
+    int64_t value = 0;
+    ASSERT_FALSE(cache->get(1, &value));
+    for (int64_t key = 1; key <= 4; ++key) cache->put(key, key * 10);
+    ASSERT_TRUE(cache->write_bypassed());
+    ASSERT_EQ(cache->bypass_events(), 1u);
+
+    // The first lookup after skipped writes must miss and re-enable admission.
+    ASSERT_FALSE(cache->get(4, &value));
+    cache->put(4, 40);
+    ASSERT_TRUE(cache->get(4, &value));
+    ASSERT_EQ(value, 40);
+    mgr.release_ll(cache.release());
 }

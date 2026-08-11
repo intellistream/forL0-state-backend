@@ -41,18 +41,23 @@ public:
 
     StateTable(int start_key_group, int num_key_groups, bool void_namespace,
                Allocator* alloc = &DefaultAllocator::instance(),
-               size_t initial_table_capacity = 16)
+               size_t initial_table_capacity = 16,
+               size_t max_table_capacity = 0,
+               double max_load_factor = 0.875)
         : start_key_group_(start_key_group),
           num_key_groups_(num_key_groups),
           void_namespace_(void_namespace),
           alloc_(alloc),
-          initial_table_capacity_(initial_table_capacity) {
+          initial_table_capacity_(initial_table_capacity),
+          max_table_capacity_(max_table_capacity),
+          max_load_factor_(max_load_factor) {
         // Always allocate flat tables — void-namespace API uses them directly,
         // and they serve as fallback for non-void-namespace states when Java
         // code calls void-namespace JNI functions (e.g., window operators).
         tables_.resize(num_key_groups);
         for (int i = 0; i < num_key_groups; ++i) {
-            tables_[i] = std::make_unique<Table>(initial_table_capacity_, alloc_);
+            tables_[i] = std::make_unique<Table>(initial_table_capacity_, alloc_,
+                                                 max_table_capacity_, max_load_factor_);
         }
         // COW state per key group
         cow_states_.resize(num_key_groups);
@@ -667,7 +672,8 @@ private:
             auto& ns_map = int_namespace_maps_[idx];
             auto it = ns_map.find(ns);
             if (it != ns_map.end()) return it->second.get();
-            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_);
+            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_,
+                                               max_table_capacity_, max_load_factor_);
             auto* ptr = tbl.get();
             ns_map.emplace(ns, std::move(tbl));
             return ptr;
@@ -675,7 +681,8 @@ private:
             auto& ns_map = tw_namespace_maps_[idx];
             auto it = ns_map.find(ns);
             if (it != ns_map.end()) return it->second.get();
-            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_);
+            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_,
+                                               max_table_capacity_, max_load_factor_);
             auto* ptr = tbl.get();
             ns_map.emplace(ns, std::move(tbl));
             return ptr;
@@ -683,7 +690,8 @@ private:
             auto& ns_map = str_namespace_maps_[idx];
             auto it = ns_map.find(ns);
             if (it != ns_map.end()) return it->second.get();
-            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_);
+            auto tbl = std::make_unique<Table>(initial_table_capacity_, alloc_,
+                                               max_table_capacity_, max_load_factor_);
             auto* ptr = tbl.get();
             ns_map.emplace(ns, std::move(tbl));
             return ptr;
@@ -707,6 +715,8 @@ private:
     bool void_namespace_;
     Allocator* alloc_;
     size_t initial_table_capacity_;
+    size_t max_table_capacity_;
+    double max_load_factor_;
 
     // VoidNamespace mode: one table per key group
     std::vector<std::unique_ptr<Table>> tables_;
@@ -765,14 +775,21 @@ private:
 class StateEngine {
 public:
     StateEngine(int start_key_group, int num_key_groups, int total_key_groups,
-                Allocator* alloc = &DefaultAllocator::instance(),
                 std::unique_ptr<HotCacheManager> hot_cache = nullptr,
-                size_t initial_table_capacity = 16)
+                size_t initial_table_capacity = 16,
+                size_t max_table_capacity = 0,
+                double max_load_factor = 0.875,
+                size_t native_memory_max_bytes = 0,
+                size_t hot_cache_state_bytes = 12 * 1024)
         : start_key_group_(start_key_group),
           num_key_groups_(num_key_groups),
           total_key_groups_(total_key_groups),
-          alloc_(alloc),
+          owned_allocator_(new CountingAllocator(native_memory_max_bytes)),
+          alloc_(owned_allocator_.get()),
           initial_table_capacity_(initial_table_capacity),
+          max_table_capacity_(max_table_capacity),
+          max_load_factor_(max_load_factor),
+          hot_cache_state_bytes_(hot_cache_state_bytes),
           snapshot_version_(0),
           hot_cache_manager_(std::move(hot_cache)) {}
 
@@ -782,7 +799,8 @@ public:
     template <typename K, typename V>
     int64_t register_state(const std::string& state_name, bool void_namespace) {
         auto table = std::make_unique<StateTable<K, V>>(
-            start_key_group_, num_key_groups_, void_namespace, alloc_, initial_table_capacity_);
+            start_key_group_, num_key_groups_, void_namespace, alloc_, initial_table_capacity_,
+            max_table_capacity_, max_load_factor_);
         auto handle = std::make_unique<TypedStateTableHandle<K, V>>(std::move(table));
         int64_t id = next_handle_id_++;
         state_names_[id] = state_name;
@@ -842,6 +860,8 @@ public:
     int total_key_groups() const { return total_key_groups_; }
     Allocator* allocator() const { return alloc_; }
     HotCacheManager* hot_cache_manager() const { return hot_cache_manager_.get(); }
+    CountingAllocator* counting_allocator() const { return owned_allocator_.get(); }
+    size_t hot_cache_state_bytes() const { return hot_cache_state_bytes_; }
 
     const std::unordered_map<int64_t, std::unique_ptr<StateTableHandle>>& state_handles() const {
         return state_handles_;
@@ -875,8 +895,12 @@ private:
     int start_key_group_;
     int num_key_groups_;
     int total_key_groups_;
+    std::unique_ptr<CountingAllocator> owned_allocator_;
     Allocator* alloc_;
     size_t initial_table_capacity_;
+    size_t max_table_capacity_;
+    double max_load_factor_;
+    size_t hot_cache_state_bytes_;
 
     int64_t next_handle_id_ = 1;
     std::unordered_map<int64_t, std::unique_ptr<StateTableHandle>> state_handles_;
