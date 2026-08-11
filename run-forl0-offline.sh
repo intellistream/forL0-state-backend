@@ -14,7 +14,9 @@ fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUN_LOG="${FORL0_RUN_LOG:-${SCRIPT_DIR}/.logs}"
+DEFAULT_RESULTS_ROOT="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/benchmark/results}"
+RUN_LOG="${FORL0_RUN_LOG:-${DEFAULT_RESULTS_ROOT}/.logs}"
+mkdir -p "$(dirname "$RUN_LOG")"
 if [[ "${FORL0_RUN_LOG_MODE:-overwrite}" == "append" ]]; then
     exec > >(tee -a "$RUN_LOG") 2>&1
 else
