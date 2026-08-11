@@ -154,22 +154,6 @@ info() {
     echo "==> $*"
 }
 
-print_python_wheel_recovery() {
-    cat >&2 <<'EOF'
-
-如果上面的错误包含 “Could not find a version that satisfies the requirement”，
-说明离线 Python wheel 不完整或与服务器的 Linux 架构/Python 版本不匹配。
-
-先在离线服务器确认目标信息：
-  uname -m
-  ./tools/python/bin/python3 --version
-
-新版完整离线包自带与 wheels 匹配的可携带 Python。若 tools/python/bin/python3
-不存在，说明使用了旧包或打包时跳过了 portable Python；请换用最新完整 Release，
-不要在没有 Python 的离线机上继续调用 pip。
-EOF
-}
-
 list_ascend_workloads() {
     printf "%-4s  %-36s  %s\n" "ID" "Name" "Description"
     printf "%-4s  %-36s  %s\n" "----" "------------------------------------" "-----------"
@@ -535,9 +519,6 @@ run_or_handle_failure() {
     if "$@"; then
         return 0
     fi
-    if [[ "$description" == "Preflight check" ]]; then
-        print_python_wheel_recovery
-    fi
     if [[ "$KEEP_GOING" == "true" ]]; then
         HAD_FAILURE=true
         echo "WARN: command failed but --keep-going is enabled: $description"
@@ -614,9 +595,15 @@ sync_runtime_control_plane() {
             "${RUNTIME_ROOT}/benchmark/config/benchmark.yaml"
         cp "${CONTROL_ROOT}/docker/run_all_apps.sh" \
             "${RUNTIME_ROOT}/docker/run_all_apps.sh"
+        cp "${CONTROL_ROOT}/docker/docker_run.sh" \
+            "${RUNTIME_ROOT}/docker/docker_run.sh"
         cp "${CONTROL_ROOT}/docker/lib/benchmark_evidence.sh" \
             "${RUNTIME_ROOT}/docker/lib/benchmark_evidence.sh"
-        chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh"
+        cp "${CONTROL_ROOT}/docker/lib/l0_detector.sh" \
+            "${RUNTIME_ROOT}/docker/lib/l0_detector.sh"
+        chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh" \
+            "${RUNTIME_ROOT}/docker/docker_run.sh" \
+            "${RUNTIME_ROOT}/docker/lib/l0_detector.sh"
 
         local backend_jar="${CONTROL_ROOT}/docker/deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
         local native_lib="${CONTROL_ROOT}/docker/deploy/libforl0_engine.so"

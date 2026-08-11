@@ -32,8 +32,11 @@ if [[ "${1:-}" == "--stop" ]]; then
     else
         echo "No active reproduce-all PID file found"
     fi
-    if command -v docker >/dev/null 2>&1; then
-        docker stop flink-taskmanager-1 flink-taskmanager-2 flink-jobmanager >/dev/null 2>&1 || true
+    if [[ -f "${PROJECT_ROOT}/docker/docker_run.sh" ]]; then
+        bash "${PROJECT_ROOT}/docker/docker_run.sh" stop || true
+    elif command -v docker >/dev/null 2>&1; then
+        docker rm -f flink-taskmanager-2 flink-taskmanager-1 flink-jobmanager >/dev/null 2>&1 || true
+        docker network rm flink-net >/dev/null 2>&1 || true
     fi
     echo "reproduce-all stopped"
     exit 0

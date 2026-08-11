@@ -100,6 +100,14 @@ usage() {
     exit 1
 }
 
+remove_cluster_resources() {
+    # docker stop leaves the container names reserved. Always remove these
+    # disposable benchmark containers so start is idempotent after an aborted
+    # run, host disconnect, or reproduce-all --stop.
+    ${DOCKER_BIN} rm -f "$TM2" "$TM1" "$JM" 2>/dev/null || true
+    ${DOCKER_BIN} network rm "$NETWORK" 2>/dev/null || true
+}
+
 do_start() {
     echo "=== 启动 BriskState Flink Docker 集群 ==="
     echo "  FLINK_HOME: ${FLINK_DIR}"
@@ -140,6 +148,10 @@ do_start() {
         echo "  如主机路径非常规，请设置: export NUMA_LIB_HOST_PATH=/path/to/libnuma.so.1"
         echo "                        export NUMA_LIB_CONTAINER_PATH=/lib/aarch64-linux-gnu/libnuma.so.1"
     fi
+
+    # Heal stale stopped/running containers from an interrupted prior run.
+    echo "[0/3] 清理残留 benchmark 容器..."
+    remove_cluster_resources
 
     # 创建网络
     ${DOCKER_BIN} network create "$NETWORK" 2>/dev/null || true
@@ -251,8 +263,7 @@ do_start() {
 
 do_stop() {
     echo "=== 停止 BriskState Flink Docker 集群 ==="
-    ${DOCKER_BIN} rm -f "$TM2" "$TM1" "$JM" 2>/dev/null || true
-    ${DOCKER_BIN} network rm "$NETWORK" 2>/dev/null || true
+    remove_cluster_resources
     echo "已停止"
 }
 
