@@ -387,7 +387,7 @@
         <div class="container">
             <h1>📊 ForL0 StateBackend Benchmark Report</h1>
             <p class="subtitle">Performance Comparison: ForL0StateBackend vs HashMapStateBackend</p>
-            <p class="timestamp">Generated: 2026-07-17 22:34:11</p>
+            <p class="timestamp">Generated: 2026-07-28 16:55:29</p>
         </div>
     </header>
     
@@ -395,7 +395,7 @@
         <!-- Executive Summary -->
         <div class="summary-card warning">
             <h2>📋 Executive Summary</h2>
-            <p>Benchmarks completed. 1/17 tests passed the 60% improvement target. Latest Client Usecase contract_baseline profile run completed for both backends; ForL0 vs HashMap delta was +149.5%.</p>
+            <p>Benchmarks completed. 0/1 tests passed the 60% improvement target. Latest Client Usecase contract_baseline profile run completed for both backends; ForL0 vs HashMap delta was -1.3%.</p>
         </div>
         
         <!-- Quick Stats -->
@@ -409,11 +409,11 @@
                 <div class="label">Parallelism</div>
             </div>
             <div class="stat-card improvement ">
-                <div class="value">24.9%</div>
+                <div class="value">57.0%</div>
                 <div class="label">WordCount Improvement</div>
             </div>
             <div class="stat-card">
-                <div class="value">18</div>
+                <div class="value">2</div>
                 <div class="label">Total Benchmarks</div>
             </div>
         </div>
@@ -447,7 +447,7 @@
             <div class="comparison-row">
                 <div class="comparison-card hashmap">
                     <h4>HashMapStateBackend</h4>
-                    <div class="metric">831,805</div>
+                    <div class="metric">1,133,238</div>
                     <div class="unit">records/s/core</div>
                 </div>
                 <div class="comparison-card vs">
@@ -455,14 +455,14 @@
                 </div>
                 <div class="comparison-card forl0">
                     <h4>ForL0StateBackend</h4>
-                    <div class="metric">1,039,194</div>
+                    <div class="metric">1,778,657</div>
                     <div class="unit">records/s/core</div>
                 </div>
             </div>
             
             <div style="text-align: center; margin: 1rem 0;">
                 <span class="improvement-badge warning">
-                    +24.9% Improvement
+                    +57.0% Improvement
                 </span>
             </div>
             
@@ -495,21 +495,21 @@
                     
                     <tr>
                         <td><strong>HashMapStateBackend</strong></td>
-                        <td>20260712_044235</td>
+                        <td>20260728_165507</td>
                         <td class="value-cell">2,000,000</td>
-                        <td class="value-cell">99,477.01</td>
-                        <td class="value-cell">24,869.25</td>
-                        <td class="value-cell">20.11s</td>
+                        <td class="value-cell">248,485.45</td>
+                        <td class="value-cell">62,121.36</td>
+                        <td class="value-cell">8.05s</td>
                         <td>not collected</td>
                     </tr>
                     
                     <tr>
                         <td><strong>BriskState</strong></td>
-                        <td>20260712_044306</td>
+                        <td>20260728_165526</td>
                         <td class="value-cell">2,000,000</td>
-                        <td class="value-cell">248,195.34</td>
-                        <td class="value-cell">62,048.84</td>
-                        <td class="value-cell">8.06s</td>
+                        <td class="value-cell">245,170.96</td>
+                        <td class="value-cell">61,292.74</td>
+                        <td class="value-cell">8.16s</td>
                         <td>not collected</td>
                     </tr>
                     
@@ -517,12 +517,12 @@
             </table>
             
             <div style="text-align: center; margin: 1rem 0;">
-                <span class="improvement-badge positive">
-                    +149.5% Client Usecase Improvement
+                <span class="improvement-badge negative">
+                    -1.3% Client Usecase Improvement
                 </span>
             </div>
             <p style="color: var(--text-secondary);">
-                Analysis: ForL0 and HashMap both completed the bounded customer workload and wrote raw results. The latest profiled run shows ForL0 reached 62048.84 records/s/core versus HashMap at 24869.25 records/s/core, a +149.5% delta on this small contract baseline. Flame graph links below correspond to the same latest profiled run.
+                Analysis: ForL0 and HashMap both completed the bounded customer workload and wrote raw results. The latest profiled run shows ForL0 reached 61292.74 records/s/core versus HashMap at 62121.36 records/s/core, a -1.3% delta on this small contract baseline. Flame graph links below correspond to the same latest profiled run.
             </p>
             
         </div>
@@ -553,278 +553,6 @@
                 </thead>
                 <tbody>
                     
-                    <tr>
-                        <td><strong>Q3</strong></td>
-                        <td></td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">123,530</td>
-                        <td class="value-cell">144,340</td>
-                        <td class="value-cell">4,307</td>
-                        <td class="value-cell">17,560</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +16.8%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q4</strong></td>
-                        <td>Average Selling Price by Category</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">53,990</td>
-                        <td class="value-cell">60,390</td>
-                        <td class="value-cell">1,038</td>
-                        <td class="value-cell">2,268</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +11.9%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q5</strong></td>
-                        <td>Hot Items</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">31,940</td>
-                        <td class="value-cell">31,000</td>
-                        <td class="value-cell">3,506</td>
-                        <td class="value-cell">2,795</td>
-                        <td>
-                            
-                            <span class="improvement-badge danger">
-                                -2.9%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q8</strong></td>
-                        <td>Monitor New Users</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">10,400</td>
-                        <td class="value-cell">165,620</td>
-                        <td class="value-cell">232</td>
-                        <td class="value-cell">21,060,000</td>
-                        <td>
-                            
-                            <span class="improvement-badge success">
-                                +1492.5%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q9</strong></td>
-                        <td>Winning Bids</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">49,080</td>
-                        <td class="value-cell">53,390</td>
-                        <td class="value-cell">946</td>
-                        <td class="value-cell">3,787</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +8.8%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q11</strong></td>
-                        <td>User Sessions</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">20,880</td>
-                        <td class="value-cell">20,910</td>
-                        <td class="value-cell">2,933</td>
-                        <td class="value-cell">2,412</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +0.1%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q12</strong></td>
-                        <td></td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">5,340</td>
-                        <td class="value-cell">7,950</td>
-                        <td class="value-cell">498</td>
-                        <td class="value-cell">1,483</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +48.9%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q15</strong></td>
-                        <td></td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">372,500</td>
-                        <td class="value-cell">164,300</td>
-                        <td class="value-cell">42,234</td>
-                        <td class="value-cell">83,827</td>
-                        <td>
-                            
-                            <span class="improvement-badge danger">
-                                -55.9%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q16</strong></td>
-                        <td></td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">480,290</td>
-                        <td class="value-cell">246,340</td>
-                        <td class="value-cell">28,708</td>
-                        <td class="value-cell">50,687</td>
-                        <td>
-                            
-                            <span class="improvement-badge danger">
-                                -48.7%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q17</strong></td>
-                        <td></td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">733,330</td>
-                        <td class="value-cell">711,060</td>
-                        <td class="value-cell">74,753</td>
-                        <td class="value-cell">97,942</td>
-                        <td>
-                            
-                            <span class="improvement-badge danger">
-                                -3.0%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q18</strong></td>
-                        <td>Find Last Bid</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">947,150</td>
-                        <td class="value-cell">1,220,000</td>
-                        <td class="value-cell">19,373</td>
-                        <td class="value-cell">86,586</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +28.8%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q19</strong></td>
-                        <td>Auction Statistics</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">974,910</td>
-                        <td class="value-cell">1,010,000</td>
-                        <td class="value-cell">56,223</td>
-                        <td class="value-cell">125,778</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +3.6%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q20</strong></td>
-                        <td>Expand Bid</td>
-                        <td class="value-cell">0</td>
-                        <td class="value-cell">49,440</td>
-                        <td class="value-cell">51,150</td>
-                        <td class="value-cell">1,476</td>
-                        <td class="value-cell">3,984</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +3.5%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q23</strong></td>
-                        <td></td>
-                        <td class="value-cell">500,000,000</td>
-                        <td class="value-cell">13,820,000</td>
-                        <td class="value-cell">13,830,000</td>
-                        <td class="value-cell">394,830,000</td>
-                        <td class="value-cell">328,020,000</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +0.1%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q24</strong></td>
-                        <td></td>
-                        <td class="value-cell">500,000,000</td>
-                        <td class="value-cell">13,820,000</td>
-                        <td class="value-cell">13,840,000</td>
-                        <td class="value-cell">286,100,000</td>
-                        <td class="value-cell">341,200,000</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +0.1%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>Q25</strong></td>
-                        <td></td>
-                        <td class="value-cell">1,000,000,000</td>
-                        <td class="value-cell">27,540,000</td>
-                        <td class="value-cell">27,620,000</td>
-                        <td class="value-cell">583,550,000</td>
-                        <td class="value-cell">1,010,000,000</td>
-                        <td>
-                            
-                            <span class="improvement-badge warning">
-                                +0.3%
-                            </span>
-                            
-                        </td>
-                    </tr>
-                    
                 </tbody>
             </table>
             
@@ -839,330 +567,8 @@
         
         <!-- Hardware Statistics Section (BENCHMARK_TEST) -->
         
-        <div class="section">
-            <h2>🖥️ Hardware Statistics</h2>
-            
-            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                [BENCHMARK_TEST] Hardware-level metrics including CPU cache and memory usage.
-            </p>
-            
-            
-            
-            <h3 style="margin-top: 1.5rem;">CPU Cache Misses</h3>
-            
-            <p style="color: var(--text-secondary); font-style: italic;">
-                No CPU cache statistics available. Run benchmarks on Linux with <code>--profile cache</code> flag to collect cache metrics.
-            </p>
-            
-            
-            <h3 style="margin-top: 2rem;">Memory Usage</h3>
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th>Query</th>
-                        <th>Backend</th>
-                        <th>Avg RSS (MB)</th>
-                        <th>Max RSS (MB)</th>
-                        <th>Samples</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    
-                    <tr>
-                        <td><strong>wordcount</strong></td>
-                        <td>forl0</td>
-                        <td class="value-cell">6848.1</td>
-                        <td class="value-cell">6855.6</td>
-                        <td>48</td>
-                    </tr>
-                    
-                </tbody>
-            </table>
-            
-            <div class="figure-container" style="margin-top: 1.5rem;">
-                <img src="../figures/memory_usage_timeline.png" alt="Memory Usage Timeline" onerror="this.parentElement.style.display='none'">
-                <p class="figure-caption">Figure: Memory Usage (RSS) Over Time</p>
-            </div>
-            
-        </div>
-        
         
         <!-- Profiler Section (BENCHMARK_TEST) - Flame Graphs -->
-        
-        <div class="section">
-            <h2>🔥 Performance Profiling</h2>
-            
-            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                [BENCHMARK_TEST] Flame graphs generated using Async Profiler. Click to open interactive HTML views.
-            </p>
-            
-            
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th>Backend</th>
-                        <th>Event Type</th>
-                        <th>File</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_145057.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_145057.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_145206.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_145206.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_145255.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_145255.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_155600.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_155600.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_155709.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_155709.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_155805.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_155805.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_171357.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_171357.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_171506.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_171506.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_20260711_171554.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_20260711_171554.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_client_usecase_20260703_120348.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_client_usecase_20260703_120348.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_client_usecase_20260703_120604.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_client_usecase_20260703_120604.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_client_usecase_20260703_140226.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_client_usecase_20260703_140226.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_client_usecase_20260703_140932.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_client_usecase_20260703_140932.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_client_usecase_20260711_161835.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_client_usecase_20260711_161835.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_client_usecase_20260711_162455.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_client_usecase_20260711_162455.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>forl0</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_forl0_client_usecase_20260711_163108.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_forl0_client_usecase_20260711_163108.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>hashmap</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_hashmap_client_usecase_20260703_120334.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_hashmap_client_usecase_20260703_120334.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>hashmap</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_hashmap_client_usecase_20260703_120551.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_hashmap_client_usecase_20260703_120551.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>hashmap</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_hashmap_client_usecase_20260703_140213.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_hashmap_client_usecase_20260703_140213.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>hashmap</strong></td>
-                        <td>cpu</td>
-                        <td><code>flamegraph_cpu_hashmap_client_usecase_20260703_140920.html</code></td>
-                        <td>
-                            <a href="../profiles/flamegraph_cpu_hashmap_client_usecase_20260703_140920.html" target="_blank" class="status-badge pass" 
-                               style="text-decoration: none; padding: 0.25rem 0.75rem;">
-                                Open Flame Graph
-                            </a>
-                        </td>
-                    </tr>
-                    
-                </tbody>
-            </table>
-            
-            <div style="margin-top: 1rem; padding: 1rem; background: #f1f5f9; border-radius: 0.5rem;">
-                <strong>💡 Flame Graph Tips:</strong>
-                <ul style="margin-top: 0.5rem; margin-left: 1.5rem;">
-                    <li><strong>Width</strong> = Time spent (wider = more CPU time)</li>
-                    <li><strong>Hover</strong> over bars to see function names and percentages</li>
-                    <li><strong>Click</strong> to zoom into a specific call stack</li>
-                    <li>Look for <code>ForL0</code> methods to analyze state backend performance</li>
-                </ul>
-            </div>
-        </div>
         
         
         <!-- Verification Section -->
@@ -1183,183 +589,7 @@
                     <tr>
                         <td><strong>WordCount</strong></td>
                         <td>≥ 60%</td>
-                        <td class="value-cell">24.9%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q3</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">16.8%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q4</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">11.9%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q5</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">-2.9%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q8</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">1492.5%</td>
-                        <td>
-                            <span class="status-badge pass">
-                                ✓ PASS
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q9</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">8.8%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q11</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">0.1%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q12</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">48.9%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q15</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">-55.9%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q16</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">-48.7%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q17</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">-3.0%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q18</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">28.8%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q19</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">3.6%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q20</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">3.5%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q23</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">0.1%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q24</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">0.1%</td>
-                        <td>
-                            <span class="status-badge fail">
-                                ✗ FAIL
-                            </span>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <td><strong>NexMark Q25</strong></td>
-                        <td>≥ 60%</td>
-                        <td class="value-cell">0.3%</td>
+                        <td class="value-cell">57.0%</td>
                         <td>
                             <span class="status-badge fail">
                                 ✗ FAIL
@@ -1374,7 +604,7 @@
         <!-- Conclusion -->
         <div class="section">
             <h2>📌 Conclusion</h2>
-            <p>Further optimization or production environment testing may be needed to achieve the 60% improvement target across all benchmarks. The Client Usecase section reports the latest profiled run and links the matching CPU flame graphs; ForL0 reached 62048.84 records/s/core versus HashMap at 24869.25 records/s/core, a +149.5% delta on this small contract baseline.</p>
+            <p>Further optimization or production environment testing may be needed to achieve the 60% improvement target across all benchmarks. The Client Usecase section reports the latest profiled run and links the matching CPU flame graphs; ForL0 reached 61292.74 records/s/core versus HashMap at 62121.36 records/s/core, a -1.3% delta on this small contract baseline.</p>
         </div>
         </div>
     </div>

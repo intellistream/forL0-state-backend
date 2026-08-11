@@ -3,7 +3,7 @@
 This directory preserves the raw and derived outputs from the June–July 2026
 ForL0 benchmark campaign. The archive includes exploratory NexMark runs,
 WordCount and client-use-case measurements, hardware-monitor samples, run logs,
-and the figures generated from those records. 
+and the figures generated from those records.
 
 These files are historical backend-path evidence. They are not a matched
 real-L0 evaluation: the archived runs do not provide the device and runtime
