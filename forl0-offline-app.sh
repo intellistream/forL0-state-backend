@@ -601,9 +601,12 @@ sync_runtime_control_plane() {
             "${RUNTIME_ROOT}/docker/lib/benchmark_evidence.sh"
         cp "${CONTROL_ROOT}/docker/lib/l0_detector.sh" \
             "${RUNTIME_ROOT}/docker/lib/l0_detector.sh"
+        cp "${CONTROL_ROOT}/docker/lib/smoke_plan.sh" \
+            "${RUNTIME_ROOT}/docker/lib/smoke_plan.sh"
         chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh" \
             "${RUNTIME_ROOT}/docker/docker_run.sh" \
-            "${RUNTIME_ROOT}/docker/lib/l0_detector.sh"
+            "${RUNTIME_ROOT}/docker/lib/l0_detector.sh" \
+            "${RUNTIME_ROOT}/docker/lib/smoke_plan.sh"
 
         local backend_jar="${CONTROL_ROOT}/docker/deploy/flink-statebackend-forL0-1.0-SNAPSHOT.jar"
         local native_lib="${CONTROL_ROOT}/docker/deploy/libforl0_engine.so"
@@ -643,8 +646,13 @@ RUNTIME_ROOT=""
 prepare_runtime
 sync_runtime_control_plane
 export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$CONTROL_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
+export FORL0_RUN_ID="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
 RUNNER="${RUNTIME_ROOT}/docker/run_all_apps.sh"
 [[ -x "$RUNNER" ]] || die "run_all_apps.sh is not executable: $RUNNER"
+SMOKE_PLAN="${RUNTIME_ROOT}/docker/lib/smoke_plan.sh"
+[[ -f "$SMOKE_PLAN" ]] || die "smoke plan is missing: $SMOKE_PLAN"
+source "$SMOKE_PLAN"
 if [[ "$RESULTS_DIR" != /* ]]; then
     RESULTS_DIR="${APP_ROOT}/${RESULTS_DIR}"
 fi
@@ -687,12 +695,26 @@ run_or_handle_failure "Preflight check" \
     "$RUNNER" --offline --preflight-only --test "$preflight_test" --backend "$BACKEND" "${PREFLIGHT_RUNNER_ARGS[@]}"
 
 if [[ "$RUN_SMOKE" == "true" ]]; then
-    run_or_handle_failure "Smoke test: client_usecase contract_baseline" \
-        "$RUNNER" --offline --test client_usecase --scenario contract_baseline \
-        --backend "$BACKEND" "${PROFILE_ARGS[@]}" --no-report "${COMMON_RUNNER_ARGS[@]}"
-    run_or_handle_failure "Smoke test: NexMark q18 Java/runtime path" \
-        "$RUNNER" --offline --test nexmark --scenario forl0_tps_probe --query q18 \
-        --backend "$BACKEND" "${PROFILE_ARGS[@]}" --no-report "${COMMON_RUNNER_ARGS[@]}"
+    # Match the formal campaign topology: every backend gets a freshly
+    # restarted cluster. Sharing one cluster let a completed HashMap q18 leave
+    # the following ForL0 q18 with a lost TaskManager and invalidated smoke.
+    SMOKE_RUNNER_ARGS=(
+        --expected-taskmanagers "$EXPECTED_TASKMANAGERS"
+        --expected-slots "$EXPECTED_SLOTS"
+        --restart-cluster
+    )
+    if [[ ${#RUNNER_EXTRA_ARGS[@]} -gt 0 ]]; then
+        SMOKE_RUNNER_ARGS+=("${RUNNER_EXTRA_ARGS[@]}")
+    fi
+    while IFS='|' read -r smoke_id smoke_test smoke_scenario smoke_query smoke_backend smoke_description; do
+        [[ "$BACKEND" == "all" || "$BACKEND" == "$smoke_backend" ]] || continue
+        smoke_query_args=()
+        [[ -z "$smoke_query" ]] || smoke_query_args=(--query "$smoke_query")
+        run_or_handle_failure "SMOKE ${smoke_id}/4: ${smoke_description} (${smoke_backend}, isolated)" \
+            "$RUNNER" --offline --test "$smoke_test" --scenario "$smoke_scenario" \
+            "${smoke_query_args[@]}" --backend "$smoke_backend" \
+            "${PROFILE_ARGS[@]}" --no-report "${SMOKE_RUNNER_ARGS[@]}"
+    done < <(forl0_smoke_plan)
 fi
 
 if [[ "$RUN_APPS" == "true" ]]; then

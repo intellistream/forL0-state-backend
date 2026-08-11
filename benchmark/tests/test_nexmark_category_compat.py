@@ -12,7 +12,10 @@ from unittest.mock import patch
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from run_nexmark import NexmarkRunner, is_benign_post_summary_cancel_conflict  # noqa: E402
+from run_nexmark import (  # noqa: E402
+    NexmarkRunner, apply_nexmark_scenario,
+    is_benign_post_summary_cancel_conflict,
+)
 
 
 class NexmarkCategoryCompatibilityTest(unittest.TestCase):
@@ -97,6 +100,19 @@ class NexmarkCategoryCompatibilityTest(unittest.TestCase):
         self.assertFalse(is_benign_post_summary_cancel_conflict(benign.replace('409', '500')))
         self.assertFalse(is_benign_post_summary_cancel_conflict(
             benign + 'OutOfMemoryError: native allocation failed\n'))
+
+    def test_scenario_applies_retry_backoff(self) -> None:
+        config = {
+            'runtime': {},
+            'nexmark': {},
+            'nexmark_scenarios': [{
+                'name': 'retry_probe',
+                'retry_backoff_seconds': 17,
+            }],
+            'backends': [],
+        }
+        applied = apply_nexmark_scenario(config, 'retry_probe')
+        self.assertEqual(17, applied['nexmark']['retry_backoff_seconds'])
 
     @patch('run_nexmark.requests.get')
     def test_failed_job_health_issue_includes_rest_exception(self, mock_get) -> None:

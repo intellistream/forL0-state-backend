@@ -56,8 +56,7 @@ if [[ "${1:-}" == "--worker" ]]; then
     mkdir -p "$(dirname "$RUN_LOG")"
     exec >>"$RUN_LOG" 2>&1
     export FORL0_OFFLINE_ONLY=true
-    export FORL0_RUN_ID="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
-    export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
+    campaign_run_id="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
     export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
     export FORL0_RUN_LOG=/dev/null
     # A formal L0-server run must fail visibly instead of silently falling
@@ -66,9 +65,14 @@ if [[ "${1:-}" == "--worker" ]]; then
     cd "$PROJECT_ROOT"
 
     echo ""
-    echo "=== reproduce-all RUN_ID=${FORL0_RUN_ID} REVISION=${FORL0_CONTROL_REVISION} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
-    bash ./reproduce-smoke
-    echo "SMOKE PASSED: starting the complete W01-W02, N01-N14, C01-C08 suite"
+    echo "=== reproduce-all CAMPAIGN=${campaign_run_id} REVISION=${FORL0_CONTROL_REVISION} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
+    FORL0_RUN_ID="${campaign_run_id}_smoke" \
+        FORL0_RUN_STARTED_EPOCH="$(date '+%s')" \
+        bash ./reproduce-smoke
+
+    export FORL0_RUN_ID="$campaign_run_id"
+    export FORL0_RUN_STARTED_EPOCH="$(date '+%s')"
+    echo "SMOKE PASSED: starting formal campaign RUN_ID=${FORL0_RUN_ID} (W01-W02, N01-N14, C01-C08)"
 
     FORL0_RUN_LOG_MODE=append bash ./run-forl0-offline.sh \
         --reproduce-ascend \

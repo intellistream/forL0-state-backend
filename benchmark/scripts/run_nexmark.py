@@ -1601,6 +1601,10 @@ class NexmarkRunner:
             for query in sorted(set(base_queries.keys()) | set(comp_queries.keys())):
                 base_result = base_queries.get(query, {})
                 comp_result = comp_queries.get(query, {})
+                if not base_result or not comp_result:
+                    missing = backend if not comp_result else base_backend
+                    print(f"  {query}: N/A (missing valid {missing} sample)")
+                    continue
                 base_perf = base_result.get('process_throughput') or base_result.get('throughput', 0)
                 comp_perf = comp_result.get('process_throughput') or comp_result.get('throughput', 0)
                 
@@ -1648,6 +1652,7 @@ def apply_nexmark_scenario(config: dict, scenario_name: str) -> dict:
         'warmup_events',
         'timeout_seconds',
         'max_attempts_per_query',
+        'retry_backoff_seconds',
         'repeat_per_query',
         'min_success_samples',
         'min_cpu_cores',

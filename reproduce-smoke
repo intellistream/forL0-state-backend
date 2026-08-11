@@ -17,6 +17,8 @@ trap cleanup EXIT
 cd "$PROJECT_ROOT"
 export FORL0_OFFLINE_ONLY=true
 export FORL0_RUN_LOG="$RUN_LOG"
+export FORL0_RUN_ID="${FORL0_RUN_ID:-smoke_$(date '+%Y%m%d_%H%M%S')}"
+export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
 
 if ! bash ./run-forl0-offline.sh --smoke-only --skip-docker-load; then
     echo "SMOKE FAILED: launcher returned a non-zero status" | tee -a "$RUN_LOG"
