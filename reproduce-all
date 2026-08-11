@@ -6,7 +6,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${PROJECT_ROOT}/.reproduce-all.pid"
-RUN_LOG="${PROJECT_ROOT}/.logs"
+RUN_LOG="${PROJECT_ROOT}/benchmark/results/.logs"
 
 if [[ "${1:-}" == "--worker" ]]; then
     printf '%s\n' "$$" > "$PID_FILE"

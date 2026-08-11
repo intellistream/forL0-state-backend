@@ -6,7 +6,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_ROOT="${PROJECT_ROOT}/benchmark/results"
-RUN_LOG="${PROJECT_ROOT}/.logs"
+RUN_LOG="${RESULTS_ROOT}/.logs"
 MARKER="$(mktemp /tmp/forl0-smoke-check.XXXXXX)"
 
 cleanup() {
