@@ -908,9 +908,56 @@ class NexmarkRunner:
                 return query_override[key]
         return self.nexmark_config.get(key, default)
 
-    def _get_query_category_suffix(self) -> str:
+    def _get_query_category(self) -> str:
+        """Return a safe NexMark query-category name from the scenario config."""
         category = str(self.nexmark_config.get('category', 'oa')).strip().lower()
+        if not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', category):
+            raise ValueError(f'Invalid NexMark query category: {category!r}')
+        return category
+
+    @staticmethod
+    def _get_query_category_suffix(category: str) -> str:
         return '' if category == 'oa' else f'.{category}'
+
+    def _prepare_driver_location(self, conf_dir: Path, category: str) -> tuple[Path, str]:
+        """Create a category-compatible distribution view for the Java driver.
+
+        The Java-8 offline driver shipped in the repository accepts ``--category``
+        but an old Benchmark.class reads the option's default value (``oa``)
+        instead of the parsed command line.  Non-OA workloads consequently fail
+        before submission with "workload ... is not defined".
+
+        Normalize a custom category to OA in an isolated temporary view.  Its
+        ``queries`` entry points at the requested category directory, while the
+        other distribution entries continue to point at the packaged NexMark
+        home.  This preserves category-specific SQL and works with both the old
+        offline class and corrected drivers.
+        """
+        if category == 'oa':
+            return self.nexmark_home, category
+
+        category_queries = self.nexmark_home / f'queries-{category}'
+        if not category_queries.is_dir():
+            raise FileNotFoundError(
+                f'NexMark query category {category!r} is missing: {category_queries}'
+            )
+
+        driver_home = conf_dir / 'nexmark-home'
+        driver_home.mkdir()
+        for entry in self.nexmark_home.iterdir():
+            if entry.name == 'queries' or entry.name.startswith('queries-'):
+                continue
+            os.symlink(entry.resolve(), driver_home / entry.name,
+                       target_is_directory=entry.is_dir())
+
+        # q10 and any future file-output query should retain durable output
+        # outside the temporary configuration directory.
+        data_dir = self.nexmark_home / 'data'
+        data_dir.mkdir(exist_ok=True)
+        if not (driver_home / 'data').exists():
+            os.symlink(data_dir.resolve(), driver_home / 'data', target_is_directory=True)
+        os.symlink(category_queries.resolve(), driver_home / 'queries', target_is_directory=True)
+        return driver_home, 'oa'
     
     def _copy_forl0_jar_if_needed(self):
         """Copy ForL0 JAR to Flink lib if not present."""
@@ -943,6 +990,7 @@ class NexmarkRunner:
         tps: int,
         warmup_duration: int,
         checkpoint_interval_ms: int,
+        driver_category: str,
     ) -> Path:
         """Write a temporary nexmark.yaml tuned for the requested query run."""
         conf_dir = Path(tempfile.mkdtemp(prefix='nexmark-conf-'))
@@ -1020,7 +1068,7 @@ class NexmarkRunner:
             f'nexmark.metric.reporter.port: {self.metric_reporter_port}\n'
             f'nexmark.workload.suite.run.events.num: {num_events}\n'
             f'nexmark.workload.suite.run.tps: {workload_tps}\n'
-            f'nexmark.workload.suite.run.queries{self._get_query_category_suffix()}: "{query}"\n'
+            f'nexmark.workload.suite.run.queries{self._get_query_category_suffix(driver_category)}: "{query}"\n'
             f'nexmark.workload.suite.run.percentage: "bid:{bid_proportion},'
             f'auction:{auction_proportion},'
             f'person:{person_proportion}"\n'
@@ -1057,7 +1105,26 @@ class NexmarkRunner:
         checkpoint_interval_ms: int,
     ) -> tuple[list[str], dict, Path]:
         """Build the NexMark benchmark-driver command and environment."""
-        conf_dir = self._write_nexmark_conf(query, backend, num_events, tps, warmup_duration, checkpoint_interval_ms)
+        category = self._get_query_category()
+        conf_dir = self._write_nexmark_conf(
+            query,
+            backend,
+            num_events,
+            tps,
+            warmup_duration,
+            checkpoint_interval_ms,
+            'oa' if category != 'oa' else category,
+        )
+        try:
+            driver_home, driver_category = self._prepare_driver_location(conf_dir, category)
+        except Exception:
+            shutil.rmtree(conf_dir, ignore_errors=True)
+            raise
+        if driver_category != category:
+            print(
+                f'[Nexmark] Category compatibility view: {category} -> '
+                f'{driver_category} ({driver_home / "queries"})'
+            )
         classpath = f"{self.nexmark_home / 'lib'}/*:{self.flink_home / 'lib'}/*"
         forl0_args = get_forl0_config_args(self.config, backend, query)
         backends_list = {b['name']: b['class'] for b in self.config.get('backends', [])}
@@ -1076,11 +1143,11 @@ class NexmarkRunner:
             classpath,
             NEXMARK_MAIN_CLASS,
             '--location',
-            str(self.nexmark_home),
+            str(driver_home),
             '--queries',
             query,
             '--category',
-            str(self.nexmark_config.get('category', 'oa')),
+            driver_category,
         ])
 
         env = os.environ.copy()
