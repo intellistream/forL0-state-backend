@@ -35,6 +35,20 @@ if (( new_raw_count < 2 )); then
     exit 1
 fi
 
+new_nexmark_count="$(
+    find "${RESULTS_ROOT}" \
+        -mindepth 2 \
+        -maxdepth 2 \
+        -type f \
+        -path '*/nexmark_*/nexmark_results.json' \
+        -newer "$MARKER" \
+        -print | wc -l
+)"
+if (( new_nexmark_count < 1 )); then
+    echo "SMOKE FAILED: expected a fresh NexMark result, found ${new_nexmark_count}" | tee -a "$RUN_LOG"
+    exit 1
+fi
+
 report="${RESULTS_ROOT}/reports/benchmark_report.html"
 if [[ ! -f "$report" || ! "$report" -nt "$MARKER" ]]; then
     echo "SMOKE FAILED: report was not regenerated at ${report}" | tee -a "$RUN_LOG"
@@ -47,4 +61,4 @@ if [[ -d "$wrong_root" ]] && find "$wrong_root" -type f -newer "$MARKER" -print 
     exit 1
 fi
 
-echo "SMOKE PASSED: environment, both backends, report, and result path are valid" | tee -a "$RUN_LOG"
+echo "SMOKE PASSED: environment, both backends, NexMark runtime, report, and result path are valid" | tee -a "$RUN_LOG"

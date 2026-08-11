@@ -59,8 +59,8 @@ RUNNER_EXTRA_ARGS=()
 REQUIRE_L0=true
 
 ASCEND_REPRO_WORKLOADS=(
-    "W01|wordcount_stateful_counter_p4_hashmap|WordCount stateful_counter_p4_probe best-of-3, HashMap baseline, isolated cluster"
-    "W02|wordcount_stateful_counter_p4_forl0|WordCount stateful_counter_p4_probe best-of-3, ForL0 tuned config, isolated cluster"
+    "W01|wordcount_stateful_counter_p4_hashmap|WordCount stateful_counter_p4_probe median-of-3, HashMap baseline, isolated cluster"
+    "W02|wordcount_stateful_counter_p4_forl0|WordCount stateful_counter_p4_probe median-of-3, ForL0 tuned config, isolated cluster"
     "N01|nexmark_q18_tps_hashmap|NexMark forl0_tps_probe q18, HashMap baseline, isolated cluster"
     "N02|nexmark_q18_tps_forl0|NexMark forl0_tps_probe q18, ForL0 stable config, isolated cluster"
     "N03|nexmark_q18_lateq_deep_hashmap|NexMark forl0_no_full_gc_lateq_deep q18, HashMap baseline, isolated cluster"
@@ -585,32 +585,36 @@ prepare_runtime() {
 }
 
 sync_runtime_control_plane() {
-    [[ "$CONTROL_ROOT" != "$APP_ROOT" ]] || return 0
+    if [[ "$CONTROL_ROOT" != "$APP_ROOT" ]]; then
+        info "Syncing current repository control scripts into installed runtime"
+        mkdir -p "${RUNTIME_ROOT}/benchmark/config" "${RUNTIME_ROOT}/benchmark/scripts/utils" "${RUNTIME_ROOT}/docker/deploy"
 
-    info "Syncing current repository control scripts into installed runtime"
-    mkdir -p "${RUNTIME_ROOT}/benchmark/scripts/utils" "${RUNTIME_ROOT}/docker/deploy"
+        local script
+        for script in \
+            clean_results.py \
+            generate_report.py \
+            run_benchmark.py \
+            run_benchset.py \
+            run_client_usecase.py \
+            run_nexmark.py \
+            run_wordcount.py; do
+            cp "${CONTROL_ROOT}/benchmark/scripts/${script}" \
+                "${RUNTIME_ROOT}/benchmark/scripts/${script}"
+        done
+        cp "${CONTROL_ROOT}/benchmark/scripts/utils/config.py" \
+            "${RUNTIME_ROOT}/benchmark/scripts/utils/config.py"
+        cp "${CONTROL_ROOT}/benchmark/config/benchmark.yaml" \
+            "${RUNTIME_ROOT}/benchmark/config/benchmark.yaml"
+        cp "${CONTROL_ROOT}/docker/run_all_apps.sh" \
+            "${RUNTIME_ROOT}/docker/run_all_apps.sh"
+        chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh"
 
-    local script
-    for script in \
-        clean_results.py \
-        run_benchmark.py \
-        run_benchset.py \
-        run_client_usecase.py \
-        run_nexmark.py; do
-        cp "${CONTROL_ROOT}/benchmark/scripts/${script}" \
-            "${RUNTIME_ROOT}/benchmark/scripts/${script}"
-    done
-    cp "${CONTROL_ROOT}/benchmark/scripts/utils/config.py" \
-        "${RUNTIME_ROOT}/benchmark/scripts/utils/config.py"
-    cp "${CONTROL_ROOT}/docker/run_all_apps.sh" \
-        "${RUNTIME_ROOT}/docker/run_all_apps.sh"
-    chmod +x "${RUNTIME_ROOT}/docker/run_all_apps.sh"
-
-    if [[ -d "${CONTROL_ROOT}/docker/deploy/nexmark-flink" ]]; then
-        mkdir -p "${RUNTIME_ROOT}/docker/deploy/nexmark-flink"
-        cp -a "${CONTROL_ROOT}/docker/deploy/nexmark-flink/." \
-            "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/"
-        chmod +x "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/bin/"*.sh 2>/dev/null || true
+        if [[ -d "${CONTROL_ROOT}/docker/deploy/nexmark-flink" ]]; then
+            mkdir -p "${RUNTIME_ROOT}/docker/deploy/nexmark-flink"
+            cp -a "${CONTROL_ROOT}/docker/deploy/nexmark-flink/." \
+                "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/"
+            chmod +x "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/bin/"*.sh 2>/dev/null || true
+        fi
     fi
 
     local nexmark_jar
@@ -672,6 +676,9 @@ if [[ "$RUN_SMOKE" == "true" ]]; then
     run_or_handle_failure "Smoke test: client_usecase contract_baseline" \
         "$RUNNER" --offline --test client_usecase --scenario contract_baseline \
         --backend "$BACKEND" "${PROFILE_ARGS[@]}" --no-report "${COMMON_RUNNER_ARGS[@]}"
+    run_or_handle_failure "Smoke test: NexMark q18 Java/runtime path" \
+        "$RUNNER" --offline --test nexmark --scenario forl0_tps_probe --query q18 \
+        --backend "$BACKEND" "${PROFILE_ARGS[@]}" --no-report "${COMMON_RUNNER_ARGS[@]}"
 fi
 
 if [[ "$RUN_APPS" == "true" ]]; then
@@ -707,6 +714,8 @@ if [[ "$RUN_ASCEND_REPRO" == "true" ]]; then
     mkdir -p "$run_log_dir"
     manifest="${run_log_dir}/ascend_reproduction_$(date '+%Y%m%d_%H%M%S').tsv"
     {
+        printf "# run_id=%s\n" "${FORL0_RUN_ID:-unassigned}"
+        printf "# run_started_epoch=%s\n" "${FORL0_RUN_STARTED_EPOCH:-unassigned}"
         printf "id\tname\tdescription\n"
         for entry in "${ASCEND_REPRO_WORKLOADS[@]}"; do
             IFS='|' read -r id name description <<< "$entry"

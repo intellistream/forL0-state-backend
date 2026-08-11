@@ -1480,6 +1480,9 @@ class NexmarkRunner:
         
         results_with_meta = {
             'timestamp': datetime.now().isoformat(),
+            'run_id': os.environ.get('FORL0_RUN_ID', '').strip() or None,
+            'run_started_epoch': int(os.environ['FORL0_RUN_STARTED_EPOCH'])
+            if os.environ.get('FORL0_RUN_STARTED_EPOCH', '').isdigit() else None,
             'mode': self.mode,
             'scenario_name': self.nexmark_config.get('scenario_name'),
             'selected_queries': getattr(self, 'selected_queries', []),
