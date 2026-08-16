@@ -293,11 +293,12 @@ sudo ldconfig
 state.backend: org.apache.flink.state.forl0.ForL0StateBackendFactory
 
 # ========== L0 Hot-Key Cache (可选) ==========
-# total-size 是作业总预算，expected-engines 通常等于 keyed 算子并行实例数。
+# total-size 是作业总预算。兼容键 expected-engines 现在表示会创建
+# 进程级 L0 manager 的 TaskManager 数量，而不是 slot/算子实例数。
 # 正式实验建议打开 strict-allocation，任何硬件降级都会直接使运行失败。
 state.backend.forl0.l0-cache.enabled: false
 state.backend.forl0.l0-cache.total-size: 20mb
-state.backend.forl0.l0-cache.expected-engines: 8
+state.backend.forl0.l0-cache.expected-engines: 2
 state.backend.forl0.l0-cache.strict-allocation: true
 state.backend.forl0.native-memory.max-size: 1gb
 ```
@@ -306,17 +307,17 @@ state.backend.forl0.native-memory.max-size: 1gb
 
 L0 的物理上限来自内核模块参数 `max_numa_capacity`（默认 20 MB / NUMA node）。
 单台鲲鹏 920 双路有 8 个 NUMA node，整机实际可用 < 100 MB。
-**同一 NUMA node 上所有 TaskManager slot 共享该节点的 L0 预算**，后启的 slot
-一旦 `cache_tuner_init` 失败就会触发硬件门禁、走 WARN 降级路径。
+**同一 TaskManager 内所有 StateEngine 共享一个 L0 manager/tuner**；不同
+TaskManager 再共享设备总预算。这样并行 slot 不会重复占用 tuner 句柄。
 
-runner 会按实际 workload parallelism 自动设置 `expected-engines`。backend 使用：
+runner 会把 `expected-engines` 设为实验拓扑中的 TaskManager 数。backend 使用：
 
 ```
-per_engine_size = total_size / expected_engines
+per_process_size = total_size / expected_engines
 ```
 
-手工部署时也必须按 keyed StateBackend instance 数，而不是只按 TaskManager 数分配。
-`l0-cache.size` 仍作为兼容的“每实例容量”选项保留；新实验应使用
+手工部署时应按 TaskManager 进程数分配，而不是按 keyed StateBackend instance 数。
+`l0-cache.size` 仍作为兼容的“每进程容量”选项保留；新实验应使用
 `l0-cache.total-size`。若超分，严格模式会失败；非严格模式会看到：
 
 ```
@@ -346,10 +347,10 @@ env.setStateBackend(stateBackend);
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `state.backend.forl0.l0-cache.enabled` | boolean | `false` | 是否请求开启 L0 Hot-Key Cache |
-| `state.backend.forl0.l0-cache.total-size` | MemorySize | 无 | 作业级 L0 总预算，由 expected-engines 均分 |
-| `state.backend.forl0.l0-cache.expected-engines` | int | `1` | 共享总预算的并行 StateEngine 数 |
+| `state.backend.forl0.l0-cache.total-size` | MemorySize | 无 | 作业级 L0 总预算，由进程级 manager 均分 |
+| `state.backend.forl0.l0-cache.expected-engines` | int | `1` | 兼容键：共享总预算的 TaskManager/进程级 manager 数 |
 | `state.backend.forl0.l0-cache.strict-allocation` | boolean | `false` | 分配缩小或硬件不可用时直接失败 |
-| `state.backend.forl0.l0-cache.size` | MemorySize | `20mb` | 兼容选项：每个 StateEngine 的容量 |
+| `state.backend.forl0.l0-cache.size` | MemorySize | `20mb` | 兼容选项：每个 TaskManager 进程的容量 |
 | `state.backend.forl0.l0-cache.state-size` | MemorySize | `1mb` | 每个可缓存 scalar ValueState 的申请额度 |
 | `state.backend.forl0.l0-cache.write-bypass-threshold` | long | `1048576` | 连续只写多少次后停止污染 L0；0 表示关闭 |
 | `state.backend.forl0.native-memory.max-size` | MemorySize | `0` | 每个 StateEngine 的 SwissTable native 内存上限；0 表示不限 |

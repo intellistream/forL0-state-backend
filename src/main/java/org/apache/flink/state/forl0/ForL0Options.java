@@ -69,19 +69,19 @@ public class ForL0Options {
             ConfigOptions.key("state.backend.forl0.l0-cache.size")
                     .memoryType()
                     .defaultValue(MemorySize.ofMebiBytes(20))
-                    .withDescription("Size of L0 Cache memory pool. Examples: 20mb, 64mb.");
+                    .withDescription("Compatibility option for the process-shared L0 Cache memory pool. Examples: 20mb, 64mb.");
 
     public static final ConfigOption<MemorySize> L0_CACHE_TOTAL_SIZE =
             ConfigOptions.key("state.backend.forl0.l0-cache.total-size")
                     .memoryType()
                     .noDefaultValue()
-                    .withDescription("Host/device-wide L0 budget divided by l0-cache.expected-engines.");
+                    .withDescription("Host/device-wide L0 budget divided by the expected process-scoped managers configured through l0-cache.expected-engines.");
 
     public static final ConfigOption<Integer> L0_CACHE_EXPECTED_ENGINES =
             ConfigOptions.key("state.backend.forl0.l0-cache.expected-engines")
                     .intType()
                     .defaultValue(1)
-                    .withDescription("Expected number of concurrent keyed StateEngines sharing the L0 device.");
+                    .withDescription("Compatibility key: expected number of process-scoped L0 managers sharing the device (normally the TaskManager count).");
 
     public static final ConfigOption<Boolean> L0_CACHE_STRICT_ALLOCATION =
             ConfigOptions.key("state.backend.forl0.l0-cache.strict-allocation")

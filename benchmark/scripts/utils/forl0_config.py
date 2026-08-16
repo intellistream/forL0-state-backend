@@ -8,7 +8,9 @@ FORL0_CONFIG_MAPPING = {
     'initial_table_capacity': 'state.backend.forl0.initial-table-capacity',
     'max_table_capacity': 'state.backend.forl0.max-table-capacity',
     'l0_cache_enabled': 'state.backend.forl0.l0-cache.enabled',
-    # Job-wide budget; the backend divides it by expected engine count.
+    # Job-wide budget. The compatibility key is now the number of
+    # process-scoped L0 managers (normally TaskManager processes), because
+    # parallel StateEngines within one process share a tuner/allocation.
     'l0_cache_size': 'state.backend.forl0.l0-cache.total-size',
     'l0_cache_expected_engines': 'state.backend.forl0.l0-cache.expected-engines',
     'l0_cache_strict_allocation': 'state.backend.forl0.l0-cache.strict-allocation',

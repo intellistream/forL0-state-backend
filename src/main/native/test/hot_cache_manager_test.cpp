@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 #include "hot_cache.h"
@@ -233,4 +234,50 @@ TEST(HotCacheManager, ConsecutiveWriteOnlyPhaseBypassesCacheSafely) {
     ASSERT_TRUE(cache->get(4, &value));
     ASSERT_EQ(value, 40);
     mgr.release_ll(cache.release());
+}
+
+TEST(HotCacheManager, ProcessRegistryReusesOneHardwareTuner) {
+    HotCacheManager::reset_process_shared_for_tests();
+    fake_backend::reset();
+
+    bool first_reused = true;
+    bool second_reused = false;
+    auto first = HotCacheManager::acquire_process_shared(
+        64 * 192, &fake_backend::loader, true, 4096, &first_reused);
+    auto second = HotCacheManager::acquire_process_shared(
+        64 * 192, &fake_backend::loader, true, 4096, &second_reused);
+
+    ASSERT_TRUE(first->is_active());
+    ASSERT_EQ(first.get(), second.get());
+    ASSERT_FALSE(first_reused);
+    ASSERT_TRUE(second_reused);
+    ASSERT_EQ(fake_backend::s_init_calls, 1);
+    ASSERT_EQ(fake_backend::s_alloc_calls, 1);
+
+    second.reset();
+    ASSERT_EQ(fake_backend::s_destroy_calls, 0);
+    first.reset();
+    ASSERT_EQ(fake_backend::s_destroy_calls, 1);
+    ASSERT_EQ(fake_backend::s_free_calls, 1);
+    HotCacheManager::reset_process_shared_for_tests();
+}
+
+TEST(HotCacheManager, ProcessRegistryRejectsOverlappingIncompatibleConfig) {
+    HotCacheManager::reset_process_shared_for_tests();
+    fake_backend::reset();
+    auto first = HotCacheManager::acquire_process_shared(
+        64 * 192, &fake_backend::loader, true, 4096);
+
+    bool rejected = false;
+    try {
+        (void) HotCacheManager::acquire_process_shared(
+            32 * 192, &fake_backend::loader, true, 4096);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    ASSERT_TRUE(rejected);
+    ASSERT_EQ(fake_backend::s_init_calls, 1);
+
+    first.reset();
+    HotCacheManager::reset_process_shared_for_tests();
 }

@@ -10,9 +10,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <stdexcept>
 #include <unistd.h>
 
 namespace forl0 {
+
+namespace {
+std::mutex g_process_manager_mutex;
+std::weak_ptr<HotCacheManager> g_process_manager;
+}  // namespace
 
 // ---------------------------------------------------------------------------
 //  Default loader: real dlopen of libl0mempool.so
@@ -160,7 +166,39 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
 
 HotCacheManager::~HotCacheManager() { shutdown(); }
 
+std::shared_ptr<HotCacheManager> HotCacheManager::acquire_process_shared(
+        size_t requested_capacity_bytes,
+        L0BindingsLoader loader,
+        bool strict_allocation,
+        uint64_t write_only_bypass_threshold,
+        bool* reused) {
+    std::lock_guard<std::mutex> registry_lock(g_process_manager_mutex);
+    if (auto existing = g_process_manager.lock()) {
+        if (existing->requested_capacity_bytes_ != requested_capacity_bytes
+                || existing->strict_allocation_ != strict_allocation
+                || existing->write_only_bypass_threshold_ != write_only_bypass_threshold) {
+            throw std::runtime_error(
+                "incompatible process-shared L0 configuration while another StateEngine is active");
+        }
+        if (reused) *reused = true;
+        return existing;
+    }
+
+    auto created = std::shared_ptr<HotCacheManager>(
+        new HotCacheManager(requested_capacity_bytes, loader, strict_allocation,
+                            write_only_bypass_threshold));
+    g_process_manager = created;
+    if (reused) *reused = false;
+    return created;
+}
+
+void HotCacheManager::reset_process_shared_for_tests() {
+    std::lock_guard<std::mutex> registry_lock(g_process_manager_mutex);
+    g_process_manager.reset();
+}
+
 void HotCacheManager::shutdown() noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     for (auto& o : owned_) delete o.cache;
     owned_.clear();
     released_runs_.clear();
@@ -182,6 +220,11 @@ void HotCacheManager::shutdown() noexcept {
 }
 
 uint32_t HotCacheManager::free_sets() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    return free_sets_unlocked();
+}
+
+uint32_t HotCacheManager::free_sets_unlocked() const noexcept {
     if (!active_) return 0;
     uint32_t f = total_sets_ - bump_next_;
     for (auto& r : released_runs_) f += r.second;
@@ -189,11 +232,13 @@ uint32_t HotCacheManager::free_sets() const noexcept {
 }
 
 size_t HotCacheManager::used_bytes() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     if (!active_) return 0;
-    return (static_cast<size_t>(total_sets_) - free_sets()) * sizeof(HotSet);
+    return (static_cast<size_t>(total_sets_) - free_sets_unlocked()) * sizeof(HotSet);
 }
 
 std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t sets_requested) {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     if (!active_ || sets_requested == 0) return nullptr;
 
     uint32_t bump_avail = total_sets_ - bump_next_;
@@ -239,6 +284,7 @@ std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t sets_requested)
 }
 
 void HotCacheManager::release_ll(HotCacheLL* cache) {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     if (!cache) return;
     for (auto it = owned_.begin(); it != owned_.end(); ++it) {
         if (it->cache == cache) {
@@ -286,33 +332,43 @@ void HotCacheManager::release_ll(HotCacheLL* cache) {
 //  Aggregate counters (Phase C MetricGroup integration).
 // ---------------------------------------------------------------------------
 uint64_t HotCacheManager::total_lookups() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->lookups();
     return sum;
 }
 
 uint64_t HotCacheManager::total_hits() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->hits();
     return sum;
 }
 
 uint64_t HotCacheManager::total_invalidations() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->invalidations();
     return sum;
 }
 
 uint64_t HotCacheManager::total_writes() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->writes();
     return sum;
 }
 
 uint64_t HotCacheManager::total_bypass_events() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->bypass_events();
     return sum;
+}
+
+uint32_t HotCacheManager::cache_count() const noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    return static_cast<uint32_t>(owned_.size());
 }
 
 // ---------------------------------------------------------------------------
@@ -326,23 +382,13 @@ uint64_t HotCacheManager::total_bypass_events() const noexcept {
 // ---------------------------------------------------------------------------
 uint32_t HotCacheManager::rebalance_if_needed(uint64_t interval_ops,
                                               double miss_rate_threshold) noexcept {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
     if (!active_) return 0;
     uint32_t rebalanced = 0;
     for (auto& o : owned_) {
-        HotCacheLL* c = o.cache;
-        // Snapshot hits/misses BEFORE consuming the delta so we can compute
-        // the miss_rate over the recent window.
-        uint64_t hits   = c->hits();
-        uint64_t misses = c->misses();
-        uint64_t delta  = c->consume_rebalance_delta();
-        if (delta < interval_ops) continue;
-        uint64_t lookups = hits + misses;
-        if (lookups == 0) continue;
-        double miss_rate = static_cast<double>(misses) / static_cast<double>(lookups);
-        if (miss_rate <= miss_rate_threshold) continue;
-        c->clear();
-        c->reset_stats();
-        ++rebalanced;
+        if (o.cache->rebalance_if_needed(interval_ops, miss_rate_threshold)) {
+            ++rebalanced;
+        }
     }
     return rebalanced;
 }

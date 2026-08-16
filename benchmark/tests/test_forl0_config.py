@@ -18,7 +18,7 @@ from utils.forl0_config import (  # noqa: E402
 
 
 class ForL0ConfigTest(unittest.TestCase):
-    def test_job_budget_is_divided_by_backend_and_not_mapped_as_per_engine_size(self) -> None:
+    def test_job_budget_is_rendered_for_process_manager_division(self) -> None:
         args = render_forl0_config_args({
             'l0_cache_enabled': True,
             'l0_cache_size': '512mb',
@@ -81,22 +81,23 @@ class ForL0ConfigTest(unittest.TestCase):
             item['name']: item for item in config['wordcount_scenarios']
         }['stateful_counter_p4_probe']['forl0_overrides']
         self.assertFalse(wordcount['l0_cache_enabled'])
-        self.assertEqual(1048576, wordcount['initial_table_capacity'])
+        self.assertEqual(8192, wordcount['initial_table_capacity'])
+        self.assertEqual(262144, wordcount['max_table_capacity'])
 
         nexmark = {item['name']: item for item in config['nexmark_scenarios']}
         self.assertEqual(
-            16,
+            2,
             nexmark['forl0_no_full_gc_pressure']['forl0_overrides'][
                 'l0_cache_expected_engines'],
         )
         self.assertEqual(
-            16,
+            2,
             nexmark['forl0_no_full_gc_allq_pressure']['forl0_overrides'][
                 'l0_cache_expected_engines'],
         )
         late = nexmark['forl0_no_full_gc_lateq_deep']
         self.assertEqual(4, late['runtime_overrides']['parallelism'])
-        self.assertEqual(8, late['forl0_overrides']['l0_cache_expected_engines'])
+        self.assertEqual(2, late['forl0_overrides']['l0_cache_expected_engines'])
         q3 = nexmark['forl0_no_full_gc_extra_sql']
         self.assertEqual(200000, q3['query_overrides']['q3']['tps'])
         self.assertEqual(4194304, q3['forl0_overrides']['max_table_capacity'])
@@ -104,7 +105,7 @@ class ForL0ConfigTest(unittest.TestCase):
         client = {
             item['name']: item for item in config['client_usecase_scenarios']
         }['scalar_state_probe_2m_ops64_batch']
-        self.assertEqual(8, client['forl0_overrides']['l0_cache_expected_engines'])
+        self.assertEqual(2, client['forl0_overrides']['l0_cache_expected_engines'])
 
 
 if __name__ == '__main__':

@@ -38,16 +38,18 @@ Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
         jint initialTableCapacity, jint maxTableCapacity,
         jdouble mainTableLoadFactor, jlong nativeMemoryMaxBytes) {
     JNI_ENTRY_RETURN(jlong, 0, {
-        std::unique_ptr<HotCacheManager> mgr;
+        std::shared_ptr<HotCacheManager> mgr;
         if (l0Enabled) {
-            mgr = std::unique_ptr<HotCacheManager>(
-                new HotCacheManager(static_cast<size_t>(l0Capacity), nullptr,
-                                    l0StrictAllocation == JNI_TRUE,
-                                    static_cast<uint64_t>(l0WriteBypassThreshold)));
+            bool reused = false;
+            mgr = HotCacheManager::acquire_process_shared(
+                static_cast<size_t>(l0Capacity), nullptr,
+                l0StrictAllocation == JNI_TRUE,
+                static_cast<uint64_t>(l0WriteBypassThreshold), &reused);
             // Hardware-gating telemetry per design §3.2.
             if (mgr->is_active()) {
                 fprintf(stderr,
-                        "[ForL0-HotCache] engine_start active=1 key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
+                        "[ForL0-HotCache] %s active=1 key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
+                        reused ? "engine_reuse" : "engine_start",
                         static_cast<int>(startKeyGroup),
                         static_cast<int>(startKeyGroup + numKeyGroups),
                         mgr->requested_capacity_bytes(), mgr->capacity_bytes(),
@@ -82,8 +84,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
         JNIEnv* env, jclass, jlong engineHandle) {
     JNI_ENTRY_VOID({
         auto* engine = from_handle<StateEngine>(engineHandle);
+        auto* mgr = engine->hot_cache_manager();
         for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
-            const StateHandle* state = entry.second;
+            StateHandle* state = entry.second;
             if (!state || !state->hot_cache_ll) continue;
             fprintf(stderr,
                     "[ForL0-HotCache] state_summary name=%s sets=%u lookups=%llu hits=%llu invalidations=%llu writes=%llu bypass_events=%llu bypassed=%d\n",
@@ -95,7 +98,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
                     static_cast<unsigned long long>(state->hot_cache_ll->bypass_events()),
                     state->hot_cache_ll->write_bypassed() ? 1 : 0);
         }
-        if (auto* mgr = engine->hot_cache_manager()) {
+        if (mgr) {
             fprintf(stderr,
                     "[ForL0-HotCache] engine_summary requested_bytes=%zu actual_bytes=%zu used_bytes=%zu total_sets=%u free_sets=%u caches=%u lookups=%llu hits=%llu invalidations=%llu writes=%llu bypass_events=%llu\n",
                     mgr->requested_capacity_bytes(), mgr->capacity_bytes(), mgr->used_bytes(),
@@ -105,6 +108,15 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
                     static_cast<unsigned long long>(mgr->total_invalidations()),
                     static_cast<unsigned long long>(mgr->total_writes()),
                     static_cast<unsigned long long>(mgr->total_bypass_events()));
+            // StateHandle stores a non-owning cache pointer. Return each
+            // engine's slices before dropping its shared manager reference so
+            // a restarted subtask cannot strand capacity until job teardown.
+            for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
+                StateHandle* state = entry.second;
+                if (!state || !state->hot_cache_ll) continue;
+                mgr->release_ll(state->hot_cache_ll);
+                state->hot_cache_ll = nullptr;
+            }
         }
         if (auto* allocator = engine->counting_allocator()) {
             fprintf(stderr,
@@ -214,11 +226,17 @@ Java_org_apache_flink_state_forl0_NativeEngine_rebalanceHotCache(
         jlong intervalOps, jdouble missRateThreshold) {
     JNI_ENTRY_RETURN(jint, 0, {
         auto* engine = from_handle<StateEngine>(engineHandle);
-        auto* mgr = engine->hot_cache_manager();
-        if (!mgr) return 0;
-        return static_cast<jint>(mgr->rebalance_if_needed(
-            static_cast<uint64_t>(intervalOps),
-            static_cast<double>(missRateThreshold)));
+        jint rebalanced = 0;
+        for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
+            StateHandle* state = entry.second;
+            if (state && state->hot_cache_ll
+                    && state->hot_cache_ll->rebalance_if_needed(
+                        static_cast<uint64_t>(intervalOps),
+                        static_cast<double>(missRateThreshold))) {
+                ++rebalanced;
+            }
+        }
+        return rebalanced;
     })
 }
 

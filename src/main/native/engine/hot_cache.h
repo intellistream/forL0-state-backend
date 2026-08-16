@@ -16,7 +16,10 @@
 // If any step fails, the manager is NOT active and StateTable::cache_ is
 // left null — there is no heap fallback (see L0_HotKey_Cache_Design §3.2).
 //
-// Thread safety: NOT required. Flink keyed-state access is single-threaded.
+// Each individual HotCacheLL remains single-writer because Flink keyed-state
+// access is single-threaded per subtask. HotCacheManager bookkeeping is
+// synchronized because all StateEngines in one TaskManager process share the
+// same hardware tuner and backing allocation.
 
 #pragma once
 
@@ -25,6 +28,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -224,6 +228,25 @@ public:
     uint64_t writes()        const noexcept { return writes_.load(std::memory_order_relaxed); }
     uint64_t bypass_events() const noexcept { return bypass_events_.load(std::memory_order_relaxed); }
     bool write_bypassed()    const noexcept { return write_bypassed_.load(std::memory_order_relaxed); }
+
+    // Called by the owning StateEngine thread only. Keeping rebalance scoped
+    // to one cache avoids clearing another parallel subtask's cache after the
+    // manager becomes process-shared.
+    bool rebalance_if_needed(uint64_t interval_ops,
+                             double miss_rate_threshold) noexcept {
+        uint64_t current_hits = hits();
+        uint64_t current_misses = misses();
+        uint64_t delta = consume_rebalance_delta();
+        if (delta < interval_ops) return false;
+        uint64_t current_lookups = current_hits + current_misses;
+        if (current_lookups == 0) return false;
+        double miss_rate = static_cast<double>(current_misses)
+                         / static_cast<double>(current_lookups);
+        if (miss_rate <= miss_rate_threshold) return false;
+        clear();
+        reset_stats();
+        return true;
+    }
 
     bool get(int64_t key, int64_t* out) noexcept {
         // A cache that observed a long write-only phase may contain skipped
@@ -486,6 +509,18 @@ public:
     HotCacheManager(const HotCacheManager&) = delete;
     HotCacheManager& operator=(const HotCacheManager&) = delete;
 
+    // libl0mempool exposes a process-scoped tuner resource. Creating one tuner
+    // per parallel StateEngine exhausts that resource even when the byte
+    // budget is divided correctly. Reuse one manager for every engine in this
+    // TaskManager process; the weak registry releases it after the last engine.
+    static std::shared_ptr<HotCacheManager> acquire_process_shared(
+            size_t requested_capacity_bytes,
+            L0BindingsLoader loader = nullptr,
+            bool strict_allocation = false,
+            uint64_t write_only_bypass_threshold = (1u << 20),
+            bool* reused = nullptr);
+    static void reset_process_shared_for_tests();
+
     bool   is_active()        const noexcept { return active_; }
     size_t capacity_bytes()   const noexcept { return capacity_bytes_; }
     size_t requested_capacity_bytes() const noexcept { return requested_capacity_bytes_; }
@@ -504,7 +539,7 @@ public:
     uint64_t total_invalidations() const noexcept;
     uint64_t total_writes()        const noexcept;
     uint64_t total_bypass_events() const noexcept;
-    uint32_t cache_count()         const noexcept { return static_cast<uint32_t>(owned_.size()); }
+    uint32_t cache_count()         const noexcept;
 
     // Phase C §6.3 adaptive rebalancer.
     //
@@ -516,7 +551,9 @@ public:
     // invariant: clearing a cache only drops non-authoritative state, so no
     // user-visible behaviour changes.
     //
-    // Returns the number of caches that were rebalanced.
+    // Returns the number of caches that were rebalanced. Production JNI
+    // scopes rebalance to the current StateEngine; this aggregate helper is
+    // retained for quiesced tests/diagnostics.
     uint32_t rebalance_if_needed(uint64_t interval_ops = (1u << 20),
                                  double miss_rate_threshold = 0.5) noexcept;
 
@@ -541,6 +578,7 @@ private:
     std::string   failure_reason_;
     bool          strict_allocation_ = false;
     uint64_t      write_only_bypass_threshold_ = (1u << 20);
+    mutable std::mutex manager_mutex_;
 
     struct Owned {
         HotCacheLL* cache;
@@ -551,6 +589,8 @@ private:
     std::vector<std::pair<uint32_t /*start*/, uint32_t /*count*/>> released_runs_;
 
     HotSet* base_sets() noexcept { return reinterpret_cast<HotSet*>(l0_base_); }
+
+    uint32_t free_sets_unlocked() const noexcept;
 
     void shutdown() noexcept;
 };

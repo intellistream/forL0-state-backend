@@ -775,7 +775,7 @@ private:
 class StateEngine {
 public:
     StateEngine(int start_key_group, int num_key_groups, int total_key_groups,
-                std::unique_ptr<HotCacheManager> hot_cache = nullptr,
+                std::shared_ptr<HotCacheManager> hot_cache = nullptr,
                 size_t initial_table_capacity = 16,
                 size_t max_table_capacity = 0,
                 double max_load_factor = 0.875,
@@ -910,7 +910,7 @@ private:
     std::vector<OwnedPtr> owned_state_handles_;  // owns all StateHandle allocations
 
     uint64_t snapshot_version_;
-    std::unique_ptr<HotCacheManager> hot_cache_manager_;
+    std::shared_ptr<HotCacheManager> hot_cache_manager_;
 };
 
 }  // namespace forl0

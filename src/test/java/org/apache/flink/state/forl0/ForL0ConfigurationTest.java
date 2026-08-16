@@ -13,11 +13,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ForL0ConfigurationTest {
 
     @Test
-    void dividesJobWideL0BudgetAcrossExpectedEngines() throws Exception {
+    void dividesJobWideL0BudgetAcrossExpectedProcessManagers() throws Exception {
         Configuration config = new Configuration();
         config.set(ForL0Options.L0_CACHE_ENABLED, true);
         config.set(ForL0Options.L0_CACHE_TOTAL_SIZE, MemorySize.ofMebiBytes(512));
-        config.set(ForL0Options.L0_CACHE_EXPECTED_ENGINES, 8);
+        config.set(ForL0Options.L0_CACHE_EXPECTED_ENGINES, 2);
         config.set(ForL0Options.MAX_TABLE_CAPACITY, 262144);
         config.set(ForL0Options.MAIN_TABLE_LOAD_FACTOR, 0.8);
         config.set(ForL0Options.NATIVE_MEMORY_MAX_SIZE, MemorySize.ofMebiBytes(1024));
@@ -25,7 +25,7 @@ class ForL0ConfigurationTest {
         ForL0StateBackend backend = new ForL0StateBackend().configure(
                 config, getClass().getClassLoader());
 
-        assertEquals(MemorySize.ofMebiBytes(64).getBytes(), longField(backend, "l0CacheSize"));
+        assertEquals(MemorySize.ofMebiBytes(256).getBytes(), longField(backend, "l0CacheSize"));
         assertEquals(MemorySize.ofMebiBytes(1024).getBytes(), longField(backend, "nativeMemoryMaxSize"));
         assertEquals(262144, intField(backend, "maxTableCapacity"));
     }

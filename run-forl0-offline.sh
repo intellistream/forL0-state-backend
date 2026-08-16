@@ -181,6 +181,61 @@ is_reusable_installed_runtime() {
         has_runtime_artifacts "$root"
 }
 
+native_source_fingerprint() {
+    (
+        cd "$SCRIPT_DIR/src/main/native"
+        {
+            find engine platform checkpoint jni -type f \
+                \( -name '*.h' -o -name '*.cpp' \) -print
+            printf '%s\n' Makefile
+        } | LC_ALL=C sort | xargs sha256sum
+    ) | sha256sum | awk '{print $1}'
+}
+
+rebuild_repository_native_if_needed() {
+    local native_root="$SCRIPT_DIR/src/main/native"
+    local stamp="$native_root/.forl0-source.sha256"
+    local source_hash=""
+    local built_hash=""
+
+    if [[ ! -f "$native_root/Makefile" ]]; then
+        echo "[native] source tree absent; reuse repository-provided prebuilt runtime"
+        return 0
+    fi
+
+    source_hash="$(native_source_fingerprint)"
+    built_hash="$(tr -d '[:space:]' < "$stamp" 2>/dev/null || true)"
+    if [[ "$source_hash" == "$built_hash" && \
+          -f "$native_root/libforl0_engine.so" && \
+          -f "$SCRIPT_DIR/src/main/resources/native/libforl0_engine.so" && \
+          -f "$SCRIPT_DIR/docker/deploy/libforl0_engine.so" ]]; then
+        echo "[native] source fingerprint unchanged; reuse server-built runtime"
+        return 0
+    fi
+
+    [[ "$(uname -m)" == "aarch64" ]] || {
+        echo "ERROR: repository-mode offline runtime must rebuild native code on aarch64; got $(uname -m)" >&2
+        return 1
+    }
+    for tool in make g++ java sha256sum; do
+        command -v "$tool" >/dev/null 2>&1 || {
+            echo "ERROR: native source changed but required offline build tool is missing: $tool" >&2
+            return 1
+        }
+    done
+
+    echo "[native] source changed; rebuilding ARM runtime before smoke/formal execution"
+    make -C "$native_root" clean
+    make -C "$native_root" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)"
+    mkdir -p "$SCRIPT_DIR/src/main/resources/native" "$SCRIPT_DIR/docker/deploy"
+    cp -f "$native_root/libforl0_engine.so" \
+        "$SCRIPT_DIR/src/main/resources/native/libforl0_engine.so"
+    cp -f "$native_root/libforl0_engine.so" \
+        "$SCRIPT_DIR/docker/deploy/libforl0_engine.so"
+    printf '%s\n' "$source_hash" > "$stamp"
+    echo "[native] rebuilt and deployed source=${source_hash}"
+}
+
 echo "============================================================"
 echo "  ForL0 offline one-command bootstrap"
 echo "============================================================"
@@ -270,6 +325,10 @@ fi
 if [[ "$APP_ROOT_KIND" == "bundle" ]]; then
     echo "[3/4] Verify every file inside the bundle"
     verify_checksum_file "$APP_ROOT/offline_bundle_sha256.txt"
+fi
+
+if [[ "$APP_ROOT_KIND" == "repository" ]]; then
+    rebuild_repository_native_if_needed
 fi
 
 if [[ -f "$APP_ROOT/forl0-offline-app.sh" ]]; then

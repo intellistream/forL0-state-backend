@@ -119,10 +119,11 @@ wordcount_scenarios:
       # engine). Avoid allocating 512 MiB of unused device memory every run.
       l0_cache_enabled: false
       l0_memory_max_size: 1024mb
-      # Each p4 subtask sees about 500k distinct keys. Pre-size the primitive
-      # table so the measured interval does not pay repeated resize costs.
-      initial_table_capacity: 1048576
-      max_table_capacity: 1048576
+      # The 1,048,576-slot pre-allocation consumed about 570 MiB per engine and
+      # the real-online median regressed by 8.3%. Keep the bounded table shape
+      # used before that experiment; resizing is cheaper than the memory drag.
+      initial_table_capacity: 8192
+      max_table_capacity: 262144
       main_table_load_factor_threshold: 0.80
 
   # ---- Checkpointed comparison scenario ----
@@ -591,9 +592,8 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
-      # q4 creates three keyed backend operators at p4. Include headroom for
-      # allocator granularity instead of dividing the global budget by p4.
-      l0_cache_expected_engines: 16
+      # One process-shared L0 manager per TaskManager (2 TMs on this topology).
+      l0_cache_expected_engines: 2
       l0_memory_max_size: 512mb
       initial_table_capacity: 2048
       max_table_capacity: 65536
@@ -725,9 +725,8 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
-      # Queries in this sweep can create multiple keyed operators. Budget for
-      # up to four p4 backend groups sharing the global L0 device.
-      l0_cache_expected_engines: 16
+      # One process-shared L0 manager per TaskManager (2 TMs on this topology).
+      l0_cache_expected_engines: 2
       l0_memory_max_size: 512mb
       initial_table_capacity: 2048
       max_table_capacity: 65536
@@ -918,9 +917,8 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
-      # Keep a 2x safety factor over the p4 keyed operator count; the hardware
-      # allocator could not satisfy the previous 64 MiB/engine requests.
-      l0_cache_expected_engines: 8
+      # One process-shared L0 manager per TaskManager (2 TMs on this topology).
+      l0_cache_expected_engines: 2
       l0_memory_max_size: 512mb
       initial_table_capacity: 2048
       max_table_capacity: 65536
@@ -1069,8 +1067,10 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
-      l0_cache_expected_engines: 8
-      l0_memory_max_size: 512mb
+      l0_cache_expected_engines: 2
+      # q3 reached 504 MiB and failed its next allocation under the old
+      # 512 MiB cap. Keep 50% headroom without changing the input workload.
+      l0_memory_max_size: 768mb
       initial_table_capacity: 262144
       max_table_capacity: 4194304
       main_table_load_factor_threshold: 0.80
@@ -1487,9 +1487,8 @@ client_usecase_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 512mb
-      # The device rejected the fourth 128 MiB allocation in the previous
-      # run. Split the job-wide budget into eight 64 MiB engine shares.
-      l0_cache_expected_engines: 8
+      # One process-shared L0 manager per TaskManager (2 TMs on this topology).
+      l0_cache_expected_engines: 2
       l0_memory_max_size: 1024mb
       initial_table_capacity: 8192
       max_table_capacity: 524288
@@ -1638,6 +1637,9 @@ backends:
     config:
       l0_cache_enabled: true
       l0_cache_size: 64mb
+      # Compatibility key: native managers are now process-scoped, so divide
+      # the job-wide total across the two TaskManager processes, not slots.
+      l0_cache_expected_engines: 2
       initial_table_capacity: 256
       max_table_capacity: 4096
       main_table_load_factor_threshold: 0.75
