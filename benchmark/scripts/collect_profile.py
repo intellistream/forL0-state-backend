@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any
 
 
+L0_ALLOCATION_SIZES_MB = (1, 2, 4, 6)
+
+
 def write_json(path: Path, payload: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -123,7 +126,9 @@ def main() -> int:
             os.environ.get("FORL0_PROFILE_CLUSTER_CLEANED", "").lower() == "true"),
         "l0_probe_strategy": {
             "kind": "production-shaped-process-pool",
-            "allocation_working_sets_mb": [1, 4, 16],
+            "allocation_working_sets_mb": list(L0_ALLOCATION_SIZES_MB),
+            "dense_measurement_limit_mb": 1,
+            "extended_access_pattern": "hotset-sparse",
             "minimum_tuner_capacity_mb": args.minimum_l0_tuner_mb,
         },
         "probes": [],
@@ -176,9 +181,9 @@ def main() -> int:
     successful_sizes_mb: list[int] = []
     if not args.simulate and l0_library and l0_device:
         # Match production ownership without stress-touching the entire tuner
-        # quota: one process-scoped tuner of at least 64 MiB, then staged small
-        # allocations like the vendor examples and the cache's active region.
-        for size_mb in (1, 4, 16):
+        # quota: dense latency/bandwidth stays bounded to the proven 1 MiB
+        # region, while larger allocations use the production HotSet layout.
+        for size_mb in L0_ALLOCATION_SIZES_MB:
             name = f"l0_calibration_{size_mb}mb.json"
             tuner_capacity = max(args.minimum_l0_tuner_mb, size_mb) << 20
             probe = run_probe(binary, l0_library, output / name, size_mb << 20,
@@ -210,7 +215,7 @@ def main() -> int:
     expected_instances = max(1, int(os.environ.get("FORL0_EXPECTED_TASKMANAGERS", "2")))
     instance_results: list[dict[str, Any]] = []
     if successful_sizes_mb and not args.simulate:
-        concurrent_size_mb = min(successful_sizes_mb)
+        concurrent_size_mb = max(successful_sizes_mb)
         numa_cpus: list[str] = []
         for cpulist in sorted(Path("/sys/devices/system/node").glob("node*/cpulist")):
             try:
@@ -263,10 +268,12 @@ def main() -> int:
     elif not args.simulate and (not l0_library or not l0_device):
         manifest["status"] = "failed"
         manifest["reason"] = "real profile requires a detected L0 device and vendor library"
-    elif not args.simulate and l0_library and l0_device and successful_l0 != 3:
+    elif (not args.simulate and l0_library and l0_device
+          and successful_l0 != len(L0_ALLOCATION_SIZES_MB)):
         manifest["status"] = "failed"
         manifest["reason"] = (
-            f"staged L0 calibration incomplete: {successful_l0}/3 probes succeeded")
+            "staged L0 calibration incomplete: "
+            f"{successful_l0}/{len(L0_ALLOCATION_SIZES_MB)} probes succeeded")
     elif instance_results and not all(item["status"] == "complete" for item in instance_results):
         manifest["status"] = "failed"
         manifest["reason"] = "single-instance L0 succeeded but concurrent TaskManager-shaped probes failed"

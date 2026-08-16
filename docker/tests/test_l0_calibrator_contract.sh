@@ -112,9 +112,9 @@ import sys
 
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 assert data["status"] == "complete", data
-assert data["l0_successful_probes"] == 3, data
+assert data["l0_successful_probes"] == 4, data
 sizes = [probe["allocation_mb"] for probe in data["probes"] if probe["kind"] == "l0"]
-assert sizes == [1, 4, 16], sizes
+assert sizes == [1, 2, 4, 6], sizes
 for probe in data["probes"]:
     if probe["kind"] != "l0":
         continue
@@ -123,9 +123,13 @@ for probe in data["probes"]:
     assert payload["tuner_capacity_bytes"] == 64 << 20, payload
     assert probe["tuner_capacity_mb"] == 64, probe
     assert payload["requested_bytes"] == probe["allocation_mb"] << 20, payload
+    assert payload["dense_measurement_bytes"] == 1 << 20, payload
+    assert payload["access_pattern"] == "dense-up-to-1mb-plus-hotset-sparse", payload
+    pressure = payload["l0_hotset_pressure_curve"]
+    assert pressure[-1]["requested_active_bytes"] == probe["allocation_mb"] << 20, pressure
 parallel = data["parallel_instance_probe"]
 assert parallel["expected_instances"] == 2, parallel
-assert parallel["allocation_mb_per_instance"] == 1, parallel
+assert parallel["allocation_mb_per_instance"] == 6, parallel
 assert parallel["tuner_capacity_mb_per_instance"] == 64, parallel
 assert parallel["status"] == "complete", parallel
 PY
@@ -152,9 +156,9 @@ from pathlib import Path
 manifest_path = Path(sys.argv[1])
 data = json.load(open(manifest_path, encoding="utf-8"))
 assert data["status"] == "failed", data
-assert data["l0_successful_probes"] == 2, data
-assert data["reason"] == "staged L0 calibration incomplete: 2/3 probes succeeded", data
-failed = json.load(open(manifest_path.parent / "l0_calibration_16mb.json", encoding="utf-8"))
+assert data["l0_successful_probes"] == 3, data
+assert data["reason"] == "staged L0 calibration incomplete: 3/4 probes succeeded", data
+failed = json.load(open(manifest_path.parent / "l0_calibration_6mb.json", encoding="utf-8"))
 assert failed["signal"] == 11, failed
 assert failed["failure_stage"] == "l0_mem_alloc", failed
 PY

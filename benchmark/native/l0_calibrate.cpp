@@ -45,6 +45,15 @@ struct ParallelSample {
     double sequential_read_gib_s;
 };
 
+struct HotSetSample {
+    size_t requested_active_bytes;
+    size_t actual_active_bytes;
+    size_t sets;
+    double init_ns_per_set;
+    double lookup_ns_per_op;
+    double update_ns_per_op;
+};
+
 double seconds_since(Clock::time_point start) {
     return std::chrono::duration<double>(Clock::now() - start).count();
 }
@@ -203,6 +212,81 @@ std::vector<ParallelSample> measure_parallel_curve(uint8_t* memory, size_t bytes
     return result;
 }
 
+uint64_t mix64(uint64_t value) {
+    value ^= value >> 33;
+    value *= 0xff51afd7ed558ccdULL;
+    value ^= value >> 33;
+    value *= 0xc4ceb9fe1a85ec53ULL;
+    value ^= value >> 33;
+    return value;
+}
+
+HotSetSample measure_hotset(uint8_t* memory, size_t requested_active_bytes) {
+    constexpr size_t set_bytes = 192;
+    const size_t available_sets = requested_active_bytes / set_bytes;
+    size_t sets = 1;
+    while (sets <= available_sets / 2) sets <<= 1;
+    const size_t actual_active_bytes = sets * set_bytes;
+
+    auto start = Clock::now();
+    for (size_t index = 0; index < sets; ++index) {
+        uint8_t* set = memory + index * set_bytes;
+        std::memset(set, 0x80, 8);
+        set[8] = 0;
+    }
+    const double init_ns = seconds_since(start) * 1e9 / static_cast<double>(sets);
+
+    for (size_t index = 0; index < sets; ++index) {
+        uint8_t* set = memory + index * set_bytes;
+        set[0] = static_cast<uint8_t>(index & 0x7f);
+        *reinterpret_cast<uint64_t*>(set + 64) = index;
+        *reinterpret_cast<uint64_t*>(set + 128) = mix64(index);
+    }
+
+    const size_t operations = std::max<size_t>(500000, std::min<size_t>(2000000, sets * 64));
+    volatile uint64_t checksum = 0;
+    uint64_t state = 0x9e3779b97f4a7c15ULL;
+    start = Clock::now();
+    for (size_t operation = 0; operation < operations; ++operation) {
+        state = mix64(state + operation);
+        const size_t index = state & (sets - 1);
+        uint8_t* set = memory + index * set_bytes;
+        checksum += set[0];
+        checksum += *reinterpret_cast<volatile uint64_t*>(set + 64);
+        checksum += *reinterpret_cast<volatile uint64_t*>(set + 128);
+    }
+    const double lookup_ns = seconds_since(start) * 1e9 / static_cast<double>(operations);
+
+    state = checksum ^ 0xd1b54a32d192ed03ULL;
+    start = Clock::now();
+    for (size_t operation = 0; operation < operations; ++operation) {
+        state = mix64(state + operation);
+        const size_t index = state & (sets - 1);
+        uint8_t* set = memory + index * set_bytes;
+        set[0] = static_cast<uint8_t>(state & 0x7f);
+        *reinterpret_cast<volatile uint64_t*>(set + 64) = state;
+        *reinterpret_cast<volatile uint64_t*>(set + 128) = checksum + state;
+    }
+    const double update_ns = seconds_since(start) * 1e9 / static_cast<double>(operations);
+    return {requested_active_bytes, actual_active_bytes, sets, init_ns,
+            lookup_ns, update_ns};
+}
+
+std::vector<HotSetSample> measure_hotset_curve(uint8_t* memory, size_t allocation_bytes) {
+    const size_t candidates[] = {
+        1024 * 1024ULL, 2 * 1024 * 1024ULL, 4 * 1024 * 1024ULL,
+        6 * 1024 * 1024ULL, 8 * 1024 * 1024ULL,
+    };
+    std::vector<HotSetSample> result;
+    for (size_t bytes : candidates) {
+        if (bytes <= allocation_bytes) result.push_back(measure_hotset(memory, bytes));
+    }
+    if (result.empty() || result.back().requested_active_bytes != allocation_bytes) {
+        result.push_back(measure_hotset(memory, allocation_bytes));
+    }
+    return result;
+}
+
 void write_curve(std::ostream& out, const std::vector<Sample>& curve) {
     out << "[\n";
     for (size_t i = 0; i < curve.size(); ++i) {
@@ -224,6 +308,21 @@ void write_parallel_curve(std::ostream& out, const std::vector<ParallelSample>& 
         if (i + 1 != curve.size()) out << ", ";
     }
     out << "]";
+}
+
+void write_hotset_curve(std::ostream& out, const std::vector<HotSetSample>& curve) {
+    out << "[\n";
+    for (size_t i = 0; i < curve.size(); ++i) {
+        const auto& sample = curve[i];
+        out << "      {\"requested_active_bytes\": " << sample.requested_active_bytes
+            << ", \"actual_active_bytes\": " << sample.actual_active_bytes
+            << ", \"sets\": " << sample.sets
+            << ", \"init_ns_per_set\": " << sample.init_ns_per_set
+            << ", \"lookup_ns_per_op\": " << sample.lookup_ns_per_op
+            << ", \"update_ns_per_op\": " << sample.update_ns_per_op << "}";
+        out << (i + 1 == curve.size() ? "\n" : ",\n");
+    }
+    out << "    ]";
 }
 
 }  // namespace
@@ -329,14 +428,29 @@ int main(int argc, char** argv) {
         std::free(heap);
         return 0;
     }
-    write_stage(stage_output, "l0_memory_initialize");
-    std::memset(l0, 0, requested);
-    write_stage(stage_output, "l0_measurement");
-    const auto l0_curve = measure_curve(static_cast<uint8_t*>(l0), requested);
-    const auto l0_parallel = measure_parallel_curve(static_cast<uint8_t*>(l0), requested);
+    const uintptr_t raw_address = reinterpret_cast<uintptr_t>(l0);
+    const uintptr_t aligned_address = (raw_address + 63u) & ~uintptr_t(63);
+    const size_t alignment_padding = aligned_address - raw_address;
+    const size_t usable_bytes = requested - alignment_padding;
+    uint8_t* const l0_aligned = reinterpret_cast<uint8_t*>(aligned_address);
+
+    // Production HotCache never zero-fills the whole tuner allocation. It
+    // initializes tag metadata sparsely and touches selected tag/key/value
+    // cache lines. Keep dense bandwidth calibration bounded to the already
+    // proven 1 MiB region, then measure production-shaped pressure separately.
+    const size_t dense_bytes = std::min<size_t>(usable_bytes, 1024 * 1024ULL);
+    write_stage(stage_output, "l0_dense_measurement");
+    const auto l0_curve = measure_curve(l0_aligned, dense_bytes);
+    const auto l0_parallel = measure_parallel_curve(l0_aligned, dense_bytes);
+    write_stage(stage_output, "l0_hotset_measurement");
+    const auto l0_hotset = measure_hotset_curve(l0_aligned, usable_bytes);
 
     out << "  \"status\": \"complete\",\n"
         << "  \"allocation_bytes\": " << requested << ",\n"
+        << "  \"usable_allocation_bytes\": " << usable_bytes << ",\n"
+        << "  \"alignment_padding_bytes\": " << alignment_padding << ",\n"
+        << "  \"dense_measurement_bytes\": " << dense_bytes << ",\n"
+        << "  \"access_pattern\": \"dense-up-to-1mb-plus-hotset-sparse\",\n"
         << "  \"heap\": ";
     write_curve(out, heap_curve);
     out << ",\n  \"heap_parallel_read_scaling\": ";
@@ -345,6 +459,8 @@ int main(int argc, char** argv) {
     write_curve(out, l0_curve);
     out << ",\n  \"l0_parallel_read_scaling\": ";
     write_parallel_curve(out, l0_parallel);
+    out << ",\n  \"l0_hotset_pressure_curve\": ";
+    write_hotset_curve(out, l0_hotset);
     out << "\n}\n";
 
     write_stage(stage_output, "l0_release");
