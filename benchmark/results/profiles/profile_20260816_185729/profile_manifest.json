@@ -1,0 +1,89 @@
+{
+  "cluster_isolated_before_profile": true,
+  "control_revision": "unavailable",
+  "control_worktree_dirty": null,
+  "evidence_label": "real-hardware-calibration",
+  "finished_at": "2026-08-16T10:57:32.960794+00:00",
+  "hardware_snapshot": {
+    "path": "hardware_snapshot.json",
+    "returncode": 0,
+    "stderr": ""
+  },
+  "host": "master",
+  "l0_probe_strategy": {
+    "allocation_working_sets_mb": [
+      1,
+      2,
+      4,
+      6
+    ],
+    "dense_measurement_limit_mb": 1,
+    "extended_access_pattern": "hotset-sparse",
+    "kind": "production-shaped-process-pool",
+    "minimum_tuner_capacity_mb": 64
+  },
+  "l0_successful_probes": 4,
+  "machine": "aarch64",
+  "parallel_instance_probe": {
+    "allocation_mb_per_instance": 6,
+    "expected_instances": 2,
+    "instances": [
+      {
+        "file": "l0_instance_1_6mb.json",
+        "instance": 1,
+        "numa_cpu": "0",
+        "signal": null,
+        "status": "complete"
+      },
+      {
+        "file": "l0_instance_2_6mb.json",
+        "instance": 2,
+        "numa_cpu": "80",
+        "signal": null,
+        "status": "complete"
+      }
+    ],
+    "status": "complete",
+    "tuner_capacity_mb_per_instance": 64
+  },
+  "probes": [
+    {
+      "file": "dram_calibration.json",
+      "kind": "dram",
+      "status": "heap-only"
+    },
+    {
+      "allocation_mb": 1,
+      "file": "l0_calibration_1mb.json",
+      "kind": "l0",
+      "status": "complete",
+      "tuner_capacity_mb": 64
+    },
+    {
+      "allocation_mb": 2,
+      "file": "l0_calibration_2mb.json",
+      "kind": "l0",
+      "status": "complete",
+      "tuner_capacity_mb": 64
+    },
+    {
+      "allocation_mb": 4,
+      "file": "l0_calibration_4mb.json",
+      "kind": "l0",
+      "status": "complete",
+      "tuner_capacity_mb": 64
+    },
+    {
+      "allocation_mb": 6,
+      "file": "l0_calibration_6mb.json",
+      "kind": "l0",
+      "status": "complete",
+      "tuner_capacity_mb": 64
+    }
+  ],
+  "profile_mode": "real",
+  "python": "/usr/local/bin/python3",
+  "schema_version": 1,
+  "started_at": "2026-08-16T10:57:29.723288+00:00",
+  "status": "complete"
+}
