@@ -45,6 +45,14 @@ selected="$(forl0_find_ready_benchmark_python "$repository_root")"
 [[ "$selected" == "$installed_root/.venv-benchmark-cp310/bin/python" ]]
 [[ "$selected" != "$(readlink -f "$installed_root/.venv-benchmark-cp310/bin/python")" ]]
 
+# A later interactive shell no longer inherits the installer's fallback-root
+# export. The standard sibling ~/forl0-runtime installation must still be
+# discovered, which is the path used by the offline L0 server.
+unset FORL0_BENCHMARK_PYTHON_ROOT
+selected="$(forl0_find_ready_benchmark_python "$repository_root")"
+[[ "$selected" == "$installed_root/.venv-benchmark-cp310/bin/python" ]]
+FORL0_BENCHMARK_PYTHON_ROOT="$installed_root"
+
 # Verify the runner's bootstrap function returns before touching the incomplete
 # wheel directory once the installed-runtime venv has passed import validation.
 awk '/^bootstrap_benchmark_python\(\)/,/^}/' "$REPO_ROOT/docker/run_all_apps.sh" \

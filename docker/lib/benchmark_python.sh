@@ -37,6 +37,8 @@ forl0_find_ready_benchmark_python() {
     local repository_root="$1"
     local explicit_python="${FORL0_BENCHMARK_PYTHON_BIN:-}"
     local fallback_root="${FORL0_BENCHMARK_PYTHON_ROOT:-}"
+    local sibling_install_root="$(dirname "$repository_root")/forl0-runtime"
+    local home_install_root="${HOME:-}/forl0-runtime"
     local root candidate seen_roots=""
 
     if [[ -n "$explicit_python" ]]; then
@@ -48,7 +50,12 @@ forl0_find_ready_benchmark_python() {
         return 2
     fi
 
-    for root in "$repository_root" "$fallback_root"; do
+    # The one-click installer defaults to ~/forl0-runtime. Environment exports
+    # from the installer do not survive when a user later opens a new shell and
+    # invokes ./reproduce-all directly, so also discover the standard install
+    # location and a repository-sibling installation deterministically.
+    for root in "$repository_root" "$fallback_root" \
+            "$sibling_install_root" "$home_install_root"; do
         [[ -n "$root" && -d "$root" ]] || continue
         root="$(cd "$root" && pwd -P)"
         case ":$seen_roots:" in
