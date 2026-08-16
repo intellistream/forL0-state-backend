@@ -343,6 +343,16 @@ int main(int argc, char** argv) {
         std::cerr << "allocation must be non-zero and no larger than tuner capacity\n";
         return 2;
     }
+    // Reserve alignment slack when the process-scoped tuner has room. The
+    // vendor ABI does not promise a cache-line-aligned return address, while
+    // HotSet uses 64-byte tag/key/value lines. Without this slack a 48-byte
+    // pointer adjustment turned a nominal 6 MiB probe into only 3 MiB of
+    // power-of-two sets.
+    constexpr size_t alignment_slack = 63;
+    const size_t vendor_allocation = (
+        requested <= SIZE_MAX - alignment_slack
+        && tuner_capacity >= requested + alignment_slack)
+        ? requested + alignment_slack : requested;
     std::ofstream out(output);
     out << std::fixed << std::setprecision(3);
     out << "{\n  \"schema_version\": 1,\n"
@@ -409,7 +419,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     write_stage(stage_output, "l0_mem_alloc");
-    void* l0 = (init_rc == 0 && tuner) ? api.alloc(tuner, requested) : nullptr;
+    void* l0 = (init_rc == 0 && tuner) ? api.alloc(tuner, vendor_allocation) : nullptr;
     write_stage(stage_output, "l0_mem_alloc_returned");
     if (!l0) {
         out << "  \"status\": \"failed\",\n"
@@ -431,23 +441,26 @@ int main(int argc, char** argv) {
     const uintptr_t raw_address = reinterpret_cast<uintptr_t>(l0);
     const uintptr_t aligned_address = (raw_address + 63u) & ~uintptr_t(63);
     const size_t alignment_padding = aligned_address - raw_address;
-    const size_t usable_bytes = requested - alignment_padding;
+    const size_t usable_bytes = vendor_allocation - alignment_padding;
     uint8_t* const l0_aligned = reinterpret_cast<uint8_t*>(aligned_address);
 
     // Production HotCache never zero-fills the whole tuner allocation. It
     // initializes tag metadata sparsely and touches selected tag/key/value
     // cache lines. Keep dense bandwidth calibration bounded to the already
     // proven 1 MiB region, then measure production-shaped pressure separately.
-    const size_t dense_bytes = std::min<size_t>(usable_bytes, 1024 * 1024ULL);
+    const size_t measurement_bytes = std::min(requested, usable_bytes);
+    const size_t dense_bytes = std::min<size_t>(measurement_bytes, 1024 * 1024ULL);
     write_stage(stage_output, "l0_dense_measurement");
     const auto l0_curve = measure_curve(l0_aligned, dense_bytes);
     const auto l0_parallel = measure_parallel_curve(l0_aligned, dense_bytes);
     write_stage(stage_output, "l0_hotset_measurement");
-    const auto l0_hotset = measure_hotset_curve(l0_aligned, usable_bytes);
+    const auto l0_hotset = measure_hotset_curve(l0_aligned, measurement_bytes);
 
     out << "  \"status\": \"complete\",\n"
         << "  \"allocation_bytes\": " << requested << ",\n"
+        << "  \"vendor_allocation_bytes\": " << vendor_allocation << ",\n"
         << "  \"usable_allocation_bytes\": " << usable_bytes << ",\n"
+        << "  \"measurement_bytes\": " << measurement_bytes << ",\n"
         << "  \"alignment_padding_bytes\": " << alignment_padding << ",\n"
         << "  \"dense_measurement_bytes\": " << dense_bytes << ",\n"
         << "  \"access_pattern\": \"dense-up-to-1mb-plus-hotset-sparse\",\n"

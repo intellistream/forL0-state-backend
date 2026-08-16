@@ -64,6 +64,8 @@ assert data["status"] == "complete", data
 assert data["requested_bytes"] == 1 << 20, data
 assert data["tuner_capacity_bytes"] == 64 << 20, data
 assert data["allocation_bytes"] == 1 << 20, data
+assert data["vendor_allocation_bytes"] == (1 << 20) + 63, data
+assert data["measurement_bytes"] == 1 << 20, data
 assert data["l0"], data
 
 old = json.load(open(sys.argv[2], encoding="utf-8"))
@@ -123,10 +125,14 @@ for probe in data["probes"]:
     assert payload["tuner_capacity_bytes"] == 64 << 20, payload
     assert probe["tuner_capacity_mb"] == 64, probe
     assert payload["requested_bytes"] == probe["allocation_mb"] << 20, payload
+    assert payload["vendor_allocation_bytes"] == (probe["allocation_mb"] << 20) + 63, payload
+    assert payload["measurement_bytes"] == probe["allocation_mb"] << 20, payload
     assert payload["dense_measurement_bytes"] == 1 << 20, payload
     assert payload["access_pattern"] == "dense-up-to-1mb-plus-hotset-sparse", payload
     pressure = payload["l0_hotset_pressure_curve"]
     assert pressure[-1]["requested_active_bytes"] == probe["allocation_mb"] << 20, pressure
+    if probe["allocation_mb"] == 6:
+        assert pressure[-1]["actual_active_bytes"] == 6 << 20, pressure
 parallel = data["parallel_instance_probe"]
 assert parallel["expected_instances"] == 2, parallel
 assert parallel["allocation_mb_per_instance"] == 6, parallel
@@ -137,7 +143,7 @@ PY
 # A partial staged curve is diagnostic evidence, not a complete calibration.
 set +e
 PATH="$TEST_TMP/bin:$PATH" \
-FAKE_L0_CRASH_LIMIT_MB=4 \
+FAKE_L0_CRASH_LIMIT_MB=5 \
 FORL0_L0_LIBRARY_PATH="$TEST_TMP/libl0mempool.so" \
 FORL0_L0_DEVICE_PATH=/dev/null \
 FORL0_EXPECTED_TASKMANAGERS=2 \
