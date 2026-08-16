@@ -76,6 +76,36 @@ cd ~/forl0-runtime/docker
 代表原目录分隔；`UPLOAD_MANIFEST.tsv` 可用于还原来源路径。需要从网页上传时，
 直接选择 `latest/` 中的全部文件。
 
+专门标定与完整调参使用同一个一键入口：
+
+```bash
+./reproduce-all --profile
+./reproduce-all --full
+```
+
+- `--profile`：仅采集硬件、NUMA、软件版本、DRAM 和分级 L0 标定，输出到
+  `benchmark/results/profiles/<run_id>/`。
+- `--full`：穷举 `benchmark/config/tuning_space.yaml` 中的 162 组配置；每组运行
+  W01-W02、N01-N14、C01-C08 全部 24 个正式 workload，输出到
+  `benchmark/results/tuning/<run_id>/`。开始搜索前必须先通过 smoke 正确性门禁。
+- 每个 trial 保存 `parameters.json`、实际生效的 `benchmark_config.yaml`、运行日志、
+  原始结果和 `trial_manifest.json`；每个 workload 也有独立 manifest，可在 trial
+  中间断点续跑。只有全部 workload 成功的 trial 才进入排名，目标分数为 12 对
+  ForL0/HashMap workload 比值的几何平均。
+- 中断后再次执行 `./reproduce-all --full` 会继续未完成的 campaign；停止使用
+  `./reproduce-all --stop`。
+- 临时缩短验证可设置 `FORL0_TUNING_MAX_TRIALS=N`。这只验证前 N 组，不代表完成
+  全参数搜索。
+
+没有真实 L0 的开发机可运行：
+
+```bash
+./reproduce-all --full --simulate
+```
+
+该模式仍生成完整 162×24 搜索产物，但明确标记为 `simulation/model`，只用于验证
+搜索、恢复和排名逻辑，不得作为真实性能或论文 speedup 证据。
+
 `reproduce-all` 在离线服务器上只产出 raw、NexMark JSON、失败证据和日志，不生成
 figure/PDF/HTML。复制 campaign 目录到分析工作站后运行：
 

@@ -39,7 +39,9 @@ offline server remains reproducible.
 - `./reproduce-smoke`: correctness and output-path gate.
 - `./reproduce-l0-ablation`: HashMap, ForL0-L0-off, and proven ForL0-L0-on.
 - `./reproduce-all`: disconnect-safe smoke followed by the full numbered suite;
-  `./reproduce-all --stop` stops its worker tree and benchmark Flink containers.
+  `--profile` collects isolated calibration evidence, `--full` performs the
+  exhaustive all-workload parameter search, and `--stop` stops any worker tree
+  plus benchmark Flink containers.
 - `./stop-reproduce-all`: short stop alias for operators on constrained terminals.
 
 These root entry points are intentionally small and stable. Put reusable shell

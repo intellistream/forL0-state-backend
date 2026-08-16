@@ -496,6 +496,7 @@ fi
 
 mkdir -p "$OUTPUT_DIR/artifacts" \
          "$OUTPUT_DIR/benchmark" \
+         "$OUTPUT_DIR/benchmark/native" \
          "$OUTPUT_DIR/docker" \
          "$OUTPUT_DIR/docker/images" \
          "$OUTPUT_DIR/docs"
@@ -507,6 +508,7 @@ if [[ -f "$REPO_ROOT/docker/images/eclipse-temurin-8-jre.tar.gz" ]]; then
 fi
 cp -a "$REPO_ROOT/benchmark/config" "$OUTPUT_DIR/benchmark/"
 cp -a "$REPO_ROOT/benchmark/scripts" "$OUTPUT_DIR/benchmark/"
+cp -f "$REPO_ROOT/benchmark/native/l0_calibrate.cpp" "$OUTPUT_DIR/benchmark/native/"
 rm -rf "$OUTPUT_DIR/benchmark/scripts/__pycache__"
 cp -f "$REPO_ROOT/benchmark/requirements.txt" "$OUTPUT_DIR/benchmark/"
 cp -f "$REPO_ROOT/benchmark/README.md" "$OUTPUT_DIR/benchmark/"
@@ -521,6 +523,12 @@ if [[ -f "$REPO_ROOT/run-forl0-offline.sh" ]]; then
     cp -f "$REPO_ROOT/run-forl0-offline.sh" "$OUTPUT_DIR/"
     chmod +x "$OUTPUT_DIR/run-forl0-offline.sh"
 fi
+for entry_point in reproduce-all reproduce-smoke stop-reproduce-all reproduce-l0-ablation; do
+    if [[ -f "$REPO_ROOT/$entry_point" ]]; then
+        cp -f "$REPO_ROOT/$entry_point" "$OUTPUT_DIR/"
+        chmod +x "$OUTPUT_DIR/$entry_point"
+    fi
+done
 if [[ -f "$REPO_ROOT/prepare-idea-offline-deployment.ps1" ]]; then
     cp -f "$REPO_ROOT/prepare-idea-offline-deployment.ps1" "$OUTPUT_DIR/"
 fi

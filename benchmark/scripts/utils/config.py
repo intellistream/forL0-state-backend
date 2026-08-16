@@ -26,7 +26,12 @@ def get_project_root():
 
 def load_config():
     """Load benchmark configuration."""
-    config_path = get_benchmark_root() / "config" / "benchmark.yaml"
+    configured_path = os.environ.get('FORL0_BENCHMARK_CONFIG', '').strip()
+    config_path = (Path(configured_path).expanduser().resolve()
+                   if configured_path
+                   else get_benchmark_root() / "config" / "benchmark.yaml")
+    if not config_path.is_file():
+        raise FileNotFoundError(f"benchmark configuration does not exist: {config_path}")
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 

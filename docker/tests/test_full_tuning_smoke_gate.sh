@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TEST_TMP="$(mktemp -d /tmp/forl0-full-gate.XXXXXX)"
+cleanup() {
+    rm -rf "$TEST_TMP"
+}
+trap cleanup EXIT
+
+cp "$REPO_ROOT/reproduce-all" "$TEST_TMP/reproduce-all"
+mkdir -p "$TEST_TMP/docker/lib" "$TEST_TMP/benchmark/scripts"
+cp "$REPO_ROOT/docker/lib/result_layout.sh" "$TEST_TMP/docker/lib/"
+cp "$REPO_ROOT/docker/lib/l0_detector.sh" "$TEST_TMP/docker/lib/"
+
+cat > "$TEST_TMP/benchmark/scripts/collect_profile.py" <<'PY'
+import argparse, json
+from pathlib import Path
+p=argparse.ArgumentParser(); p.add_argument('--project-root'); p.add_argument('--output-dir'); p.add_argument('--simulate', action='store_true')
+a=p.parse_args(); out=Path(a.output_dir); out.mkdir(parents=True, exist_ok=True)
+(out/'profile_manifest.json').write_text(json.dumps({'status':'complete'}))
+with (Path(a.project_root)/'trace').open('a') as f: f.write('profile\n')
+PY
+cat > "$TEST_TMP/benchmark/scripts/tuning_runner.py" <<'PY'
+import argparse
+from pathlib import Path
+p=argparse.ArgumentParser(); p.add_argument('--project-root'); p.add_argument('--output-dir'); p.add_argument('--mode')
+a=p.parse_args()
+with (Path(a.project_root)/'trace').open('a') as f: f.write('tuning\n')
+PY
+cat > "$TEST_TMP/reproduce-smoke" <<'EOF'
+#!/usr/bin/env bash
+printf 'smoke\n' >> "$(cd "$(dirname "$0")" && pwd)/trace"
+mkdir -p "$FORL0_RESULTS_DIR"
+EOF
+chmod +x "$TEST_TMP/reproduce-all" "$TEST_TMP/reproduce-smoke"
+
+FORL0_RESULTS_BASE="$TEST_TMP/results" FORL0_RUN_ID=full_gate \
+    "$TEST_TMP/reproduce-all" --full --foreground
+
+[[ "$(tr '\n' ' ' < "$TEST_TMP/trace")" == "profile smoke tuning " ]]
+[[ -f "$TEST_TMP/results/tuning/full_gate/smoke/PASSED" ]]
+echo "full tuning smoke gate tests passed"

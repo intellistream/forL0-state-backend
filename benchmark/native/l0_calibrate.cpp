@@ -223,20 +223,24 @@ void write_parallel_curve(std::ostream& out, const std::vector<ParallelSample>& 
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 4) {
-        std::cerr << "usage: l0_calibrate LIBL0 OUTPUT_JSON ALLOCATION_BYTES\n";
+    if (argc != 4 && argc != 5) {
+        std::cerr << "usage: l0_calibrate LIBL0 OUTPUT_JSON ALLOCATION_BYTES [EVIDENCE_LABEL]\n";
         return 2;
     }
     const std::string library = argv[1];
     const std::string output = argv[2];
     const size_t requested = std::strtoull(argv[3], nullptr, 10);
+    const std::string evidence_label = argc == 5 ? argv[4] : "real-hardware-calibration";
     std::ofstream out(output);
     out << std::fixed << std::setprecision(3);
     out << "{\n  \"schema_version\": 1,\n"
-        << "  \"evidence_label\": \"real-hardware-calibration\",\n"
+        << "  \"evidence_label\": \"" << escape_json(evidence_label) << "\",\n"
         << "  \"requested_bytes\": " << requested << ",\n"
         << "  \"curve_repeats\": 3,\n"
         << "  \"cpu_hash_mix_mops_s\": " << measure_hash_mix_mops_s() << ",\n";
+    // Preserve useful diagnostic context even if a vendor allocation later
+    // terminates this isolated probe process.
+    out.flush();
 
     void* heap = nullptr;
     if (posix_memalign(&heap, 64, requested) != 0 || !heap) return 3;

@@ -680,6 +680,25 @@ class NexmarkRunner:
 
         return None
 
+    def _cluster_capacity_issue(self) -> Optional[str]:
+        """Return only infrastructure-capacity failures relevant to retry safety."""
+        try:
+            response = requests.get(f"{self.rest_url}/overview", timeout=5)
+            if response.status_code != 200:
+                return f"Flink overview returned HTTP {response.status_code}"
+            overview = response.json()
+        except Exception as exc:
+            return f"Cannot query Flink overview: {exc}"
+        expected_tms = int(os.environ.get('FORL0_EXPECTED_TASKMANAGERS', '2'))
+        expected_slots = int(os.environ.get('FORL0_EXPECTED_SLOTS', '8'))
+        tm_count = int(overview.get('taskmanagers', 0) or 0)
+        slots_total = int(overview.get('slots-total', 0) or 0)
+        if tm_count < expected_tms:
+            return f"TaskManager count is still degraded: {tm_count} < {expected_tms}"
+        if slots_total < expected_slots:
+            return f"slot count is still degraded: {slots_total} < {expected_slots}"
+        return None
+
     def _run_nexmark_driver(self, cmd: list[str], env: dict, timeout_seconds: int) -> tuple[int, str, float]:
         """Run the Java NexMark driver while monitoring Flink health.
 
@@ -1236,6 +1255,13 @@ class NexmarkRunner:
         try:
             for attempt in range(1, max_attempts + 1):
                 if attempt > 1:
+                    capacity_issue = self._cluster_capacity_issue()
+                    if capacity_issue:
+                        print(
+                            "  ERROR: refusing to retry on a degraded cluster; "
+                            f"the outer launcher must restart it first: {capacity_issue}"
+                        )
+                        return None
                     print(f"  [Nexmark] Retry attempt {attempt}/{max_attempts} for {query} ({backend})")
 
                 self._cancel_running_jobs(f"{backend}:{query} attempt {attempt}")

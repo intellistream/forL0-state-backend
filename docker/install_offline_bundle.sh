@@ -196,12 +196,16 @@ cp -f "$NEXMARK_JAR" \
     "${INSTALL_DIR}/docker/deploy/nexmark-flink/lib/$(basename "$NEXMARK_JAR")"
 chmod +x "${INSTALL_DIR}/docker/deploy/nexmark-flink/bin/"*.sh 2>/dev/null || true
 
-rm -rf "${INSTALL_DIR}/benchmark/config" "${INSTALL_DIR}/benchmark/scripts" "${INSTALL_DIR}/benchmark/offline-packages"
+rm -rf "${INSTALL_DIR}/benchmark/config" "${INSTALL_DIR}/benchmark/scripts" \
+       "${INSTALL_DIR}/benchmark/native" "${INSTALL_DIR}/benchmark/offline-packages"
 if [[ -d "${BUNDLE_ROOT}/benchmark/config" ]]; then
     cp -r "${BUNDLE_ROOT}/benchmark/config" "${INSTALL_DIR}/benchmark/"
 fi
 if [[ -d "${BUNDLE_ROOT}/benchmark/scripts" ]]; then
     cp -r "${BUNDLE_ROOT}/benchmark/scripts" "${INSTALL_DIR}/benchmark/"
+fi
+if [[ -d "${BUNDLE_ROOT}/benchmark/native" ]]; then
+    cp -r "${BUNDLE_ROOT}/benchmark/native" "${INSTALL_DIR}/benchmark/"
 fi
 if [[ -d "${BUNDLE_ROOT}/benchmark/offline-packages" ]]; then
     cp -r "${BUNDLE_ROOT}/benchmark/offline-packages" "${INSTALL_DIR}/benchmark/"
@@ -240,6 +244,13 @@ fi
 if [[ -d "${BUNDLE_ROOT}/docs" ]]; then
     cp -r "${BUNDLE_ROOT}/docs/." "${INSTALL_DIR}/docs/" 2>/dev/null || true
 fi
+for entry_point in run-forl0-offline.sh forl0-offline-app.sh reproduce-all \
+                   reproduce-smoke stop-reproduce-all reproduce-l0-ablation; do
+    if [[ -f "${BUNDLE_ROOT}/${entry_point}" ]]; then
+        cp -f "${BUNDLE_ROOT}/${entry_point}" "${INSTALL_DIR}/"
+        chmod +x "${INSTALL_DIR}/${entry_point}"
+    fi
+done
 if [[ -x "${BUNDLE_ROOT}/tools/python/bin/python3" ]]; then
     echo "      ✓ 同步包内 CPython 运行时"
     mkdir -p "${INSTALL_DIR}/tools"

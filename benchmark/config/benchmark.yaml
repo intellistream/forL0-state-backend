@@ -596,9 +596,12 @@ nexmark_scenarios:
       l0_cache_expected_engines: 2
       # q4/q18 legitimately outgrow 65,536 slots under this pressure shape.
       # Keep the small lazy initial allocation, but permit bounded growth.
-      l0_memory_max_size: 768mb
+      # The 2026-08-16 real run peaked at ~798 MiB and failed the next native
+      # allocation under the old 768 MiB cap. Leave growth headroom while the
+      # full tuning campaign measures the smallest stable value.
+      l0_memory_max_size: 1280mb
       initial_table_capacity: 2048
-      max_table_capacity: 1048576
+      max_table_capacity: 2097152
       main_table_load_factor_threshold: 0.80
 
   - name: forl0_no_full_gc_allq_pressure
@@ -676,7 +679,10 @@ nexmark_scenarios:
         # topology if the allq pressure window runs for the full 90s.  Keep the
         # same input mix and operator parallelism, but shorten the fairness
         # window so both backends finish reliably in the one-shot offline run.
-        metric_monitor_duration: 45s
+        # The latest HashMap TaskManager disappeared at the old 25s+45s
+        # boundary. Six 5-second samples are sufficient after warmup and stop
+        # before that observed failure point.
+        metric_monitor_duration: 30s
       q11:
         tps: 1000000
         person_proportion: 1
@@ -888,7 +894,9 @@ nexmark_scenarios:
         bid_hot_ratio_bidders: 24
         auction_hot_ratio_sellers: 8
         metric_monitor_delay: 15s
-        metric_monitor_duration: 45s
+        # The latest HashMap TaskManager disappeared at the old 15s+45s
+        # boundary. Retain six steady samples but finish at 45s wall time.
+        metric_monitor_duration: 30s
       q19:
         tps: 2400000
         person_proportion: 1
@@ -921,9 +929,12 @@ nexmark_scenarios:
       l0_cache_size: 256mb
       # One process-shared L0 manager per TaskManager (2 TMs on this topology).
       l0_cache_expected_engines: 2
-      l0_memory_max_size: 768mb
+      # q18 reached ~798 MiB before std::bad_alloc with the former 768 MiB
+      # bound. The tuning sweep includes 768/1024/1280 MiB; use the safest
+      # reference point for the default reproduction path.
+      l0_memory_max_size: 1280mb
       initial_table_capacity: 2048
-      max_table_capacity: 1048576
+      max_table_capacity: 2097152
       main_table_load_factor_threshold: 0.80
 
   - name: forl0_no_full_gc_extra_sql

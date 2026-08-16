@@ -28,6 +28,8 @@ cp "$REPO_ROOT/docker/lib/l0_detector.sh" "$TEST_TMP/docker/lib/l0_detector.sh"
 mkdir -p "$TEST_TMP/benchmark/scripts"
 cp "$REPO_ROOT/benchmark/scripts/capture_hardware_snapshot.py" \
     "$TEST_TMP/benchmark/scripts/capture_hardware_snapshot.py"
+cp "$REPO_ROOT/benchmark/scripts/collect_profile.py" \
+    "$TEST_TMP/benchmark/scripts/collect_profile.py"
 mkdir -p "$TEST_TMP/benchmark/native"
 cp "$REPO_ROOT/benchmark/native/l0_calibrate.cpp" \
     "$TEST_TMP/benchmark/native/l0_calibrate.cpp"

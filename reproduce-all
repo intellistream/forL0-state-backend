@@ -7,6 +7,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${PROJECT_ROOT}/.reproduce-all.pid"
 RUN_ID_FILE="${PROJECT_ROOT}/.reproduce-all.run-id"
+FULL_RESUME_FILE="${PROJECT_ROOT}/.reproduce-all.full-run-id"
 RESULT_LAYOUT="${PROJECT_ROOT}/docker/lib/result_layout.sh"
 [[ -f "$RESULT_LAYOUT" ]] || {
     echo "ERROR: missing result layout helper: $RESULT_LAYOUT" >&2
@@ -29,7 +30,7 @@ if [[ "${1:-}" == "--stop" ]]; then
     if [[ -f "$PID_FILE" ]]; then
         worker_pid="$(tr -d '[:space:]' < "$PID_FILE")"
         worker_command="$(ps -p "$worker_pid" -o args= 2>/dev/null || true)"
-        if [[ "$worker_pid" =~ ^[0-9]+$ && "$worker_command" == *reproduce-all*--worker* ]]; then
+        if [[ "$worker_pid" =~ ^[0-9]+$ && "$worker_command" == *reproduce-all*--*worker* ]]; then
             echo "Stopping reproduce-all worker PID=${worker_pid}"
             stop_process_tree "$worker_pid"
         else
@@ -48,6 +49,82 @@ if [[ "${1:-}" == "--stop" ]]; then
         docker network rm flink-net >/dev/null 2>&1 || true
     fi
     echo "reproduce-all stopped"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--profile-worker" ]]; then
+    profile_run_id="${FORL0_RUN_ID:-profile_$(date '+%Y%m%d_%H%M%S')}"
+    forl0_validate_run_id "$profile_run_id"
+    profile_root="${RESULTS_BASE}/profiles/${profile_run_id}"
+    [[ ! -e "$profile_root" ]] || {
+        echo "ERROR: profile output already exists: $profile_root" >&2
+        exit 1
+    }
+    mkdir -p "$profile_root"
+    printf '%s\n' "$$" > "$PID_FILE"
+    printf '%s\n' "$profile_run_id" > "$RUN_ID_FILE"
+    trap 'rm -f "$PID_FILE" "$RUN_ID_FILE"' EXIT
+    exec >>"${profile_root}/.logs" 2>&1
+    echo "=== ForL0 profile ${profile_run_id} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
+    source "${PROJECT_ROOT}/docker/lib/l0_detector.sh"
+    forl0_detect_l0_environment || true
+    forl0_print_l0_detection
+    profile_python="${PROJECT_ROOT}/tools/python/bin/python3"
+    [[ -x "$profile_python" ]] || profile_python="$(command -v python3)"
+    "$profile_python" "${PROJECT_ROOT}/benchmark/scripts/collect_profile.py" \
+        --project-root "$PROJECT_ROOT" --output-dir "$profile_root"
+    echo "PROFILE COMPLETE: ${profile_root}"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--full-worker" ]]; then
+    shift
+    tuning_mode=real
+    if [[ "${1:-}" == "--simulate" ]]; then
+        tuning_mode=simulate
+        shift
+    fi
+    full_run_id="${FORL0_RUN_ID:-full_$(date '+%Y%m%d_%H%M%S')}"
+    forl0_validate_run_id "$full_run_id"
+    tuning_root="${RESULTS_BASE}/tuning/${full_run_id}"
+    mkdir -p "$tuning_root"
+    printf '%s\n' "$$" > "$PID_FILE"
+    printf '%s\n' "$full_run_id" > "$RUN_ID_FILE"
+    trap 'rm -f "$PID_FILE" "$RUN_ID_FILE"' EXIT
+    exec >>"${tuning_root}/.logs" 2>&1
+    echo "=== ForL0 full tuning ${full_run_id} mode=${tuning_mode} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
+    tuning_python="${PROJECT_ROOT}/tools/python/bin/python3"
+    [[ -x "$tuning_python" ]] || tuning_python="$(command -v python3)"
+    profile_args=()
+    [[ "$tuning_mode" == "real" ]] || profile_args+=(--simulate)
+    if [[ ! -f "${tuning_root}/profile/profile_manifest.json" ]]; then
+        if [[ "$tuning_mode" == "real" ]]; then
+            source "${PROJECT_ROOT}/docker/lib/l0_detector.sh"
+            forl0_detect_l0_environment || true
+            forl0_print_l0_detection
+        fi
+        "$tuning_python" "${PROJECT_ROOT}/benchmark/scripts/collect_profile.py" \
+            --project-root "$PROJECT_ROOT" --output-dir "${tuning_root}/profile" "${profile_args[@]}"
+    fi
+    if [[ "$tuning_mode" == "real" && ! -f "${tuning_root}/smoke/PASSED" ]]; then
+        echo "=== Full tuning correctness gate: smoke ==="
+        mkdir -p "${tuning_root}/smoke"
+        FORL0_RESULTS_DIR="${tuning_root}/smoke" \
+        FORL0_RUN_ID="${full_run_id}_smoke" \
+        FORL0_RUN_STARTED_EPOCH="$(date '+%s')" \
+        FORL0_RUN_LOG=/dev/null \
+        FORL0_L0_STRICT_OVERRIDE=true \
+            bash "${PROJECT_ROOT}/reproduce-smoke"
+        printf 'passed_at=%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" \
+            > "${tuning_root}/smoke/PASSED"
+        echo "SMOKE PASSED: starting exhaustive tuning"
+    fi
+    export FORL0_RUN_ID="$full_run_id"
+    export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
+    "$tuning_python" "${PROJECT_ROOT}/benchmark/scripts/tuning_runner.py" \
+        --project-root "$PROJECT_ROOT" --output-dir "$tuning_root" --mode "$tuning_mode"
+    rm -f "$FULL_RESUME_FILE"
+    echo "FULL TUNING COMPLETE: ${tuning_root}"
     exit 0
 fi
 
@@ -105,43 +182,19 @@ if [[ "${1:-}" == "--worker" ]]; then
         elif command -v python3 >/dev/null 2>&1; then
             snapshot_python="$(command -v python3)"
         fi
-        if [[ -n "$snapshot_python" && -f "${PROJECT_ROOT}/benchmark/scripts/capture_hardware_snapshot.py" ]]; then
-            # Reuse the same detector as the Docker launcher so the snapshot
-            # fingerprints the exact L0 library/device selected for the run.
+        if [[ -n "$snapshot_python" && -f "${PROJECT_ROOT}/benchmark/scripts/collect_profile.py" ]]; then
+            # Use isolated, staged probes. A vendor L0 allocation crash is
+            # recorded as structured evidence and cannot terminate the worker.
             source "${PROJECT_ROOT}/docker/lib/l0_detector.sh"
             forl0_detect_l0_environment || true
-            if "$snapshot_python" "${PROJECT_ROOT}/benchmark/scripts/capture_hardware_snapshot.py" \
-                    --project-root "$PROJECT_ROOT" \
-                    --output "${campaign_root}/hardware_snapshot.json"; then
-                echo "HARDWARE SNAPSHOT: ${campaign_root}/hardware_snapshot.json"
+            if "$snapshot_python" "${PROJECT_ROOT}/benchmark/scripts/collect_profile.py" \
+                    --project-root "$PROJECT_ROOT" --output-dir "$campaign_root"; then
+                echo "HARDWARE/L0 PROFILE: ${campaign_root}/profile_manifest.json"
             else
-                echo "WARNING: hardware snapshot failed; benchmark will continue" >&2
+                echo "WARNING: hardware/L0 profile failed; benchmark will continue" >&2
             fi
         else
-            echo "WARNING: Python or hardware snapshot script unavailable; benchmark will continue" >&2
-        fi
-        # Calibrate the real L0-vs-DRAM cost curve before Flink starts. The
-        # temporary executable is never published; only its small JSON output
-        # becomes part of the campaign evidence. 128 MiB matches one TM's
-        # share of the 256 MiB job budget on the reference two-TM topology.
-        calibration_source="${PROJECT_ROOT}/benchmark/native/l0_calibrate.cpp"
-        calibration_binary="${campaign_root}/.l0_calibrate"
-        calibration_output="${campaign_root}/l0_calibration.json"
-        if [[ -n "${FORL0_L0_LIBRARY_PATH:-}" && -f "$calibration_source" ]] && \
-                command -v g++ >/dev/null 2>&1; then
-            if g++ -O3 -std=c++17 -pthread "$calibration_source" -ldl -o "$calibration_binary" && \
-                    "$calibration_binary" "$FORL0_L0_LIBRARY_PATH" "$calibration_output" 134217728 && \
-                    grep -q '"status": "complete"' "$calibration_output"; then
-                echo "L0 CALIBRATION: ${calibration_output}"
-            else
-                echo "WARNING: real L0 calibration incomplete; inspect ${calibration_output}; benchmark will continue" >&2
-            fi
-            rm -f "$calibration_binary"
-        else
-            printf '%s\n' \
-                '{"schema_version":1,"evidence_label":"real-hardware-calibration","status":"unavailable","reason":"L0 library, source, or g++ unavailable"}' \
-                > "$calibration_output"
-            echo "WARNING: L0 calibration unavailable; recorded reason in ${calibration_output}" >&2
+            echo "WARNING: Python or profile collector unavailable; benchmark will continue" >&2
         fi
         FORL0_RESULTS_DIR="$smoke_results" \
         FORL0_RUN_ID="${campaign_run_id}_smoke" \
@@ -184,27 +237,109 @@ if [[ "${1:-}" == "--worker" ]]; then
     exit 0
 fi
 
+usage() {
+    cat <<'EOF'
+Usage:
+  ./reproduce-all                   smoke gate, then the complete formal suite
+  ./reproduce-all --profile         collect hardware plus staged DRAM/L0 calibration
+  ./reproduce-all --full            pass smoke, then run a resumable real-hardware parameter search
+  ./reproduce-all --full --simulate validate the same search locally with simulation/model data
+  ./reproduce-all --stop            stop the active reproduce/profile/full worker and Flink cluster
+
+Optional:
+  --foreground                      keep the selected mode attached to this terminal
+
+Environment:
+  FORL0_TUNING_MAX_TRIALS=N         optionally cap the exhaustive 162-trial search
+  FORL0_RUN_ID=ID                   choose/reuse a run ID
+EOF
+}
+
+requested_mode=default
+simulate=false
+foreground=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --profile) requested_mode=profile ;;
+        --full) requested_mode=full ;;
+        --simulate) simulate=true ;;
+        --foreground) foreground=true ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "ERROR: unknown reproduce-all option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+if [[ "$simulate" == "true" && "$requested_mode" != "full" ]]; then
+    echo "ERROR: --simulate is only valid together with --full" >&2
+    exit 2
+fi
+
 if [[ -f "$PID_FILE" ]]; then
     existing_pid="$(tr -d '[:space:]' < "$PID_FILE")"
     existing_command="$(ps -p "$existing_pid" -o args= 2>/dev/null || true)"
-    if [[ "$existing_pid" =~ ^[0-9]+$ && "$existing_command" == *reproduce-all*--worker* ]] && \
+    if [[ "$existing_pid" =~ ^[0-9]+$ && "$existing_command" == *reproduce-all*--*worker* ]] && \
             kill -0 "$existing_pid" 2>/dev/null; then
         active_run_id="$(tr -d '[:space:]' < "$RUN_ID_FILE" 2>/dev/null || true)"
-        echo "完整性能测试已在运行，PID=${existing_pid}"
-        echo "日志：${RESULTS_BASE}/runs/${active_run_id:-unknown}/.logs"
+        if [[ "$existing_command" == *--full-worker* ]]; then
+            active_root="${RESULTS_BASE}/tuning/${active_run_id:-unknown}"
+        elif [[ "$existing_command" == *--profile-worker* ]]; then
+            active_root="${RESULTS_BASE}/profiles/${active_run_id:-unknown}"
+        else
+            active_root="${RESULTS_BASE}/runs/${active_run_id:-unknown}"
+        fi
+        echo "reproduce-all 已在运行，PID=${existing_pid}"
+        echo "日志：${active_root}/.logs"
         exit 0
     fi
     rm -f "$PID_FILE" "$RUN_ID_FILE"
 fi
 
-campaign_run_id="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+case "$requested_mode" in
+    profile)
+        campaign_run_id="${FORL0_RUN_ID:-profile_$(date '+%Y%m%d_%H%M%S')}"
+        worker_args=(--profile-worker)
+        output_root="${RESULTS_BASE}/profiles/${campaign_run_id}"
+        description="硬件/L0 标定"
+        ;;
+    full)
+        if [[ -n "${FORL0_RUN_ID:-}" ]]; then
+            campaign_run_id="$FORL0_RUN_ID"
+        elif [[ -f "$FULL_RESUME_FILE" ]]; then
+            campaign_run_id="$(tr -d '[:space:]' < "$FULL_RESUME_FILE")"
+        else
+            campaign_run_id="full_$(date '+%Y%m%d_%H%M%S')"
+        fi
+        worker_args=(--full-worker)
+        [[ "$simulate" == "false" ]] || worker_args+=(--simulate)
+        output_root="${RESULTS_BASE}/tuning/${campaign_run_id}"
+        if [[ "$simulate" == "true" ]]; then
+            description="仿真全量参数搜索"
+        else
+            description="真实硬件全量参数搜索"
+        fi
+        printf '%s\n' "$campaign_run_id" > "$FULL_RESUME_FILE"
+        ;;
+    *)
+        campaign_run_id="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+        worker_args=(--worker)
+        output_root="${RESULTS_BASE}/runs/${campaign_run_id}"
+        description="完整性能测试"
+        ;;
+esac
 forl0_validate_run_id "$campaign_run_id"
-FORL0_RUN_ID="$campaign_run_id" nohup "$0" --worker >/dev/null 2>&1 &
+if [[ "$foreground" == "true" ]]; then
+    FORL0_RUN_ID="$campaign_run_id" exec "$0" "${worker_args[@]}"
+fi
+FORL0_RUN_ID="$campaign_run_id" nohup "$0" "${worker_args[@]}" >/dev/null 2>&1 &
 worker_pid=$!
 printf '%s\n' "$worker_pid" > "$PID_FILE"
 printf '%s\n' "$campaign_run_id" > "$RUN_ID_FILE"
 
-echo "完整性能测试已后台启动，PID=${worker_pid}（先 smoke，通过后自动跑全量）"
-echo "日志：${RESULTS_BASE}/runs/${campaign_run_id}/.logs"
-echo "运行中结果：${RESULTS_BASE}/runs/${campaign_run_id}"
-echo "成功后网页上传目录：${RESULTS_BASE}/latest（仅文件，无子目录）"
+echo "${description}已后台启动，PID=${worker_pid}"
+echo "日志：${output_root}/.logs"
+echo "运行中结果：${output_root}"
+if [[ "$requested_mode" == "default" ]]; then
+    echo "成功后网页上传目录：${RESULTS_BASE}/latest（仅文件，无子目录）"
+elif [[ "$requested_mode" == "full" ]]; then
+    echo "中断后再次执行相同命令会从已完成 trial 继续"
+fi
