@@ -12,6 +12,15 @@ cp "$REPO_ROOT/reproduce-all" "$TEST_TMP/reproduce-all"
 mkdir -p "$TEST_TMP/docker/lib" "$TEST_TMP/benchmark/scripts"
 cp "$REPO_ROOT/docker/lib/result_layout.sh" "$TEST_TMP/docker/lib/"
 cp "$REPO_ROOT/docker/lib/l0_detector.sh" "$TEST_TMP/docker/lib/"
+cp "$REPO_ROOT/docker/lib/benchmark_python.sh" "$TEST_TMP/docker/lib/"
+mkdir -p "$TEST_TMP/tools/python/bin"
+cat > "$TEST_TMP/tools/python/bin/python3" <<'EOF'
+#!/usr/bin/env bash
+# Executable is not sufficient: this fixture represents the server's portable
+# Python that cannot import yaml.
+exit 1
+EOF
+chmod +x "$TEST_TMP/tools/python/bin/python3"
 cat > "$TEST_TMP/docker/docker_run.sh" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1" == "stop" ]]

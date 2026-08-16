@@ -16,6 +16,40 @@ RESULT_LAYOUT="${PROJECT_ROOT}/docker/lib/result_layout.sh"
 source "$RESULT_LAYOUT"
 RESULTS_BASE="$(forl0_results_base "$PROJECT_ROOT")"
 
+resolve_tuning_python() {
+    local resolver="${PROJECT_ROOT}/docker/lib/benchmark_python.sh"
+    local selected="" resolution_status=0 candidate=""
+    [[ -f "$resolver" ]] || {
+        echo "ERROR: missing benchmark Python resolver: $resolver" >&2
+        return 1
+    }
+    # shellcheck disable=SC1090
+    source "$resolver"
+    if selected="$(forl0_find_ready_benchmark_python "$PROJECT_ROOT")"; then
+        printf '%s\n' "$selected"
+        return 0
+    else
+        resolution_status=$?
+    fi
+    # An explicit override is authoritative. Never silently replace an
+    # explicitly selected but dependency-incomplete interpreter.
+    [[ "$resolution_status" -ne 2 ]] || return 1
+
+    # Tuning only imports PyYAML; allow a smaller local interpreter when the
+    # complete plotting/report environment is absent. Crucially, validate the
+    # import instead of accepting tools/python merely because it is executable.
+    for candidate in "${PROJECT_ROOT}/tools/python/bin/python3" "$(command -v python3 || true)"; do
+        [[ -n "$candidate" && -x "$candidate" ]] || continue
+        if "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+            forl0_benchmark_python_path "$candidate"
+            return 0
+        fi
+    done
+    echo "ERROR: no Python interpreter with PyYAML is available for full tuning" >&2
+    echo "Set FORL0_BENCHMARK_PYTHON_BIN to the dependency-complete benchmark venv." >&2
+    return 1
+}
+
 stop_cluster_for_l0_profile() {
     echo "=== Isolating L0 calibration: stopping any existing Flink cluster ==="
     if [[ -f "${PROJECT_ROOT}/docker/docker_run.sh" ]]; then
@@ -108,8 +142,8 @@ if [[ "${1:-}" == "--full-worker" ]]; then
     trap 'rm -f "$PID_FILE" "$RUN_ID_FILE"' EXIT
     exec >>"${tuning_root}/.logs" 2>&1
     echo "=== ForL0 full tuning ${full_run_id} mode=${tuning_mode} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
-    tuning_python="${PROJECT_ROOT}/tools/python/bin/python3"
-    [[ -x "$tuning_python" ]] || tuning_python="$(command -v python3)"
+    tuning_python="$(resolve_tuning_python)"
+    echo "TUNING PYTHON: ${tuning_python}"
     profile_args=()
     [[ "$tuning_mode" == "real" ]] || profile_args+=(--simulate)
     profile_status="missing"
