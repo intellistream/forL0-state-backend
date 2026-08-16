@@ -1,0 +1,123 @@
+{
+  "access_pattern": "dense-up-to-1mb-plus-hotset-sparse",
+  "alignment_padding_bytes": 48,
+  "allocation_bytes": 6291456,
+  "command": [
+    "/root/forL0/benchmark/results/profiles/profile_20260816_184820/.l0_calibrate",
+    "/opt/pkg/l0memlib/libl0mempool.so",
+    "/root/forL0/benchmark/results/profiles/profile_20260816_184820/l0_calibration_6mb.partial.json",
+    "6291456",
+    "real-hardware-calibration",
+    "67108864"
+  ],
+  "cpu_hash_mix_mops_s": 222.694,
+  "curve_repeats": 3,
+  "dense_measurement_bytes": 1048576,
+  "evidence_label": "real-hardware-calibration",
+  "finished_at": "2026-08-16T10:48:23.517340+00:00",
+  "heap": [
+    {
+      "random_read_ns": 2.205,
+      "sequential_read_gib_s": 24.512,
+      "sequential_write_gib_s": 129.862,
+      "working_set_bytes": 65536
+    },
+    {
+      "random_read_ns": 6.853,
+      "sequential_read_gib_s": 23.944,
+      "sequential_write_gib_s": 68.627,
+      "working_set_bytes": 1048576
+    },
+    {
+      "random_read_ns": 31.41,
+      "sequential_read_gib_s": 24.204,
+      "sequential_write_gib_s": 29.714,
+      "working_set_bytes": 6291456
+    }
+  ],
+  "heap_parallel_read_scaling": [
+    {
+      "sequential_read_gib_s": 18.099,
+      "workers": 1
+    },
+    {
+      "sequential_read_gib_s": 31.333,
+      "workers": 2
+    },
+    {
+      "sequential_read_gib_s": 28.981,
+      "workers": 4
+    }
+  ],
+  "l0": [
+    {
+      "random_read_ns": 2.071,
+      "sequential_read_gib_s": 24.512,
+      "sequential_write_gib_s": 129.862,
+      "working_set_bytes": 65536
+    },
+    {
+      "random_read_ns": 4.849,
+      "sequential_read_gib_s": 23.88,
+      "sequential_write_gib_s": 82.168,
+      "working_set_bytes": 1048576
+    }
+  ],
+  "l0_hotset_pressure_curve": [
+    {
+      "actual_active_bytes": 786432,
+      "init_ns_per_set": 5.623,
+      "lookup_ns_per_op": 7.486,
+      "requested_active_bytes": 1048576,
+      "sets": 4096,
+      "update_ns_per_op": 5.366
+    },
+    {
+      "actual_active_bytes": 1572864,
+      "init_ns_per_set": 1.803,
+      "lookup_ns_per_op": 9.488,
+      "requested_active_bytes": 2097152,
+      "sets": 8192,
+      "update_ns_per_op": 5.37
+    },
+    {
+      "actual_active_bytes": 3145728,
+      "init_ns_per_set": 1.525,
+      "lookup_ns_per_op": 11.794,
+      "requested_active_bytes": 4194304,
+      "sets": 16384,
+      "update_ns_per_op": 5.396
+    },
+    {
+      "actual_active_bytes": 3145728,
+      "init_ns_per_set": 1.345,
+      "lookup_ns_per_op": 11.781,
+      "requested_active_bytes": 6291408,
+      "sets": 16384,
+      "update_ns_per_op": 5.398
+    }
+  ],
+  "l0_parallel_read_scaling": [
+    {
+      "sequential_read_gib_s": 9.372,
+      "workers": 1
+    },
+    {
+      "sequential_read_gib_s": 12.265,
+      "workers": 2
+    },
+    {
+      "sequential_read_gib_s": 10.68,
+      "workers": 4
+    }
+  ],
+  "last_stage": "complete",
+  "requested_bytes": 6291456,
+  "schema_version": 1,
+  "started_at": "2026-08-16T10:48:23.303023+00:00",
+  "status": "complete",
+  "stderr": "",
+  "stdout": "",
+  "tuner_capacity_bytes": 67108864,
+  "usable_allocation_bytes": 6291408
+}
