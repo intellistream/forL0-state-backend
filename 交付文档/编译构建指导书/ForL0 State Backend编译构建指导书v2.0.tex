@@ -591,7 +591,7 @@ chmod +x reproduce-all stop-reproduce-all run-forl0-offline.sh
 
 所有无扩展名 launcher 和 \texttt{.sh} 文件必须保持 LF 行尾与 executable bit。若出现 \texttt{bash\textbackslash r: No such file or directory}，应重新以 LF/二进制方式传输；临时修复可用 \texttt{sed -i 's/\textbackslash r\$//' <script>}，但正式交付应以仓库 \texttt{.gitattributes} 和正确上传方式为准。
 
-构建/运行证据全部写入 \texttt{benchmark/results/runs/<run\_id>/}；成功后发布的 \texttt{benchmark/results/latest/} 为扁平文件集合。每轮还自动写入 \texttt{hardware\_snapshot.json} 与 \texttt{l0\_calibration.json}，分别保存目标机硬件/软件指纹以及 128 MiB L0--DRAM 延迟、带宽、工作集和 1/2/4 worker 并发标定曲线。标定程序在 campaign 目录临时编译，执行后删除二进制，只保留小型 JSON。服务器端不构建交付 PDF 或 figure，避免离线 Python/字体/LaTeX 差异污染结果；PDF 在本地从已上传的 raw、JSON 和 log 派生。
+构建/运行证据全部写入 \texttt{benchmark/results/runs/<run\_id>/}；成功后发布的 \texttt{benchmark/results/latest/} 为扁平文件集合。每轮还自动写入 \texttt{hardware\_snapshot.json} 与 \texttt{l0\_calibration.json}，分别保存目标机硬件/软件指纹、1 MiB 内的密集 L0--DRAM 延迟/带宽曲线、1/2/4 worker 并发曲线，以及 1/2/4/6 MiB 生产 HotSet 稀疏压力曲线。标定程序在 campaign 目录临时编译，执行后删除二进制，只保留小型 JSON。服务器端不构建交付 PDF 或 figure，避免离线 Python/字体/LaTeX 差异污染结果；PDF 在本地从已上传的 raw、JSON 和 log 派生。
 
 开发机可生成本机 DRAM 曲线并与目标机标定对齐：
 
@@ -603,7 +603,7 @@ python3 benchmark/scripts/compare_l0_calibrations.py \
   --output /tmp/l0-model.json
 \end{lstlisting}
 
-输出明确标记为 \texttt{simulation/model}，用于本地调参和相对趋势预测；交付性能数字仍必须来自真实 L0 服务器的 \texttt{real-online} 作业。
+输出明确标记为 \texttt{simulation/model}。\texttt{./reproduce-all --full --simulate} 会自动选择最新真实 L0 calibration、生成带 SHA 的本机对齐模型并用于候选筛选；交付性能数字仍必须来自真实 L0 服务器的 \texttt{real-online} 作业。
 
 \section{常见问题与排查}
 

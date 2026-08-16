@@ -84,18 +84,58 @@ def patch_config(node: Any, params: dict[str, Any]) -> None:
             patch_config(item, params)
 
 
-def simulation_metrics(params: dict[str, Any], trial_index: int) -> dict[str, Any]:
-    """Deterministic model used to validate search/ranking, never as measured evidence."""
+def load_calibration_model(path: Path) -> tuple[dict[str, Any], str]:
+    raw = path.read_bytes()
+    model = json.loads(raw)
+    if model.get("evidence_label") != "simulation/model":
+        raise SystemExit("calibration model must be labelled simulation/model")
+    if model.get("schema_version") != 2:
+        raise SystemExit("calibration model schema_version 2 is required")
+    if not model.get("rows") or not model.get("parallel_read_rows"):
+        raise SystemExit("calibration model lacks dense or parallel L0 rows")
+    return model, hashlib.sha256(raw).hexdigest()
+
+
+def simulation_metrics(params: dict[str, Any], trial_index: int,
+                       calibration: dict[str, Any]) -> dict[str, Any]:
+    """Calibration-informed deterministic model, never measured workload evidence."""
     initial = float(params["initial_table_capacity"])
     maximum = float(params["max_table_capacity"])
     load = float(params["main_table_load_factor_threshold"])
     cache = size_mb(params["l0_cache_size"])
     native = size_mb(params["l0_memory_max_size"])
 
-    startup_penalty = abs(math.log2(initial / 2048.0)) * 0.035
+    dense = max(calibration["rows"], key=lambda row: row["working_set_bytes"])
+    latency_speedup = max(
+        0.25, dense["target_heap_random_read_ns"] / dense["target_l0_random_read_ns"])
+    parallel_rows = calibration["parallel_read_rows"]
+    preferred_parallel = min(parallel_rows, key=lambda row: abs(row["workers"] - 2))
+    bandwidth_ratio = max(
+        0.25, preferred_parallel["target_l0_gib_s"] /
+        preferred_parallel["target_heap_gib_s"])
+    pressure_rows = calibration.get("hotset_pressure_rows") or []
+    if pressure_rows:
+        pressure_first = pressure_rows[0]
+        pressure_last = pressure_rows[-1]
+        lookup_pressure = max(
+            0.25, pressure_first["lookup_ns_per_op"] / pressure_last["lookup_ns_per_op"])
+        update_pressure = max(
+            0.25, pressure_first["update_ns_per_op"] / pressure_last["update_ns_per_op"])
+        pressure_factor = min(1.25, max(
+            0.5, math.sqrt(lookup_pressure * update_pressure)))
+    else:
+        pressure_factor = 1.0
+    compute_ratio = max(0.25, float(calibration.get(
+        "target_vs_local_hash_compute_ratio", 1.0)))
+
+    startup_penalty = abs(math.log2(initial / 2048.0)) * 0.035 / min(2.0, compute_ratio)
     load_penalty = abs(load - 0.82) * 0.65
-    cache_gain = 0.13 * (1.0 - math.exp(-cache / 180.0))
-    memory_gain = 0.10 * min(1.0, max(0.0, (native - 700.0) / 500.0))
+    measured_cache_weight = min(0.24, 0.055 * max(0.0, latency_speedup - 1.0))
+    measured_bandwidth_weight = min(0.08, 0.04 * max(0.0, bandwidth_ratio - 1.0))
+    cache_gain = ((measured_cache_weight + measured_bandwidth_weight)
+                  * (1.0 - math.exp(-cache / 180.0)) * pressure_factor)
+    memory_gain = (0.06 + min(0.05, 0.02 * max(0.0, compute_ratio - 1.0))) * min(
+        1.0, max(0.0, (native - 700.0) / 500.0))
     capacity_gain = 0.035 * min(1.0, math.log2(maximum / 1048576.0 + 1.0))
     deterministic_noise = ((trial_index * 7919) % 101 - 50) / 10000.0
     objective = 1.0 + cache_gain + memory_gain + capacity_gain - startup_penalty - load_penalty + deterministic_noise
@@ -111,7 +151,16 @@ def simulation_metrics(params: dict[str, Any], trial_index: int) -> dict[str, An
         "stable": stable,
         "objective": objective if stable else 0.0,
         "predicted_throughput": workloads,
-        "model_notes": "Synthetic response surface for harness validation and candidate ordering only.",
+        "model_inputs": {
+            "working_set_bytes": dense["working_set_bytes"],
+            "target_l0_vs_heap_latency_speedup": latency_speedup,
+            "target_l0_vs_heap_parallel_bandwidth_ratio": bandwidth_ratio,
+            "hotset_pressure_factor": pressure_factor,
+            "target_vs_local_hash_compute_ratio": compute_ratio,
+        },
+        "model_notes": (
+            "Calibration-informed response model for candidate screening only; "
+            "not real-online throughput evidence."),
     }
 
 
@@ -234,8 +283,17 @@ def main() -> int:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--mode", choices=("real", "simulate"), default="real")
+    parser.add_argument("--calibration-model", type=Path)
     parser.add_argument("--max-trials", type=int)
     args = parser.parse_args()
+
+    calibration_model: dict[str, Any] | None = None
+    calibration_sha256: str | None = None
+    if args.mode == "simulate":
+        if args.calibration_model is None:
+            parser.error("--calibration-model is required in simulate mode")
+        calibration_model, calibration_sha256 = load_calibration_model(
+            args.calibration_model.resolve())
 
     root = args.project_root.resolve()
     output = args.output_dir.resolve()
@@ -261,6 +319,16 @@ def main() -> int:
             raise SystemExit(
                 f"refusing to mix tuning modes in {output}: existing={previous_mode}, requested={args.mode}"
             )
+        previous_model = previous_manifest.get("calibration_model_sha256")
+        if args.mode == "simulate":
+            if not previous_model:
+                raise SystemExit(
+                    "refusing to resume legacy simulation without calibration model provenance; "
+                    "choose a new FORL0_RUN_ID")
+            if previous_model != calibration_sha256:
+                raise SystemExit(
+                    "refusing to resume simulation with a different calibration model: "
+                    f"existing={previous_model}, requested={calibration_sha256}")
     manifest = {
         "schema_version": 1,
         "evidence_label": evidence,
@@ -276,6 +344,10 @@ def main() -> int:
         "workload_count": len(space["workload_ids"]),
         "entry_point": "./reproduce-all --full" + (" --simulate" if args.mode == "simulate" else ""),
     }
+    if args.mode == "simulate":
+        manifest["calibration_model"] = str(args.calibration_model.resolve())
+        manifest["calibration_model_sha256"] = calibration_sha256
+        manifest["model_scope"] = calibration_model.get("model_scope")
     write_json(manifest_path, manifest)
 
     ranked = []
@@ -300,9 +372,12 @@ def main() -> int:
         write_json(trial_manifest, running)
         print(f"[tuning] {index}/{len(candidates)} {trial_id}: {params}", flush=True)
         if args.mode == "simulate":
-            result = simulation_metrics(params, index)
+            assert calibration_model is not None
+            result = simulation_metrics(params, index, calibration_model)
             write_json(trial_dir / "simulation_result.json", {
-                "evidence_label": evidence, **result})
+                "evidence_label": evidence,
+                "calibration_model_sha256": calibration_sha256,
+                **result})
         else:
             config = yaml.safe_load(base_path.read_text(encoding="utf-8"))
             patch_config(config, params)
@@ -324,14 +399,29 @@ def main() -> int:
         best_config = output / ranked[0]["trial"] / "benchmark_config.yaml"
         if best_config.is_file():
             shutil.copy2(best_config, output / "best_benchmark_config.yaml")
-    manifest["status"] = "complete"
+    trial_statuses: list[str] = []
+    for path in output.glob("trial_*/trial_manifest.json"):
+        try:
+            status = json.loads(path.read_text(encoding="utf-8")).get("status")
+        except (OSError, json.JSONDecodeError):
+            status = "invalid"
+        trial_statuses.append(str(status))
+    completed_trials = trial_statuses.count("complete")
+    rejected_trials = trial_statuses.count("rejected")
+    failed_trials = sum(
+        status not in ("complete", "rejected") for status in trial_statuses)
+    evaluated_trials = completed_trials + rejected_trials
+    all_evaluated = evaluated_trials == len(candidates)
+    manifest["status"] = "complete" if all_evaluated and failed_trials == 0 else "failed"
     manifest["finished_at"] = now()
-    manifest["completed_trials"] = sum(1 for path in output.glob("trial_*/trial_manifest.json")
-                                        if json.loads(path.read_text()).get("status") == "complete")
+    manifest["evaluated_trials"] = evaluated_trials
+    manifest["completed_trials"] = completed_trials
+    manifest["rejected_trials"] = rejected_trials
+    manifest["failed_trials"] = failed_trials
     manifest["ranked_trials"] = len(ranked)
     write_json(manifest_path, manifest)
-    print(f"[tuning] complete: {output}")
-    return 0
+    print(f"[tuning] {manifest['status']}: {output}")
+    return 0 if manifest["status"] == "complete" else 1
 
 
 if __name__ == "__main__":

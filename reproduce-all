@@ -142,10 +142,52 @@ if [[ "${1:-}" == "--full-worker" ]]; then
             > "${tuning_root}/smoke/PASSED"
         echo "SMOKE PASSED: starting exhaustive tuning"
     fi
+    tuning_args=(--project-root "$PROJECT_ROOT" --output-dir "$tuning_root" --mode "$tuning_mode")
+    if [[ "$tuning_mode" == "simulate" ]]; then
+        target_calibration="${FORL0_TARGET_CALIBRATION:-}"
+        if [[ -z "$target_calibration" ]]; then
+            target_calibration="$($tuning_python - "${RESULTS_BASE}/profiles" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+for path in sorted(root.glob("profile_*/l0_calibration.json"), reverse=True):
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if (payload.get("status") == "complete"
+            and payload.get("evidence_label") == "real-hardware-calibration"
+            and payload.get("l0")
+            and payload.get("l0_parallel_read_scaling")):
+        print(path.resolve())
+        break
+PY
+)"
+        fi
+        [[ -n "$target_calibration" && -f "$target_calibration" ]] || {
+            echo "ERROR: calibrated simulation requires a real target l0_calibration.json" >&2
+            echo "Run ./reproduce-all --profile on the L0 server and upload its profile, or set:" >&2
+            echo "  FORL0_TARGET_CALIBRATION=/path/to/l0_calibration.json" >&2
+            exit 1
+        }
+        local_calibration="${tuning_root}/profile/dram_calibration.json"
+        [[ -f "$local_calibration" ]] || {
+            echo "ERROR: local DRAM calibration missing: $local_calibration" >&2
+            exit 1
+        }
+        calibration_model="${tuning_root}/calibration_model.json"
+        "$tuning_python" "${PROJECT_ROOT}/benchmark/scripts/compare_l0_calibrations.py" \
+            --target "$target_calibration" --local "$local_calibration" \
+            --output "$calibration_model"
+        tuning_args+=(--calibration-model "$calibration_model")
+        echo "CALIBRATED SIMULATION MODEL: ${calibration_model}"
+        echo "TARGET L0 CALIBRATION: ${target_calibration}"
+    fi
     export FORL0_RUN_ID="$full_run_id"
     export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
-    "$tuning_python" "${PROJECT_ROOT}/benchmark/scripts/tuning_runner.py" \
-        --project-root "$PROJECT_ROOT" --output-dir "$tuning_root" --mode "$tuning_mode"
+    "$tuning_python" "${PROJECT_ROOT}/benchmark/scripts/tuning_runner.py" "${tuning_args[@]}"
     rm -f "$FULL_RESUME_FILE"
     echo "FULL TUNING COMPLETE: ${tuning_root}"
     exit 0
@@ -275,6 +317,7 @@ Optional:
 
 Environment:
   FORL0_TUNING_MAX_TRIALS=N         optionally cap the exhaustive 162-trial search
+  FORL0_TARGET_CALIBRATION=PATH     override target real-L0 calibration for --simulate
   FORL0_RUN_ID=ID                   choose/reuse a run ID
 EOF
 }

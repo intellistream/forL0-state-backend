@@ -1447,7 +1447,7 @@ Client usecase 全部默认场景均可一键完成。合同基线、3000 条优
 
 2026-08-16 14:50 campaign 验证了共享 manager 修复有效：各 TaskManager 均先出现 \texttt{engine\_start active=1}，后续 StateEngine 使用 \texttt{engine\_reuse active=1}，不再发生旧的 per-engine tuner 耗尽。但该轮仍暴露三个独立容量问题。q4 与 q18 在压力窗口内达到 \texttt{max-table-capacity=65536} 后 fail-fast；q3 则因 \texttt{initial-table-capacity=262144} 对多个 join state/key-group 做巨额预分配，每 engine 峰值约 801 MiB，并在 768 MiB 门限附近抛出 \texttt{std::bad\_alloc}。当前修复保持初始容量 2048，q4/q18 的增长上限提高到 1,048,576、native 上限提高到 768 MiB；q3 初始容量降至 2048，保留 4,194,304 的按需增长上限。该轮失败样本只作为诊断证据，不进入性能主表，修复后的数字仍需下一轮真实 L0 campaign 刷新。
 
-为减少后续访问离线服务器的次数，\texttt{reproduce-all} 现在在 Flink 启动前自动生成 \texttt{hardware\_snapshot.json} 与 \texttt{l0\_calibration.json}。前者记录 CPU/cache/NUMA/内存拓扑、内核、L0 设备、\texttt{libl0mempool.so} 指纹及工具链版本；后者在与单 TaskManager 预算一致的 128 MiB 工作集上测量 L0 与 DRAM 的随机读延迟、顺序读写带宽、工作集曲线和 1/2/4 worker 并发扩展。开发机可用 \texttt{calibrate-local-l0-model} 生成本机曲线，再用 \texttt{compare\_l0\_calibrations.py} 构造 \texttt{simulation/model} 成本表。该模型用于本地筛选容量、并行度和热点策略；它不等同于 \texttt{real-online} 吞吐证据，最终候选仍需少量真实 L0 复核。
+为减少后续访问离线服务器的次数，\texttt{reproduce-all} 现在在 Flink 启动前自动生成 \texttt{hardware\_snapshot.json} 与 \texttt{l0\_calibration.json}。前者记录 CPU/cache/NUMA/内存拓扑、内核、L0 设备、\texttt{libl0mempool.so} 指纹及工具链版本；后者把密集延迟/带宽测量限制在已验证的 1 MiB，并按 1/2/4/6 MiB 采集与生产 192 字节 HotSet 布局一致的稀疏标签/键/值压力曲线和双 TaskManager 实例证据，避免把整个 tuner 配额错误地整区清零。开发机的 \texttt{reproduce-all --full --simulate} 会将最新真实 L0 曲线与本机 DRAM 曲线构造成带源文件 SHA 的 \texttt{simulation/model} 成本表后再进行候选搜索；它不等同于 \texttt{real-online} 吞吐证据，最终候选仍需少量真实 L0 复核。
 
 \section{测试结论}
 

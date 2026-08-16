@@ -189,7 +189,7 @@ smoke 和正式实验都成功后，本轮结果会发布到
 # 穷举 162 组参数；每组均执行 W01-W02、N01-N14、C01-C08 全部 24 个 workload
 ./reproduce-all --full
 
-# 当前无 L0 的开发机只验证同一搜索/排名/断点续跑流程
+# 无 L0 的开发机使用最新真实 profile 驱动校准后的搜索模型
 ./reproduce-all --full --simulate
 ```
 
@@ -208,10 +208,10 @@ L0 不存在、所有分级探针失败或并行 TaskManager 形态探针失败�
 `dram_calibration.json` 和 `l0_calibration.json`。前者保存 CPU/cache/NUMA、内存、
 内核、L0 设备与运行库指纹；后两者测量目标机 DRAM/L0 的工作集延迟、带宽和
 1/2/4 worker 扩展曲线。L0 以真实 TaskManager 的独立进程池形态创建至少 64 MiB
-vendor tuner，再按 1/4/16 MiB 渐进分配并测量工作集，不会把整段 tuner 配额当作
-活跃数据区强制扫写。标定器将 vendor tuner 总容量与测量工作集大小真正分开；任一级
-失败便停止更大的不安全请求。厂商库崩溃只会形成带 signal/returncode、failure_stage
-及崩溃前最后阶段的诊断 JSON，不会终止父进程。
+vendor tuner：密集延迟/带宽测量限制在已验证的 1 MiB，1/2/4/6 MiB 扩展区间采用与
+生产 HotCache 相同的 192 字节 set 稀疏标签/键/值访问，不再整区清零。标定器将
+vendor tuner 总容量、密集工作集和 HotSet 活跃容量分开；任一级失败便停止更大的请求。
+厂商库崩溃只会形成带 signal/returncode、failure_stage 及最后阶段的诊断 JSON。
 这些文件用于在开发机建立性能模型，不包含环境变量、网络配置或认证信息。
 
 实验服务器默认不生成 figure、PDF 或 HTML。复制本轮 `results/runs/<run_id>/`
@@ -233,8 +233,10 @@ python3 benchmark/scripts/compare_l0_calibrations.py \
   --output /tmp/l0-model.json
 ```
 
-模型输出标记为 `simulation/model`，适合筛选容量、并行度和热点策略；最终绝对
-吞吐仍需用少量真实 L0 作业确认。
+模型输出标记为 `simulation/model`。`./reproduce-all --full --simulate` 会自动选择
+`benchmark/results/profiles/` 下最新可用的真实 L0 calibration，与本机 DRAM 曲线生成
+`calibration_model.json` 后再搜索；也可用 `FORL0_TARGET_CALIBRATION=/path/to/file`
+显式指定。模型适合筛选容量、并行度和热点策略，最终绝对吞吐仍需真实 L0 作业确认。
 
 #### 5. 常见问题快速定位
 

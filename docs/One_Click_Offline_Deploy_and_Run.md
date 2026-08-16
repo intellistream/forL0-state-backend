@@ -86,8 +86,8 @@ cd ~/forl0-runtime/docker
 - `--profile`：仅采集硬件、NUMA、软件版本、DRAM 和分级 L0 标定，输出到
   `benchmark/results/profiles/<run_id>/`。开始前会自动停止遗留 Flink 容器，避免
   其他进程占用全局 L0 池；L0 或并行实例标定不完整时命令返回失败，不产生虚假的
-  “完成”状态。每个实例建立至少 64 MiB 的独立 vendor tuner，并按 1/4/16 MiB
-  渐进工作集探测；不会把整个 tuner 配额一次性扫写。
+  “完成”状态。每个实例建立至少 64 MiB 的独立 vendor tuner；密集曲线限制在
+  1 MiB，1/2/4/6 MiB 使用生产 HotSet 稀疏访问，不再整区清零。
 - `--full`：穷举 `benchmark/config/tuning_space.yaml` 中的 162 组配置；每组运行
   W01-W02、N01-N14、C01-C08 全部 24 个正式 workload，输出到
   `benchmark/results/tuning/<run_id>/`。开始搜索前必须先通过 smoke 正确性门禁。
@@ -107,8 +107,10 @@ cd ~/forl0-runtime/docker
 ./reproduce-all --full --simulate
 ```
 
-该模式仍生成完整 162×24 搜索产物，但明确标记为 `simulation/model`，只用于验证
-搜索、恢复和排名逻辑，不得作为真实性能或论文 speedup 证据。
+该模式自动选择 `benchmark/results/profiles/` 中最新可用的真实 L0 calibration，
+与本机 DRAM 曲线生成带 SHA 的 `calibration_model.json`，再驱动完整 162×24 搜索。
+可用 `FORL0_TARGET_CALIBRATION=/path/to/l0_calibration.json` 显式覆盖。所有结果仍明确
+标记为 `simulation/model`，只用于候选筛选，不得作为真实性能或论文 speedup 证据。
 
 `reproduce-all` 在离线服务器上只产出 raw、NexMark JSON、失败证据和日志，不生成
 figure/PDF/HTML。复制 campaign 目录到分析工作站后运行：
