@@ -1,0 +1,39 @@
+{
+  "control_revision": "unavailable",
+  "control_worktree_dirty": null,
+  "evidence_label": "real-hardware-calibration",
+  "finished_at": "2026-08-16T09:18:10.929388+00:00",
+  "hardware_snapshot": {
+    "path": "hardware_snapshot.json",
+    "returncode": 0,
+    "stderr": ""
+  },
+  "host": "master",
+  "l0_successful_probes": 0,
+  "machine": "aarch64",
+  "probes": [
+    {
+      "file": "dram_calibration.json",
+      "kind": "dram",
+      "status": "heap-only"
+    },
+    {
+      "file": "l0_calibration_1mb.json",
+      "kind": "l0",
+      "size_mb": 1,
+      "status": "heap-only"
+    },
+    {
+      "file": "l0_calibration_4mb.json",
+      "kind": "l0",
+      "size_mb": 4,
+      "status": "failed"
+    }
+  ],
+  "profile_mode": "real",
+  "python": "/usr/local/bin/python3",
+  "reason": "L0 was detected but every safe staged probe failed",
+  "schema_version": 1,
+  "started_at": "2026-08-16T09:18:08.556556+00:00",
+  "status": "partial"
+}
