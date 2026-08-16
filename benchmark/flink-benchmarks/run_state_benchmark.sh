@@ -51,6 +51,9 @@ echo ""
 # Navigate to flink-benchmarks directory and save absolute path
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+RESULTS_ROOT="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/../results}"
+mkdir -p "$RESULTS_ROOT"
+RESULTS_ROOT="$(cd "$RESULTS_ROOT" && pwd)"
 
 # Check async-profiler if profiling is enabled
 PROFILER_ARGS=""
@@ -73,10 +76,8 @@ if [ "$ENABLE_PROFILING" = true ]; then
         exit 1
     fi
     
-    RESULTS_DIR="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/../results}"
-    mkdir -p "$RESULTS_DIR/profiles"
-    RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd)"
-    PROFILER_ARGS="-prof async:libPath=$ASYNC_PROFILER_LIB;output=flamegraph;dir=${RESULTS_DIR}/profiles"
+    mkdir -p "$RESULTS_ROOT/profiles"
+    PROFILER_ARGS="-prof async:libPath=$ASYNC_PROFILER_LIB;output=flamegraph;dir=${RESULTS_ROOT}/profiles"
     echo -e "${GREEN}Using async-profiler: $ASYNC_PROFILER_LIB${NC}"
 fi
 
@@ -174,7 +175,7 @@ BENCHMARKS=(
 BACKENDS=("HEAP" "FORL0")
 
 # Output directory for results
-RESULTS_DIR="../../results/state-benchmark"
+RESULTS_DIR="${RESULTS_ROOT}/state-benchmark"
 mkdir -p "$RESULTS_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -384,4 +385,3 @@ if [ -f "$CHART_SCRIPT" ]; then
 else
     echo -e "${YELLOW}⚠ Chart script not found: $CHART_SCRIPT${NC}"
 fi
-

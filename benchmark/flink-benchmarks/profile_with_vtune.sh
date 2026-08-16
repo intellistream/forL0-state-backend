@@ -57,7 +57,8 @@ fi
 
 # Setup directories
 VTUNE_DIR="/home/user/vtune-results"
-RESULTS_DIR="../../results/state-benchmark"
+RESULTS_ROOT="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/../results}"
+RESULTS_DIR="${RESULTS_ROOT}/state-benchmark"
 mkdir -p "$VTUNE_DIR"
 mkdir -p "$RESULTS_DIR"
 

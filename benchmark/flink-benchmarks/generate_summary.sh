@@ -8,8 +8,11 @@ if [ -z "$1" ]; then
 fi
 
 TIMESTAMP=$1
-RESULTS_DIR="../../results/state-benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RESULTS_ROOT="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/../results}"
+RESULTS_DIR="${RESULTS_ROOT}/state-benchmark"
 SUMMARY_FILE="$RESULTS_DIR/summary_${TIMESTAMP}.txt"
+mkdir -p "$RESULTS_DIR"
 
 # Benchmark list
 BENCHMARKS=(

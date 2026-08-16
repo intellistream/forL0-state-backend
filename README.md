@@ -67,7 +67,7 @@ powershell -ExecutionPolicy Bypass -File .\prepare-idea-offline-deployment.ps1
 该脚本通过已认证的 GitHub CLI 自动下载私有 r7 Release 压缩包和 SHA256 到仓库根目录并完成校验。随后让 IDEA Deployment 上传整个仓库，确认没有把 `*.tar.gz` 排除。服务器端执行：
 
 ```bash
-cd /root/forl0
+cd /root/forL0
 FORL0_OFFLINE_ONLY=true bash ./run-forl0-offline.sh
 ```
 

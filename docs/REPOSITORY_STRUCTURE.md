@@ -55,8 +55,12 @@ copies the complete `benchmark/scripts/` and `docker/lib/` trees.
 
 ## Evidence and generated artifacts
 
-- `benchmark/results/`: measured and derived experiment evidence. Do not remove
-  or relocate it during code cleanup.
+- `benchmark/results/`: the only live output root used by current benchmark
+  launchers (`runs/` while a campaign is running and flat `latest/` after a
+  successful campaign). Do not redirect new runs to a repository-level path.
+- Historical April 2026 sweep raw data, logs, and plots are not retained as a
+  second artifact tree; their relevant numerical conclusions remain summarized
+  in the paper and delivery-document tables.
 - `docker/deploy/`: runnable JAR/native artifacts consumed by offline scripts.
 - `docker/generated/`: generated bundle snapshots and cluster configuration;
   do not treat copied source files here as canonical implementation files.

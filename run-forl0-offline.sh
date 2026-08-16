@@ -29,6 +29,7 @@ ARCHIVE="${FORL0_OFFLINE_ARCHIVE:-${SCRIPT_DIR}/${BUNDLE_NAME}.tar.gz}"
 EXTRACT_PARENT="${FORL0_EXTRACT_PARENT:-${SCRIPT_DIR}}"
 BUNDLE_DIR="${EXTRACT_PARENT}/${BUNDLE_NAME}"
 CHECKSUM_FILE="${ARCHIVE}.sha256"
+INSTALL_DIR="${FORL0_INSTALL_DIR:-${HOME}/forl0-runtime}"
 RELEASE_TAG="${FORL0_RELEASE_TAG:-offline-arm64-py310-20260721-r7}"
 RELEASE_BASE_URL="https://github.com/intellistream/forL0-state-backend/releases/download/${RELEASE_TAG}"
 DOWNLOAD_AUTH_TOKEN=""
@@ -141,6 +142,45 @@ verify_checksum_file() {
     fi
 }
 
+has_runtime_artifacts() {
+    local root="$1"
+    compgen -G "${root}/docker/deploy/flink-statebackend-for[Ll]0-*.jar" >/dev/null &&
+        [[ -f "${root}/docker/deploy/libforl0_engine.so" ]] &&
+        compgen -G "${root}/docker/deploy/wordcount-benchmark-*.jar" >/dev/null &&
+        compgen -G "${root}/docker/deploy/nexmark-flink-*.jar" >/dev/null &&
+        compgen -G "${root}/docker/deploy/nexmark-flink/lib/nexmark-flink-*.jar" >/dev/null &&
+        compgen -G "${root}/docker/deploy/flink-keyedcoprocessfunction-example-*-jar-with-dependencies.jar" >/dev/null
+}
+
+is_runnable_repository() {
+    local root="$1"
+    [[ -f "${root}/forl0-offline-app.sh" ]] &&
+        [[ -f "${root}/docker/run_all_apps.sh" ]] &&
+        [[ -f "${root}/docker/server_setup.sh" ]] &&
+        [[ -f "${root}/docker/lib/l0_detector.sh" ]] &&
+        [[ -f "${root}/benchmark/config/benchmark.yaml" ]] &&
+        [[ -f "${root}/benchmark/scripts/run_benchmark.py" ]] &&
+        has_runtime_artifacts "$root"
+}
+
+is_complete_bundle() {
+    local root="$1"
+    [[ -f "${root}/offline_bundle_sha256.txt" ]] &&
+        [[ -f "${root}/forl0-offline-app.sh" ]] &&
+        [[ -f "${root}/docker/install_offline_bundle.sh" ]] &&
+        [[ -f "${root}/docker/run_all_apps.sh" ]]
+}
+
+is_reusable_installed_runtime() {
+    local root="$1"
+    [[ -f "${root}/docker/run_all_apps.sh" ]] &&
+        [[ -f "${root}/docker/server_setup.sh" ]] &&
+        [[ -f "${root}/docker/lib/l0_detector.sh" ]] &&
+        [[ -f "${root}/benchmark/config/benchmark.yaml" ]] &&
+        [[ -f "${root}/benchmark/scripts/run_benchmark.py" ]] &&
+        has_runtime_artifacts "$root"
+}
+
 echo "============================================================"
 echo "  ForL0 offline one-command bootstrap"
 echo "============================================================"
@@ -148,19 +188,41 @@ echo "  Archive:     ${ARCHIVE}"
 echo "  Project dir: ${SCRIPT_DIR}"
 echo "  Run log:     ${RUN_LOG}"
 echo "  Extract to:  ${BUNDLE_DIR}"
+echo "  Installed:   ${INSTALL_DIR}"
 echo "  FLINK_HOME:  ${FLINK_HOME:-${HOME}/flink_home}"
 echo ""
 
-if [[ ! -f "$CHECKSUM_FILE" && "${FORL0_OFFLINE_ONLY:-false}" != "true" ]]; then
-    echo "[0/4] Download Release checksum"
-    download_release_asset "$(basename "$CHECKSUM_FILE")" "$CHECKSUM_FILE"
-fi
-if [[ ! -f "$ARCHIVE" && "${FORL0_OFFLINE_ONLY:-false}" != "true" ]]; then
-    echo "[0/4] Download Release archive (resume is supported)"
-    download_release_asset "$(basename "$ARCHIVE")" "$ARCHIVE"
+APP_ROOT=""
+APP_ROOT_KIND=""
+
+# Preserve bundle integrity when the launcher is executed from inside an
+# extracted bundle rather than beside it.
+if is_complete_bundle "$SCRIPT_DIR"; then
+    echo "[1/4] Launcher is inside an extracted offline bundle"
+    echo "[2/4] Bundle already available"
+    APP_ROOT="$SCRIPT_DIR"
+    APP_ROOT_KIND="bundle"
+# A complete checkout uploaded to the L0 server is already the freshest control
+# and artifact root. Do not let a stale directory left by an older bundle shadow
+# it merely because that directory exists.
+elif is_runnable_repository "$SCRIPT_DIR"; then
+    echo "[1/4] Reuse runnable repository at ${SCRIPT_DIR}"
+    echo "[2/4] Release archive is not required for repository mode"
+    echo "[3/4] Repository structure validated"
+    APP_ROOT="$SCRIPT_DIR"
+    APP_ROOT_KIND="repository"
+else
+    if [[ ! -f "$CHECKSUM_FILE" && "${FORL0_OFFLINE_ONLY:-false}" != "true" ]]; then
+        echo "[0/4] Download Release checksum"
+        download_release_asset "$(basename "$CHECKSUM_FILE")" "$CHECKSUM_FILE"
+    fi
+    if [[ ! -f "$ARCHIVE" && "${FORL0_OFFLINE_ONLY:-false}" != "true" ]]; then
+        echo "[0/4] Download Release archive (resume is supported)"
+        download_release_asset "$(basename "$ARCHIVE")" "$ARCHIVE"
+    fi
 fi
 
-if [[ -f "$ARCHIVE" ]]; then
+if [[ -z "$APP_ROOT" && -f "$ARCHIVE" ]]; then
     if [[ ! -f "$CHECKSUM_FILE" ]]; then
         echo "ERROR: missing archive checksum: $CHECKSUM_FILE" >&2
         exit 1
@@ -171,31 +233,51 @@ if [[ -f "$ARCHIVE" ]]; then
     echo "[2/4] Extract offline bundle"
     mkdir -p "$EXTRACT_PARENT"
     tar -xzf "$ARCHIVE" -C "$EXTRACT_PARENT"
-elif [[ -d "$BUNDLE_DIR" ]]; then
+    if ! is_complete_bundle "$BUNDLE_DIR"; then
+        echo "ERROR: extracted archive is not a complete ForL0 bundle: $BUNDLE_DIR" >&2
+        exit 1
+    fi
+    APP_ROOT="$BUNDLE_DIR"
+    APP_ROOT_KIND="bundle"
+elif [[ -z "$APP_ROOT" ]] && is_complete_bundle "$BUNDLE_DIR"; then
     echo "[1/4] Archive not present; reuse extracted bundle"
     echo "[2/4] Bundle already available"
-else
-    echo "ERROR: neither archive nor extracted bundle was found" >&2
-    echo "  expected archive: $ARCHIVE" >&2
-    echo "  expected bundle:  $BUNDLE_DIR" >&2
-    exit 1
+    APP_ROOT="$BUNDLE_DIR"
+    APP_ROOT_KIND="bundle"
+elif [[ -z "$APP_ROOT" ]] && is_reusable_installed_runtime "$INSTALL_DIR"; then
+    if [[ -d "$BUNDLE_DIR" ]]; then
+        echo "WARN: ignoring incomplete extracted bundle: $BUNDLE_DIR" >&2
+    fi
+    echo "[1/4] Archive and complete bundle not present"
+    echo "[2/4] Reuse installed runtime at ${INSTALL_DIR}"
+    echo "[3/4] Installed runtime structure validated"
+    APP_ROOT="$INSTALL_DIR"
+    APP_ROOT_KIND="installed-runtime"
 fi
 
-[[ -f "$BUNDLE_DIR/offline_bundle_sha256.txt" ]] || {
-    echo "ERROR: bundle checksum manifest is missing: $BUNDLE_DIR/offline_bundle_sha256.txt" >&2
+[[ -n "$APP_ROOT" ]] || {
+    echo "ERROR: no runnable ForL0 source was found" >&2
+    echo "  repository:        $SCRIPT_DIR" >&2
+    echo "  expected archive:  $ARCHIVE" >&2
+    echo "  expected bundle:   $BUNDLE_DIR" >&2
+    echo "  installed runtime: $INSTALL_DIR" >&2
+    if [[ -d "$BUNDLE_DIR" ]]; then
+        echo "  note: the expected bundle directory exists but is incomplete" >&2
+    fi
     exit 1
 }
 
-echo "[3/4] Verify every file inside the bundle"
-verify_checksum_file "$BUNDLE_DIR/offline_bundle_sha256.txt"
+if [[ "$APP_ROOT_KIND" == "bundle" ]]; then
+    echo "[3/4] Verify every file inside the bundle"
+    verify_checksum_file "$APP_ROOT/offline_bundle_sha256.txt"
+fi
 
-[[ -f "$BUNDLE_DIR/forl0-offline-app.sh" ]] || {
-    echo "ERROR: bundle launcher is missing: $BUNDLE_DIR/forl0-offline-app.sh" >&2
-    exit 1
-}
-chmod +x "$BUNDLE_DIR/forl0-offline-app.sh" "$BUNDLE_DIR/docker/"*.sh
-if [[ -f "$BUNDLE_DIR/docker/lib/l0_detector.sh" ]]; then
-    chmod +x "$BUNDLE_DIR/docker/lib/l0_detector.sh"
+if [[ -f "$APP_ROOT/forl0-offline-app.sh" ]]; then
+    chmod +x "$APP_ROOT/forl0-offline-app.sh"
+fi
+chmod +x "$APP_ROOT/docker/"*.sh 2>/dev/null || true
+if [[ -f "$APP_ROOT/docker/lib/l0_detector.sh" ]]; then
+    chmod +x "$APP_ROOT/docker/lib/l0_detector.sh"
 fi
 
 echo "[4/4] Install and run ForL0 validation"
@@ -209,9 +291,24 @@ else
     echo "  failures:  keep going, then generate the final HTML report"
     RUN_ARGS=("${DEFAULT_RUN_ARGS[@]}" "$@")
 fi
-export FORL0_APP_ROOT="$BUNDLE_DIR"
-export FORL0_CONTROL_ROOT="$SCRIPT_DIR"
-exec bash "$SCRIPT_DIR/forl0-offline-app.sh" \
-    --install-dir "${FORL0_INSTALL_DIR:-${HOME}/forl0-runtime}" \
+echo "  Runtime source: ${APP_ROOT_KIND} (${APP_ROOT})"
+export FORL0_APP_ROOT="$APP_ROOT"
+if is_runnable_repository "$SCRIPT_DIR"; then
+    export FORL0_CONTROL_ROOT="$SCRIPT_DIR"
+    LAUNCHER="$SCRIPT_DIR/forl0-offline-app.sh"
+else
+    export FORL0_CONTROL_ROOT="$APP_ROOT"
+    if [[ -f "$SCRIPT_DIR/forl0-offline-app.sh" ]]; then
+        LAUNCHER="$SCRIPT_DIR/forl0-offline-app.sh"
+    else
+        LAUNCHER="$APP_ROOT/forl0-offline-app.sh"
+    fi
+fi
+[[ -f "$LAUNCHER" ]] || {
+    echo "ERROR: offline app launcher is missing: $LAUNCHER" >&2
+    exit 1
+}
+exec bash "$LAUNCHER" \
+    --install-dir "$INSTALL_DIR" \
     --results-dir "$DEFAULT_RESULTS_ROOT" \
     "${RUN_ARGS[@]}"

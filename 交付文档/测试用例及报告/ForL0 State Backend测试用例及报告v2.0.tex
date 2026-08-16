@@ -167,7 +167,6 @@
 \newcommand{\coverrulethin}{{\color{accent!55}\rule{\linewidth}{0.3pt}}}
 
 % 图片搜索路径（相对于本 tex 文件所在目录）
-\graphicspath{{../../results/}{../../results/figures/}{../../results/kunpeng/wordcount_sweep/figures/}{../../results/intel/}}
 
 \begin{document}
 
@@ -668,7 +667,7 @@ python run_benchmark.py --test wordcount --backend all \
     --num-keys 1000000 --skew 0.0
 \end{lstlisting}
 
-原始结果以 JSON 存储于 \texttt{results/kunpeng/wordcount\_sweep/raw/}；绘图输出在 \texttt{results/kunpeng/wordcount\_sweep/figures/}。
+原始扫描值已完整汇总在本节表格中；仓库不再重复保存对应的历史绘图文件。
 
 \subsection{NexMark Benchmark}
 
@@ -733,28 +732,7 @@ L0 Cache               & 启用 \\
 
 \subsubsection{吞吐量网格}
 
-\begin{figure}[!htb]
-\centering
-\begin{minipage}[t]{0.49\textwidth}
-\centering
-\includegraphics[width=\textwidth]{wordcount_grid_hashmap.pdf}\\
-\small (a) HashMapStateBackend
-\end{minipage}\hfill
-\begin{minipage}[t]{0.49\textwidth}
-\centering
-\includegraphics[width=\textwidth]{wordcount_grid_forl0.pdf}\\
-\small (b) \project{}
-\end{minipage}
-\caption{鲲鹏平台 WordCount 在 $(num\_keys,\ skew\_factor)$ 网格上的吞吐量对比：(a) HashMapStateBackend，(b) \project{}。}
-\label{fig:wc-grid-kp}
-\end{figure}
 
-\begin{figure}[!htb]
-\centering
-\includegraphics[width=0.62\textwidth]{wordcount_grid_speedup.pdf}
-\caption{\project{} 相对 HashMapStateBackend 的吞吐量比值（鲲鹏）}
-\label{fig:wc-speedup}
-\end{figure}
 \FloatBarrier
 
 \subsubsection{数据明细}
@@ -845,33 +823,12 @@ L0 Cache    & 不可用（Intel 平台不具备该硬件） \\
 
 \subsubsection{吞吐量网格}
 
-\begin{figure}[!htb]
-\centering
-\begin{minipage}[t]{0.49\textwidth}
-\centering
-\includegraphics[width=\textwidth]{wordcount_sweep/figures/wordcount_grid_hashmap.pdf}\\
-\small (a) HashMapStateBackend
-\end{minipage}\hfill
-\begin{minipage}[t]{0.49\textwidth}
-\centering
-\includegraphics[width=\textwidth]{wordcount_sweep/figures/wordcount_grid_forl0.pdf}\\
-\small (b) \project{}
-\end{minipage}
-\caption{Intel 平台 WordCount 在 $(num\_keys,\ skew\_factor)$ 网格上的吞吐量对比：(a) HashMapStateBackend，(b) \project{}。}
-\label{fig:wc-grid-intel}
-\end{figure}
 
-\begin{figure}[!htb]
-\centering
-\includegraphics[width=0.62\textwidth]{wordcount_sweep/figures/wordcount_grid_speedup.pdf}
-\caption{\project{} 相对 HashMapStateBackend 的吞吐量比值（Intel）}
-\label{fig:wc-speedup-intel}
-\end{figure}
 \FloatBarrier
 
 \subsubsection{数据明细}
 
-下表给出 36 组扫描点的吞吐量（单位：M\,records/sec）及 \project{} 相对 HashMapStateBackend 的比值；原始数据见 \texttt{results/intel/wordcount\_sweep/raw/wordcount\_grid\_sweep\_20260423\_025206\_final.json}。
+下表保留 36 组扫描点的完整吞吐量（单位：M\,records/sec）及 \project{} 相对 HashMapStateBackend 的比值。
 
 \begin{table}[H]
 \centering
@@ -939,21 +896,6 @@ L0 Cache    & 不可用（Intel 平台不具备该硬件） \\
 
 为定位 \project{} 在 Intel 平台上的优化瓶颈，使用 Intel VTune Profiler 的 \texttt{Memory Access / Microarchitecture Exploration} 分析类型在 60\,s 采样窗口内对 WordCount 流水线进行了优化前后两次剖析。两次采样的 \emph{Elapsed Time} 均严格控制为 60.001\,s，仅状态访问路径发生变化，可直接对比 $\mu$Pipe 的失速分布。
 
-\begin{figure}[!htb]
-\centering
-\begin{minipage}[t]{0.49\textwidth}
-\centering
-\includegraphics[width=\textwidth]{wc优化前.png}\\[2pt]
-\textbf{(a) 优化前}：Memory Bound 占 48.1\% Pipeline Slots
-\end{minipage}\hfill
-\begin{minipage}[t]{0.49\textwidth}
-\centering
-\includegraphics[width=\textwidth]{wc优化后.png}\\[2pt]
-\textbf{(b) 优化后}：Memory Bound 降至 15.3\% Pipeline Slots
-\end{minipage}
-\caption{Intel VTune Memory Access 分析：WordCount 在 \project{} 优化前后的 $\mu$Pipe 与 Back-End Bound 拆解对比。}
-\label{fig:vtune-wc}
-\end{figure}
 
 关键指标对比如下表：
 
@@ -1045,23 +987,11 @@ Baseline\,(\textit{收益评估})  & 181\,s         & 104\,s & --     & 111\,s  
   \item \textbf{卡死用例消失}。Intel 16\,G 档下 HashMap 在 q19 / q20 出现卡死，\project{} 在相同配置下可正常完成，表明即使在较紧的堆预算下 \project{} 仍能保证作业可用性。
 \end{itemize}
 
-\begin{figure}[!htb]
-\centering
-\includegraphics[width=\textwidth]{nexmark_comparison.pdf}
-\caption{NexMark 查询执行时间对比。(a) 鲲鹏 openEuler 平台、TaskManager 4 核 / Heap 11.7\,GB 下 HashMapStateBackend、\project{}（启用 / 关闭 L0 Cache）与《收益评估》提供的历史 baseline 四方对比，红色数值标注 HashMap 出现 Full GC 拖慢的查询；(b) Intel x86\_64 参考平台在 16\,/\,18\,/\,20\,GB 三档 TaskManager 内存下两种后端的扫描结果，红色斜线段表示 HashMap 在该配置下卡死无法完成。}
-\label{fig:nexmark}
-\end{figure}
 
 \subsection{Flink 状态算子级 JMH 基准（Intel 参考平台）}
 
 除端到端查询外，使用 Flink 官方 \texttt{flink-benchmarks} 仓库中的 \texttt{StateBackendBenchmark} 对 \texttt{ValueState}、\texttt{ListState}、\texttt{MapState} 的典型算子单独打点。该基准纯粹比较状态后端在算子层的吞吐，排除上层拓扑影响。
 
-\begin{figure}[!htb]
-\centering
-\includegraphics[width=\textwidth]{flink-state-benchmark.png}
-\caption{Flink StateBackend JMH 基准：\project{} 与 HashMapStateBackend 的算子吞吐（Intel 参考平台，单位 ops/ms）}
-\label{fig:jmh}
-\end{figure}
 
 在该基准下 \project{} 在 14 个操作点中 13 个呈现正向提升：\texttt{value.Add} +87.2\%、\texttt{value.Update} +59.5\%、\texttt{map.Add} +110.0\%、\texttt{map.Remove} +74.4\%、\texttt{list.GetAndIterate} +131.5\%；仅 \texttt{list.Append} 出现 $-$8.9\% 的回退。该结果与 NexMark 端到端收益方向一致：算子层的哈希定位与迭代路径得到加速，上层查询在状态密集场景下的整体加速才得以兑现。
 

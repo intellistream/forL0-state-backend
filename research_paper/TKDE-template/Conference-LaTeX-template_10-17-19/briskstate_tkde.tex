@@ -13,7 +13,6 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,shapes.geometric,calc}
 
-\graphicspath{{../../ICPP-demo/}{../../../results/intel/wordcount_sweep/figures/}{../../../results/intel/}}
 
 \newcommand{\briskstate}{BriskState\xspace}
 \newcommand{\system}{\briskstate}
@@ -443,14 +442,8 @@ Native namespace/COW & TimeWindow namespace and native persistence round-trip te
 
 The WordCount benchmark isolates the repeated ValueState sequence of reading a counter, incrementing it, and writing it back. This makes it a good workload for revealing how a backend behaves once the state path dominates operator cost.
 
-Figure~\ref{fig:wc-grid} shows the raw-verified Intel grid sweep over key cardinality and skew. This software-only experiment did not use the hardware cache facility. Across 36 scanned points, the recorded mean ratio is 1.270$\times$ and the peak is 1.414$\times$; these values establish neither a hardware-cache effect nor a mechanism attribution.
+The raw-verified Intel grid sweep over key cardinality and skew. This software-only experiment did not use the hardware cache facility. Across 36 scanned points, the recorded mean ratio is 1.270$\times$ and the peak is 1.414$\times$; these values establish neither a hardware-cache effect nor a mechanism attribution.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.72\textwidth]{wordcount_grid_speedup.pdf}
-\caption{Raw-verified, software-only Intel WordCount grid sweep. The 36-point grid has a 1.270$\times$ mean ratio and 1.414$\times$ peak; it is not hardware evidence.}
-\label{fig:wc-grid}
-\end{figure*}
 
 To make the trend more concrete, Table~\ref{tab:wordcount-points} lists representative scan points from the 36-point grid. The table shows that the improvement is not confined to one narrow configuration. Moderate skew, weak skew, and fully hot-keyed cases all benefit, although the improvement is largest away from the most extreme hot-key setting.
 
@@ -474,21 +467,8 @@ Keys & Skew & Heap & \system & Speedup & Time reduction \\
 \end{tabular}
 \end{table*}
 
-Figure~\ref{fig:wc-absolute} shows the same WordCount sweep as absolute throughput surfaces for the heap baseline and \system. The figure makes one additional point that the speedup heatmap alone does not: \system does not win merely because the baseline collapses at a few outliers. The absolute throughput surface is elevated across most of the scanned space.
+The tabulated WordCount sweep reports absolute throughput for both the heap baseline and \system. The figure makes one additional point that the speedup heatmap alone does not: \system does not win merely because the baseline collapses at a few outliers. The absolute throughput surface is elevated across most of the scanned space.
 
-\begin{figure*}[t]
-\centering
-\begin{minipage}[t]{0.48\textwidth}
-\centering
-\includegraphics[width=\linewidth]{wordcount_grid_hashmap.pdf}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.48\textwidth}
-\centering
-\includegraphics[width=\linewidth]{wordcount_grid_forl0.pdf}
-\end{minipage}
-\caption{Absolute Intel WordCount throughput surfaces. Left: heap baseline. Right: \system. The gain is broadly distributed across the scanned key-cardinality/skew grid rather than concentrated in a small number of pathological points.}
-\label{fig:wc-absolute}
-\end{figure*}
 
 For reproducibility, Table~\ref{tab:wordcount-detail} provides a denser slice of the Intel scan. The table complements the heatmaps by exposing raw throughput and time deltas across a wider set of representative points.
 
