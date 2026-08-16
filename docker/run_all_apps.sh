@@ -25,6 +25,10 @@ source "./lib/benchmark_evidence.sh"
 source "./lib/benchmark_python.sh"
 
 REPO_ROOT="$(cd .. && pwd)"
+# Preflight Python subprocesses load benchmark/config from this path.  Export
+# it before argument handling and preflight instead of waiting until the real
+# benchmark command is launched.
+export REPO_ROOT
 export FORL0_RUN_ID="${FORL0_RUN_ID:-manual_$(date '+%Y%m%d_%H%M%S')}"
 export FORL0_RESULTS_DIR="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results/runs/${FORL0_RUN_ID}/formal}"
 FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
@@ -728,7 +732,6 @@ if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
     cmd+=("${EXTRA_ARGS[@]}")
 fi
 
-export REPO_ROOT
 export FORL0_EXPECTED_TASKMANAGERS="$EXPECTED_TASKMANAGERS"
 export FORL0_EXPECTED_SLOTS="$EXPECTED_SLOTS"
 echo "Command: ${cmd[*]}"
