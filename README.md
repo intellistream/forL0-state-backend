@@ -180,6 +180,11 @@ bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" \
 smoke 和正式实验都成功后，本轮结果会发布到
 `$HOME/forl0-runtime/benchmark/results/latest/`。
 
+每轮还会在 Flink 启动前自动生成 `hardware_snapshot.json` 和
+`l0_calibration.json`。前者保存 CPU/cache/NUMA、内存、内核、L0 设备与运行库
+指纹；后者测量目标机 L0/DRAM 的工作集延迟、带宽和 1/2/4 worker 扩展曲线。
+这些文件用于在开发机建立性能模型，不包含环境变量、网络配置或认证信息。
+
 实验服务器默认不生成 figure、PDF 或 HTML。复制本轮 `results/runs/<run_id>/`
 到分析工作站后，运行 `benchmark/scripts/generate_campaign_analysis.py`，派生物写入
 已被 Git 忽略的 `output/`。
@@ -188,6 +193,19 @@ smoke 和正式实验都成功后，本轮结果会发布到
 `UPLOAD_MANIFEST.tsv` 记录扁平文件名与原路径的映射。通过 GitHub 网页上传时，
 直接选中 `latest/` 中的全部文件即可。新一轮成功结果会替换上一轮，失败结果不会
 覆盖 `latest/`。
+
+复制目标机的 `l0_calibration.json` 后，可在开发机生成本机曲线和校准模型：
+
+```bash
+./benchmark/scripts/calibrate-local-l0-model /tmp/local-calibration.json
+python3 benchmark/scripts/compare_l0_calibrations.py \
+  --target benchmark/results/latest/l0_calibration.json \
+  --local /tmp/local-calibration.json \
+  --output /tmp/l0-model.json
+```
+
+模型输出标记为 `simulation/model`，适合筛选容量、并行度和热点策略；最终绝对
+吞吐仍需用少量真实 L0 作业确认。
 
 #### 5. 常见问题快速定位
 

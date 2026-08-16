@@ -594,9 +594,11 @@ nexmark_scenarios:
       l0_cache_size: 256mb
       # One process-shared L0 manager per TaskManager (2 TMs on this topology).
       l0_cache_expected_engines: 2
-      l0_memory_max_size: 512mb
+      # q4/q18 legitimately outgrow 65,536 slots under this pressure shape.
+      # Keep the small lazy initial allocation, but permit bounded growth.
+      l0_memory_max_size: 768mb
       initial_table_capacity: 2048
-      max_table_capacity: 65536
+      max_table_capacity: 1048576
       main_table_load_factor_threshold: 0.80
 
   - name: forl0_no_full_gc_allq_pressure
@@ -727,9 +729,9 @@ nexmark_scenarios:
       l0_cache_size: 256mb
       # One process-shared L0 manager per TaskManager (2 TMs on this topology).
       l0_cache_expected_engines: 2
-      l0_memory_max_size: 512mb
+      l0_memory_max_size: 768mb
       initial_table_capacity: 2048
-      max_table_capacity: 65536
+      max_table_capacity: 1048576
       main_table_load_factor_threshold: 0.80
 
   - name: forl0_no_full_gc_q8_q11_tuned
@@ -919,9 +921,9 @@ nexmark_scenarios:
       l0_cache_size: 256mb
       # One process-shared L0 manager per TaskManager (2 TMs on this topology).
       l0_cache_expected_engines: 2
-      l0_memory_max_size: 512mb
+      l0_memory_max_size: 768mb
       initial_table_capacity: 2048
-      max_table_capacity: 65536
+      max_table_capacity: 1048576
       main_table_load_factor_threshold: 0.80
 
   - name: forl0_no_full_gc_extra_sql
@@ -1068,10 +1070,11 @@ nexmark_scenarios:
       l0_cache_enabled: true
       l0_cache_size: 256mb
       l0_cache_expected_engines: 2
-      # q3 reached 504 MiB and failed its next allocation under the old
-      # 512 MiB cap. Keep 50% headroom without changing the input workload.
+      # q3 creates several join-state tables per key group. An initial capacity
+      # of 262,144 eagerly consumed ~520 MiB per engine before useful work and
+      # made the next allocation fail. Start small and grow on demand instead.
       l0_memory_max_size: 768mb
-      initial_table_capacity: 262144
+      initial_table_capacity: 2048
       max_table_capacity: 4194304
       main_table_load_factor_threshold: 0.80
 

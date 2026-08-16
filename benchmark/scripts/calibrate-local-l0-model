@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Build a heap-only calibration curve for the local performance model.
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUTPUT="${1:-${PROJECT_ROOT}/benchmark/results/local_hardware_calibration.json}"
+SOURCE="${PROJECT_ROOT}/benchmark/native/l0_calibrate.cpp"
+TEMP_BINARY="$(mktemp /tmp/forl0-local-calibrate.XXXXXX)"
+cleanup() { rm -f "$TEMP_BINARY"; }
+trap cleanup EXIT
+
+command -v g++ >/dev/null 2>&1 || {
+    echo "ERROR: g++ is required for local calibration" >&2
+    exit 1
+}
+mkdir -p "$(dirname "$OUTPUT")"
+g++ -O3 -std=c++17 -pthread "$SOURCE" -ldl -o "$TEMP_BINARY"
+"$TEMP_BINARY" - "$OUTPUT" 134217728
+echo "Local calibration saved: $OUTPUT"

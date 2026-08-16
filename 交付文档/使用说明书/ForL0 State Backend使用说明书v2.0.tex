@@ -29,7 +29,7 @@
 \setsansfont{Noto Sans CJK SC}
 \setmonofont{Noto Sans Mono CJK SC}
 
-\XeTeXlinebreaklocale "zh"
+% \XeTeXlinebreaklocale "zh"  % Tectonic's bundled ICU may not provide this locale
 \XeTeXlinebreakskip = 0pt plus 1pt
 
 % ===================== Hyperref =====================
@@ -425,8 +425,13 @@ env.setStateBackend(
 \texttt{state.backend.forl0.async-snapshots} & boolean & \texttt{true} & 使用原生 Copy-On-Write 异步快照。 \\
 \texttt{state.backend.forl0.l0-cache.enabled} & boolean & \texttt{false} & 是否启用 L0 Cache 加速，需鲲鹏硬件支持。 \\
 \texttt{state.backend.forl0.l0-cache.size} & MemorySize & 256\,mb & L0 内存池总容量，支持 \texttt{256mb}、\texttt{1gb} 等写法。 \\
+\texttt{state.backend.forl0.l0-cache.total-size} & MemorySize & -- & 主机/设备级 L0 总预算；按 \texttt{expected-engines} 划分给 TaskManager 进程。 \\
+\texttt{state.backend.forl0.l0-cache.expected-engines} & int & 1 & 预期进程级 manager 数；应填写 TaskManager 进程数，不是 slot 或 StateEngine 数。 \\
+\texttt{state.backend.forl0.l0-cache.strict-allocation} & boolean & \texttt{false} & 为 true 时，硬件门禁或分配失败直接使作业失败，适用于正式 L0 证据采集。 \\
+\texttt{state.backend.forl0.native-memory.max-size} & MemorySize & 0 & 单 StateEngine 的 SwissTable native 内存上限；0 表示不设限。 \\
+\texttt{forL0.metricsCollector.enabled} & boolean & \texttt{false} & 是否注册 HotCache gauge；性能复现默认关闭，诊断时显式开启。 \\
 \texttt{state.backend.forl0.initial-table-capacity} & int & 64 & 单张 SwissTable 的初始 slot 数，必须为 2 的幂且 $\ge 8$。 \\
-\texttt{state.backend.forl0.max-table-capacity} & int & 1024 & 单张 SwissTable 的容量上限，达到后触发分裂。 \\
+\texttt{state.backend.forl0.max-table-capacity} & int & 1024 & 单张 SwissTable 的容量上限，达到后 fail-fast，防止无界内存增长。 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -441,7 +446,9 @@ env.setStateBackend(
   \item 首次探测性 \texttt{l0\_mem\_alloc} 调用成功。
 \end{enumerate}
 
-任一项不满足时，HotCache 快路径默默保持未激活；状态访问由底层 SwissTable 直接服务，作业可正常启动与运行。运行时可以通过 Flink 指标系统的 \texttt{forl0.hotcache.active} gauge 确认是否真正激活（见 \S7.3）。
+任一项不满足时，非 strict 作业会禁用 HotCache，状态访问仍由底层 SwissTable 正常服务；strict 作业则直接失败，避免把硬件未生效的样本误收为 L0 结果。运行时应结合日志与指标确认：\texttt{L0 cache disabled by config} 表示配置有意关闭；\texttt{L0 hardware not available ... forcibly disabled} 表示硬件门禁失败；\texttt{engine\_start active=1} 表示当前 TaskManager 首次成功创建进程级 manager；\texttt{engine\_reuse active=1} 表示同进程后续 StateEngine 正在复用该 manager。正式 L0-on 样本还必须出现至少一条 \texttt{state\_attach}（见 \S7.1）。
+
+每个 TaskManager 进程只持有一个共享 \texttt{HotCacheManager}。因此 \texttt{l0-cache.total-size} 的预算划分按 TaskManager 进程数计算；提高 operator 并行度会增加共享池中的 state cache 数量，但不会再重复创建硬件 tuner。不同 TaskManager 之间仍是独立进程和独立 manager。
 
 \subsection{SwissTable 容量参数}
 
@@ -455,7 +462,7 @@ env.setStateBackend(
 \textbf{配置项} & \textbf{默认值} & \textbf{说明} \\
 \midrule
 \texttt{state.backend.forl0.initial-table-capacity} & 64 & 初始 slot 数，必须为 2 的幂且 $\ge 8$。 \\
-\texttt{state.backend.forl0.max-table-capacity}     & 1024 & 单表容量上限，达到后触发分裂而非继续扩容。 \\
+\texttt{state.backend.forl0.max-table-capacity}     & 1024 & 单表容量上限，达到后 fail-fast 而非无界扩容。 \\
 \multicolumn{2}{l}{负载因子} & 内部常量 87.5\%，触发 rehash / grow 的负载阈值。 \\
 \bottomrule
 \end{tabularx}
@@ -649,6 +656,11 @@ curl -X POST http://<jobmanager>:8081/jars/<jar-id>/run \
 \texttt{[ForL0] Creating ForL0StateBackend from configuration.} & 通过 Factory 从配置创建后端 \\
 \texttt{[ForL0] Building ForL0KeyedStateBackend with C++ engine\ldots} & KeyedStateBackend 构造开始 \\
 \texttt{[ForL0] C++ engine created: handle=\ldots, l0Enabled=\ldots} & C++ 引擎创建完成，l0Enabled 反映 HotCache 是否激活 \\
+\texttt{[ForL0-HotCache] L0 cache disabled by config.} & 当前 StateEngine 明确采用 L0-off；WordCount p4 融合计数探针属于此类 \\
+\texttt{[ForL0-HotCache] engine\_start active=1 \ldots} & 当前 TaskManager 首次成功初始化进程级 L0 manager \\
+\texttt{[ForL0-HotCache] engine\_reuse active=1 \ldots} & 同一 TaskManager 内其他 StateEngine 复用已有 manager，属于正常并行行为 \\
+\texttt{[ForL0-HotCache] state\_attach name=\ldots} & 受支持状态已从共享池取得 HotSet，是正式 L0-on 证据之一 \\
+\texttt{[ForL0-HotCache] WARN: L0 hardware not available \ldots} & 配置要求 L0，但设备、库或分配门禁失败；strict 正式实验不得接收 \\
 \texttt{[ForL0] ForL0KeyedStateBackend built successfully.} & KeyedStateBackend 构造完成 \\
 \texttt{[ForL0] Failed to load native engine: \ldots} & 原生库加载失败，后端不会启动 \\
 \bottomrule
@@ -670,7 +682,7 @@ NativeEngine.ensureLoaded();  // 未加载时抛出 RuntimeException
 
 \subsection{HotCache 指标}
 
-启用 L0 Hot-Key Cache 时，后端在作业的 \texttt{MetricGroup} 下自动注册以下 gauge，指标名为 \texttt{<operator>.forl0.hotcache.<field>}，可直接在 Flink Web UI 或对接的指标后端（Prometheus / InfluxDB 等）中观察：
+启用 L0 Hot-Key Cache 且设置 \texttt{forL0.metricsCollector.enabled=true} 时，后端在作业的 \texttt{MetricGroup} 下注册以下 gauge，指标名为 \texttt{<operator>.forl0.hotcache.<field>}，可直接在 Flink Web UI 或对接的指标后端（Prometheus / InfluxDB 等）中观察：
 
 \begin{table}[H]
 \centering
@@ -691,7 +703,7 @@ NativeEngine.ensureLoaded();  // 未加载时抛出 RuntimeException
 \end{tabularx}
 \end{table}
 
-当设置 \texttt{l0-cache.enabled=true} 但 \texttt{active} 始终为 0 时，说明硬件门禁未通过（见 \S3.3），作业已自动回退到纯 SwissTable 路径；此时 \texttt{bytesCapacity=0}、\texttt{hits=0}、\texttt{lookups=0}。
+当设置 \texttt{l0-cache.enabled=true} 但 \texttt{active} 始终为 0 时，说明硬件门禁未通过（见 \S3.3），非 strict 作业已回退到纯 SwissTable 路径；此时 \texttt{bytesCapacity=0}、\texttt{hits=0}、\texttt{lookups=0}。若 \texttt{lookups=0,hits=0} 但日志显示 L0 已激活，则表示该 workload 没有调用 HotCache get，命中率应记为“不适用（0/0）”而不是 0\%。例如 WordCount \texttt{addAndGetLong} 在一次 JNI 内直接修改权威 SwissTable，只做更新而不读取 HotCache，因此正式 p4 探针会主动关闭 L0。
 
 \section{调优建议}
 
@@ -740,6 +752,29 @@ NativeEngine.ensureLoaded();  // 未加载时抛出 RuntimeException
   \item 生产环境将 Checkpoint 目录指向稳定的共享存储（HDFS、NAS 等）。
 \end{itemize}
 
+\section{离线一键复现与结果下载}
+
+在完整仓库覆盖到离线服务器 \texttt{/root/forL0} 后，只需执行：
+
+\begin{lstlisting}[language=shellcmd]
+cd /root/forL0
+chmod +x reproduce-all stop-reproduce-all
+./reproduce-all
+\end{lstlisting}
+
+脚本会后台运行并立即返回 PID，先完成四项隔离 smoke，再执行完整正式矩阵。监控和停止命令分别为：
+
+\begin{lstlisting}[language=shellcmd]
+tail -f benchmark/results/runs/*/.logs
+./stop-reproduce-all
+\end{lstlisting}
+
+运行中或失败时，完整证据位于 \texttt{benchmark/results/runs/<run\_id>/}；失败目录会保留 \texttt{FAILED.txt}、\texttt{.logs} 和局部结果用于诊断，但不会发布为最新有效数据。全部成功后，脚本将 campaign 扁平发布到 \texttt{benchmark/results/latest/}，该目录只包含文件而没有子目录，适合直接通过网页上传；\texttt{UPLOAD\_MANIFEST.tsv} 记录每个扁平文件对应的原始相对路径。
+
+正式矩阵包括 WordCount W01--W02、NexMark N01--N14 和 Client C01--C08。NexMark 默认成对覆盖 q3/q4/q9/q18/q19/q20，是代表性性能集合；仓库虽提供 q0--q22 的 SQL 与可选场景，但 \texttt{reproduce-all} 不等价于全 23 query 穷举。服务器只产出 raw、JSON 与日志证据，不生成 figure/PDF；报告和图应在联网本地取得 latest 后生成。
+
+若脚本来自 Windows 或网页中转，出现 \texttt{/usr/bin/env: bash\textbackslash r}，说明文件被转换为 CRLF。应重新以二进制方式覆盖仓库文件；仓库的 \texttt{.gitattributes} 会固定 shell 脚本为 LF。直接执行前还应保留 executable bit，或运行上面的 \texttt{chmod +x}。
+
 \section{常见问题}
 
 \begin{table}[H]
@@ -754,6 +789,8 @@ NativeEngine.ensureLoaded();  // 未加载时抛出 RuntimeException
 日志中 \texttt{l0Enabled=false} & L0 硬件/库不可用或未启用 & 核查 \texttt{/dev/hisi\_l0}、\texttt{libl0mempool.so} 以及 \texttt{l0-cache.enabled} \\
 Checkpoint 失败 & Checkpoint 目录权限不足 & 确认 \texttt{state.checkpoints.dir} 路径对 Flink 进程可写 \\
 \texttt{forl0.hotcache.active=0} 但配置已开启 & 硬件门禁未通过 & 检查 \texttt{/dev/hisi\_l0} 是否存在，\texttt{libl0mempool.so} 是否在搜索路径上 \\
+正式 L0-on 场景出现 \texttt{disabled by config} & 场景覆盖或配置传递错误 & 检查 workload 的 \texttt{forl0\_overrides}；WordCount p4 出现该日志属于预期，pressure/late-query 场景则不应出现 \\
+只有 \texttt{engine\_start} 后又有多个 \texttt{engine\_reuse} & 同一 TaskManager 内并行 StateEngine 共享 manager & 正常行为；继续确认存在 \texttt{state\_attach}，且无 hardware-not-available 警告 \\
 作业 OOM & 状态规模超出进程内存预算 & 增加 \texttt{taskmanager.memory.process.size}，或设置状态 TTL \\
 \bottomrule
 \end{tabularx}

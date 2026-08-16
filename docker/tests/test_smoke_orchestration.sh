@@ -24,6 +24,13 @@ mkdir -p "$TEST_TMP/benchmark/results"
 cp "$REPO_ROOT/reproduce-all" "$TEST_TMP/reproduce-all"
 mkdir -p "$TEST_TMP/docker/lib"
 cp "$REPO_ROOT/docker/lib/result_layout.sh" "$TEST_TMP/docker/lib/result_layout.sh"
+cp "$REPO_ROOT/docker/lib/l0_detector.sh" "$TEST_TMP/docker/lib/l0_detector.sh"
+mkdir -p "$TEST_TMP/benchmark/scripts"
+cp "$REPO_ROOT/benchmark/scripts/capture_hardware_snapshot.py" \
+    "$TEST_TMP/benchmark/scripts/capture_hardware_snapshot.py"
+mkdir -p "$TEST_TMP/benchmark/native"
+cp "$REPO_ROOT/benchmark/native/l0_calibrate.cpp" \
+    "$TEST_TMP/benchmark/native/l0_calibrate.cpp"
 
 cat > "$TEST_TMP/reproduce-smoke" <<'EOF'
 #!/usr/bin/env bash
@@ -56,6 +63,10 @@ fi
 [[ -f "$TEST_TMP/benchmark/results/latest/formal__formal.txt" ]]
 [[ -f "$TEST_TMP/benchmark/results/latest/campaign.log" ]]
 [[ -f "$TEST_TMP/benchmark/results/latest/run_manifest.json" ]]
+[[ -f "$TEST_TMP/benchmark/results/latest/hardware_snapshot.json" ]]
+[[ -f "$TEST_TMP/benchmark/results/latest/l0_calibration.json" ]]
+grep -q '"evidence_label": "real-hardware-context"' \
+    "$TEST_TMP/benchmark/results/latest/hardware_snapshot.json"
 if find "$TEST_TMP/benchmark/results/latest" -mindepth 1 -type d -print -quit | grep -q .; then
     echo "published latest contains a directory" >&2
     exit 1

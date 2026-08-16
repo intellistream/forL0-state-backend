@@ -98,8 +98,14 @@ class ForL0ConfigTest(unittest.TestCase):
         late = nexmark['forl0_no_full_gc_lateq_deep']
         self.assertEqual(4, late['runtime_overrides']['parallelism'])
         self.assertEqual(2, late['forl0_overrides']['l0_cache_expected_engines'])
+        self.assertEqual(1048576, late['forl0_overrides']['max_table_capacity'])
+        pressure = nexmark['forl0_no_full_gc_pressure']['forl0_overrides']
+        self.assertEqual(2048, pressure['initial_table_capacity'])
+        self.assertEqual(1048576, pressure['max_table_capacity'])
+        self.assertEqual('768mb', pressure['l0_memory_max_size'])
         q3 = nexmark['forl0_no_full_gc_extra_sql']
         self.assertEqual(200000, q3['query_overrides']['q3']['tps'])
+        self.assertEqual(2048, q3['forl0_overrides']['initial_table_capacity'])
         self.assertEqual(4194304, q3['forl0_overrides']['max_table_capacity'])
 
         client = {

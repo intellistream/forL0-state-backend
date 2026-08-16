@@ -99,6 +99,50 @@ if [[ "${1:-}" == "--worker" ]]; then
 
         echo ""
         echo "=== reproduce-all CAMPAIGN=${campaign_run_id} REVISION=${FORL0_CONTROL_REVISION} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
+        snapshot_python=""
+        if [[ -x "${PROJECT_ROOT}/tools/python/bin/python3" ]]; then
+            snapshot_python="${PROJECT_ROOT}/tools/python/bin/python3"
+        elif command -v python3 >/dev/null 2>&1; then
+            snapshot_python="$(command -v python3)"
+        fi
+        if [[ -n "$snapshot_python" && -f "${PROJECT_ROOT}/benchmark/scripts/capture_hardware_snapshot.py" ]]; then
+            # Reuse the same detector as the Docker launcher so the snapshot
+            # fingerprints the exact L0 library/device selected for the run.
+            source "${PROJECT_ROOT}/docker/lib/l0_detector.sh"
+            forl0_detect_l0_environment || true
+            if "$snapshot_python" "${PROJECT_ROOT}/benchmark/scripts/capture_hardware_snapshot.py" \
+                    --project-root "$PROJECT_ROOT" \
+                    --output "${campaign_root}/hardware_snapshot.json"; then
+                echo "HARDWARE SNAPSHOT: ${campaign_root}/hardware_snapshot.json"
+            else
+                echo "WARNING: hardware snapshot failed; benchmark will continue" >&2
+            fi
+        else
+            echo "WARNING: Python or hardware snapshot script unavailable; benchmark will continue" >&2
+        fi
+        # Calibrate the real L0-vs-DRAM cost curve before Flink starts. The
+        # temporary executable is never published; only its small JSON output
+        # becomes part of the campaign evidence. 128 MiB matches one TM's
+        # share of the 256 MiB job budget on the reference two-TM topology.
+        calibration_source="${PROJECT_ROOT}/benchmark/native/l0_calibrate.cpp"
+        calibration_binary="${campaign_root}/.l0_calibrate"
+        calibration_output="${campaign_root}/l0_calibration.json"
+        if [[ -n "${FORL0_L0_LIBRARY_PATH:-}" && -f "$calibration_source" ]] && \
+                command -v g++ >/dev/null 2>&1; then
+            if g++ -O3 -std=c++17 -pthread "$calibration_source" -ldl -o "$calibration_binary" && \
+                    "$calibration_binary" "$FORL0_L0_LIBRARY_PATH" "$calibration_output" 134217728 && \
+                    grep -q '"status": "complete"' "$calibration_output"; then
+                echo "L0 CALIBRATION: ${calibration_output}"
+            else
+                echo "WARNING: real L0 calibration incomplete; inspect ${calibration_output}; benchmark will continue" >&2
+            fi
+            rm -f "$calibration_binary"
+        else
+            printf '%s\n' \
+                '{"schema_version":1,"evidence_label":"real-hardware-calibration","status":"unavailable","reason":"L0 library, source, or g++ unavailable"}' \
+                > "$calibration_output"
+            echo "WARNING: L0 calibration unavailable; recorded reason in ${calibration_output}" >&2
+        fi
         FORL0_RESULTS_DIR="$smoke_results" \
         FORL0_RUN_ID="${campaign_run_id}_smoke" \
         FORL0_RUN_STARTED_EPOCH="$(date '+%s')" \

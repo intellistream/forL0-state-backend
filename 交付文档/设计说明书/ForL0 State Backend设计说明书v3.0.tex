@@ -687,7 +687,7 @@
 
 \subsubsection{L0 Hot-Key Cache}
 
-L0 Hot-Key Cache 是系统默认启用的外层快路径，其核心是一块位于鲲鹏 L0 Cache 用户态分区的紧凑哈希索引，下面给出其数据结构与访问算法。
+L0 Hot-Key Cache 是由配置显式启用的外层快路径，其核心是一块位于鲲鹏 L0 Cache 用户态分区的紧凑哈希索引。未启用或硬件门禁未通过时，权威状态仍由 SwissTable 正常服务。下面给出其数据结构与访问算法。
 
 \paragraph{数据结构}
 缓存整体为一个 set-associative 哈希索引，共 $N$ 个 set，每个 set 由固定的 8 个 way 组成，紧凑占用 $3 \times 64 = 192$\,B，且严格按 64\,B 对齐：
@@ -718,6 +718,11 @@ L0 Hot-Key Cache 是系统默认启用的外层快路径，其核心是一块位
 
 \paragraph{失效算法}
 删除或 key-group 迁移时，按查找算法定位 set 并匹配 way，将命中 way 的 tag 置为 \texttt{EMPTY}，keys / vals 不做清零。set 作为整体在 rescale 时归还 \texttt{HotCacheManager} 全局池，由该管理器统一承担 L0 内存的分配与回收。
+
+\paragraph{TaskManager 进程级共享管理}
+\texttt{libl0mempool.so} 的 tuner 是进程级稀缺资源，不能按并行 subtask 或每个 \texttt{StateEngine} 重复初始化。当前实现因此在每个 TaskManager 进程内只创建一个 \texttt{HotCacheManager}，多个 \texttt{StateEngine} 通过 \texttt{shared\_ptr} 复用同一 tuner、同一底层 L0 分配和同一 HotSet 池。全局注册表使用弱引用：最后一个 engine 销毁后，manager 与硬件资源随之释放，不跨 TaskManager 进程共享。
+
+共享后，manager 的分配、回收、统计与生命周期账本由互斥锁保护；每个 \texttt{HotCacheLL} 仍由所属 Flink subtask 单线程访问。自适应 rebalance 只清理触发它的当前 state cache，不再因为一个 state 的 miss rate 而清空其他并行 instance 的缓存。配置项 \texttt{l0-cache.expected-engines} 为兼容历史名称保留，其计数现在应等于预期 TaskManager \emph{进程数}，而不是 slot、operator 或 StateEngine 数。启动日志中首个 engine 记录 \texttt{engine\_start active=1}，同进程后续 engine 记录 \texttt{engine\_reuse active=1}；\texttt{state\_attach} 则证明至少一个受支持状态真正取得 HotSet。
 
 % ---------- Figure 6: L0 Hot-Key Cache 结构与快路径 ----------
 \begin{figure}[htbp]
@@ -1330,14 +1335,14 @@ v3.0 进一步明确了透明优化的覆盖边界：当前可自动作用于普
 
 实验编排层也在 v3.0 中补充运行保障设计：离线一键脚本在进入实验前校验 TaskManager 与 slot 数，NexMark driver 运行期间继续监控 Flink REST 中的 FAILED job、TaskManager 数和 slot 数；一旦集群退化即终止 driver 并失败退出，避免在离线机器上因无限 stop/等待消耗实验窗口。\texttt{--full} 模式的 NexMark pressure suite 固定展开为 \texttt{forl0\_no\_full\_gc\_allq\_pressure}、\texttt{forl0\_no\_full\_gc\_q8\_q11\_deep} 和 \texttt{forl0\_no\_full\_gc\_lateq\_deep}；同时提供 \texttt{--pressure-only}，用于离线机器只补跑 ForL0/L0 友好的 pressure 配置。该逻辑只影响 benchmark 编排，不改变 ForL0 状态后端语义或 workload 源码。
 
-离线服务器复现交付报告中的 Ascend 编号化性能清单时，使用仓库根目录下的 \texttt{forl0-offline-app.sh}：
+离线服务器复现交付报告中的 Ascend 编号化性能清单时，推荐使用仓库根目录下的单一入口：
 \begin{verbatim}
-export FLINK_HOME=/home/shuhao/flink-1.20.3
-cd /home/shuhao/forL0-state-backend
-./forl0-offline-app.sh --flink-home "$FLINK_HOME" \
-  --skip-docker-load --reproduce-ascend --no-report
+cd /root/forL0
+./reproduce-all
 \end{verbatim}
-该命令覆盖 WordCount、NexMark 和 Client usecase 的默认编号场景，结果写入 \texttt{benchmark/results/run\_logs/ascend\_reproduction\_*.tsv}、\texttt{benchmark/results/raw/} 与 \texttt{benchmark/results/nexmark\_*/nexmark\_results.json}。
+该入口后台启动独立 campaign，先运行 HashMap/ForL0 隔离的 smoke 正确性门禁，通过后再执行 W01--W02、N01--N14、C01--C08 正式矩阵；运行日志和中间证据写入 \texttt{benchmark/results/runs/<run\_id>/.logs} 及其 \texttt{smoke/}、\texttt{formal/} 子目录。只有整个 campaign 成功才原子发布到无子目录的 \texttt{benchmark/results/latest/}，并通过 \texttt{UPLOAD\_MANIFEST.tsv} 保存扁平文件名到原始相对路径的映射；失败 campaign 保留 \texttt{FAILED.txt} 和局部证据，但不会覆盖 latest。
+
+当前正式 NexMark 矩阵是面向交付时间与稳定性的代表性集合，成对运行 q3/q4/q9/q18/q19/q20，并非 q0--q22 的穷举测试。仓库包含 q0--q22 的 HashMap/ForL0 SQL 资产和可选 scenario；若验收要求全 query 覆盖，应单独执行完整扫描，并将其结果与默认代表性性能矩阵分开陈述。
 
 2026-07-11 的 Ascend 离线复现进一步补充了工程化约束：ForL0 的 \texttt{initial-table-capacity}、L0 cache size 等后端配置必须从 Flink Java 配置完整下传到 native \texttt{StateEngine}，否则 benchmark.yaml 中的调优参数只是表面生效；native 共享库的构建必须将头文件纳入依赖，避免 JNI/native 结构体布局变化后只重编部分 object 引入崩溃；离线部署必须保证 Flink \texttt{lib/} 中的 backend jar、jar 内嵌 native resource、\texttt{native/} 目录和 deploy 目录四者版本一致。上述改造均限定在 ForL0 后端、native 构建与一键实验编排范围内，不要求 WordCount、NexMark 或客户用例修改源码。
 
@@ -1346,5 +1351,7 @@ cd /home/shuhao/forL0-state-backend
 由于 Ascend 容器环境下短时 WordCount 单次运行存在明显方差，v3.0 设计将“实验复现口径”也视为交付设计的一部分：编号化一键脚本允许场景声明 \texttt{repeat\_runs} 与 \texttt{repeat\_policy}，当前 WordCount fastpath 场景采用同并行度 p4 的 best-of-3，并在 raw JSON 中保留每次 job id、吞吐和耗时。这一机制不改变后端实现，也不只对 ForL0 生效；HashMap 与 ForL0 使用同一 repeat 规则，从而降低离线机器单次坏样本导致结论翻转的风险。
 
 Ascend 默认编号清单采用总吞吐优先原则，但该原则不改变公平后端对比边界：同一 workload 内 HashMap 与 ForL0 必须使用相同 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只允许通过自身后端参数和实现优化取得收益。2026-07-12 最终一键复跑在 \texttt{benchmark/results/run\_logs/ascend\_reproduction\_20260712\_040246.tsv} 中完整通过，默认清单覆盖 WordCount、NexMark q18/q19/q20/q9/q4/q3 以及 Client usecase。该轮 WordCount p4 best-of-3 为 831,805 vs 1,039,194 records/s/core（$+$24.9\%）；NexMark 中 q18 \texttt{tps\_probe} 为 174.90 K/s vs 215.89 K/s（$+$23.4\%），q18 \texttt{lateq\_deep} 为 947.15 K/s vs 1.22 M/s（$+$28.8\%），q19 为 $+$3.6\%，q20 为 $+$3.5\%，q9 为 $+$8.8\%，q4 在 600 K/s、45 s 稳定窗口下为 $+$11.9\%，q3 为 $+$16.8\%。其中 q20/q9/q19 同时体现更显著的 CPU/core 效率改善。Client 原始业务形态主要作为兼容与无回退复核，\texttt{scalar\_state\_probe\_2m\_ops64\_batch} 则作为 map-heavy 诊断压力场景，24,869 vs 62,049 records/s/core（$+$149.5\%）。q5、q8、q11、\texttt{state\_pressure\_1m} 和 benchset 不进入默认清单：前者未形成稳定、显著、公平的 ForL0 吞吐优势，后者会拖慢或削弱离线一键复现的确定性。曾探索过的 ForL0 higher-parallelism q19/q20 配置虽然面向总 TPS，但改变了 operator 级执行拓扑，已从默认编号清单、YAML 场景和交付结论中撤出。
+
+2026-08 的硬件复跑诊断进一步修正了两个实现与口径问题。第一，L0 tuner 实际按 TaskManager 进程生效，旧实现按每个 StateEngine 创建 manager 会在多 operator/多 subtask 下耗尽 tuner；现已改为进程内共享 manager，并将并发账本与 per-state rebalance 隔离。第二，WordCount \texttt{stateful\_counter\_p4\_probe} 使用融合 \texttt{addAndGetLong}：它在一次 JNI 内直接 \texttt{modify\_in\_place} 权威 SwissTable，只有写穿透而没有 HotCache get，因此观测到 \texttt{lookups=0,hits=0} 表示“未执行缓存查询”，不是 0\% 命中。该场景现明确关闭 L0，避免为无读取收益的 cache 分配硬件容量；它用于衡量融合 JNI、primitive SwissTable 与低 GC 路径，而 L0 硬件收益由具有非零 lookups/hits 的 Client/NexMark L0-on 场景证明。
 
 \end{document}

@@ -29,7 +29,7 @@
 \setsansfont{Noto Sans CJK SC}
 \setmonofont{Noto Sans Mono CJK SC}
 
-\XeTeXlinebreaklocale "zh"
+% \XeTeXlinebreaklocale "zh"  % Tectonic's bundled ICU may not provide this locale
 \XeTeXlinebreakskip = 0pt plus 1pt
 
 % ===================== Hyperref =====================
@@ -387,6 +387,12 @@ make install
 
 \texttt{make install} 会将生成的 \texttt{libforl0\_engine.so} 复制到 \texttt{src/main/resources/native/} 下，随后 Java 测试和打包流程即可直接引用该产物。
 
+\subsection{头文件依赖与离线重建指纹}
+
+native 引擎的大量实现位于模板头文件中，只比较 \texttt{.cpp} 时间戳可能留下 ABI 或结构布局已经变化的旧 object。仓库根入口 \texttt{run-forl0-offline.sh} 在 repository mode 下会对 \texttt{engine/}、\texttt{platform/}、\texttt{checkpoint/}、\texttt{jni/} 内全部 \texttt{.h}/\texttt{.cpp} 以及 Makefile 计算 SHA-256 指纹。指纹变化时，aarch64 服务器会在 smoke/formal 之前执行干净 native 重建，并把新指纹写入 \texttt{src/main/native/.forl0-source.sha256}；缺少 make、g++、Java 或摘要工具时直接失败，避免继续使用 stale native 库。
+
+手工构建后必须保持以下副本一致：\texttt{src/main/native/libforl0\_engine.so}、\texttt{src/main/resources/native/libforl0\_engine.so}、\texttt{docker/deploy/libforl0\_engine.so}、backend JAR 内嵌 native resource，以及 Flink \texttt{lib/}/\texttt{native/} 中的运行副本。仅替换 JAR 或仅替换外部 \texttt{.so} 都可能产生 Java/JNI/native 版本错配。
+
 \subsection{鲲鹏平台默认启用的编译选项}
 
 在 aarch64 上，CMake 脚本会根据平台自动启用下列优化，不需要在命令行显式指定：
@@ -568,6 +574,36 @@ ls nexmark-flink/nexmark-datastream/target/nexmark-datastream-*.jar
 
 echo "构建完成"
 \end{lstlisting}
+
+\section{离线仓库校验与一键入口}
+
+当目标服务器直接接收完整仓库覆盖时，推荐让仓库自身作为最新 control/artifact root，不再复用遗留离线包目录。确认架构和脚本格式后执行：
+
+\begin{lstlisting}[language=shellcmd]
+cd /root/forL0
+uname -m                       # expected: aarch64
+git diff --check
+chmod +x reproduce-all stop-reproduce-all run-forl0-offline.sh
+./reproduce-all
+\end{lstlisting}
+
+\texttt{reproduce-all} 在后台先执行 smoke，成功后运行正式编号矩阵；repository mode 会在进入实验前执行上述 native 指纹检查与必要重建，并同步当前 backend JAR、native 库、NexMark driver 与 workload JAR。不要只覆盖 Python/shell 控制脚本而保留旧 runtime artifact，也不要让不完整的旧 bundle 目录遮蔽完整仓库。
+
+所有无扩展名 launcher 和 \texttt{.sh} 文件必须保持 LF 行尾与 executable bit。若出现 \texttt{bash\textbackslash r: No such file or directory}，应重新以 LF/二进制方式传输；临时修复可用 \texttt{sed -i 's/\textbackslash r\$//' <script>}，但正式交付应以仓库 \texttt{.gitattributes} 和正确上传方式为准。
+
+构建/运行证据全部写入 \texttt{benchmark/results/runs/<run\_id>/}；成功后发布的 \texttt{benchmark/results/latest/} 为扁平文件集合。每轮还自动写入 \texttt{hardware\_snapshot.json} 与 \texttt{l0\_calibration.json}，分别保存目标机硬件/软件指纹以及 128 MiB L0--DRAM 延迟、带宽、工作集和 1/2/4 worker 并发标定曲线。标定程序在 campaign 目录临时编译，执行后删除二进制，只保留小型 JSON。服务器端不构建交付 PDF 或 figure，避免离线 Python/字体/LaTeX 差异污染结果；PDF 在本地从已上传的 raw、JSON 和 log 派生。
+
+开发机可生成本机 DRAM 曲线并与目标机标定对齐：
+
+\begin{lstlisting}[language=shellcmd]
+./benchmark/scripts/calibrate-local-l0-model /tmp/local-calibration.json
+python3 benchmark/scripts/compare_l0_calibrations.py \
+  --target benchmark/results/latest/l0_calibration.json \
+  --local /tmp/local-calibration.json \
+  --output /tmp/l0-model.json
+\end{lstlisting}
+
+输出明确标记为 \texttt{simulation/model}，用于本地调参和相对趋势预测；交付性能数字仍必须来自真实 L0 服务器的 \texttt{real-online} 作业。
 
 \section{常见问题与排查}
 
