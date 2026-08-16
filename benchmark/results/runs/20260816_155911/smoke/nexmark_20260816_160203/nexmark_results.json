@@ -1,0 +1,126 @@
+{
+  "timestamp": "2026-08-16T16:03:24.229859",
+  "run_id": "20260816_155911_smoke",
+  "run_started_epoch": 1786867154,
+  "variant": null,
+  "control_revision": "unavailable",
+  "mode": "benchmark",
+  "scenario_name": "forl0_tps_probe",
+  "selected_queries": [
+    "q18"
+  ],
+  "cli_args": {},
+  "nexmark_config": {
+    "queries": "q18",
+    "q4_events": 0,
+    "q5_events": 0,
+    "q8_events": 0,
+    "q9_events": 0,
+    "q11_events": 0,
+    "q18_events": 0,
+    "q19_events": 0,
+    "q20_events": 0,
+    "tps": 2000000,
+    "warmup_events": 0,
+    "warmup_duration": 0,
+    "min_profile_cpu_cores": 0.0,
+    "person_proportion": 1,
+    "auction_proportion": 49,
+    "bid_proportion": 50,
+    "timeout_seconds": 21600,
+    "max_attempts_per_query": 2,
+    "retry_backoff_seconds": 10,
+    "repeat_per_query": 1,
+    "min_success_samples": 1,
+    "min_cpu_cores": 0.0,
+    "flink_config_overrides": {
+      "parallelism.default": 4,
+      "taskmanager.numberOfTaskSlots": 4,
+      "table.exec.mini-batch.enabled": false,
+      "table.optimizer.distinct-agg.split.enabled": false,
+      "execution.checkpointing.checkpoints-after-tasks-finish.enabled": false,
+      "pipeline.object-reuse": true
+    },
+    "metric_monitor_delay": "10s",
+    "metric_monitor_interval": "5s",
+    "metric_monitor_duration": "60s",
+    "metric_tps_vertex": "sink",
+    "query_overrides": {
+      "q4": {
+        "tps": 500000,
+        "metric_monitor_delay": "20s"
+      },
+      "q5": {
+        "tps": 2000000,
+        "metric_monitor_delay": "20s"
+      },
+      "q8": {
+        "tps": 1000000,
+        "person_proportion": 25,
+        "auction_proportion": 25,
+        "bid_proportion": 50,
+        "metric_monitor_delay": "20s"
+      },
+      "q9": {
+        "tps": 50000,
+        "metric_monitor_delay": "20s"
+      },
+      "q11": {
+        "tps": 200000,
+        "person_proportion": 10,
+        "auction_proportion": 10,
+        "bid_proportion": 80,
+        "metric_monitor_delay": "30s",
+        "metric_monitor_duration": "90s"
+      },
+      "q18": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      },
+      "q19": {
+        "tps": 1000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "metric_monitor_delay": "50s",
+        "metric_monitor_duration": "60s"
+      },
+      "q20": {
+        "tps": 200000,
+        "metric_monitor_delay": "20s"
+      }
+    },
+    "category": "forl0",
+    "scenario_name": "forl0_tps_probe"
+  },
+  "results": {
+    "forl0": {
+      "query_results": {
+        "q18": {
+          "cpu": 5.96,
+          "throughput": 312820.0,
+          "throughput_per_core": 52486.57718120806,
+          "benchmark": "nexmark",
+          "backend": "forl0",
+          "query": "q18",
+          "parallelism": 4,
+          "checkpoint_interval": 0,
+          "person_proportion": 1,
+          "auction_proportion": 49,
+          "bid_proportion": 50,
+          "bid_hot_ratio_auctions": null,
+          "bid_hot_ratio_bidders": null,
+          "auction_hot_ratio_sellers": null,
+          "configured_tps": 5000000,
+          "metric_tps_vertex": "sink",
+          "metric_monitor_duration": "60s",
+          "collect_full_gc": false,
+          "reject_full_gc": false,
+          "max_full_gc_delta": 0,
+          "full_gc_delta": 0
+        }
+      },
+      "failed_queries": []
+    }
+  }
+}
