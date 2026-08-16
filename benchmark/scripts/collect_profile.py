@@ -24,10 +24,13 @@ def write_json(path: Path, payload: Any) -> None:
 
 def run_probe(binary: Path, library: str, output: Path, size: int,
               evidence_label: str, timeout: int,
-              command_prefix: list[str] | None = None) -> dict[str, Any]:
+              command_prefix: list[str] | None = None,
+              tuner_capacity: int | None = None) -> dict[str, Any]:
     partial = output.with_suffix(".partial.json")
     command = list(command_prefix or []) + [
         str(binary), library, str(partial), str(size), evidence_label]
+    if tuner_capacity is not None:
+        command.append(str(tuner_capacity))
     started = datetime.now(timezone.utc).isoformat()
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
@@ -72,12 +75,18 @@ def main() -> int:
     parser.add_argument("--simulate", action="store_true",
                         help="Collect host DRAM calibration only and label it simulation/model.")
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument(
+        "--minimum-l0-tuner-mb", type=int,
+        default=int(os.environ.get("FORL0_PROFILE_MIN_TUNER_MB", "64")),
+        help="Minimum production-shaped vendor tuner capacity (default: 64 MiB).")
     args = parser.parse_args()
 
     root = args.project_root.resolve()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     evidence_label = "simulation/model" if args.simulate else "real-hardware-calibration"
+    if args.minimum_l0_tuner_mb <= 0:
+        parser.error("--minimum-l0-tuner-mb must be positive")
     git_revision = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
     git_dirty = subprocess.run(
@@ -97,6 +106,11 @@ def main() -> int:
         "python": sys.executable,
         "cluster_isolated_before_profile": (
             os.environ.get("FORL0_PROFILE_CLUSTER_CLEANED", "").lower() == "true"),
+        "l0_probe_strategy": {
+            "kind": "production-shaped-process-pool",
+            "single_instance_capacities_mb": [64, 128, 192],
+            "minimum_tuner_capacity_mb": args.minimum_l0_tuner_mb,
+        },
         "probes": [],
     }
     write_json(output / "profile_manifest.json", manifest)
@@ -146,10 +160,16 @@ def main() -> int:
     best_l0_payload: dict[str, Any] | None = None
     successful_sizes_mb: list[int] = []
     if not args.simulate and l0_library and l0_device:
-        for size_mb in (1, 4, 16, 64, 128):
+        # Real workloads successfully initialize process pools at 64 MiB and
+        # above. Tiny 1/4/16 MiB tuner pools are not production-shaped and are
+        # rejected by this vendor runtime. Each allocated pool still measures
+        # nested working sets down to 64 KiB.
+        for size_mb in (64, 128, 192):
             name = f"l0_calibration_{size_mb}mb.json"
+            tuner_capacity = max(args.minimum_l0_tuner_mb, size_mb) << 20
             probe = run_probe(binary, l0_library, output / name, size_mb << 20,
-                              evidence_label, args.timeout)
+                              evidence_label, args.timeout,
+                              tuner_capacity=tuner_capacity)
             manifest["probes"].append({"kind": "l0", "size_mb": size_mb,
                                         "file": name, "status": probe.get("status")})
             if probe.get("status") == "complete":
@@ -171,7 +191,7 @@ def main() -> int:
     expected_instances = max(1, int(os.environ.get("FORL0_EXPECTED_TASKMANAGERS", "2")))
     instance_results: list[dict[str, Any]] = []
     if successful_sizes_mb and not args.simulate:
-        concurrent_size_mb = min(64, max(successful_sizes_mb))
+        concurrent_size_mb = min(successful_sizes_mb)
         numa_cpus: list[str] = []
         for cpulist in sorted(Path("/sys/devices/system/node").glob("node*/cpulist")):
             try:
@@ -187,7 +207,8 @@ def main() -> int:
             name = f"l0_instance_{instance + 1}_{concurrent_size_mb}mb.json"
             payload = run_probe(
                 binary, l0_library, output / name, concurrent_size_mb << 20,
-                evidence_label, args.timeout, prefix)
+                evidence_label, args.timeout, prefix,
+                tuner_capacity=max(args.minimum_l0_tuner_mb, concurrent_size_mb) << 20)
             return {"instance": instance + 1, "file": name,
                     "numa_cpu": numa_cpus[instance % len(numa_cpus)] if numa_cpus else None,
                     "status": payload.get("status"), "signal": payload.get("signal")}

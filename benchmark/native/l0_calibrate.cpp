@@ -223,19 +223,26 @@ void write_parallel_curve(std::ostream& out, const std::vector<ParallelSample>& 
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 4 && argc != 5) {
-        std::cerr << "usage: l0_calibrate LIBL0 OUTPUT_JSON ALLOCATION_BYTES [EVIDENCE_LABEL]\n";
+    if (argc < 4 || argc > 6) {
+        std::cerr << "usage: l0_calibrate LIBL0 OUTPUT_JSON ALLOCATION_BYTES "
+                     "[EVIDENCE_LABEL] [TUNER_CAPACITY_BYTES]\n";
         return 2;
     }
     const std::string library = argv[1];
     const std::string output = argv[2];
     const size_t requested = std::strtoull(argv[3], nullptr, 10);
-    const std::string evidence_label = argc == 5 ? argv[4] : "real-hardware-calibration";
+    const std::string evidence_label = argc >= 5 ? argv[4] : "real-hardware-calibration";
+    const size_t tuner_capacity = argc == 6 ? std::strtoull(argv[5], nullptr, 10) : requested;
+    if (requested == 0 || tuner_capacity < requested) {
+        std::cerr << "allocation must be non-zero and no larger than tuner capacity\n";
+        return 2;
+    }
     std::ofstream out(output);
     out << std::fixed << std::setprecision(3);
     out << "{\n  \"schema_version\": 1,\n"
         << "  \"evidence_label\": \"" << escape_json(evidence_label) << "\",\n"
         << "  \"requested_bytes\": " << requested << ",\n"
+        << "  \"tuner_capacity_bytes\": " << tuner_capacity << ",\n"
         << "  \"curve_repeats\": 3,\n"
         << "  \"cpu_hash_mix_mops_s\": " << measure_hash_mix_mops_s() << ",\n";
     // Preserve useful diagnostic context even if a vendor allocation later
@@ -273,17 +280,21 @@ int main(int argc, char** argv) {
     }
 
     void* tuner = nullptr;
-    const int init_rc = api.init(&tuner, requested);
+    const int init_rc = api.init(&tuner, tuner_capacity);
     void* l0 = (init_rc == 0 && tuner) ? api.alloc(tuner, requested) : nullptr;
     if (!l0) {
-        out << "  \"status\": \"heap-only\",\n"
+        out << "  \"status\": \"failed\",\n"
             << "  \"heap\": ";
         write_curve(out, heap_curve);
         out << ",\n  \"heap_parallel_read_scaling\": ";
         write_parallel_curve(out, heap_parallel);
         out << ",\n  \"l0\": null,\n"
-            << "  \"l0_reason\": \"L0 allocation failed\",\n"
-            << "  \"cache_tuner_init_rc\": " << init_rc << "\n}\n";
+            << "  \"l0_reason\": \""
+            << (init_rc == 0 ? "L0 allocation failed" : "cache_tuner_init failed") << "\",\n"
+            << "  \"failure_stage\": \""
+            << (init_rc == 0 ? "l0_mem_alloc" : "cache_tuner_init") << "\",\n"
+            << "  \"cache_tuner_init_rc\": " << init_rc << ",\n"
+            << "  \"tuner_created\": " << (tuner ? "true" : "false") << "\n}\n";
         if (tuner) api.destroy(tuner);
         dlclose(api.handle);
         std::free(heap);
