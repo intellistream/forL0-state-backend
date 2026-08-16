@@ -1,122 +1,123 @@
 # ForL0 最新离线实验分析
 
-报告日期：2026-08-11
+报告日期：2026-08-16
 
-实验批次：2026-08-11 17:00–17:33（run manifest：
-[`ascend_reproduction_20260811_170156.tsv`](formal__run_logs__ascend_reproduction_20260811_170156.tsv)）
+最新观测批次：`benchmark/results/runs/20260816_115143`
 
-报告类型：`derived-artifact`。本报告从已提交的 raw JSON、NexMark JSON 和 `.logs`
-重新核算；没有在本机伪造或重跑 L0 硬件实验。
+证据类型：`real-online`，批次状态为 `failed/partial`。由于失败批次不会覆盖
+`benchmark/results/latest/` 的成功快照，本文件单独指向上述 campaign；分析只使用
+配置一致且两端均成功的样本，失败单元不补零、不参与加速比。
 
-## 2026-08-11 18:42 批次校验（不作为有效性能批次）
+## 执行摘要
 
-远端提交 `2bd0bee` 中的新日志来自 18:42 开始的实验，而本轮 L0 归因、NexMark
-cancel-409 和结果作用域修复直到 18:55 的 `3e190fe` 才提交。因此该实验实际运行的
-是旧控制面：日志中 `GitCommit: unavailable`、`RunID: unassigned`，WordCount 仍显示
-`best` 并使用旧的 `l0-cache.size` / `l0-memory.max-size` 属性，NexMark preflight 也没有
-验证 cancel-409 修复。日志在 N04 启动中途结束，说明上传的是仍在运行的部分批次。
+- 计划矩阵共 24 个 backend 单元，16 个产生有效结果；12 组对比中只有 6 组完整。
+- WordCount `stateful_counter_p4_probe` 中，ForL0 中位吞吐比 HashMap 低 **9.1%**，
+  是本轮最明确的性能回退。
+- NexMark q18 TPS probe 中，ForL0 吞吐提高 **17.2%**；q19 吞吐持平。
+- q18/q19 报告的 ForL0 CPU 需求分别下降 **75.5%** 和 **45.8%**，但都只有单次
+  backend 样本，必须复测后才能形成 CPU 效率或扩展性结论。
+- Client contract、optimized、state-pressure 三组差异都小于 **0.1%**，目前只能
+  判断为持平或受 source/bounded shutdown 限制。
+- 当前证据支持“部分 workload 有 CPU 效率潜力”，不支持 ForL0 整体加速结论。
 
-- q18 TPS 的 HashMap 作业在 116 ms 内进入 `FAILED`，没有产生可用 sample；ForL0 的
-  601,870 events/s 因此没有匹配 baseline，不能计算提升。N03 HashMap 在完整 summary
-  后 cancel 返回 409（1.12M events/s），属于旧 driver 的清理竞态；它也不能与缺失的
-  N04 结果组成配对。
-- HTML 中 q8 的 **+1492.5%** 不是本批次新结果。旧报告错误地把
-  `forl0_no_full_gc_q8_q11_deep` 的 HashMap 10,400 events/s 与
-  `contract_baseline` 的 ForL0 165,620 events/s 跨场景拼接。该数字无效。相同目录、
-  相同 `contract_baseline` 的历史值实际是 165,690 vs 165,620，约 -0.04%，但同样不是
-  本轮真实 L0 结论。
-- WordCount 的 +0.1% 来自旧配置的 best-of-3。三次 HashMap 为
-  4.981M / 4.156M / 4.535M records/s，ForL0 为 4.984M / 4.987M / 4.533M；样本呈现
-  明显双峰。best 得到 +0.1%，median 会得到约 +9.9%，二者差异本身说明这组运行存在
-  顺序/热身噪声，不能挑一个聚合方式当成稳定提升。
+## 修复前实测性能
 
-代码现已将报告限制为同一 `run_id`、同一有效 workload identity（场景、TPS、事件
-比例、parallelism、monitor 配置）的完整 backend pair；无 `run_id` 的独立 raw 文件
-不再跨文件比较。新结果还会记录 `control_revision`。因此上述 q8 拼接和旧 WordCount
-best 选择不会进入下一轮正式报告。
+| 类别 | Workload | HashMap | ForL0 | ForL0 变化 | 样本说明 |
+|---|---|---:|---:|---:|---|
+| WordCount | stateful_counter_p4_probe | 4.986 M records/s | 4.532 M records/s | **-9.1%** | 每端 3 次，取中位数 |
+| Client | contract_baseline | 74.28 records/s | 74.34 records/s | +0.1% | 每端单次 |
+| Client | forl0_optimized | 743.10 records/s | 742.43 records/s | -0.1% | 每端单次 |
+| Client | state_pressure_300k | 3.738 K records/s | 3.740 K records/s | +0.0% | 每端单次 |
+| NexMark | q18 forl0_tps_probe | 274.09 K events/s | 321.25 K events/s | **+17.2%** | 每端单次 |
+| NexMark | q19 forl0_tps_probe | 1.130 M events/s | 1.130 M events/s | 0.0% | 每端单次 |
 
-## 结论
+WordCount 的三次直接测量如下：
 
-最新批次修复了先前的 NexMark category/path 问题，q3/q4/q9/q18/q19/q20 已经
-真正提交并产生结果。单次配对显示 ForL0 在 q18、q20、q9、q4、q3 的吞吐分别
-为 **+38.1%、+13.4%、+15.7%、+54.8%、+4.8%**，q19 为 **-1.7%**。
-这些是有价值的系统级信号，但每个查询只有一对样本，仍不足以形成论文级稳定结论。
+| Backend | Repeat 1 | Repeat 2 | Repeat 3 | Median |
+|---|---:|---:|---:|---:|
+| HashMap | 4.529 M/s | 4.986 M/s | 4.988 M/s | 4.986 M/s |
+| ForL0 | 4.529 M/s | 4.532 M/s | 4.535 M/s | 4.532 M/s |
 
-本批次依然不能证明上述提升来自 L0 硬件：launcher 日志没有归档 TaskManager 的
-`[ForL0-HotCache]` 激活、容量、hit/miss 或销毁 summary。q18 使用复杂 Row state，
-不是当前 scalar HotCache 的直接适用路径；它的提升更可能来自 native SwissTable、
-fixed-row 与 JNI 路径。Client 的 batch scalar 提升同样主要属于 JNI batching，不能
-写成 L0 加速。
+HashMap 第一次存在明显冷启动慢样本，后两次稳定在约 4.99 M/s；ForL0 三次稳定在
+约 4.53 M/s。因此不能把回退解释成单个异常点。
 
-## 有效结果
+## CPU 效率与并行度
 
-### WordCount
+| Query | HashMap CPU | ForL0 CPU | CPU 变化 | Throughput/core 比率 |
+|---|---:|---:|---:|---:|
+| q18 | 22.48 cores | 5.50 cores | -75.5% | 4.79x |
+| q19 | 9.74 cores | 5.28 cores | -45.8% | 1.84x |
 
-场景 `stateful_counter_p4_probe`，2M keys、200M records、parallelism 4，best-of-3：
+较低 CPU 需求意味着 ForL0 **可能**拥有提高并行度或同机部署更多任务的余量，但
+不能直接据此把正式矩阵改为 p8：本批次的 p8 q18/q20 已经导致 HashMap TaskManager
+丢失，同时 ForL0 的共享 L0 分配也失败。下一轮应先完成稳定的 p4 配对，再单独做
+p4→p8 scaling；每个点至少 3 次，并同时检查吞吐、CPU、L0 分配和 TaskManager 存活。
 
-| Backend | 三次吞吐（records/s） | 选中值 |
-|---|---:|---:|
-| HashMap | 4,981,463 / 4,532,995 / 4,533,909 | 4,981,463 |
-| ForL0 | 4,982,396 / 4,155,123 / 4,987,044 | 4,987,044 |
+## 失败单元与根因
 
-选中值差异仅 **+0.11%**，应视为持平。两端都有明显慢样本，后续报告应使用交替
-运行的独立 job 和 median/置信区间，不应只展示 best-of-3。该 fused add-and-get
-路径始终更新权威 SwissTable；旧 HotCache 只做 cache put，并不提供读取加速。
+| Workload | Backend | 观测根因 |
+|---|---|---|
+| q18 lateq deep | HashMap | p8 压力下 TaskManager 丢失 |
+| q18 lateq deep | ForL0 | `strict L0 allocation failed` |
+| q20 lateq deep | HashMap | p8 压力下 TaskManager 丢失 |
+| q20 lateq deep | ForL0 | `strict L0 allocation failed` |
+| q9 pressure | ForL0 | L0 全局预算只按 parallelism 切分，低估 backend engine 数量 |
+| q4 pressure | ForL0 | 多个 keyed operator 共享 L0，实际 engine 数超过 p4 |
+| q3 extra SQL | ForL0 | L0 分配失败，随后达到 SwissTable max-table-capacity |
+| Client scalar | ForL0 | 第四个约 128 MiB L0 分配失败；旧 runner 还漏报非零状态 |
 
-原始数据：[`HashMap`](formal__raw__wordcount_stateful_counter_p4_probe_hashmap_20260811_170422.json)、
-[`ForL0`](formal__raw__wordcount_stateful_counter_p4_probe_forl0_20260811_170646.json)。
+q4 日志显示最多有三个 p4 keyed backend operator 组，即可能同时创建 12 个 backend
+engine。旧配置仅按 pipeline parallelism=4 切分全局 256 MiB L0，导致每个 engine
+请求约 64 MiB，多个实例启动时迅速耗尽全局设备池。
 
-### NexMark
+## WordCount 回退定位与调优
 
-| Query | HashMap events/s | ForL0 events/s | 吞吐变化 | 备注 |
-|---|---:|---:|---:|---|
-| q18 lateq | 1,050,000 | 1,450,000 | **+38.1%** | 两端 summary 完整；HashMap cancel 返回 409 |
-| q19 | 957,640 | 941,190 | **-1.7%** | 近似持平 |
-| q20 | 414,260 | 469,580 | **+13.4%** | 候选优势 |
-| q9 | 96,540 | 111,710 | **+15.7%** | ForL0 的报告 CPU 更高，per-core 反而更低 |
-| q4 | 172,480 | 266,930 | **+54.8%** | 最强候选，必须重复验证 |
-| q3 | 538,860 | 564,570 | **+4.8%** | 小幅候选优势 |
+ForL0 WordCount 日志记录约 2 亿次 fused counter 写入，但 L0 cache 的
+`lookups=0`、`hits=0`，每个 engine 都触发 write bypass；与此同时每轮仍分配总计
+512 MiB L0。该 fused `addAndGetLong` 路径直接更新权威 SwissTable，当前 L0 cache
+没有提供读取收益，却引入设备分配和初始化成本。
 
-q18 TPS probe 的 HashMap N01 在提交后很快失败，不能与 N02 配对；当时的 failure
-marker 没有收集 TaskManager stderr，因此仅凭现有日志无法确定最终异常。另有两个
-driver 在完整 summary 后 cancel 已结束 job 时收到 HTTP 409。409 是清理竞态，样本
-可保留；其他非零退出即使含有局部 summary 也不应接纳。
+提交 `b0e686a` 已进行以下调整：
 
-### Client use case
+1. 仅对 `stateful_counter_p4_probe` 关闭无效 L0 cache，不改变记录数、key 分布、
+   parallelism、聚合口径或 HashMap baseline。
+2. 按每个 p4 subtask 约 500K distinct keys，将 primitive main table 预分配为
+   1,048,576 slots，减少测量期间扩容。
+3. 仍使用每端 3 次、median 聚合。调优后的数值必须由下一轮真实服务器重跑产生，
+   本报告不把配置推测写成已经获得的提升。
 
-| 场景 | HashMap records/s | ForL0 records/s | 变化 |
-|---|---:|---:|---:|
-| contract, 300 records | 74.34 | 74.30 | -0.05% |
-| optimized CSV, 3K | 743.94 | 742.70 | -0.17% |
-| state pressure, 300K | 3,737.08 | 3,738.09 | +0.03% |
-| scalar batch, 2M × 64 ops | 248,273.88 | 248,639.85 | +0.15% |
+## 已实施的失败修复
 
-四组均应视为持平。旧批次中接近 2× 的 scalar 结果没有在本轮复现；两端最新完成
-时间都约 8.05 秒，说明此前差异受轮询量化或运行路径变化影响，旧结论必须撤回。
+- q4/q9 pressure：L0 job-wide 预算按最多 16 个并发 engine share 切分。
+- q18/q20 lateq：正式配对改为服务器已完成过的 p4 拓扑，并缩短到稳定测量窗口；
+  两端使用完全相同的 workload 配置。
+- q3：将持续保留输入的形状从 1M TPS 调整到可持续的 200K TPS，并将 table ceiling
+  提高到 4,194,304。
+- Client scalar：L0 预算改为 8 份 64 MiB share；Client 返回空结果时 runner 现在
+  必须非零退出并生成 `FAILED_client_*` 证据。
+- 一键 smoke/formal 默认显式 `--no-report`。实验服务器只生成 raw、NexMark JSON、
+  `.logs` 和失败证据，不再生成 figure、PDF 或 HTML。
+- 本地派生目录 `output/` 和 `tmp/` 已加入 `.gitignore`，图和 PDF 不推送远端。
 
-## 本轮代码校对发现与修复
+## 下一轮验收标准
 
-- `l0_cache_size` 过去被每个并行 StateEngine 完整申请，导致 p4/p8 并行实例竞争
-  同一硬件池。现在它被解释为 job-wide `l0-cache.total-size`，runner 自动按 workload
-  parallelism 设置 `expected-engines` 并均分。
-- 正式 L0-on 消融启用 strict allocation；硬件不可用或容量缩水不再悄悄降级。
-- 每个 scalar state 的固定 64-set 配额改为显式 `l0-cache.state-size`，并输出请求量、
-  实际量、state/engine counters 和 native memory peak。
-- SwissTable 的 max capacity、load factor 和 native-memory limit 从“声明但未生效”改为
-  强制执行；超限以明确异常失败，避免直接被容器 OOM killer 以 137 杀死。
-- 长期只写 workload 达阈值后停止污染 L0；下一次读取强制 miss 并重新准入，保证正确性。
-- NexMark 只接纳可证明的 post-summary cancel-409；其他 driver 异常一律重试/失败。
-- `docker/run_all_apps.sh` 现在把 TaskManager 的 L0/memory/根因证据写入
-  `benchmark/results/run_logs/`，同时进入 `benchmark/results/.logs`；每条 benchmark
-  命令使用独立时间窗口，后续 workload 不会误用先前的 L0 激活记录。
-- 新增 `./reproduce-l0-ablation`，一键运行 HashMap、ForL0-L0-off、ForL0-L0-on
-  三路同场景比较；L0-on 缺少真实激活证据会失败。
+1. 运行更新后的 `./reproduce-all`，先通过 smoke，再执行完整正式矩阵。
+2. WordCount 两端各 3 次；确认 ForL0 日志显示该场景 L0 cache disabled，并比较
+   预分配后的稳定中位数。
+3. q4/q9/q18/q20/q3/Client scalar 不得再出现 strict allocation、table capacity、
+   TaskManager drop 或漏报失败。
+4. q18/q19 CPU 效率至少重复 3 次；记录每次 CPU 序列、TaskManager 数和采样窗口。
+5. 完整矩阵成功后再运行独立 p4/p8 scaling。若 p8 只降低 CPU 而吞吐不增长，或
+   再次触发 L0/内存压力，则不能将 CPU/core 优势解释成可用扩展性。
 
-## 下一轮验收
+## 派生报告
 
-1. 先运行 `./reproduce-l0-ablation`，确认每个 L0-on engine 都有 `active=1` 记录且
-   没有硬件 fallback；三路 JSON 的 `_metadata.variant` 必须不同。
-2. 再运行 `./reproduce-all`。关键 query 至少进行 3 个独立、交替顺序的配对 job。
-3. 报告 L0 hit rate、write bypass、requested/actual bytes、native peak 与 Full GC；没有
-   同批证据时，只能表述为 ForL0 backend 提升，不能表述为 L0 硬件提升。
-4. q4、q18 是优先复验对象；q19 是回归守门项；WordCount 和 Client batch 当前按持平处理。
+本地分析命令：
+
+```bash
+python benchmark/scripts/generate_campaign_analysis.py \
+  --campaign benchmark/results/runs/20260816_115143 --output output
+```
+
+生成的 PDF、SVG、PNG、CSV 和 Markdown 仅保存在本地 `output/`。本文件是仓库内
+持续更新的文字汇报，图表不进入 Git。
