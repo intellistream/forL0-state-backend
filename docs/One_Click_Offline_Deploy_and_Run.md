@@ -86,8 +86,8 @@ cd ~/forl0-runtime/docker
 - `--profile`：仅采集硬件、NUMA、软件版本、DRAM 和分级 L0 标定，输出到
   `benchmark/results/profiles/<run_id>/`。开始前会自动停止遗留 Flink 容器，避免
   其他进程占用全局 L0 池；L0 或并行实例标定不完整时命令返回失败，不产生虚假的
-  “完成”状态。L0 按每个 TaskManager 进程 64/128/192 MiB 的生产形态容量探测，
-  不再使用 vendor runtime 会拒绝的 1 MiB tuner 池。
+  “完成”状态。每个实例建立至少 64 MiB 的独立 vendor tuner，并按 1/4/16 MiB
+  渐进工作集探测；不会把整个 tuner 配额一次性扫写。
 - `--full`：穷举 `benchmark/config/tuning_space.yaml` 中的 162 组配置；每组运行
   W01-W02、N01-N14、C01-C08 全部 24 个正式 workload，输出到
   `benchmark/results/tuning/<run_id>/`。开始搜索前必须先通过 smoke 正确性门禁。

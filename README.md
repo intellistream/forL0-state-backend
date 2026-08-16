@@ -207,11 +207,11 @@ L0 不存在、所有分级探针失败或并行 TaskManager 形态探针失败�
 每轮还会在 Flink 启动前自动生成 `hardware_snapshot.json`、
 `dram_calibration.json` 和 `l0_calibration.json`。前者保存 CPU/cache/NUMA、内存、
 内核、L0 设备与运行库指纹；后两者测量目标机 DRAM/L0 的工作集延迟、带宽和
-1/2/4 worker 扩展曲线。L0 以真实 TaskManager 进程池形态按每实例
-64/128/192 MiB 分级，并在隔离子进程执行；每个池内部仍测量从 64 KiB 到池容量的
-工作集曲线。标定器将 vendor tuner 总容量与测量工作集大小分开，避免用厂商不支持的
-1 MiB tiny pool 初始化。任一级失败便停止更大的不安全请求；厂商库崩溃只会形成带
-signal/returncode 和 failure_stage 的诊断 JSON，不会终止父进程。
+1/2/4 worker 扩展曲线。L0 以真实 TaskManager 的独立进程池形态创建至少 64 MiB
+vendor tuner，再按 1/4/16 MiB 渐进分配并测量工作集，不会把整段 tuner 配额当作
+活跃数据区强制扫写。标定器将 vendor tuner 总容量与测量工作集大小真正分开；任一级
+失败便停止更大的不安全请求。厂商库崩溃只会形成带 signal/returncode、failure_stage
+及崩溃前最后阶段的诊断 JSON，不会终止父进程。
 这些文件用于在开发机建立性能模型，不包含环境变量、网络配置或认证信息。
 
 实验服务器默认不生成 figure、PDF 或 HTML。复制本轮 `results/runs/<run_id>/`

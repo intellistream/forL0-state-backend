@@ -77,6 +77,12 @@ std::string escape_json(const std::string& value) {
     return out;
 }
 
+void write_stage(const std::string& path, const char* stage) {
+    std::ofstream marker(path, std::ios::trunc);
+    marker << stage << "\n";
+    marker.flush();
+}
+
 Sample measure(uint8_t* memory, size_t bytes) {
     constexpr size_t line = 64;
     const size_t lines = std::max<size_t>(2, bytes / line);
@@ -230,6 +236,7 @@ int main(int argc, char** argv) {
     }
     const std::string library = argv[1];
     const std::string output = argv[2];
+    const std::string stage_output = output + ".stage";
     const size_t requested = std::strtoull(argv[3], nullptr, 10);
     const std::string evidence_label = argc >= 5 ? argv[4] : "real-hardware-calibration";
     const size_t tuner_capacity = argc == 6 ? std::strtoull(argv[5], nullptr, 10) : requested;
@@ -249,12 +256,15 @@ int main(int argc, char** argv) {
     // terminates this isolated probe process.
     out.flush();
 
+    write_stage(stage_output, "heap_allocation");
     void* heap = nullptr;
     if (posix_memalign(&heap, 64, requested) != 0 || !heap) return 3;
     std::memset(heap, 0, requested);
+    write_stage(stage_output, "heap_measurement");
     const auto heap_curve = measure_curve(static_cast<uint8_t*>(heap), requested);
     const auto heap_parallel = measure_parallel_curve(static_cast<uint8_t*>(heap), requested);
 
+    write_stage(stage_output, "vendor_library_load");
     Api api;
     if (library != "-") api.handle = dlopen(library.c_str(), RTLD_NOW);
     if (api.handle) {
@@ -280,8 +290,28 @@ int main(int argc, char** argv) {
     }
 
     void* tuner = nullptr;
+    write_stage(stage_output, "cache_tuner_init");
     const int init_rc = api.init(&tuner, tuner_capacity);
+    write_stage(stage_output, "cache_tuner_init_returned");
+    if (init_rc != 0 || !tuner) {
+        out << "  \"status\": \"failed\",\n"
+            << "  \"heap\": ";
+        write_curve(out, heap_curve);
+        out << ",\n  \"heap_parallel_read_scaling\": ";
+        write_parallel_curve(out, heap_parallel);
+        out << ",\n  \"l0\": null,\n"
+            << "  \"l0_reason\": \"cache_tuner_init failed\",\n"
+            << "  \"failure_stage\": \"cache_tuner_init\",\n"
+            << "  \"cache_tuner_init_rc\": " << init_rc << ",\n"
+            << "  \"tuner_created\": " << (tuner ? "true" : "false") << "\n}\n";
+        if (tuner) api.destroy(tuner);
+        dlclose(api.handle);
+        std::free(heap);
+        return 0;
+    }
+    write_stage(stage_output, "l0_mem_alloc");
     void* l0 = (init_rc == 0 && tuner) ? api.alloc(tuner, requested) : nullptr;
+    write_stage(stage_output, "l0_mem_alloc_returned");
     if (!l0) {
         out << "  \"status\": \"failed\",\n"
             << "  \"heap\": ";
@@ -290,9 +320,8 @@ int main(int argc, char** argv) {
         write_parallel_curve(out, heap_parallel);
         out << ",\n  \"l0\": null,\n"
             << "  \"l0_reason\": \""
-            << (init_rc == 0 ? "L0 allocation failed" : "cache_tuner_init failed") << "\",\n"
-            << "  \"failure_stage\": \""
-            << (init_rc == 0 ? "l0_mem_alloc" : "cache_tuner_init") << "\",\n"
+            << "L0 allocation failed\",\n"
+            << "  \"failure_stage\": \"l0_mem_alloc\",\n"
             << "  \"cache_tuner_init_rc\": " << init_rc << ",\n"
             << "  \"tuner_created\": " << (tuner ? "true" : "false") << "\n}\n";
         if (tuner) api.destroy(tuner);
@@ -300,7 +329,9 @@ int main(int argc, char** argv) {
         std::free(heap);
         return 0;
     }
+    write_stage(stage_output, "l0_memory_initialize");
     std::memset(l0, 0, requested);
+    write_stage(stage_output, "l0_measurement");
     const auto l0_curve = measure_curve(static_cast<uint8_t*>(l0), requested);
     const auto l0_parallel = measure_parallel_curve(static_cast<uint8_t*>(l0), requested);
 
@@ -316,9 +347,11 @@ int main(int argc, char** argv) {
     write_parallel_curve(out, l0_parallel);
     out << "\n}\n";
 
+    write_stage(stage_output, "l0_release");
     std::free(heap);
     api.free(tuner, l0);
     api.destroy(tuner);
     dlclose(api.handle);
+    write_stage(stage_output, "complete");
     return 0;
 }

@@ -11,6 +11,7 @@ trap cleanup EXIT
 cat > "$TEST_TMP/fake_l0.cpp" <<'CPP'
 #include <cstdlib>
 #include <cstddef>
+#include <csignal>
 
 struct Tuner { size_t capacity; };
 
@@ -26,6 +27,11 @@ extern "C" int cache_tuner_destroy(void* tuner) {
 extern "C" void* l0_mem_alloc(void* raw_tuner, size_t bytes) {
     Tuner* tuner = static_cast<Tuner*>(raw_tuner);
     if (!tuner || bytes > tuner->capacity) return nullptr;
+    size_t crash_limit_mb = 16;
+    if (const char* configured = std::getenv("FAKE_L0_CRASH_LIMIT_MB")) {
+        crash_limit_mb = std::strtoull(configured, nullptr, 10);
+    }
+    if (bytes > (crash_limit_mb << 20)) std::raise(SIGSEGV);
     void* memory = nullptr;
     return posix_memalign(&memory, 64, bytes) == 0 ? memory : nullptr;
 }
@@ -66,6 +72,23 @@ assert old["failure_stage"] == "cache_tuner_init", old
 assert old["cache_tuner_init_rc"] == 1, old
 PY
 
+# A vendor crash must leave an exact last-stage breadcrumb for diagnosis.
+python3 - "$TEST_TMP/l0_calibrate" "$TEST_TMP/libl0mempool.so" \
+    "$TEST_TMP/crash.json" <<'PY'
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+completed = subprocess.run(
+    [sys.argv[1], sys.argv[2], sys.argv[3], str(64 << 20), "contract-test", str(64 << 20)],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+assert completed.returncode == -signal.SIGSEGV, completed
+assert Path(sys.argv[3] + ".stage").read_text(encoding="utf-8").strip() == "l0_mem_alloc"
+PY
+
 # Exercise the Python orchestrator with the fake ABI too. Hide the host taskset
 # affinity policy so this remains deterministic inside constrained CI cpusets.
 mkdir -p "$TEST_TMP/bin"
@@ -90,12 +113,50 @@ import sys
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 assert data["status"] == "complete", data
 assert data["l0_successful_probes"] == 3, data
-sizes = [probe["size_mb"] for probe in data["probes"] if probe["kind"] == "l0"]
-assert sizes == [64, 128, 192], sizes
+sizes = [probe["allocation_mb"] for probe in data["probes"] if probe["kind"] == "l0"]
+assert sizes == [1, 4, 16], sizes
+for probe in data["probes"]:
+    if probe["kind"] != "l0":
+        continue
+    payload = json.load(open(sys.argv[1].replace("profile_manifest.json", probe["file"]),
+                             encoding="utf-8"))
+    assert payload["tuner_capacity_bytes"] == 64 << 20, payload
+    assert probe["tuner_capacity_mb"] == 64, probe
+    assert payload["requested_bytes"] == probe["allocation_mb"] << 20, payload
 parallel = data["parallel_instance_probe"]
 assert parallel["expected_instances"] == 2, parallel
-assert parallel["allocation_mb_per_instance"] == 64, parallel
+assert parallel["allocation_mb_per_instance"] == 1, parallel
+assert parallel["tuner_capacity_mb_per_instance"] == 64, parallel
 assert parallel["status"] == "complete", parallel
+PY
+
+# A partial staged curve is diagnostic evidence, not a complete calibration.
+set +e
+PATH="$TEST_TMP/bin:$PATH" \
+FAKE_L0_CRASH_LIMIT_MB=4 \
+FORL0_L0_LIBRARY_PATH="$TEST_TMP/libl0mempool.so" \
+FORL0_L0_DEVICE_PATH=/dev/null \
+FORL0_EXPECTED_TASKMANAGERS=2 \
+FORL0_PROFILE_CLUSTER_CLEANED=true \
+    python3 "$REPO_ROOT/benchmark/scripts/collect_profile.py" \
+        --project-root "$REPO_ROOT" --output-dir "$TEST_TMP/partial-profile" --timeout 60
+partial_rc=$?
+set -e
+[[ "$partial_rc" -ne 0 ]]
+
+python3 - "$TEST_TMP/partial-profile/profile_manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+data = json.load(open(manifest_path, encoding="utf-8"))
+assert data["status"] == "failed", data
+assert data["l0_successful_probes"] == 2, data
+assert data["reason"] == "staged L0 calibration incomplete: 2/3 probes succeeded", data
+failed = json.load(open(manifest_path.parent / "l0_calibration_16mb.json", encoding="utf-8"))
+assert failed["signal"] == 11, failed
+assert failed["failure_stage"] == "l0_mem_alloc", failed
 PY
 
 echo "L0 calibrator contract tests passed"

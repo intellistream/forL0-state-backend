@@ -27,6 +27,9 @@ def run_probe(binary: Path, library: str, output: Path, size: int,
               command_prefix: list[str] | None = None,
               tuner_capacity: int | None = None) -> dict[str, Any]:
     partial = output.with_suffix(".partial.json")
+    stage_file = Path(str(partial) + ".stage")
+    partial.unlink(missing_ok=True)
+    stage_file.unlink(missing_ok=True)
     command = list(command_prefix or []) + [
         str(binary), library, str(partial), str(size), evidence_label]
     if tuner_capacity is not None:
@@ -49,16 +52,28 @@ def run_probe(binary: Path, library: str, output: Path, size: int,
         except (OSError, json.JSONDecodeError):
             payload = {}
     partial.unlink(missing_ok=True)
+    last_stage = None
+    if stage_file.is_file():
+        try:
+            last_stage = stage_file.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            last_stage = None
+    stage_file.unlink(missing_ok=True)
     if returncode != 0 or not payload:
         payload = {
             "schema_version": 1,
             "evidence_label": evidence_label,
             "status": "failed",
             "requested_bytes": size,
+            "tuner_capacity_bytes": tuner_capacity if tuner_capacity is not None else size,
             "returncode": returncode,
             "signal": -returncode if returncode < 0 else None,
             "reason": "isolated calibration probe failed",
         }
+    if last_stage:
+        payload["last_stage"] = last_stage
+        if payload.get("status") == "failed" and "failure_stage" not in payload:
+            payload["failure_stage"] = last_stage
     payload["command"] = command
     payload["started_at"] = started
     payload["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -108,7 +123,7 @@ def main() -> int:
             os.environ.get("FORL0_PROFILE_CLUSTER_CLEANED", "").lower() == "true"),
         "l0_probe_strategy": {
             "kind": "production-shaped-process-pool",
-            "single_instance_capacities_mb": [64, 128, 192],
+            "allocation_working_sets_mb": [1, 4, 16],
             "minimum_tuner_capacity_mb": args.minimum_l0_tuner_mb,
         },
         "probes": [],
@@ -160,23 +175,27 @@ def main() -> int:
     best_l0_payload: dict[str, Any] | None = None
     successful_sizes_mb: list[int] = []
     if not args.simulate and l0_library and l0_device:
-        # Real workloads successfully initialize process pools at 64 MiB and
-        # above. Tiny 1/4/16 MiB tuner pools are not production-shaped and are
-        # rejected by this vendor runtime. Each allocated pool still measures
-        # nested working sets down to 64 KiB.
-        for size_mb in (64, 128, 192):
+        # Match production ownership without stress-touching the entire tuner
+        # quota: one process-scoped tuner of at least 64 MiB, then staged small
+        # allocations like the vendor examples and the cache's active region.
+        for size_mb in (1, 4, 16):
             name = f"l0_calibration_{size_mb}mb.json"
             tuner_capacity = max(args.minimum_l0_tuner_mb, size_mb) << 20
             probe = run_probe(binary, l0_library, output / name, size_mb << 20,
                               evidence_label, args.timeout,
                               tuner_capacity=tuner_capacity)
-            manifest["probes"].append({"kind": "l0", "size_mb": size_mb,
-                                        "file": name, "status": probe.get("status")})
+            manifest["probes"].append({
+                "kind": "l0",
+                "allocation_mb": size_mb,
+                "tuner_capacity_mb": tuner_capacity >> 20,
+                "file": name,
+                "status": probe.get("status"),
+            })
             if probe.get("status") == "complete":
                 successful_l0 += 1
                 best_l0_payload = probe
                 successful_sizes_mb.append(size_mb)
-            # Once the smallest safe allocation cannot be established, larger
+            # Once a safe allocation cannot be established, larger
             # requests are neither useful nor safe in this host context. This
             # also avoids turning a resource-busy init failure into a later
             # vendor-library crash.
@@ -218,6 +237,8 @@ def main() -> int:
         manifest["parallel_instance_probe"] = {
             "expected_instances": expected_instances,
             "allocation_mb_per_instance": concurrent_size_mb,
+            "tuner_capacity_mb_per_instance": max(
+                args.minimum_l0_tuner_mb, concurrent_size_mb),
             "instances": instance_results,
             "status": ("complete" if all(item["status"] == "complete" for item in instance_results)
                        else "failed"),
@@ -242,9 +263,10 @@ def main() -> int:
     elif not args.simulate and (not l0_library or not l0_device):
         manifest["status"] = "failed"
         manifest["reason"] = "real profile requires a detected L0 device and vendor library"
-    elif not args.simulate and l0_library and l0_device and successful_l0 == 0:
+    elif not args.simulate and l0_library and l0_device and successful_l0 != 3:
         manifest["status"] = "failed"
-        manifest["reason"] = "L0 was detected but every safe staged probe failed"
+        manifest["reason"] = (
+            f"staged L0 calibration incomplete: {successful_l0}/3 probes succeeded")
     elif instance_results and not all(item["status"] == "complete" for item in instance_results):
         manifest["status"] = "failed"
         manifest["reason"] = "single-instance L0 succeeded but concurrent TaskManager-shaped probes failed"
