@@ -35,7 +35,7 @@ fi
 source "$L0_DETECTOR"
 FLINK_DIR="${FLINK_HOME:-}"
 INSTALL_DIR="${HOME}/forl0-runtime"
-RESULTS_DIR="${APP_ROOT}/benchmark/results"
+RESULTS_DIR="${FORL0_RESULTS_DIR:-${APP_ROOT}/benchmark/results/runs/manual_$(date '+%Y%m%d_%H%M%S')/formal}"
 BACKEND="all"
 QUERIES="q4,q5,q8,q9,q11,q18,q19,q20"
 QUERIES_EXPLICIT=false
@@ -100,7 +100,8 @@ Common options:
   --install-dir PATH      Runtime install dir when running from an offline bundle.
                           Default: ~/forl0-runtime
   --results-dir PATH      Benchmark output directory. Relative paths are resolved
-                          from the launcher directory. Default: benchmark/results
+                          from the launcher directory. Default: an isolated
+                          benchmark/results/runs/<run_id>/formal directory
   --backend NAME          all / forl0 / hashmap. Default: all
   --queries LIST          Override NexMark query list for pressure scenarios.
                           By default, each tuned pressure scenario uses its own

@@ -175,12 +175,15 @@ bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" \
 
 默认要求 2 个 TaskManager、共 8 个 slot。若部署拓扑不同，可显式传入 `--expected-taskmanagers N --expected-slots N`。真实离线 L0 验证不要使用 `--allow-simulation`。
 
-结果位于 `$HOME/forl0-runtime/benchmark/results/`：
+`./reproduce-all` 运行时把本轮内容隔离在
+`$HOME/forl0-runtime/benchmark/results/runs/<run_id>/`，其中 `.logs` 是完整持续日志。
+smoke 和正式实验都成功后，本轮结果会发布到
+`$HOME/forl0-runtime/benchmark/results/latest/`。
 
-- `raw/`：WordCount、Client Usecase、NexMark 汇总 JSON
-- `nexmark_*/`：NexMark 原始 summary、日志和监控数据
-- `run_logs/ascend_reproduction_*.tsv`：编号化复跑 manifest
-- `reports/benchmark_report.html`：HTML 汇总报告
+`latest/` 中全部是文件，没有子目录；原始层级用文件名中的 `__` 表示，
+`UPLOAD_MANIFEST.tsv` 记录扁平文件名与原路径的映射。通过 GitHub 网页上传时，
+直接选中 `latest/` 中的全部文件即可。新一轮成功结果会替换上一轮，失败结果不会
+覆盖 `latest/`。
 
 #### 5. 常见问题快速定位
 

@@ -22,14 +22,21 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$TEST_TMP/benchmark/results"
 cp "$REPO_ROOT/reproduce-all" "$TEST_TMP/reproduce-all"
+mkdir -p "$TEST_TMP/docker/lib"
+cp "$REPO_ROOT/docker/lib/result_layout.sh" "$TEST_TMP/docker/lib/result_layout.sh"
 
 cat > "$TEST_TMP/reproduce-smoke" <<'EOF'
 #!/usr/bin/env bash
-printf 'smoke:%s:%s\n' "$FORL0_RUN_ID" "$FORL0_RUN_STARTED_EPOCH" >> "$FORL0_TEST_TRACE"
+mkdir -p "$FORL0_RESULTS_DIR"
+printf 'smoke output\n' > "$FORL0_RESULTS_DIR/smoke.txt"
+printf 'smoke:%s:%s:%s\n' "$FORL0_RUN_ID" "$FORL0_RUN_STARTED_EPOCH" "$FORL0_RESULTS_DIR" >> "$FORL0_TEST_TRACE"
 EOF
 cat > "$TEST_TMP/run-forl0-offline.sh" <<'EOF'
 #!/usr/bin/env bash
-printf 'formal:%s:%s\n' "$FORL0_RUN_ID" "$FORL0_RUN_STARTED_EPOCH" >> "$FORL0_TEST_TRACE"
+mkdir -p "$FORL0_RESULTS_DIR"
+printf 'formal output\n' > "$FORL0_RESULTS_DIR/formal.txt"
+printf 'formal:%s:%s:%s\n' "$FORL0_RUN_ID" "$FORL0_RUN_STARTED_EPOCH" "$FORL0_RESULTS_DIR" >> "$FORL0_TEST_TRACE"
+[[ "${FORL0_TEST_FAIL_FORMAL:-false}" != "true" ]] || exit 7
 EOF
 
 export FORL0_TEST_TRACE="$TEST_TMP/trace"
@@ -38,11 +45,31 @@ FORL0_RUN_STARTED_EPOCH=123 \
 FORL0_CONTROL_REVISION=test \
     bash "$TEST_TMP/reproduce-all" --worker
 
-grep -q '^smoke:campaign42_smoke:' "$FORL0_TEST_TRACE"
-grep -q '^formal:campaign42:' "$FORL0_TEST_TRACE"
-if grep -q '^formal:campaign42:123$' "$FORL0_TEST_TRACE"; then
+grep -q '^smoke:campaign42_smoke:.*:.*/benchmark/results/runs/campaign42/smoke$' "$FORL0_TEST_TRACE"
+grep -q '^formal:campaign42:.*:.*/benchmark/results/runs/campaign42/formal$' "$FORL0_TEST_TRACE"
+if grep -q '^formal:campaign42:123:' "$FORL0_TEST_TRACE"; then
     echo "formal campaign reused the smoke start epoch" >&2
     exit 1
 fi
+[[ -f "$TEST_TMP/benchmark/results/latest/smoke__smoke.txt" ]]
+[[ -f "$TEST_TMP/benchmark/results/latest/formal__formal.txt" ]]
+[[ -f "$TEST_TMP/benchmark/results/latest/campaign.log" ]]
+[[ -f "$TEST_TMP/benchmark/results/latest/run_manifest.json" ]]
+if find "$TEST_TMP/benchmark/results/latest" -mindepth 1 -type d -print -quit | grep -q .; then
+    echo "published latest contains a directory" >&2
+    exit 1
+fi
+[[ ! -e "$TEST_TMP/benchmark/results/runs/campaign42" ]]
+
+if FORL0_RUN_ID=campaign-fail \
+   FORL0_CONTROL_REVISION=test \
+   FORL0_TEST_FAIL_FORMAL=true \
+   bash "$TEST_TMP/reproduce-all" --worker; then
+    echo "failed formal campaign unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q '"run_id": "campaign42"' "$TEST_TMP/benchmark/results/latest/run_manifest.json"
+[[ -f "$TEST_TMP/benchmark/results/runs/campaign-fail/FAILED.txt" ]]
+grep -q '"status": "failed"' "$TEST_TMP/benchmark/results/runs/campaign-fail/run_manifest.json"
 
 echo "smoke orchestration tests passed"

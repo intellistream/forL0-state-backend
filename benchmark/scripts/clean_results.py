@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""清理 benchmark 结果目录"""
+"""Safely clean generated benchmark results while retaining documentation."""
 
 import shutil
 import sys
@@ -11,60 +11,53 @@ from utils.config import get_results_dir
 RESULTS_DIR = get_results_dir('')
 
 
+def _is_real_direct_child(path: Path) -> bool:
+    """Return true only for a non-symlink entry directly below RESULTS_DIR."""
+    return (
+        path.parent.resolve() == RESULTS_DIR.resolve()
+        and path.name not in {"", ".", ".."}
+        and not path.is_symlink()
+    )
+
+
+def _remove_entry(path: Path) -> None:
+    if not _is_real_direct_child(path):
+        raise RuntimeError(f"拒绝清理不安全的结果路径: {path}")
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
 def clean_results(confirm: bool = True) -> None:
-    """清理 results 目录下的所有文件"""
-    
-    dirs_to_clean = [
-        RESULTS_DIR / "raw",
-        RESULTS_DIR / "figures", 
-        RESULTS_DIR / "reports",
-        RESULTS_DIR / "latency",
-        RESULTS_DIR / "profiles",
-        RESULTS_DIR / "hardware",
-    ]
-    
-    # 查找 nexmark_* 目录
-    nexmark_dirs = list(RESULTS_DIR.glob("nexmark_*"))
-    
-    # 统计文件数量
-    total_files = 0
-    for d in dirs_to_clean:
-        if d.exists():
-            total_files += len(list(d.glob("*")))
-    total_files += len(nexmark_dirs)
-    
-    if total_files == 0:
+    """Remove generated campaigns and legacy outputs, but keep result docs."""
+
+    legacy_names = ["raw", "figures", "reports", "latency", "profiles", "hardware", "run_logs"]
+    targets = [RESULTS_DIR / "latest", RESULTS_DIR / "runs"]
+    targets.extend(RESULTS_DIR / name for name in legacy_names)
+    targets.extend(sorted(RESULTS_DIR.glob("nexmark_*")))
+    targets = [path for path in targets if path.exists() or path.is_symlink()]
+
+    if not targets:
         print("✓ Results 目录已经是空的")
         return
-    
-    print(f"将清理以下目录中的 {total_files} 个文件/目录:")
-    for d in dirs_to_clean:
-        if d.exists():
-            files = list(d.glob("*"))
-            if files:
-                print(f"  - {d}: {len(files)} 个文件")
-    if nexmark_dirs:
-        print(f"  - nexmark_* 目录: {len(nexmark_dirs)} 个")
-    
+
+    print(f"将清理 {len(targets)} 个生成结果入口（README 等说明文件会保留）:")
+    for path in targets:
+        print(f"  - {path}")
+
     if confirm:
         response = input("\n确认清理? [y/N]: ").strip().lower()
         if response != 'y':
             print("已取消")
             return
     
-    # 执行清理
-    for d in dirs_to_clean:
-        if d.exists():
-            for f in d.glob("*"):
-                if f.is_file():
-                    f.unlink()
-                elif f.is_dir():
-                    shutil.rmtree(f)
-    
-    # 清理 nexmark_* 目录
-    for d in nexmark_dirs:
-        shutil.rmtree(d)
-    
+    for path in targets:
+        _remove_entry(path)
+
+    # Keep the run staging root available for the next campaign. Empty
+    # directories are not required in Git and will be recreated by launchers.
+    (RESULTS_DIR / "runs").mkdir(parents=True, exist_ok=True)
     print("✓ 清理完成")
 
 

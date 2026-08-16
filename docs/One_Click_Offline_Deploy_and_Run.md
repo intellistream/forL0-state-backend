@@ -70,7 +70,8 @@ cd ~/forl0-runtime/docker
 
 ## 3. 结果查看
 
-- 性能对比：`benchmark/results/raw/`
-- NexMark 汇总：`benchmark/results/nexmark_*/nexmark_results.json`
-- 火焰图：`benchmark/results/**/profiles/`
-- HTML 报告：`benchmark/results/reports/benchmark_report.html`
+推荐从仓库根目录运行 `./reproduce-all`。运行中的结果和完整日志分别位于
+`benchmark/results/runs/<run_id>/` 与其 `.logs`；成功后发布为
+`benchmark/results/latest/`。`latest/` 中只有文件、没有文件夹，文件名中的 `__`
+代表原目录分隔；`UPLOAD_MANIFEST.tsv` 可用于还原来源路径。需要从网页上传时，
+直接选择 `latest/` 中的全部文件。

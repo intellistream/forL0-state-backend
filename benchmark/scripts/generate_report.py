@@ -1995,8 +1995,11 @@ def generate_report(results, output_dir):
     
     # Prepare data
     config = load_config()
-    wc_hashmap = results.get('wordcount', {}).get('hashmap', {})
-    wc_forl0 = results.get('wordcount', {}).get('forl0', {})
+    # A scoped smoke campaign intentionally has no WordCount result. The
+    # loader represents an absent backend with None, so normalize it before
+    # rendering the partial correctness report.
+    wc_hashmap = results.get('wordcount', {}).get('hashmap') or {}
+    wc_forl0 = results.get('wordcount', {}).get('forl0') or {}
     wc_scenario = wc_hashmap.get('scenario') or wc_forl0.get('scenario')
     wc_config = dict(config.get('wordcount', {}))
     if wc_scenario:

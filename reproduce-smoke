@@ -5,8 +5,29 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_ROOT="${PROJECT_ROOT}/benchmark/results"
-RUN_LOG="${FORL0_RUN_LOG:-${RESULTS_ROOT}/.logs}"
+RESULT_LAYOUT="${PROJECT_ROOT}/docker/lib/result_layout.sh"
+[[ -f "$RESULT_LAYOUT" ]] || {
+    echo "ERROR: missing result layout helper: $RESULT_LAYOUT" >&2
+    exit 1
+}
+source "$RESULT_LAYOUT"
+export FORL0_RUN_ID="${FORL0_RUN_ID:-smoke_$(date '+%Y%m%d_%H%M%S')}"
+forl0_validate_run_id "$FORL0_RUN_ID"
+if [[ -n "${FORL0_RESULTS_DIR:-}" ]]; then
+    RESULTS_ROOT="$FORL0_RESULTS_DIR"
+    [[ "$RESULTS_ROOT" == /* ]] || RESULTS_ROOT="${PROJECT_ROOT}/${RESULTS_ROOT}"
+else
+    RESULTS_BASE="$(forl0_results_base "$PROJECT_ROOT")"
+    RESULTS_ROOT="${RESULTS_BASE}/runs/${FORL0_RUN_ID}/smoke"
+    [[ ! -e "${RESULTS_BASE}/runs/${FORL0_RUN_ID}" ]] || {
+        echo "ERROR: smoke output already exists: ${RESULTS_BASE}/runs/${FORL0_RUN_ID}" >&2
+        exit 1
+    }
+fi
+mkdir -p "$RESULTS_ROOT"
+RESULTS_ROOT="$(cd "$RESULTS_ROOT" && pwd -P)"
+export FORL0_RESULTS_DIR="$RESULTS_ROOT"
+RUN_LOG="${FORL0_RUN_LOG:-$(dirname "$RESULTS_ROOT")/.logs}"
 MARKER="$(mktemp /tmp/forl0-smoke-check.XXXXXX)"
 
 cleanup() {
@@ -17,7 +38,6 @@ trap cleanup EXIT
 cd "$PROJECT_ROOT"
 export FORL0_OFFLINE_ONLY=true
 export FORL0_RUN_LOG="$RUN_LOG"
-export FORL0_RUN_ID="${FORL0_RUN_ID:-smoke_$(date '+%Y%m%d_%H%M%S')}"
 export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"
 
 if ! bash ./run-forl0-offline.sh --smoke-only --skip-docker-load; then

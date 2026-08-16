@@ -88,13 +88,14 @@ cd /path/to/forL0-state-backend/docker
   --test nexmark --query q4
 ```
 
-完整实验产物包括：
+`./reproduce-all` 的运行中产物位于
+`benchmark/results/runs/<run_id>/`，完整持续日志是该目录下的 `.logs`。
+成功后，所有产物会发布到 `benchmark/results/latest/`；该目录完全扁平，只有文件，
+因此可直接从 GitHub 网页一次选中上传。文件名中的 `__` 表示原目录分隔，
+`UPLOAD_MANIFEST.tsv` 给出原路径映射，完整日志会发布为 `campaign.log`。
 
-- `benchmark/results/raw/`：两遍实验的 raw JSON。
-- `benchmark/results/profiles/`：第二遍 CPU profiling flame graph。
-- `benchmark/results/reports/benchmark_report.html`：重新生成并校验过的 HTML 报告。
-- `benchmark/results/run_logs/`：一键脚本日志。
-- `benchmark/results/.logs`：`reproduce-*` 的持续合并输出，可直接 `tail -f`。
+新一轮成功结果会原子替换旧 `latest/` 并删除 staging；失败轮次不会污染
+`latest/`，诊断信息会暂留在唯一的 `runs/<run_id>/` 中，下一次启动时清理。
 
 L0 硬件归因使用三路一键消融（HashMap / ForL0-L0-off / ForL0-L0-on）：
 
@@ -103,7 +104,7 @@ L0 硬件归因使用三路一键消融（HashMap / ForL0-L0-off / ForL0-L0-on�
 ```
 
 L0-on 路径强制严格分配，并将每个 TaskManager 的 `engine_start`、state/engine
-summary、native 内存峰值保存到 `benchmark/results/run_logs/`；缺少激活证据会使脚本失败。
+summary、native 内存峰值保存在本轮 scoped results 中；缺少激活证据会使脚本失败。
 
 如只想先做依赖检查，可运行：
 
@@ -165,10 +166,11 @@ cd /path/to/forL0-state-backend/docker
   --no-profile
 ```
 
-运行完成后，HTML 报告位于：
+直接调用低层 `run_all_apps.sh` 时，HTML 报告位于对应的本轮结果目录；用
+`./reproduce-all` 成功发布后，它会成为 `latest/formal__reports__benchmark_report.html`：
 
 ```bash
-/path/to/forL0-state-backend/benchmark/results/reports/benchmark_report.html
+/path/to/forL0-state-backend/benchmark/results/latest/formal__reports__benchmark_report.html
 ```
 
 只基于已有结果重新生成报告：

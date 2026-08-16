@@ -62,11 +62,14 @@ def get_flink_home():
 def get_results_dir(subdir='raw'):
     """Get results directory path."""
     configured_root = os.environ.get('FORL0_RESULTS_DIR', '').strip()
-    results_root = (
-        Path(configured_root).expanduser()
-        if configured_root
-        else get_benchmark_root() / "results"
-    )
+    if configured_root:
+        results_root = Path(configured_root).expanduser()
+    else:
+        run_id = os.environ.get('FORL0_RUN_ID', '').strip()
+        if run_id:
+            results_root = get_benchmark_root() / "results" / "runs" / run_id / "formal"
+        else:
+            results_root = get_benchmark_root() / "results"
     results_dir = results_root / subdir
     results_dir.mkdir(parents=True, exist_ok=True)
     return results_dir

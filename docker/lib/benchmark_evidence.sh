@@ -5,7 +5,7 @@
 
 write_failed_marker() {
     local status="$1"
-    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
+    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results/runs/${FORL0_RUN_ID:-manual}/formal}"
     local log_dir="${results_dir}/run_logs"
     mkdir -p "$log_dir"
     local marker="${log_dir}/FAILED_${TEST_NAME}_${BACKEND}_$(date '+%Y%m%d_%H%M%S').txt"
@@ -43,7 +43,7 @@ PY
 }
 
 capture_taskmanager_evidence() {
-    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
+    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results/runs/${FORL0_RUN_ID:-manual}/formal}"
     local log_dir="${results_dir}/run_logs"
     mkdir -p "$log_dir"
     EVIDENCE_LOG="${log_dir}/taskmanager_${TEST_NAME}_${BACKEND}_$(date '+%Y%m%d_%H%M%S').log"

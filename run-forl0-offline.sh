@@ -14,7 +14,8 @@ fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_RESULTS_ROOT="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/benchmark/results}"
+export FORL0_RUN_ID="${FORL0_RUN_ID:-manual_$(date '+%Y%m%d_%H%M%S')}"
+DEFAULT_RESULTS_ROOT="${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/benchmark/results/runs/${FORL0_RUN_ID}/formal}"
 RUN_LOG="${FORL0_RUN_LOG:-${DEFAULT_RESULTS_ROOT}/.logs}"
 mkdir -p "$(dirname "$RUN_LOG")"
 if [[ "${FORL0_RUN_LOG_MODE:-overwrite}" == "append" ]]; then
@@ -212,5 +213,5 @@ export FORL0_APP_ROOT="$BUNDLE_DIR"
 export FORL0_CONTROL_ROOT="$SCRIPT_DIR"
 exec bash "$SCRIPT_DIR/forl0-offline-app.sh" \
     --install-dir "${FORL0_INSTALL_DIR:-${HOME}/forl0-runtime}" \
-    --results-dir "${FORL0_RESULTS_DIR:-${SCRIPT_DIR}/benchmark/results}" \
+    --results-dir "$DEFAULT_RESULTS_ROOT" \
     "${RUN_ARGS[@]}"

@@ -6,7 +6,14 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${PROJECT_ROOT}/.reproduce-all.pid"
-RUN_LOG="${PROJECT_ROOT}/benchmark/results/.logs"
+RUN_ID_FILE="${PROJECT_ROOT}/.reproduce-all.run-id"
+RESULT_LAYOUT="${PROJECT_ROOT}/docker/lib/result_layout.sh"
+[[ -f "$RESULT_LAYOUT" ]] || {
+    echo "ERROR: missing result layout helper: $RESULT_LAYOUT" >&2
+    exit 1
+}
+source "$RESULT_LAYOUT"
+RESULTS_BASE="$(forl0_results_base "$PROJECT_ROOT")"
 
 stop_process_tree() {
     local parent_pid="$1"
@@ -28,10 +35,12 @@ if [[ "${1:-}" == "--stop" ]]; then
         else
             echo "Ignoring stale reproduce-all PID file: ${worker_pid:-empty}"
         fi
-        rm -f "$PID_FILE"
     else
         echo "No active reproduce-all PID file found"
     fi
+    # Also clear an orphaned run-id marker when the PID file disappeared or
+    # became stale. It is launcher state, not benchmark evidence.
+    rm -f "$PID_FILE" "$RUN_ID_FILE"
     if [[ -f "${PROJECT_ROOT}/docker/docker_run.sh" ]]; then
         bash "${PROJECT_ROOT}/docker/docker_run.sh" stop || true
     elif command -v docker >/dev/null 2>&1; then
@@ -43,42 +52,91 @@ if [[ "${1:-}" == "--stop" ]]; then
 fi
 
 if [[ "${1:-}" == "--worker" ]]; then
+    campaign_run_id="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+    forl0_validate_run_id "$campaign_run_id"
+    campaign_root="$(forl0_prepare_campaign "$RESULTS_BASE" "$campaign_run_id")"
+    smoke_results="${campaign_root}/smoke"
+    formal_results="${campaign_root}/formal"
+    run_log="${campaign_root}/.logs"
+    campaign_started_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+    control_revision="${FORL0_CONTROL_REVISION:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
+    if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null || true)" ]]; then
+        control_dirty=true
+    else
+        control_dirty=false
+    fi
+
     printf '%s\n' "$$" > "$PID_FILE"
+    printf '%s\n' "$campaign_run_id" > "$RUN_ID_FILE"
     cleanup() {
-        rm -f "$PID_FILE"
+        rm -f "$PID_FILE" "$RUN_ID_FILE"
     }
-    trap cleanup EXIT INT TERM
+    interrupted() {
+        forl0_write_campaign_manifest "$campaign_root" "$campaign_run_id" interrupted \
+            "$control_revision" "$campaign_started_at" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$control_dirty" || true
+        forl0_mark_campaign_failed "$campaign_root" 130 || true
+        cleanup
+        exit 130
+    }
+    trap cleanup EXIT
+    trap interrupted INT TERM
 
     # Capture the complete worker lifecycle, including failures that happen
-    # before run-forl0-offline.sh installs its own tee. Nested launchers write
-    # to /dev/null and flow through this single append-only stream, avoiding
-    # duplicated log lines and preserving earlier runs.
-    mkdir -p "$(dirname "$RUN_LOG")"
-    exec >>"$RUN_LOG" 2>&1
-    export FORL0_OFFLINE_ONLY=true
-    campaign_run_id="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
-    export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
-    export FORL0_RUN_LOG=/dev/null
-    # A formal L0-server run must fail visibly instead of silently falling
-    # back when one parallel engine cannot obtain its assigned L0 quota.
-    export FORL0_L0_STRICT_OVERRIDE="${FORL0_L0_STRICT_OVERRIDE:-true}"
-    cd "$PROJECT_ROOT"
+    # before run-forl0-offline.sh installs its own tee. The redirected subshell
+    # closes the log before flat publication, so campaign.log is complete.
+    forl0_write_campaign_manifest "$campaign_root" "$campaign_run_id" running \
+        "$control_revision" "$campaign_started_at" "" "$control_dirty"
+    set +e
+    (
+        set -euo pipefail
+        export FORL0_OFFLINE_ONLY=true
+        export FORL0_CONTROL_REVISION="$control_revision"
+        export FORL0_RUN_LOG=/dev/null
+        # A formal L0-server run must fail visibly instead of silently falling
+        # back when one parallel engine cannot obtain its assigned L0 quota.
+        export FORL0_L0_STRICT_OVERRIDE="${FORL0_L0_STRICT_OVERRIDE:-true}"
+        cd "$PROJECT_ROOT"
 
-    echo ""
-    echo "=== reproduce-all CAMPAIGN=${campaign_run_id} REVISION=${FORL0_CONTROL_REVISION} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
-    FORL0_RUN_ID="${campaign_run_id}_smoke" \
+        echo ""
+        echo "=== reproduce-all CAMPAIGN=${campaign_run_id} REVISION=${FORL0_CONTROL_REVISION} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
+        FORL0_RESULTS_DIR="$smoke_results" \
+        FORL0_RUN_ID="${campaign_run_id}_smoke" \
         FORL0_RUN_STARTED_EPOCH="$(date '+%s')" \
-        bash ./reproduce-smoke
+            bash ./reproduce-smoke
 
-    export FORL0_RUN_ID="$campaign_run_id"
-    export FORL0_RUN_STARTED_EPOCH="$(date '+%s')"
-    echo "SMOKE PASSED: starting formal campaign RUN_ID=${FORL0_RUN_ID} (W01-W02, N01-N14, C01-C08)"
+        export FORL0_RESULTS_DIR="$formal_results"
+        export FORL0_RUN_ID="$campaign_run_id"
+        export FORL0_RUN_STARTED_EPOCH="$(date '+%s')"
+        echo "SMOKE PASSED: starting formal campaign RUN_ID=${FORL0_RUN_ID} (W01-W02, N01-N14, C01-C08)"
 
-    FORL0_RUN_LOG_MODE=append bash ./run-forl0-offline.sh \
-        --reproduce-ascend \
-        --keep-going \
-        --skip-docker-load
-    exit $?
+        FORL0_RUN_LOG_MODE=append bash ./run-forl0-offline.sh \
+            --reproduce-ascend \
+            --keep-going \
+            --skip-docker-load
+    ) >>"$run_log" 2>&1
+    campaign_status=$?
+    set -e
+
+    if (( campaign_status != 0 )); then
+        forl0_write_campaign_manifest "$campaign_root" "$campaign_run_id" failed \
+            "$control_revision" "$campaign_started_at" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$control_dirty"
+        forl0_mark_campaign_failed "$campaign_root" "$campaign_status"
+        echo "reproduce-all failed; diagnostics: ${campaign_root}" >&2
+        exit "$campaign_status"
+    fi
+
+    printf '\n=== reproduce-all CAMPAIGN=%s complete; publishing flat latest ===\n' "$campaign_run_id" >> "$run_log"
+    forl0_write_campaign_manifest "$campaign_root" "$campaign_run_id" complete \
+        "$control_revision" "$campaign_started_at" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$control_dirty"
+    if ! latest_dir="$(forl0_publish_flat_latest "$RESULTS_BASE" "$campaign_root")"; then
+        forl0_write_campaign_manifest "$campaign_root" "$campaign_run_id" failed \
+            "$control_revision" "$campaign_started_at" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$control_dirty" || true
+        forl0_mark_campaign_failed "$campaign_root" publish || true
+        echo "reproduce-all completed workloads but failed to publish latest; diagnostics: ${campaign_root}" >&2
+        exit 1
+    fi
+    echo "reproduce-all complete: ${latest_dir}"
+    exit 0
 fi
 
 if [[ -f "$PID_FILE" ]]; then
@@ -86,17 +144,22 @@ if [[ -f "$PID_FILE" ]]; then
     existing_command="$(ps -p "$existing_pid" -o args= 2>/dev/null || true)"
     if [[ "$existing_pid" =~ ^[0-9]+$ && "$existing_command" == *reproduce-all*--worker* ]] && \
             kill -0 "$existing_pid" 2>/dev/null; then
+        active_run_id="$(tr -d '[:space:]' < "$RUN_ID_FILE" 2>/dev/null || true)"
         echo "完整性能测试已在运行，PID=${existing_pid}"
-        echo "日志：${RUN_LOG}"
+        echo "日志：${RESULTS_BASE}/runs/${active_run_id:-unknown}/.logs"
         exit 0
     fi
-    rm -f "$PID_FILE"
+    rm -f "$PID_FILE" "$RUN_ID_FILE"
 fi
 
-nohup "$0" --worker >/dev/null 2>&1 &
+campaign_run_id="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
+forl0_validate_run_id "$campaign_run_id"
+FORL0_RUN_ID="$campaign_run_id" nohup "$0" --worker >/dev/null 2>&1 &
 worker_pid=$!
 printf '%s\n' "$worker_pid" > "$PID_FILE"
+printf '%s\n' "$campaign_run_id" > "$RUN_ID_FILE"
 
 echo "完整性能测试已后台启动，PID=${worker_pid}（先 smoke，通过后自动跑全量）"
-echo "日志：${RUN_LOG}"
-echo "结果：${PROJECT_ROOT}/benchmark/results"
+echo "日志：${RESULTS_BASE}/runs/${campaign_run_id}/.logs"
+echo "运行中结果：${RESULTS_BASE}/runs/${campaign_run_id}"
+echo "成功后网页上传目录：${RESULTS_BASE}/latest（仅文件，无子目录）"

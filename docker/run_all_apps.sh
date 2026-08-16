@@ -24,6 +24,8 @@ source "./lib/python_wheel_detector.sh"
 source "./lib/benchmark_evidence.sh"
 
 REPO_ROOT="$(cd .. && pwd)"
+export FORL0_RUN_ID="${FORL0_RUN_ID:-manual_$(date '+%Y%m%d_%H%M%S')}"
+export FORL0_RESULTS_DIR="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results/runs/${FORL0_RUN_ID}/formal}"
 FLINK_DIR="${FLINK_HOME:-${HOME}/flink_home}"
 PROFILE_MODE=""
 BACKEND="all"
@@ -59,7 +61,7 @@ load_local_env() {
 }
 
 print_provenance() {
-    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
+    local results_dir="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results/runs/${FORL0_RUN_ID:-manual}/formal}"
     echo "============================================================"
     echo "  ForL0 benchmark run context"
     echo "============================================================"
@@ -576,7 +578,7 @@ usage() {
   --backend NAME        默认 all，可选 hashmap / forl0 / all
   --test NAME           默认 apps，可选 unittest / wordcount / nexmark / client_usecase / benchset / apps / all
   --scenario NAME       透传场景名，例如 NexMark forl0_q5_tps_probe 或 WordCount high_cardinality
-  --results-dir PATH    结果根目录；默认 benchmark/results
+  --results-dir PATH    结果根目录；默认隔离到 benchmark/results/runs/<run_id>/formal
   --offline             禁止联网安装依赖；缺少离线包时直接失败
   --online              允许离线包失败后回退在线安装（默认 auto）
   --no-report           只跑实验，不生成 benchmark HTML 报告

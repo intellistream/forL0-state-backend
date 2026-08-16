@@ -112,9 +112,11 @@ if [[ -n "$FLINK_DIR" ]]; then
     export FLINK_HOME="$FLINK_DIR"
 fi
 
-RUN_ID="$(date +%Y%m%d_%H%M%S)"
+RUN_ID="${FORL0_RUN_ID:-offline_$(date +%Y%m%d_%H%M%S)}"
+export FORL0_RUN_ID="$RUN_ID"
 RUN_STARTED_EPOCH="$(date +%s)"
-RESULTS_DIR="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results}"
+RESULTS_DIR="${FORL0_RESULTS_DIR:-${REPO_ROOT}/benchmark/results/runs/${RUN_ID}/formal}"
+export FORL0_RESULTS_DIR="$RESULTS_DIR"
 LOG_DIR="${RESULTS_DIR}/run_logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/offline_l0_experiment_${RUN_ID}.log"
