@@ -112,6 +112,7 @@ if [[ "${1:-}" == "--worker" ]]; then
         FORL0_RUN_LOG_MODE=append bash ./run-forl0-offline.sh \
             --reproduce-ascend \
             --keep-going \
+            --no-report \
             --skip-docker-load
     ) >>"$run_log" 2>&1
     campaign_status=$?

@@ -93,6 +93,14 @@ cd /path/to/forL0-state-backend/docker
 成功后，所有产物会发布到 `benchmark/results/latest/`；该目录完全扁平，只有文件，
 因此可直接从 GitHub 网页一次选中上传。文件名中的 `__` 表示原目录分隔，
 `UPLOAD_MANIFEST.tsv` 给出原路径映射，完整日志会发布为 `campaign.log`。
+`reproduce-all` 不在实验服务器生成 figure、PDF 或 HTML；服务器只负责 raw、
+NexMark JSON、失败证据和日志。派生分析在复制结果后的工作站生成，并由根目录
+`.gitignore` 排除：
+
+```bash
+python benchmark/scripts/generate_campaign_analysis.py \
+  --campaign benchmark/results/runs/<run_id> --output output
+```
 
 新一轮成功结果会原子替换旧 `latest/` 并删除 staging；失败轮次不会污染
 `latest/`，诊断信息会暂留在唯一的 `runs/<run_id>/` 中，下一次启动时清理。
@@ -166,14 +174,8 @@ cd /path/to/forL0-state-backend/docker
   --no-profile
 ```
 
-直接调用低层 `run_all_apps.sh` 时，HTML 报告位于对应的本轮结果目录；用
-`./reproduce-all` 成功发布后，它会成为 `latest/formal__reports__benchmark_report.html`：
-
-```bash
-/path/to/forL0-state-backend/benchmark/results/latest/formal__reports__benchmark_report.html
-```
-
-只基于已有结果重新生成报告：
+只有显式请求 `--report-only` 时，低层工具才在当前机器生成旧版 HTML。正式
+`./reproduce-all` 不调用它。只基于已有结果重新生成旧版 HTML：
 
 ```bash
 cd /path/to/forL0-state-backend/docker

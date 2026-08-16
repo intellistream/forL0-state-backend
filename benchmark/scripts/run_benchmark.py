@@ -414,6 +414,9 @@ Examples:
                 results['client_usecase'][backend] = result
                 client_tag = f'client_usecase_{args.scenario}' if args.scenario else 'client_usecase'
                 save_result(result, client_tag, backend)
+            else:
+                print(f"\n[Error] Client Usecase failed for backend: {backend}")
+                sys.exit(1)
     
     # Run Benchset (seven paper workloads)
     if args.test == 'benchset' or run_app_suite:

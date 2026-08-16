@@ -75,3 +75,13 @@ cd ~/forl0-runtime/docker
 `benchmark/results/latest/`。`latest/` 中只有文件、没有文件夹，文件名中的 `__`
 代表原目录分隔；`UPLOAD_MANIFEST.tsv` 可用于还原来源路径。需要从网页上传时，
 直接选择 `latest/` 中的全部文件。
+
+`reproduce-all` 在离线服务器上只产出 raw、NexMark JSON、失败证据和日志，不生成
+figure/PDF/HTML。复制 campaign 目录到分析工作站后运行：
+
+```bash
+python benchmark/scripts/generate_campaign_analysis.py \
+  --campaign benchmark/results/runs/<run_id> --output output
+```
+
+`output/` 是本地派生目录，已加入 `.gitignore`，不会推送远端。

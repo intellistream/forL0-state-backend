@@ -540,6 +540,7 @@ def main():
     backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
 
     results = {}
+    failed_backends = []
     for backend in backends:
         result = run_client_usecase(
             config,
@@ -550,11 +551,16 @@ def main():
             results[backend] = result
             tag = f"client_usecase_{args.scenario}" if args.scenario else 'client_usecase'
             save_result(result, tag, backend)
+        else:
+            failed_backends.append(backend)
 
     if results:
         print('\nSummary:')
         for backend, result in results.items():
             print(f"  {backend:10s}: {result['throughput_per_core']:>12,.0f} records/s/core")
+    if failed_backends:
+        print(f"ERROR: Client Usecase failed for backend(s): {', '.join(failed_backends)}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

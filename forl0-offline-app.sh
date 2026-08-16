@@ -45,7 +45,9 @@ RUN_SMOKE=true
 RUN_APPS=true
 RUN_NEXMARK_PRESSURE=false
 RUN_ASCEND_REPRO=false
-RUN_REPORT=true
+# The offline server is an evidence producer.  Reports and figures are derived
+# locally from copied raw/log artifacts unless --report-only is explicitly used.
+RUN_REPORT=false
 PROFILE_ARGS=(--no-profile)
 SKIP_DOCKER_LOAD=false
 KEEP_GOING=false
@@ -129,7 +131,7 @@ Operational options:
   --allow-simulation     Do not require real L0 hardware. Use only for local
                           dry-runs; offline L0 validation should omit this.
   --skip-docker-load      Do not import docker/images/eclipse-temurin-8-jre.tar*.
-  --keep-going            Continue to report generation after a benchmark failure.
+  --keep-going            Continue with remaining workloads after a benchmark failure.
   --restart-cluster       Restart the benchmark Flink cluster before running.
   --no-initial-restart    Reuse an existing healthy Flink cluster. Not recommended
                           for real L0 validation because old containers may miss
@@ -809,12 +811,16 @@ if [[ "$RUN_REPORT" == "true" ]]; then
 fi
 
 info "Done"
-echo "Report:"
-echo "  ${FORL0_RESULTS_DIR}/reports/benchmark_report.html"
 echo "Raw results:"
 echo "  ${FORL0_RESULTS_DIR}/raw/"
 echo "NexMark runs:"
 echo "  ${FORL0_RESULTS_DIR}/nexmark_*/"
+if [[ "$RUN_REPORT" == "true" ]]; then
+    echo "Report:"
+    echo "  ${FORL0_RESULTS_DIR}/reports/benchmark_report.html"
+else
+    echo "Derived figures/reports: disabled on the experiment server"
+fi
 if [[ "$HAD_FAILURE" == "true" ]]; then
     echo "ERROR: one or more workloads failed; inspect ${FORL0_RESULTS_DIR}/run_logs/FAILED_*" >&2
     exit 1

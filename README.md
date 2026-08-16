@@ -168,9 +168,9 @@ bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" --apps-only
 # 阶段 3（可选）：增加 NexMark throughput pressure 场景
 bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" --full
 
-# 阶段 4：复现完整 Ascend 编号化性能清单并生成最终报告
+# 阶段 4：复现完整 Ascend 编号化性能清单（只产出 raw/log 证据）
 bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" \
-  --skip-docker-load --reproduce-ascend --keep-going
+  --skip-docker-load --reproduce-ascend --keep-going --no-report
 ```
 
 默认要求 2 个 TaskManager、共 8 个 slot。若部署拓扑不同，可显式传入 `--expected-taskmanagers N --expected-slots N`。真实离线 L0 验证不要使用 `--allow-simulation`。
@@ -179,6 +179,10 @@ bash ./forl0-offline-app.sh --install-dir "$INSTALL_DIR" \
 `$HOME/forl0-runtime/benchmark/results/runs/<run_id>/`，其中 `.logs` 是完整持续日志。
 smoke 和正式实验都成功后，本轮结果会发布到
 `$HOME/forl0-runtime/benchmark/results/latest/`。
+
+实验服务器默认不生成 figure、PDF 或 HTML。复制本轮 `results/runs/<run_id>/`
+到分析工作站后，运行 `benchmark/scripts/generate_campaign_analysis.py`，派生物写入
+已被 Git 忽略的 `output/`。
 
 `latest/` 中全部是文件，没有子目录；原始层级用文件名中的 `__` 表示，
 `UPLOAD_MANIFEST.tsv` 记录扁平文件名与原路径的映射。通过 GitHub 网页上传时，

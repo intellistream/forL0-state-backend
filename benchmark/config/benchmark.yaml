@@ -114,11 +114,15 @@ wordcount_scenarios:
     repeat_runs: 3
     repeat_policy: median
     forl0_overrides:
-      l0_cache_enabled: true
-      l0_cache_size: 512mb
+      # The fused addAndGetLong path does not read the L0 cache (the latest
+      # real-online run reported lookups=0/hits=0 and one write bypass per
+      # engine). Avoid allocating 512 MiB of unused device memory every run.
+      l0_cache_enabled: false
       l0_memory_max_size: 1024mb
-      initial_table_capacity: 8192
-      max_table_capacity: 262144
+      # Each p4 subtask sees about 500k distinct keys. Pre-size the primitive
+      # table so the measured interval does not pay repeated resize costs.
+      initial_table_capacity: 1048576
+      max_table_capacity: 1048576
       main_table_load_factor_threshold: 0.80
 
   # ---- Checkpointed comparison scenario ----
@@ -587,6 +591,9 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
+      # q4 creates three keyed backend operators at p4. Include headroom for
+      # allocator granularity instead of dividing the global budget by p4.
+      l0_cache_expected_engines: 16
       l0_memory_max_size: 512mb
       initial_table_capacity: 2048
       max_table_capacity: 65536
@@ -718,6 +725,9 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
+      # Queries in this sweep can create multiple keyed operators. Budget for
+      # up to four p4 backend groups sharing the global L0 device.
+      l0_cache_expected_engines: 16
       l0_memory_max_size: 512mb
       initial_table_capacity: 2048
       max_table_capacity: 65536
@@ -844,7 +854,10 @@ nexmark_scenarios:
     checkpoint_interval: 0
     reject_full_gc: true
     runtime_overrides:
-      parallelism: 8
+      # p8 overloaded one 16 GiB HashMap TaskManager before a comparable
+      # sample was produced. p4 is the highest topology that completed the
+      # q18 TPS probe on both backends on this server.
+      parallelism: 4
     person_proportion: 1
     auction_proportion: 9
     bid_proportion: 90
@@ -866,15 +879,15 @@ nexmark_scenarios:
       q20: 0
     query_overrides:
       q18:
-        tps: 12000000
+        tps: 5000000
         person_proportion: 1
         auction_proportion: 9
         bid_proportion: 90
         bid_hot_ratio_auctions: 24
         bid_hot_ratio_bidders: 24
         auction_hot_ratio_sellers: 8
-        metric_monitor_delay: 30s
-        metric_monitor_duration: 60s
+        metric_monitor_delay: 15s
+        metric_monitor_duration: 45s
       q19:
         tps: 2400000
         person_proportion: 1
@@ -885,19 +898,18 @@ nexmark_scenarios:
         metric_monitor_delay: 45s
         metric_monitor_duration: 90s
       q20:
-        tps: 700000
+        tps: 500000
         person_proportion: 1
         auction_proportion: 49
         bid_proportion: 50
         bid_hot_ratio_auctions: 24
         auction_hot_ratio_sellers: 12
-        metric_monitor_delay: 25s
-        # The 90s p8/q20 lateq-deep window can fail HashMap on 2x16GB Ascend
-        # after reaching the useful pressure plateau.  Keep the v3 high-pressure
-        # workload shape, but stop within the stable comparison window.
-        metric_monitor_duration: 60s
+        metric_monitor_delay: 20s
+        # The old 90s p8 window dropped a 16 GiB HashMap TaskManager after the
+        # useful pressure plateau. Stop within the stable p4 comparison window.
+        metric_monitor_duration: 45s
     flink_config_overrides:
-      parallelism.default: 8
+      parallelism.default: 4
       taskmanager.numberOfTaskSlots: 4
       table.exec.mini-batch.enabled: false
       table.optimizer.distinct-agg.split.enabled: false
@@ -906,6 +918,9 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
+      # Keep a 2x safety factor over the p4 keyed operator count; the hardware
+      # allocator could not satisfy the previous 64 MiB/engine requests.
+      l0_cache_expected_engines: 8
       l0_memory_max_size: 512mb
       initial_table_capacity: 2048
       max_table_capacity: 65536
@@ -962,13 +977,16 @@ nexmark_scenarios:
         tps: 5000000
         metric_monitor_delay: 10s
       q3:
-        tps: 1000000
+        # q3 retains its person/auction join inputs. The old 1M TPS x 80s
+        # shape exceeded backend capacity rather than measuring a sustainable
+        # steady state on the 2x16 GiB server.
+        tps: 200000
         person_proportion: 50
         auction_proportion: 50
         bid_proportion: 0
         auction_hot_ratio_sellers: 12
-        metric_monitor_delay: 20s
-        metric_monitor_duration: 60s
+        metric_monitor_delay: 10s
+        metric_monitor_duration: 30s
       q6:
         tps: 600000
         person_proportion: 1
@@ -1051,9 +1069,10 @@ nexmark_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 256mb
+      l0_cache_expected_engines: 8
       l0_memory_max_size: 512mb
-      initial_table_capacity: 2048
-      max_table_capacity: 65536
+      initial_table_capacity: 262144
+      max_table_capacity: 4194304
       main_table_load_factor_threshold: 0.80
 
   - name: heap_squeeze_gc_probe
@@ -1468,6 +1487,9 @@ client_usecase_scenarios:
     forl0_overrides:
       l0_cache_enabled: true
       l0_cache_size: 512mb
+      # The device rejected the fourth 128 MiB allocation in the previous
+      # run. Split the job-wide budget into eight 64 MiB engine shares.
+      l0_cache_expected_engines: 8
       l0_memory_max_size: 1024mb
       initial_table_capacity: 8192
       max_table_capacity: 524288

@@ -35,7 +35,7 @@ cat > "$TEST_TMP/run-forl0-offline.sh" <<'EOF'
 #!/usr/bin/env bash
 mkdir -p "$FORL0_RESULTS_DIR"
 printf 'formal output\n' > "$FORL0_RESULTS_DIR/formal.txt"
-printf 'formal:%s:%s:%s\n' "$FORL0_RUN_ID" "$FORL0_RUN_STARTED_EPOCH" "$FORL0_RESULTS_DIR" >> "$FORL0_TEST_TRACE"
+printf 'formal:%s:%s:%s:%s\n' "$FORL0_RUN_ID" "$FORL0_RUN_STARTED_EPOCH" "$FORL0_RESULTS_DIR" "$*" >> "$FORL0_TEST_TRACE"
 [[ "${FORL0_TEST_FAIL_FORMAL:-false}" != "true" ]] || exit 7
 EOF
 
@@ -46,7 +46,8 @@ FORL0_CONTROL_REVISION=test \
     bash "$TEST_TMP/reproduce-all" --worker
 
 grep -q '^smoke:campaign42_smoke:.*:.*/benchmark/results/runs/campaign42/smoke$' "$FORL0_TEST_TRACE"
-grep -q '^formal:campaign42:.*:.*/benchmark/results/runs/campaign42/formal$' "$FORL0_TEST_TRACE"
+grep -q '^formal:campaign42:.*:.*/benchmark/results/runs/campaign42/formal:' "$FORL0_TEST_TRACE"
+grep -q '^formal:campaign42:.*:--reproduce-ascend --keep-going --no-report --skip-docker-load$' "$FORL0_TEST_TRACE"
 if grep -q '^formal:campaign42:123:' "$FORL0_TEST_TRACE"; then
     echo "formal campaign reused the smoke start epoch" >&2
     exit 1

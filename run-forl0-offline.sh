@@ -288,7 +288,7 @@ if has_explicit_run_mode "$@"; then
 else
     echo "No run mode selected; running the complete Ascend reproduction matrix."
     echo "  workloads: W01-W02, N01-N14, C01-C08"
-    echo "  failures:  keep going, then generate the final HTML report"
+    echo "  failures:  keep going and preserve raw/log evidence"
     RUN_ARGS=("${DEFAULT_RUN_ARGS[@]}" "$@")
 fi
 echo "  Runtime source: ${APP_ROOT_KIND} (${APP_ROOT})"
