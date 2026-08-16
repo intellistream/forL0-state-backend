@@ -18,16 +18,32 @@ make_fake_python() {
     chmod +x "$path"
 }
 
+make_fake_venv_python() {
+    local root="$1"
+    local abi="$2"
+    mkdir -p "$root/.venv-benchmark-${abi}/bin"
+    cat > "$root/base-python-${abi}" <<'EOF'
+#!/usr/bin/env bash
+case "$0" in
+    *.venv-benchmark-*/bin/python) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+    chmod +x "$root/base-python-${abi}"
+    ln -s "../../base-python-${abi}" "$root/.venv-benchmark-${abi}/bin/python"
+}
+
 repository_root="$TEST_TMP/repository"
 installed_root="$TEST_TMP/forl0-runtime"
 make_fake_python "$repository_root/.venv-benchmark-cp39/bin/python" 1
-make_fake_python "$installed_root/.venv-benchmark-cp310/bin/python" 0
+make_fake_venv_python "$installed_root" cp310
 
 # Regression for campaign 20260816_111556: ignore the incomplete repository
 # venv and reuse the dependency-complete project venv from the installed runtime.
 FORL0_BENCHMARK_PYTHON_ROOT="$installed_root"
 selected="$(forl0_find_ready_benchmark_python "$repository_root")"
-[[ "$selected" == "$(readlink -f "$installed_root/.venv-benchmark-cp310/bin/python")" ]]
+[[ "$selected" == "$installed_root/.venv-benchmark-cp310/bin/python" ]]
+[[ "$selected" != "$(readlink -f "$installed_root/.venv-benchmark-cp310/bin/python")" ]]
 
 # Verify the runner's bootstrap function returns before touching the incomplete
 # wheel directory once the installed-runtime venv has passed import validation.
@@ -37,7 +53,7 @@ source "$TEST_TMP/bootstrap_benchmark_python.sh"
 REPO_ROOT="$repository_root"
 BENCH_PYTHON=""
 bootstrap_benchmark_python
-[[ "$BENCH_PYTHON" == "$(readlink -f "$installed_root/.venv-benchmark-cp310/bin/python")" ]]
+[[ "$BENCH_PYTHON" == "$installed_root/.venv-benchmark-cp310/bin/python" ]]
 
 # An explicit interpreter is authoritative and must fail closed when incomplete.
 FORL0_BENCHMARK_PYTHON_BIN="$repository_root/.venv-benchmark-cp39/bin/python"
@@ -51,8 +67,18 @@ fi
 unset FORL0_BENCHMARK_PYTHON_BIN
 
 # A ready repository-local venv takes precedence over the installed fallback.
-make_fake_python "$repository_root/.venv-benchmark-cp39/bin/python" 0
+rm -f "$repository_root/.venv-benchmark-cp39/bin/python"
+make_fake_venv_python "$repository_root" cp39
 selected="$(forl0_find_ready_benchmark_python "$repository_root")"
-[[ "$selected" == "$(readlink -f "$repository_root/.venv-benchmark-cp39/bin/python")" ]]
+[[ "$selected" == "$repository_root/.venv-benchmark-cp39/bin/python" ]]
+
+# An explicit relative venv interpreter is made absolute without resolving its
+# final symlink, so it also retains the venv package context.
+(
+    cd "$repository_root"
+    FORL0_BENCHMARK_PYTHON_BIN=.venv-benchmark-cp39/bin/python
+    selected="$(forl0_find_ready_benchmark_python "$repository_root")"
+    [[ "$selected" == "$repository_root/.venv-benchmark-cp39/bin/python" ]]
+)
 
 echo "benchmark Python resolution tests passed"

@@ -15,6 +15,24 @@ import tqdm
 PY
 }
 
+forl0_benchmark_python_path() {
+    local python_bin="$1"
+    local python_dir
+
+    # A venv's bin/python is normally a symlink to its base interpreter.  Do
+    # not canonicalize the final component: executing the venv path is what
+    # activates its site-packages, even though readlink -f points elsewhere.
+    if [[ "$python_bin" != */* ]]; then
+        command -v -- "$python_bin"
+        return
+    fi
+    if [[ "$python_bin" != /* ]]; then
+        python_bin="${PWD}/${python_bin}"
+    fi
+    python_dir="$(cd "$(dirname "$python_bin")" && pwd -P)"
+    printf '%s/%s\n' "$python_dir" "$(basename "$python_bin")"
+}
+
 forl0_find_ready_benchmark_python() {
     local repository_root="$1"
     local explicit_python="${FORL0_BENCHMARK_PYTHON_BIN:-}"
@@ -23,7 +41,7 @@ forl0_find_ready_benchmark_python() {
 
     if [[ -n "$explicit_python" ]]; then
         if forl0_benchmark_python_has_dependencies "$explicit_python"; then
-            readlink -f "$explicit_python"
+            forl0_benchmark_python_path "$explicit_python"
             return 0
         fi
         echo "ERROR: FORL0_BENCHMARK_PYTHON_BIN is not executable or lacks benchmark dependencies: $explicit_python" >&2
@@ -42,7 +60,7 @@ forl0_find_ready_benchmark_python() {
             "$root"/.venv-benchmark/bin/python; do
             [[ -x "$candidate" ]] || continue
             if forl0_benchmark_python_has_dependencies "$candidate"; then
-                readlink -f "$candidate"
+                printf '%s\n' "$candidate"
                 return 0
             fi
         done
