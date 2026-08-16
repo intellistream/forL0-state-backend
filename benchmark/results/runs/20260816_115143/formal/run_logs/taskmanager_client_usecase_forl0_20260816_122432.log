@@ -1,0 +1,25 @@
+=== flink-taskmanager-1 ===
+=== flink-taskmanager-2 ===
+[ForL0-HotCache] engine_start active=1 key_groups=64:96 requested_bytes=134217728 actual_bytes=134217600 total_sets=699050 strict=1
+[ForL0-HotCache] engine_start active=1 key_groups=32:64 requested_bytes=134217728 actual_bytes=134217600 total_sets=699050 strict=1
+[ForL0-HotCache] engine_start active=1 key_groups=96:128 requested_bytes=134217728 actual_bytes=134217600 total_sets=699050 strict=1
+Caused by: org.apache.flink.util.FlinkException: Could not restore keyed state backend for KeyedCoProcessOperator_b27f31f3e3a199a9981d185a455185be_(1/4) from any of the 1 provided restore options.
+Caused by: java.lang.RuntimeException: strict L0 allocation failed: l0_mem_alloc probe failed
+[ForL0-HotCache] state_attach name=ScalarLeftCount requested_bytes=1048576 actual_bytes=786432 sets=4096
+[ForL0-HotCache] state_attach name=ScalarLeftCount requested_bytes=1048576 actual_bytes=786432 sets=4096
+[ForL0-HotCache] state_attach name=ScalarLeftCount requested_bytes=1048576 actual_bytes=786432 sets=4096
+[ForL0-HotCache] state_attach name=ScalarRightCount requested_bytes=1048576 actual_bytes=786432 sets=4096
+[ForL0-HotCache] state_attach name=ScalarRightCount requested_bytes=1048576 actual_bytes=786432 sets=4096
+[ForL0-HotCache] state_attach name=ScalarRightCount requested_bytes=1048576 actual_bytes=786432 sets=4096
+[ForL0-HotCache] state_summary name=ScalarLeftCount sets=4096 lookups=624 hits=114 invalidations=0 writes=624 bypass_events=0 bypassed=0
+[ForL0-HotCache] state_summary name=ScalarRightCount sets=4096 lookups=1247 hits=228 invalidations=0 writes=623 bypass_events=0 bypassed=0
+[ForL0-HotCache] engine_summary requested_bytes=134217728 actual_bytes=134217600 used_bytes=1572864 total_sets=699050 free_sets=690858 caches=2 lookups=1871 hits=342 invalidations=0 writes=1247 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=42993664 peak_bytes=42993664 max_bytes=1073741824
+[ForL0-HotCache] state_summary name=ScalarLeftCount sets=4096 lookups=658 hits=118 invalidations=0 writes=658 bypass_events=0 bypassed=0
+[ForL0-HotCache] state_summary name=ScalarRightCount sets=4096 lookups=1316 hits=236 invalidations=0 writes=658 bypass_events=0 bypassed=0
+[ForL0-HotCache] engine_summary requested_bytes=134217728 actual_bytes=134217600 used_bytes=1572864 total_sets=699050 free_sets=690858 caches=2 lookups=1974 hits=354 invalidations=0 writes=1316 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=42993664 peak_bytes=42993664 max_bytes=1073741824
+[ForL0-HotCache] state_summary name=ScalarLeftCount sets=4096 lookups=745 hits=140 invalidations=0 writes=745 bypass_events=0 bypassed=0
+[ForL0-HotCache] state_summary name=ScalarRightCount sets=4096 lookups=1490 hits=280 invalidations=0 writes=745 bypass_events=0 bypassed=0
+[ForL0-HotCache] engine_summary requested_bytes=134217728 actual_bytes=134217600 used_bytes=1572864 total_sets=699050 free_sets=690858 caches=2 lookups=2235 hits=420 invalidations=0 writes=1490 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=42993664 peak_bytes=42993664 max_bytes=1073741824
