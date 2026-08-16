@@ -16,6 +16,20 @@ RESULT_LAYOUT="${PROJECT_ROOT}/docker/lib/result_layout.sh"
 source "$RESULT_LAYOUT"
 RESULTS_BASE="$(forl0_results_base "$PROJECT_ROOT")"
 
+stop_cluster_for_l0_profile() {
+    echo "=== Isolating L0 calibration: stopping any existing Flink cluster ==="
+    if [[ -f "${PROJECT_ROOT}/docker/docker_run.sh" ]]; then
+        bash "${PROJECT_ROOT}/docker/docker_run.sh" stop
+    elif command -v docker >/dev/null 2>&1; then
+        docker rm -f flink-taskmanager-2 flink-taskmanager-1 flink-jobmanager >/dev/null 2>&1 || true
+        docker network rm flink-net >/dev/null 2>&1 || true
+    else
+        echo "ERROR: Docker is unavailable; cannot guarantee an idle L0 device for calibration" >&2
+        return 1
+    fi
+    export FORL0_PROFILE_CLUSTER_CLEANED=true
+}
+
 stop_process_tree() {
     local parent_pid="$1"
     local child_pid
@@ -66,6 +80,7 @@ if [[ "${1:-}" == "--profile-worker" ]]; then
     trap 'rm -f "$PID_FILE" "$RUN_ID_FILE"' EXIT
     exec >>"${profile_root}/.logs" 2>&1
     echo "=== ForL0 profile ${profile_run_id} started=$(date '+%Y-%m-%d %H:%M:%S %z') ==="
+    stop_cluster_for_l0_profile
     source "${PROJECT_ROOT}/docker/lib/l0_detector.sh"
     forl0_detect_l0_environment || true
     forl0_print_l0_detection
@@ -97,8 +112,16 @@ if [[ "${1:-}" == "--full-worker" ]]; then
     [[ -x "$tuning_python" ]] || tuning_python="$(command -v python3)"
     profile_args=()
     [[ "$tuning_mode" == "real" ]] || profile_args+=(--simulate)
-    if [[ ! -f "${tuning_root}/profile/profile_manifest.json" ]]; then
+    profile_status="missing"
+    if [[ -f "${tuning_root}/profile/profile_manifest.json" ]]; then
+        profile_status="$($tuning_python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", "unknown"))' \
+            "${tuning_root}/profile/profile_manifest.json" 2>/dev/null || printf invalid)"
+    fi
+    if [[ "$profile_status" != "complete" ]]; then
+        [[ "$profile_status" == "missing" ]] || \
+            echo "Discarding unusable cached profile status=${profile_status}; collecting again"
         if [[ "$tuning_mode" == "real" ]]; then
+            stop_cluster_for_l0_profile
             source "${PROJECT_ROOT}/docker/lib/l0_detector.sh"
             forl0_detect_l0_environment || true
             forl0_print_l0_detection
@@ -185,6 +208,7 @@ if [[ "${1:-}" == "--worker" ]]; then
         if [[ -n "$snapshot_python" && -f "${PROJECT_ROOT}/benchmark/scripts/collect_profile.py" ]]; then
             # Use isolated, staged probes. A vendor L0 allocation crash is
             # recorded as structured evidence and cannot terminate the worker.
+            stop_cluster_for_l0_profile
             source "${PROJECT_ROOT}/docker/lib/l0_detector.sh"
             forl0_detect_l0_environment || true
             if "$snapshot_python" "${PROJECT_ROOT}/benchmark/scripts/collect_profile.py" \

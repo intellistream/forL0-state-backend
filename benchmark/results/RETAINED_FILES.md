@@ -1,8 +1,11 @@
 # Retained benchmark evidence
 
-Only `benchmark/results/latest/` is retained as completed evidence. It currently
-contains campaign `20260811_170156` in a completely flat, web-upload-friendly
-layout.
+Only `benchmark/results/latest/` is retained as completed benchmark evidence.
+It currently contains campaign `20260811_170156` in a completely flat,
+web-upload-friendly layout. The newest dedicated hardware calibration may also
+be retained under `benchmark/results/profiles/`; failed timestamped benchmark
+runs under `benchmark/results/runs/` are temporary diagnostics, not retained
+evidence.
 
 The exact source-path mapping is recorded in `latest/UPLOAD_MANIFEST.tsv`; run
 identity and status are recorded in `latest/run_manifest.json`.

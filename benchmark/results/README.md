@@ -6,6 +6,10 @@
   after its latest attempt fails.
 - `latest/` is the only completed campaign retained for publication.
 
+Dedicated hardware calibration uses `profiles/profile_<timestamp>/`. Keep the
+newest profile while it is being analyzed or replaced; it is independent of
+the failed benchmark staging directories under `runs/`.
+
 `latest/` is deliberately flat: it contains files only, with no subdirectories
 or symlinks. Nested staging paths are encoded with `__`, for example:
 

@@ -95,6 +95,8 @@ def main() -> int:
         "control_worktree_dirty": (bool(git_dirty.stdout.strip())
                                    if git_dirty.returncode == 0 else None),
         "python": sys.executable,
+        "cluster_isolated_before_profile": (
+            os.environ.get("FORL0_PROFILE_CLUSTER_CLEANED", "").lower() == "true"),
         "probes": [],
     }
     write_json(output / "profile_manifest.json", manifest)
@@ -154,9 +156,11 @@ def main() -> int:
                 successful_l0 += 1
                 best_l0_payload = probe
                 successful_sizes_mb.append(size_mb)
-            # A signal normally means this host context cannot safely touch the
-            # vendor allocation. Do not repeat larger unsafe allocations.
-            if probe.get("signal"):
+            # Once the smallest safe allocation cannot be established, larger
+            # requests are neither useful nor safe in this host context. This
+            # also avoids turning a resource-busy init failure into a later
+            # vendor-library crash.
+            if probe.get("status") != "complete":
                 break
     else:
         manifest["l0_reason"] = "simulation mode or L0 device/library not detected"
@@ -214,17 +218,20 @@ def main() -> int:
     manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
     if heap.get("status") not in ("heap-only", "complete"):
         manifest["status"] = "failed"
+    elif not args.simulate and (not l0_library or not l0_device):
+        manifest["status"] = "failed"
+        manifest["reason"] = "real profile requires a detected L0 device and vendor library"
     elif not args.simulate and l0_library and l0_device and successful_l0 == 0:
-        manifest["status"] = "partial"
+        manifest["status"] = "failed"
         manifest["reason"] = "L0 was detected but every safe staged probe failed"
     elif instance_results and not all(item["status"] == "complete" for item in instance_results):
-        manifest["status"] = "partial"
+        manifest["status"] = "failed"
         manifest["reason"] = "single-instance L0 succeeded but concurrent TaskManager-shaped probes failed"
     else:
         manifest["status"] = "complete"
     write_json(output / "profile_manifest.json", manifest)
     print(output / "profile_manifest.json")
-    return 0 if manifest["status"] in ("complete", "partial") else 1
+    return 0 if manifest["status"] == "complete" else 1
 
 
 if __name__ == "__main__":

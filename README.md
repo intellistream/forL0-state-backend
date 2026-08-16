@@ -195,7 +195,10 @@ smoke 和正式实验都成功后，本轮结果会发布到
 
 `--profile` 写入 `benchmark/results/profiles/<run_id>/`，`--full` 写入
 `benchmark/results/tuning/<run_id>/`，两者的完整输出都在各自目录的 `.logs`。
-真实 `--full` 先执行 smoke 正确性门禁，通过后才开始搜索。单项失败后继续，重新
+真实标定会先自动停止遗留 Flink 容器，确保 L0 全局内存池处于空闲状态；如果
+L0 不存在、所有分级探针失败或并行 TaskManager 形态探针失败，命令会明确失败，
+不会再把 partial 数据打印成 `PROFILE COMPLETE`。真实 `--full` 不会复用失败的
+标定结果，并在标定成功后执行 smoke 正确性门禁，通过后才开始搜索。单项失败后继续，重新
 执行同一命令会跳过已完成 workload/trial；所有 24 个 workload
 都成功的候选才有资格进入真实结果排名。可用
 `FORL0_TUNING_MAX_TRIALS=N ./reproduce-all --full` 做有限验证，但这不再是完整穷举。
@@ -204,8 +207,9 @@ smoke 和正式实验都成功后，本轮结果会发布到
 每轮还会在 Flink 启动前自动生成 `hardware_snapshot.json`、
 `dram_calibration.json` 和 `l0_calibration.json`。前者保存 CPU/cache/NUMA、内存、
 内核、L0 设备与运行库指纹；后两者测量目标机 DRAM/L0 的工作集延迟、带宽和
-1/2/4 worker 扩展曲线。L0 探测按 1/4/16/64/128 MiB 分级并在隔离子进程执行，
-厂商库崩溃只会形成带 signal/returncode 的诊断 JSON，不会终止整轮实验。
+1/2/4 worker 扩展曲线。L0 探测按 1/4/16/64/128 MiB 分级并在隔离子进程执行；
+任一级失败便停止更大的不安全请求。厂商库崩溃只会形成带 signal/returncode 的
+诊断 JSON，不会终止父进程。
 这些文件用于在开发机建立性能模型，不包含环境变量、网络配置或认证信息。
 
 实验服务器默认不生成 figure、PDF 或 HTML。复制本轮 `results/runs/<run_id>/`

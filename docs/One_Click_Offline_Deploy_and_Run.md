@@ -84,7 +84,9 @@ cd ~/forl0-runtime/docker
 ```
 
 - `--profile`：仅采集硬件、NUMA、软件版本、DRAM 和分级 L0 标定，输出到
-  `benchmark/results/profiles/<run_id>/`。
+  `benchmark/results/profiles/<run_id>/`。开始前会自动停止遗留 Flink 容器，避免
+  其他进程占用全局 L0 池；L0 或并行实例标定不完整时命令返回失败，不产生虚假的
+  “完成”状态。
 - `--full`：穷举 `benchmark/config/tuning_space.yaml` 中的 162 组配置；每组运行
   W01-W02、N01-N14、C01-C08 全部 24 个正式 workload，输出到
   `benchmark/results/tuning/<run_id>/`。开始搜索前必须先通过 smoke 正确性门禁。
@@ -93,7 +95,8 @@ cd ~/forl0-runtime/docker
   中间断点续跑。只有全部 workload 成功的 trial 才进入排名，目标分数为 12 对
   ForL0/HashMap workload 比值的几何平均。
 - 中断后再次执行 `./reproduce-all --full` 会继续未完成的 campaign；停止使用
-  `./reproduce-all --stop`。
+  `./reproduce-all --stop`。已有 profile 只有 `status=complete` 才会复用，失败或
+  旧的 partial profile 会自动重新采集。
 - 临时缩短验证可设置 `FORL0_TUNING_MAX_TRIALS=N`。这只验证前 N 组，不代表完成
   全参数搜索。
 
