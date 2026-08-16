@@ -566,6 +566,25 @@ prepare_runtime() {
     die "cannot find a runnable ForL0 repository or offline bundle under ${APP_ROOT}"
 }
 
+copy_file_unless_same() {
+    local source="$1"
+    local destination="$2"
+    local source_real destination_real destination_dir
+
+    destination_dir="$(dirname "$destination")"
+    mkdir -p "$destination_dir"
+    source_real="$(readlink -f "$source")"
+    if [[ -e "$destination" ]]; then
+        destination_real="$(readlink -f "$destination")"
+    else
+        destination_real="$(cd "$destination_dir" && pwd -P)/$(basename "$destination")"
+    fi
+    if [[ "$source_real" == "$destination_real" ]]; then
+        return 0
+    fi
+    cp -f "$source" "$destination"
+}
+
 sync_runtime_control_plane() {
     if [[ "$CONTROL_ROOT" != "$APP_ROOT" ]]; then
         info "Syncing current repository control scripts into installed runtime"
@@ -636,9 +655,15 @@ sync_runtime_control_plane() {
     local nexmark_jar
     nexmark_jar="$(compgen -G "${CONTROL_ROOT}/docker/deploy/nexmark-flink-*.jar" | head -n 1 || true)"
     if [[ -n "$nexmark_jar" ]]; then
-        cp -f "$nexmark_jar" "${RUNTIME_ROOT}/docker/deploy/"
-        rm -f "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/lib/"nexmark-flink-*.jar
-        cp -f "$nexmark_jar" "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/lib/"
+        local driver_jar stale_jar
+        copy_file_unless_same "$nexmark_jar" \
+            "${RUNTIME_ROOT}/docker/deploy/$(basename "$nexmark_jar")"
+        driver_jar="${RUNTIME_ROOT}/docker/deploy/nexmark-flink/lib/$(basename "$nexmark_jar")"
+        copy_file_unless_same "$nexmark_jar" "$driver_jar"
+        for stale_jar in "${RUNTIME_ROOT}/docker/deploy/nexmark-flink/lib/"nexmark-flink-*.jar; do
+            [[ -e "$stale_jar" ]] || continue
+            [[ "$(readlink -f "$stale_jar")" == "$(readlink -f "$driver_jar")" ]] || rm -f "$stale_jar"
+        done
         echo "      ✓ Synced Java 8 NexMark JAR into runtime distribution"
     fi
 }
