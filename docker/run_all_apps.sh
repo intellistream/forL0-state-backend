@@ -22,6 +22,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source "./lib/python_wheel_detector.sh"
 source "./lib/benchmark_evidence.sh"
+source "./lib/benchmark_python.sh"
 
 REPO_ROOT="$(cd .. && pwd)"
 export FORL0_RUN_ID="${FORL0_RUN_ID:-manual_$(date '+%Y%m%d_%H%M%S')}"
@@ -294,6 +295,20 @@ bootstrap_benchmark_python() {
     local offline_wheels_dir=""
     local venv_dir=""
     local python_bin=""
+    local ready_python=""
+    local resolution_status=0
+
+    if ready_python="$(forl0_find_ready_benchmark_python "$REPO_ROOT")"; then
+        BENCH_PYTHON="$ready_python"
+        echo "[3/5] 复用依赖完整的 benchmark Python: $BENCH_PYTHON"
+        "$BENCH_PYTHON" -c 'import sys; print(f"      Python:       {sys.executable} ({sys.version_info.major}.{sys.version_info.minor})")'
+        return 0
+    else
+        resolution_status=$?
+    fi
+    if [[ "$resolution_status" -eq 2 ]]; then
+        exit 1
+    fi
 
     for candidate in \
         "${REPO_ROOT}/offline-packages" \
@@ -342,17 +357,7 @@ bootstrap_benchmark_python() {
     local pip_bin="$venv_dir/bin/pip"
     local deps_ok=true
 
-    if ! "$py_bin" - <<'PY' >/dev/null 2>&1
-import yaml
-import pandas
-import numpy
-import matplotlib
-import seaborn
-import jinja2
-import requests
-import tqdm
-PY
-    then
+    if ! forl0_benchmark_python_has_dependencies "$py_bin"; then
         deps_ok=false
     fi
 
@@ -383,7 +388,7 @@ PY
         echo "      ✓ benchmark Python 依赖已满足"
     fi
 
-    if ! "$py_bin" -c 'import pandas, yaml, numpy, matplotlib, seaborn, jinja2, requests, tqdm'; then
+    if ! forl0_benchmark_python_has_dependencies "$py_bin"; then
         echo "✗ benchmark Python 依赖安装后仍无法导入" >&2
         exit 1
     fi

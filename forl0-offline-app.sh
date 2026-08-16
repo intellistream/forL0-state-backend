@@ -619,6 +619,8 @@ sync_runtime_control_plane() {
             "${RUNTIME_ROOT}/docker/docker_run.sh"
         cp "${CONTROL_ROOT}/docker/lib/benchmark_evidence.sh" \
             "${RUNTIME_ROOT}/docker/lib/benchmark_evidence.sh"
+        cp "${CONTROL_ROOT}/docker/lib/benchmark_python.sh" \
+            "${RUNTIME_ROOT}/docker/lib/benchmark_python.sh"
         cp "${CONTROL_ROOT}/docker/lib/l0_detector.sh" \
             "${RUNTIME_ROOT}/docker/lib/l0_detector.sh"
         cp "${CONTROL_ROOT}/docker/lib/smoke_plan.sh" \
@@ -671,6 +673,7 @@ sync_runtime_control_plane() {
 RUNTIME_ROOT=""
 prepare_runtime
 sync_runtime_control_plane
+export FORL0_BENCHMARK_PYTHON_ROOT="${FORL0_BENCHMARK_PYTHON_ROOT:-${INSTALL_DIR}}"
 export FORL0_CONTROL_REVISION="${FORL0_CONTROL_REVISION:-$(git -C "$CONTROL_ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)}"
 export FORL0_RUN_ID="${FORL0_RUN_ID:-$(date '+%Y%m%d_%H%M%S')}"
 export FORL0_RUN_STARTED_EPOCH="${FORL0_RUN_STARTED_EPOCH:-$(date '+%s')}"

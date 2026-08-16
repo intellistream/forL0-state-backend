@@ -30,6 +30,9 @@ offline server remains reproducible.
   workload entry point.
 - `docker/lib/benchmark_evidence.sh`: failure markers, TaskManager evidence,
   and L0 proof gates.
+- `docker/lib/benchmark_python.sh`: validates and selects a dependency-complete
+  project Python from the current checkout or installed offline runtime before
+  attempting wheel-based environment creation.
 
 ## One-command entry points
 
