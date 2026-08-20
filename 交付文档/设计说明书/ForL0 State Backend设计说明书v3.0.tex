@@ -3,6 +3,7 @@
 
 % ===================== Packages =====================
 \usepackage{fontspec}
+\usepackage{xeCJK}
 \usepackage[a4paper,top=2.8cm,bottom=2.8cm,left=2.6cm,right=2.6cm,headheight=15pt,headsep=10pt,footskip=22pt]{geometry}
 \usepackage{array}
 \usepackage{amsmath}
@@ -40,24 +41,39 @@
 \usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,shapes.multipart,backgrounds}
 
 % ===================== Fonts =====================
+\IfFontExistsTF{Noto Sans CJK SC}{%
+  \setCJKmainfont{Noto Sans CJK SC}%
+  \setCJKsansfont{Noto Sans CJK SC}%
+  \setCJKmonofont{Noto Sans CJK SC}%
+}{%
+  \IfFontExistsTF{PingFang SC}{%
+    \setCJKmainfont{PingFang SC}%
+    \setCJKsansfont{PingFang SC}%
+    \setCJKmonofont{PingFang SC}%
+  }{%
+    \setCJKmainfont{AR PL UMing CN}%
+    \setCJKsansfont{AR PL UKai CN}%
+    \setCJKmonofont{AR PL UMing CN}%
+  }%
+}
 \IfFontExistsTF{Noto Serif CJK SC}{%
   \setmainfont{Noto Serif CJK SC}%
 }{%
   \IfFontExistsTF{Noto Sans CJK SC}{%
     \setmainfont{Noto Sans CJK SC}%
   }{%
-    \setmainfont{DejaVu Serif}%
+    \IfFontExistsTF{Songti SC}{\setmainfont{Songti SC}}{\setmainfont{DejaVu Serif}}%
   }%
 }
 \IfFontExistsTF{Noto Sans CJK SC}{%
   \setsansfont{Noto Sans CJK SC}%
 }{%
-  \setsansfont{DejaVu Sans}%
+  \IfFontExistsTF{PingFang SC}{\setsansfont{PingFang SC}}{\setsansfont{DejaVu Sans}}%
 }
 \IfFontExistsTF{Droid Sans Mono}{%
   \setmonofont{Droid Sans Mono}%
 }{%
-  \setmonofont{DejaVu Sans Mono}%
+  \IfFontExistsTF{Menlo}{\setmonofont{Menlo}}{\setmonofont{DejaVu Sans Mono}}%
 }
 
 % \XeTeXlinebreaklocale "zh"  % not supported by tectonic in some environments
@@ -224,7 +240,7 @@
 
 \vfill
 
-{\sffamily\large\color{accent!85} 2026 年 7 月\par}
+{\sffamily\large\color{accent!85} 2026 年 8 月\par}
 
 \vspace{1.2cm}
 \end{titlepage}
@@ -272,7 +288,7 @@
   \item \texttt{NativeEngine} 按高频类型组合暴露窄接口，例如 long key、int key、TimeWindow namespace、typed inner map 等专用路径。
   \item RowData key 通过 \texttt{RowDataKeyAccessor} 识别为单字段 primitive、固定长度多字段或 generic bytes 三类编码方式。
   \item 对部分 BinaryRowData 或 bytes value，native 层支持零拷贝读取，减少中间 \texttt{byte[]} 和对象重建成本。
-  \item 在 JNI 热路径的最外层，系统默认启用基于鲲鹏 L0 Cache 用户态分区的\textbf{L0 Hot-Key Cache}，对高频热键提供 4--10 cycle 级别的读写穿透缓存；缓存 miss 以及不符合类型条件的访问直接回落到 \texttt{SwissTable}，不改变数据一致性。
+  \item 在 JNI 热路径的最外层，系统可按配置启用基于鲲鹏 L0 Cache 用户态分区的\textbf{L0 Hot-Key Cache}；缓存 miss 以及不符合类型条件的访问直接回落到 \texttt{SwissTable}，不改变数据一致性。
 \end{itemize}
 
 因此，系统的性能优化重点并不是改变 Flink 状态语义，而是在保持语义不变的前提下，尽量让热点访问路径走最短 JNI 路由、最窄类型表示、最少数据复制，并使能够落在 L0 上的热键数据不再为每次访问支付 DRAM 延迟。
@@ -370,7 +386,7 @@
   \item \texttt{NativeEngine}：负责定义 JNI 接口并承担共享库加载。
   \item \texttt{TypeAnalyzer} 与 \texttt{RowDataKeyAccessor}：负责类型识别、布局描述生成和 RowData 快路径支持。
   \item \texttt{StateEngine}、\texttt{StateTable} 与 \texttt{SwissTable}：共同构成 native 数据面，承担状态组织、访问、快照和恢复。
-  \item \texttt{HotCacheManager} 与 \texttt{HotKeyCache}：在 L0 Cache 分区上构造热点键值对的 set-associative 读写穿透缓存，默认随后端启用；硬件或共享库不可用时自动降级为关闭，不做 heap 回补。
+  \item \texttt{HotCacheManager} 与 \texttt{HotCacheLL}：在 L0 Cache 分区上构造热点键值对的 set-associative 读写穿透缓存；该能力默认关闭，显式启用后若硬件门禁未通过则保持关闭，不做 heap 回补。
 \end{itemize}
 
 % ---------- Figure 2: 组件图 ----------
@@ -549,18 +565,18 @@
 \centering
 \begin{tikzpicture}[x=1cm,y=1cm,font=\footnotesize\sffamily]
 
-  % ================= 行 A：32 位 hash 位分配（左） + 公式（右） =================
-  \node[figtitle, anchor=west] at (0.0,7.55) {(a) 32 位 hash 位分配};
+  % ================= 行 A：64 位 hash 位分配（左） + 公式（右） =================
+  \node[figtitle, anchor=west] at (0.0,7.55) {(a) 64 位 hash 位分配};
 
   \draw[fill=fgaccentlight, draw=fgaccent, line width=0.5pt]
     (0.0,6.75) rectangle (8.0,7.30);
-  \node[anchor=center] at (4.0,7.02) {$H_1$（高 25 位，用作探测起点）};
+  \node[anchor=center] at (4.0,7.02) {$H_1$（高 57 位，用作探测起点）};
 
   \draw[fill=fgaccent!35, draw=fgaccent, line width=0.5pt]
     (8.0,6.75) rectangle (10.0,7.30);
   \node[anchor=center] at (9.0,7.02) {$H_2$（低 7 位）};
 
-  \node[figsmall, anchor=north] at (0.0,6.70)  {bit 31};
+  \node[figsmall, anchor=north] at (0.0,6.70)  {bit 63};
   \node[figsmall, anchor=north] at (8.0,6.70)  {bit 7};
   \node[figsmall, anchor=north] at (10.0,6.70) {bit 0};
 
@@ -689,6 +705,8 @@
 
 L0 Hot-Key Cache 是由配置显式启用的外层快路径，其核心是一块位于鲲鹏 L0 Cache 用户态分区的紧凑哈希索引。未启用或硬件门禁未通过时，权威状态仍由 SwissTable 正常服务。下面给出其数据结构与访问算法。
 
+当前缓存只附着到 VoidNamespace 下的标量 \texttt{ValueState}：key 为 \texttt{INT64} 或 \texttt{INT32}，value 为 \texttt{INT64}、\texttt{INT32} 或 \texttt{FLOAT64}。复合 key、TimeWindow namespace、变长 value 以及其他状态类型均直接访问权威 SwissTable。
+
 \paragraph{数据结构}
 缓存整体为一个 set-associative 哈希索引，共 $N$ 个 set，每个 set 由固定的 8 个 way 组成，紧凑占用 $3 \times 64 = 192$\,B，且严格按 64\,B 对齐：
 \begin{itemize}
@@ -696,12 +714,12 @@ L0 Hot-Key Cache 是由配置显式启用的外层快路径，其核心是一块
   \item \textbf{keys 行}（64\,B）：存放 8 个 8\,B 定长 key 槽位。
   \item \textbf{vals 行}（64\,B）：存放 8 个 8\,B 定长 value 槽位。
 \end{itemize}
-所有 64 位 key 先经 Wyhash 风格的 64 位混合函数得到一个散列值 $h$，再沿用 SwissTable 的 $H_1/H_2$ 位分配方式从 $h$ 中切分：低 7 位 $H_2 = h \,\&\, \mathtt{0x7F}$ 用作 tag，高位 $H_1 = h \gg 7$ 用作 set 定位。set 索引由 $set = H_1 \,\&\, (N-1)$ 给出（$N$ 为 2 的幂）。8 个 way 之间以 NEON \texttt{vceq\_u8} 对 tags 行进行单周期 8-way 并行比较，在不支持 NEON 的平台上退回标量实现。
+所有 key 先归一化为 64 位整数并经 64 位混合函数得到散列值 $h$，再沿用 SwissTable 的 $H_1/H_2$ 位分配方式从 $h$ 中切分：低 7 位 $H_2 = h \,\&\, \mathtt{0x7F}$ 用作 tag，高位 $H_1 = h \gg 7$ 用作 set 定位。set 索引由 $set = H_1 \,\&\, (N-1)$ 给出（$N$ 为 2 的幂）。8 个 way 在 aarch64 上使用 NEON \texttt{vceq\_u8} 并行比较，在 x86\_64 上使用 SSE2，其余平台使用标量实现。
 
 \paragraph{查找算法}
 给定 \texttt{(kg, ns, key)}，首先将 key 归一化为 64 位整数，再计算混合散列 $h$ 以及 $H_1$、$H_2$，定位到唯一的 set：
 \begin{enumerate}
-  \item 一次 64\,B 载入读入 tags 行，使用 \texttt{vceq\_u8}($tags$, $H_2$) 得到 8 字节匹配掩码，每匹配一个 way 对应一个非零字节。
+  \item 读取 tags 行中的 8 个 tag，使用 \texttt{vceq\_u8}($tags$, $H_2$) 得到 8 字节匹配掩码，每匹配一个 way 对应一个非零字节。
   \item 对掩码中每个候选 way 读取 \texttt{keys[way]}，与 $key$ 逐一比较；相等则读取 \texttt{vals[way]} 返回。
   \item 若无匹配或匹配 way 的 key 不等，则记为 miss，并回落到 SwissTable 权威存储。
 \end{enumerate}
@@ -717,7 +735,7 @@ L0 Hot-Key Cache 是由配置显式启用的外层快路径，其核心是一块
 \texttt{rr} 复用 tags 行尾部的 1 字节元数据空间，仅占用低 3 位，不增加额外 cache line。
 
 \paragraph{失效算法}
-删除或 key-group 迁移时，按查找算法定位 set 并匹配 way，将命中 way 的 tag 置为 \texttt{EMPTY}，keys / vals 不做清零。set 作为整体在 rescale 时归还 \texttt{HotCacheManager} 全局池，由该管理器统一承担 L0 内存的分配与回收。
+删除状态条目时，按查找算法定位 set 并匹配 way，将命中 way 的 tag 置为 \texttt{EMPTY}，keys / vals 不做清零。状态缓存释放时，其 HotSet 区间归还 \texttt{HotCacheManager} 共享池，由该管理器统一承担 L0 内存的分配与回收。
 
 \paragraph{TaskManager 进程级共享管理}
 \texttt{libl0mempool.so} 的 tuner 是进程级稀缺资源，不能按并行 subtask 或每个 \texttt{StateEngine} 重复初始化。当前实现因此在每个 TaskManager 进程内只创建一个 \texttt{HotCacheManager}，多个 \texttt{StateEngine} 通过 \texttt{shared\_ptr} 复用同一 tuner、同一底层 L0 分配和同一 HotSet 池。全局注册表使用弱引用：最后一个 engine 销毁后，manager 与硬件资源随之释放，不跨 TaskManager 进程共享。
@@ -876,26 +894,16 @@ L0 Hot-Key Cache 是由配置显式启用的外层快路径，其核心是一块
 
 策略一旦确定，后续每次状态访问都只进入对应分支，不再重复做整套类型判定。
 
-\subsubsection{透明融合边界与状态内部快路径}
+\subsubsection{状态访问优化边界}
 
-为避免将后端优化泄漏到用户作业或 benchmark workload 中，\project{} 的融合优化遵循一条边界原则：\textbf{生产路径上的状态访问优化必须封装在 ForL0 后端、JNI 层和 native 状态引擎内部，不能要求 WordCount、NexMark 或客户作业显式调用 ForL0 专有 API}。因此，系统区分两类快路径：
+状态访问优化封装在 ForL0 后端、JNI 层和 native 状态引擎内部。用户作业继续使用 Flink 标准的 \texttt{value()}、\texttt{update()}、\texttt{get()}、\texttt{put()} 和 \texttt{clear()} 等接口，不依赖专有状态 API。
 
 \begin{itemize}
-  \item \textbf{透明快路径}：由 \texttt{ForL0ValueState}、\texttt{ForL0MapState} 等状态实现内部完成。用户仍然调用 Flink 标准的 \texttt{value()}、\texttt{update()}、\texttt{get()}、\texttt{put()}、\texttt{clear()} 等接口，后端根据已预计算的 \texttt{KeyNsStrategy} / \texttt{MapStrategy} 选择 typed JNI、缓存或 native 特化路径。
-  \item \textbf{诊断快路径}：用于定位 JNI 调用粒度瓶颈的非合同实验接口，例如 \texttt{addAndGetLong} 或顺序批量更新接口。该类接口帮助验证“多次 get/put 融合为一次 native 调用”能够降低 JNI 边界成本，但不作为普通用户作业的 API 依赖。
+  \item \textbf{标准接口路径}：状态实现根据预计算的 \texttt{KeyNsStrategy}、\texttt{ListStrategy} 和 \texttt{MapStrategy}，选择 typed JNI、RowData 只读视图或通用序列化路径。
+  \item \textbf{内部融合接口}：\texttt{addAndGetLong}、\texttt{mapAddAndGetLongLong} 和顺序批量更新接口用于已知的复合读改写操作，不属于普通用户作业的公开接口约定。
 \end{itemize}
 
-在当前实现中，透明快路径重点覆盖 primitive \texttt{ValueState<Long>}。对于 long/int key、VoidNamespace 或 long key + TimeWindow namespace 的组合，\texttt{ForL0ValueState} 在内部维护一个单条目的热 key 缓存。缓存键由 \texttt{(key, keyGroup, namespace)} 组成；当连续访问命中同一状态条目时，\texttt{value()} 可以直接返回 Java 层缓存的 long 值，避免再次发起 JNI get。任何 \texttt{update()}、\texttt{clear()} 以及内部 \texttt{addAndGetLong()} 都会同步维护或失效该缓存，从而保证缓存只作为访问加速层，不改变 native 状态表的权威存储语义。
-
-该设计的收益边界也较为明确：它适合热点 key、短期局部性强、以 \texttt{ValueState<Long>} 读改写为主的算子；对 RowData、generic bytes、复杂对象、迭代器扫描和业务函数主导的路径，系统仍保持原有 serializer 或 zero-copy 路径，不进行不透明推断。
-
-\subsubsection{v3.0 覆盖边界与离线复跑反馈}
-
-v3.0 设计进一步明确了“透明优化”和“诊断融合”的边界。当前可在普通 workload 中自动生效的新增能力主要是 ForL0 内部的 primitive \texttt{ValueState<Long>} 热 key 缓存；它要求状态描述符、serializer、key/namespace 形态能够落到后端已识别的 long 快路径。若作业实际进入 \texttt{TupleSerializer}、RowData、窗口复合 accumulator、List/Map 迭代、SQL runtime 生成状态或通用 bytes serializer 路径，则本轮缓存不会强行介入，以避免破坏 Flink 状态语义、serializer 兼容性和 checkpoint/savepoint 格式。
-
-MapState 的 \texttt{mapAddAndGetLongLong} 与 \texttt{mapAddSequentialAndSumLongLong} 属于诊断融合 JNI：它证明了 map-heavy workload 在合适调用粒度下可以减少 Java/JNI/native 往返，但标准 Flink \texttt{MapState} API 只暴露 \texttt{get()}、\texttt{put()}、\texttt{entries()} 等离散操作，后端无法在不理解上层业务循环的情况下安全地把多次调用自动合并。因此，该能力不作为普通用户作业需要调用的公开接口；若要把类似收益推广到 NexMark、客户作业或其他生产 workload，需要在 ForL0 后端可观察的状态访问模式、Flink runtime/operator 生成层，或 SQL 代码生成层识别 compound state operation，而不是修改 benchmark/workload 源码。
-
-2026 年 7 月的离线复跑也验证了上述边界：WordCount 合同场景实际使用 sliding-window + string key + \texttt{TupleSerializer} 的 generic 路径，不命中 primitive \texttt{ValueState<Long>} 缓存；NexMark 默认 event-count 口径中，各 query 大量状态由 SQL runtime 的窗口、join、rank、RowData 和复合 accumulator 驱动，透明缓存只能覆盖其中很小一部分访问。因此，v3.0 后续设计重点应从单点 JNI 函数继续上移到“可被后端自动识别的复合状态操作”和“SQL/窗口状态类型专用快路径”，同时继续保持 workload 代码零侵入。
+类型布局稳定的 primitive key/value、固定宽度 RowData 和 TimeWindow namespace 使用专用路径；generic bytes、复杂对象和迭代器访问保持 serializer 或通用 JNI 路径。L0 HotCache 独立于 Java 状态对象，仅覆盖 VoidNamespace 标量 ValueState 白名单。
 
 \subsubsection{类型分析与布局描述}
 
@@ -941,7 +949,7 @@ MapState 的 \texttt{mapAddAndGetLongLong} 与 \texttt{mapAddSequentialAndSumLon
 
 \paragraph{查询（Get）}
 
-查询流程总是先在 L0 Hot-Key Cache 上尝试快路径：若 state 类型被纳入 cache 白名单且命中，则直接返回；否则定位目标状态表，再根据 key-group 和 namespace 找到对应的 \texttt{SwissTable}。在表内查找时，系统先扫描 ctrl 区中的 \(H_2\) 指纹以筛选候选槽位，再对少量候选槽位执行键比较；若当前探测组内已经出现 EMPTY 槽位，则说明本次查询未命中，可以直接返回空结果。SwissTable 命中后结果同步回填 cache，从而让后续同 key 访问继续走热路径。
+若状态已附着 L0 Hot-Key Cache，查询先尝试缓存快路径，命中时直接返回；未附着或缓存 miss 时，再根据 key-group 和 namespace 定位对应的 \texttt{SwissTable}。在表内查找时，系统先扫描 ctrl 区中的 \(H_2\) 指纹以筛选候选槽位，再对少量候选槽位执行键比较；若当前探测组内已经出现 EMPTY 槽位，则说明本次查询未命中，可以直接返回空结果。对已附着缓存的状态，SwissTable 命中后同步回填 cache。
 
 \begin{algorithm}[!htbp]
 \caption{状态查询算法（含 L0 Hot-Key Cache 快路径）}
@@ -1140,9 +1148,9 @@ MapState 的 \texttt{mapAddAndGetLongLong} 与 \texttt{mapAddSequentialAndSumLon
 
 \texttt{ForL0ValueState} 负责单值状态的读取、写回与清理。其设计重点在于根据 key、namespace 和 value 的组合，尽量选择最短路径完成一次状态访问。对于 primitive 值，会优先使用一次 JNI 调用完成存在性判断与取值；对于 bytes 和 string，会优先使用连续字节返回；对于 RowData，则优先判断能否走零拷贝或压缩编码路径。
 
-在 primitive long 计数类场景中，\texttt{ForL0ValueState} 还维护一个后端内部的单条目缓存，用于覆盖 \texttt{value() -> update()} 或连续读取同一状态条目的常见访问模式。该缓存只在非 RowData 的 \texttt{ValueState<Long>} 快路径上启用，并记录 key、key-group 与 namespace 边界；命中时可跳过一次 JNI get。写入、清理和内部融合加法都会同步更新或失效缓存，因此 checkpoint、savepoint、rescale 和后续 native 访问仍以 native \texttt{StateTable} 为权威来源。
+在 primitive long 计数类场景中，\texttt{ForL0ValueState} 使用 typed JNI 直接访问 native \texttt{StateTable}，避免通用 serializer 路径。启用 L0 HotCache 且状态符合白名单时，缓存位于 native 层并保持读写穿透；checkpoint、savepoint、rescale 和恢复始终以 native \texttt{StateTable} 为权威来源。
 
-对于可以在后端内部安全表达为“加 delta 并返回新值”的场景，\texttt{ForL0ValueState} 提供 \texttt{addAndGetLong} 作为内部/诊断快路径，对应 native 层的 \texttt{valueAddAndGet*} 系列 JNI 入口。该入口不要求普通用户作业修改代码；普通作业仍通过 Flink \texttt{ValueState} 接口访问，后端仅在自身实现内部选择是否利用该能力。
+对于可以在后端内部安全表达为“加 delta 并返回新值”的场景，\texttt{ForL0ValueState} 提供 \texttt{addAndGetLong} 内部融合接口，对应 native 层的 \texttt{valueAddAndGet*} 系列 JNI 入口。普通作业仍通过 Flink \texttt{ValueState} 接口访问。
 
 \subsubsection{ForL0ListState}
 
@@ -1152,7 +1160,7 @@ MapState 的 \texttt{mapAddAndGetLongLong} 与 \texttt{mapAddSequentialAndSumLon
 
 \texttt{ForL0MapState} 的关键设计在于 typed inner map。对常见组合，系统允许按 inner entry 粒度执行 \texttt{get}、\texttt{put}、\texttt{remove} 和 \texttt{contains}，而不是把整张 map 始终当作 opaque bytes blob 读写。只有在 generic 回退路径下，才需要通过通用序列化方式处理内层 map。
 
-\texttt{MapState<Long,Long>} 是 JNI 调用粒度最敏感的路径之一。一次逻辑上的 counter 更新如果通过标准接口写成 \texttt{get()} 再 \texttt{put()}，会产生两次 Java/JNI/native 往返。为定位该瓶颈，\texttt{ForL0MapState} 与 \texttt{NativeEngine} 增加了 \texttt{mapAddAndGetLongLong} 和 \texttt{mapAddSequentialAndSumLongLong} 诊断接口，用于将单个或一批 long inner-key 的读改写合并到 native 层完成。该设计验证了 JNI/API 粒度对 map-heavy scalar workload 的影响，但生产透明路径仍以标准 \texttt{MapState} 接口和 typed \texttt{get}/\texttt{put}/\texttt{contains}/\texttt{remove} 为主；若未来要对所有 workload 自动生效，需要在 Flink runtime 或算子生成层识别 compound state operation，而不是修改业务代码。
+\texttt{ForL0MapState} 与 \texttt{NativeEngine} 提供 \texttt{mapAddAndGetLongLong} 和 \texttt{mapAddSequentialAndSumLongLong} 内部融合接口，可将已知的单项或批量 long inner-key 读改写合并到 native 层。标准状态访问仍使用 Flink \texttt{MapState} 接口及 typed \texttt{get}/\texttt{put}/\texttt{contains}/\texttt{remove} 路径。
 
 \subsubsection{ForL0ReducingState 与 ForL0AggregatingState}
 
@@ -1273,14 +1281,14 @@ native KV block 的内部组织以 state 为单位记录 stateId、entryCount �
 
 \subsection{Savepoint 与状态恢复}
 
-\project{} 同时支持普通 checkpoint 恢复与 canonical savepoint 恢复。恢复流程由 \texttt{ForL0KeyedStateBackendBuilder} 统一驱动，主要包括以下步骤：
+\project{} 支持普通 checkpoint 恢复，并支持 canonical savepoint 中 Keyed State 数据的恢复。恢复流程由 \texttt{ForL0KeyedStateBackendBuilder} 统一驱动，主要包括以下步骤：
 
 \begin{enumerate}
   \item 读取状态句柄并恢复 \texttt{KeyedBackendSerializationProxy}。
   \item 执行 key serializer 兼容性校验，重建 state meta info registry。
-  \item 恢复 priority queue 状态。
+  \item 普通 checkpoint 按 Flink 格式恢复 priority queue 状态。
   \item 按 key-group 读取 KV 数据块，并写回对应 typed \texttt{StateTable}。
-  \item 对 canonical savepoint，将规范格式条目翻译为 native 状态表中的键值结构。
+  \item 对 canonical savepoint，将 Keyed State 的规范格式条目翻译为 native 状态表中的键值结构。
 \end{enumerate}
 
 恢复完成后，backend 重新持有全部 engine handle 与 state handle，后续访问继续通过 Java 控制层和 JNI 路由到 native 数据面。
@@ -1329,29 +1337,6 @@ native 共享库的加载采用两级策略：优先从系统库路径加载；�
 
 在这一分层之上，系统围绕热点访问路径组织了若干结构：typed \texttt{StateTable} 与 SwissTable 提供 SWAR 并行探测的哈希索引，RowData 快路径、typed inner map、TimeWindow 专用路径针对常见键与值形态减少复制与装箱，L0 Hot-Key Cache 作为 8-way set-associative 读写穿透缓存承接高频访问，CoW 快照与 Flink 的 Checkpoint、Savepoint 语义保持一致。
 
-\project{} 与 Flink 状态接口和容错机制保持兼容，用户侧无需修改即可使用；同时在哈希组织、原生内存利用以及与硬件缓存亲和的访问路径等方向上保留了进一步演进的空间。
-
-v3.0 进一步明确了透明优化的覆盖边界：当前可自动作用于普通作业的新增优化以 primitive \texttt{ValueState<Long>} 热 key 缓存为主，MapState 批量加法等融合 JNI 仍定位为诊断能力。离线复跑表明，WordCount sliding-window、NexMark SQL 窗口/join/rank 以及客户双流 join 中的大量状态访问会进入 \texttt{TupleSerializer}、RowData、复合 accumulator、迭代器或业务对象主导路径，不能仅依赖单点 JNI 函数获得全 workload 收益。后续若继续保持 workload 零侵入，设计重点应转向 ForL0 后端和 Flink runtime/operator/SQL codegen 层可自动识别的 compound state operation，以及窗口、join、rank、MapState/ListState 迭代等复杂状态形态的专用透明快路径。
-
-实验编排层也在 v3.0 中补充运行保障设计：离线一键脚本在进入实验前校验 TaskManager 与 slot 数，NexMark driver 运行期间继续监控 Flink REST 中的 FAILED job、TaskManager 数和 slot 数；一旦集群退化即终止 driver 并失败退出，避免在离线机器上因无限 stop/等待消耗实验窗口。\texttt{--full} 模式的 NexMark pressure suite 固定展开为 \texttt{forl0\_no\_full\_gc\_allq\_pressure}、\texttt{forl0\_no\_full\_gc\_q8\_q11\_deep} 和 \texttt{forl0\_no\_full\_gc\_lateq\_deep}；同时提供 \texttt{--pressure-only}，用于离线机器只补跑 ForL0/L0 友好的 pressure 配置。该逻辑只影响 benchmark 编排，不改变 ForL0 状态后端语义或 workload 源码。
-
-离线服务器复现交付报告中的 Ascend 编号化性能清单时，推荐使用仓库根目录下的单一入口：
-\begin{verbatim}
-cd /root/forL0
-./reproduce-all
-\end{verbatim}
-该入口后台启动独立 campaign，先运行 HashMap/ForL0 隔离的 smoke 正确性门禁，通过后再执行 W01--W02、N01--N14、C01--C08 正式矩阵；运行日志和中间证据写入 \texttt{benchmark/results/runs/<run\_id>/.logs} 及其 \texttt{smoke/}、\texttt{formal/} 子目录。只有整个 campaign 成功才原子发布到无子目录的 \texttt{benchmark/results/latest/}，并通过 \texttt{UPLOAD\_MANIFEST.tsv} 保存扁平文件名到原始相对路径的映射；失败 campaign 保留 \texttt{FAILED.txt} 和局部证据，但不会覆盖 latest。
-
-当前正式 NexMark 矩阵是面向交付时间与稳定性的代表性集合，成对运行 q3/q4/q9/q18/q19/q20，并非 q0--q22 的穷举测试。仓库包含 q0--q22 的 HashMap/ForL0 SQL 资产和可选 scenario；若验收要求全 query 覆盖，应单独执行完整扫描，并将其结果与默认代表性性能矩阵分开陈述。
-
-2026-07-11 的 Ascend 离线复现进一步补充了工程化约束：ForL0 的 \texttt{initial-table-capacity}、L0 cache size 等后端配置必须从 Flink Java 配置完整下传到 native \texttt{StateEngine}，否则 benchmark.yaml 中的调优参数只是表面生效；native 共享库的构建必须将头文件纳入依赖，避免 JNI/native 结构体布局变化后只重编部分 object 引入崩溃；离线部署必须保证 Flink \texttt{lib/} 中的 backend jar、jar 内嵌 native resource、\texttt{native/} 目录和 deploy 目录四者版本一致。上述改造均限定在 ForL0 后端、native 构建与一键实验编排范围内，不要求 WordCount、NexMark 或客户用例修改源码。
-
-同一轮复现还暴露了采集开关必须真正进入后端的问题：早期脚本无条件传入 \texttt{forL0.metricsCollector.enabled=true}，但后端 builder 并未读取该配置，HotCache gauge 会在有 \texttt{MetricGroup} 时无条件注册。v3.0 将该开关纳入 ForL0 配置面，默认性能复现关闭，仅在诊断或指标采集时显式打开。该设计避免性能交付口径被采集型 JNI gauge 调用影响，同时保留运维观测能力。
-
-由于 Ascend 容器环境下短时 WordCount 单次运行存在明显方差，v3.0 设计将“实验复现口径”也视为交付设计的一部分：编号化一键脚本允许场景声明 \texttt{repeat\_runs} 与 \texttt{repeat\_policy}，当前 WordCount fastpath 场景采用同并行度 p4 的 best-of-3，并在 raw JSON 中保留每次 job id、吞吐和耗时。这一机制不改变后端实现，也不只对 ForL0 生效；HashMap 与 ForL0 使用同一 repeat 规则，从而降低离线机器单次坏样本导致结论翻转的风险。
-
-Ascend 默认编号清单采用总吞吐优先原则，但该原则不改变公平后端对比边界：同一 workload 内 HashMap 与 ForL0 必须使用相同 query、输入比例、Flink/operator 并行度、slot 数和监控窗口；ForL0 只允许通过自身后端参数和实现优化取得收益。2026-07-12 最终一键复跑在 \texttt{benchmark/results/run\_logs/ascend\_reproduction\_20260712\_040246.tsv} 中完整通过，默认清单覆盖 WordCount、NexMark q18/q19/q20/q9/q4/q3 以及 Client usecase。该轮 WordCount p4 best-of-3 为 831,805 vs 1,039,194 records/s/core（$+$24.9\%）；NexMark 中 q18 \texttt{tps\_probe} 为 174.90 K/s vs 215.89 K/s（$+$23.4\%），q18 \texttt{lateq\_deep} 为 947.15 K/s vs 1.22 M/s（$+$28.8\%），q19 为 $+$3.6\%，q20 为 $+$3.5\%，q9 为 $+$8.8\%，q4 在 600 K/s、45 s 稳定窗口下为 $+$11.9\%，q3 为 $+$16.8\%。其中 q20/q9/q19 同时体现更显著的 CPU/core 效率改善。Client 原始业务形态主要作为兼容与无回退复核，\texttt{scalar\_state\_probe\_2m\_ops64\_batch} 则作为 map-heavy 诊断压力场景，24,869 vs 62,049 records/s/core（$+$149.5\%）。q5、q8、q11、\texttt{state\_pressure\_1m} 和 benchset 不进入默认清单：前者未形成稳定、显著、公平的 ForL0 吞吐优势，后者会拖慢或削弱离线一键复现的确定性。曾探索过的 ForL0 higher-parallelism q19/q20 配置虽然面向总 TPS，但改变了 operator 级执行拓扑，已从默认编号清单、YAML 场景和交付结论中撤出。
-
-2026-08 的硬件复跑诊断进一步修正了两个实现与口径问题。第一，L0 tuner 实际按 TaskManager 进程生效，旧实现按每个 StateEngine 创建 manager 会在多 operator/多 subtask 下耗尽 tuner；现已改为进程内共享 manager，并将并发账本与 per-state rebalance 隔离。第二，WordCount \texttt{stateful\_counter\_p4\_probe} 使用融合 \texttt{addAndGetLong}：它在一次 JNI 内直接 \texttt{modify\_in\_place} 权威 SwissTable，只有写穿透而没有 HotCache get，因此观测到 \texttt{lookups=0,hits=0} 表示“未执行缓存查询”，不是 0\% 命中。该场景现明确关闭 L0，避免为无读取收益的 cache 分配硬件容量；它用于衡量融合 JNI、primitive SwissTable 与低 GC 路径，而 L0 硬件收益由具有非零 lookups/hits 的 Client/NexMark L0-on 场景证明。
+\project{} 与 Flink 状态接口和容错机制保持兼容，用户侧无需修改即可使用。标准接口路径自动选择 typed JNI、固定宽度 RowData、TimeWindow 或通用序列化实现；L0 HotCache 仅对满足白名单的状态附着，其他状态始终由 native StateTable 和 SwissTable 提供权威存储。
 
 \end{document}
