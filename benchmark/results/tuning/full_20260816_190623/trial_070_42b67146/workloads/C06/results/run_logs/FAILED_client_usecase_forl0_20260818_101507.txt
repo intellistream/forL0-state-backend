@@ -1,0 +1,23 @@
+ForL0 benchmark failed
+date=2026-08-18 10:15:07 +0800
+repo=/root/forL0
+test=client_usecase
+backend=forl0
+status=1
+profile=disabled
+expected_taskmanagers=2
+expected_slots=8
+extra_args=--scenario state_pressure_300k
+taskmanager_evidence=/root/forL0/benchmark/results/tuning/full_20260816_190623/trial_070_42b67146/workloads/C06/results/run_logs/taskmanager_client_usecase_forl0_20260818_101507.log
+evidence_since_epoch=1787019300
+
+cluster_summary:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 172.23.0.4:38693-62d1c7 slots=4 free=4 heartbeatMs=1787019305590
+TM 172.23.0.3:41749-3c2442 slots=4 free=4 heartbeatMs=1787019305592
+
+running_or_recent_jobs:
+{'jid': 'cfe3956f75fe57f7b8a987054f77c352', 'name': 'client-usecase-xx6000c-benchmark', 'start-time': 1787019303445, 'end-time': 1787019304340, 'duration': 895, 'state': 'FAILED', 'last-modification': 1787019304340, 'tasks': {'running': 0, 'canceling': 0, 'canceled': 15, 'total': 16, 'created': 0, 'scheduled': 0, 'deploying': 0, 'reconciling': 0, 'finished': 0, 'initializing': 0, 'failed': 1}}
