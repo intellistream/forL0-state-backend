@@ -1,0 +1,24 @@
+ForL0 benchmark failed
+date=2026-08-19 04:56:12 +0800
+repo=/root/forL0
+test=nexmark
+backend=forl0
+status=1
+profile=disabled
+expected_taskmanagers=2
+expected_slots=8
+extra_args=--scenario forl0_no_full_gc_lateq_deep --query q18
+taskmanager_evidence=/root/forL0/benchmark/results/tuning/full_20260816_190623/trial_104_1c4801b2/workloads/N04/results/run_logs/taskmanager_nexmark_forl0_20260819_045612.log
+evidence_since_epoch=1787086470
+
+cluster_summary:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 172.27.0.3:35683-92a2d2 slots=4 free=4 heartbeatMs=1787086569038
+TM 172.27.0.4:41815-19f03d slots=4 free=4 heartbeatMs=1787086569037
+
+running_or_recent_jobs:
+{'jid': 'f3c82258b3dab0f9c131eb3eef63b9c8', 'name': 'insert-into_default_catalog.default_database.nexmark_q18', 'start-time': 1787086533737, 'end-time': 1787086567697, 'duration': 33960, 'state': 'FAILED', 'last-modification': 1787086567697, 'tasks': {'running': 0, 'canceling': 0, 'canceled': 7, 'total': 8, 'created': 0, 'scheduled': 0, 'deploying': 0, 'reconciling': 0, 'finished': 0, 'initializing': 0, 'failed': 1}}
+{'jid': '159c2127c9d8629f33971a0f6cd89234', 'name': 'insert-into_default_catalog.default_database.nexmark_q18', 'start-time': 1787086478909, 'end-time': 1787086517312, 'duration': 38403, 'state': 'FAILED', 'last-modification': 1787086517312, 'tasks': {'running': 0, 'canceling': 0, 'canceled': 7, 'total': 8, 'created': 0, 'scheduled': 0, 'deploying': 0, 'reconciling': 0, 'finished': 0, 'initializing': 0, 'failed': 1}}
