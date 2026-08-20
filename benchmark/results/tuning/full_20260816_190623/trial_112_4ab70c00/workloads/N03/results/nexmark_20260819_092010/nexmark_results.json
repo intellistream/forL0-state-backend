@@ -1,0 +1,114 @@
+{
+  "timestamp": "2026-08-19T09:21:05.858695",
+  "run_id": "full_20260816_190623_trial_112_4ab70c00_N03",
+  "run_started_epoch": 1787102394,
+  "variant": "trial_112_4ab70c00_N03",
+  "control_revision": "unavailable",
+  "mode": "benchmark",
+  "scenario_name": "forl0_no_full_gc_lateq_deep",
+  "selected_queries": [
+    "q18"
+  ],
+  "cli_args": {},
+  "nexmark_config": {
+    "queries": "q18",
+    "q4_events": 80000000,
+    "q5_events": 80000000,
+    "q8_events": 100000000,
+    "q9_events": 40000000,
+    "q11_events": 80000000,
+    "q18_events": 0,
+    "q19_events": 0,
+    "q20_events": 0,
+    "tps": 1000000,
+    "warmup_events": 0,
+    "warmup_duration": 0,
+    "min_profile_cpu_cores": 0.0,
+    "person_proportion": 1,
+    "auction_proportion": 9,
+    "bid_proportion": 90,
+    "timeout_seconds": 21600,
+    "max_attempts_per_query": 2,
+    "repeat_per_query": 1,
+    "min_success_samples": 1,
+    "min_cpu_cores": 0.0,
+    "flink_config_overrides": {
+      "parallelism.default": 4,
+      "taskmanager.numberOfTaskSlots": 4,
+      "table.exec.mini-batch.enabled": false,
+      "table.optimizer.distinct-agg.split.enabled": false,
+      "execution.checkpointing.checkpoints-after-tasks-finish.enabled": false,
+      "pipeline.object-reuse": true
+    },
+    "metric_monitor_delay": "20s",
+    "metric_monitor_interval": "5s",
+    "metric_monitor_duration": "90s",
+    "metric_tps_vertex": "sink",
+    "reject_full_gc": true,
+    "query_overrides": {
+      "q18": {
+        "tps": 5000000,
+        "person_proportion": 1,
+        "auction_proportion": 9,
+        "bid_proportion": 90,
+        "bid_hot_ratio_auctions": 24,
+        "bid_hot_ratio_bidders": 24,
+        "auction_hot_ratio_sellers": 8,
+        "metric_monitor_delay": "15s",
+        "metric_monitor_duration": "30s"
+      },
+      "q19": {
+        "tps": 2400000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "bid_hot_ratio_auctions": 24,
+        "bid_hot_ratio_bidders": 12,
+        "metric_monitor_delay": "45s",
+        "metric_monitor_duration": "90s"
+      },
+      "q20": {
+        "tps": 500000,
+        "person_proportion": 1,
+        "auction_proportion": 49,
+        "bid_proportion": 50,
+        "bid_hot_ratio_auctions": 24,
+        "auction_hot_ratio_sellers": 12,
+        "metric_monitor_delay": "20s",
+        "metric_monitor_duration": "45s"
+      }
+    },
+    "category": "forl0",
+    "scenario_name": "forl0_no_full_gc_lateq_deep"
+  },
+  "results": {
+    "hashmap": {
+      "query_results": {
+        "q18": {
+          "cpu": 17.79,
+          "throughput": 400690.0,
+          "throughput_per_core": 22523.327712197864,
+          "benchmark": "nexmark",
+          "backend": "hashmap",
+          "query": "q18",
+          "parallelism": 4,
+          "checkpoint_interval": 0,
+          "person_proportion": 1,
+          "auction_proportion": 9,
+          "bid_proportion": 90,
+          "bid_hot_ratio_auctions": 24,
+          "bid_hot_ratio_bidders": 24,
+          "auction_hot_ratio_sellers": 8,
+          "configured_tps": 5000000,
+          "metric_tps_vertex": "sink",
+          "metric_monitor_duration": "30s",
+          "collect_full_gc": true,
+          "reject_full_gc": true,
+          "max_full_gc_delta": 0,
+          "full_gc_delta": 0
+        }
+      },
+      "failed_queries": []
+    }
+  }
+}
