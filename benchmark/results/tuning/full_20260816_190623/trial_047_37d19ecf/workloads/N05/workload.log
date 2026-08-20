@@ -1,0 +1,335 @@
+============================================================
+  ForL0 offline one-command bootstrap
+============================================================
+  Archive:     /root/forL0/forl0-offline-linux-arm64-py310-20260721.tar.gz
+  Project dir: /root/forL0
+  Run log:     /dev/null
+  Extract to:  /root/forL0/forl0-offline-linux-arm64-py310-20260721
+  Installed:   /root/forl0-runtime
+  FLINK_HOME:  /root/flink_home
+
+[1/4] Reuse runnable repository at /root/forL0
+[2/4] Release archive is not required for repository mode
+[3/4] Repository structure validated
+[native] source fingerprint unchanged; reuse server-built runtime
+[4/4] Install and run ForL0 validation
+
+  Runtime source: repository (/root/forL0)
+
+==> Checking L0 hardware environment
+  device:      OK (/dev/hisi_l0)
+  libl0:       OK (/opt/pkg/l0memlib/libl0mempool.so; bounded search under /opt)
+  libnuma:     OK (/usr/lib64/libnuma.so.1.0.0; ldconfig cache)
+  result:      real L0 environment looks available
+
+==> Preparing full repository runtime
+============================================================
+  ForL0 仓库一键部署
+============================================================
+  仓库路径:   /root/forL0
+  FLINK_HOME: /root/flink_home
+  Docker:     docker
+
+      ⚠ 未找到 unit-test benchmark JAR；apps/nexmark/wordcount/client_usecase 运行不依赖该产物
+[1/4] 跳过 Docker 镜像加载
+
+[2/4] 检查 L0 环境...
+      device:      OK (/dev/hisi_l0)
+      libl0:       OK (/opt/pkg/l0memlib/libl0mempool.so; explicit override)
+      libnuma:     OK (/usr/lib64/libnuma.so.1.0.0; explicit override)
+      ✓ L0 硬件环境可用
+
+[3/4] 安装预编译产物到 Flink...
+      ✓ backend JAR 已安装到 /root/flink_home/lib/
+      ✓ NexMark JAR 已安装到 /root/flink_home/lib/
+      ✓ native 库已安装到 /root/flink_home/native/
+      ✓ WordCount benchmark 已就绪
+      ✓ Client usecase benchmark 已就绪
+      ✓ 环境文件已写入 /root/forL0/docker/forl0-local.env
+      ✓ async-profiler 已就绪: /root/forL0/tools/async-profiler
+
+[4/4] 启动 Docker 集群...
+      已跳过启动。手工执行：
+      source /root/forL0/docker/forl0-local.env
+      cd /root/forL0/docker && ./docker_run.sh start
+
+============================================================
+  完成
+============================================================
+  查看状态: source /root/forL0/docker/forl0-local.env && cd /root/forL0/docker && ./docker_run.sh status
+  查看日志: source /root/forL0/docker/forl0-local.env && cd /root/forL0/docker && ./docker_run.sh logs tm1
+  全量运行 apps: cd /root/forL0/docker && ./run_all_apps.sh
+  只跑 WordCount: cd /root/forL0/docker && ./run_all_apps.sh --test wordcount
+      ✓ Synced Java 8 NexMark JAR into runtime distribution
+
+==> Runtime summary
+  app root:    /root/forL0
+  runtime:     /root/forL0
+  results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results
+  FLINK_HOME:  /root/flink_home
+  backend:     all
+  profile:     --no-profile
+  pressure:    forl0_tps_probe
+  workloads:   N05
+  expected TM: 2
+  expected slots: 8
+  control rev: unavailable
+
+==> Preflight check
+Command: /root/forL0/docker/run_all_apps.sh --offline --preflight-only --test apps --backend all --expected-taskmanagers 2 --expected-slots 8 --restart-cluster --restart-cluster
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /root/forL0
+  Results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results
+  Test:        apps
+  Backend:     all
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   unavailable
+  RunID:       full_20260816_190623_trial_047_37d19ecf_N05
+  ControlRev:  unavailable
+  Date:        2026-08-17 21:08:50 +0800
+
+[preflight] 检查 Flink 与 benchmark 产物
+      ✓ FLINK_HOME: /root/flink_home
+      ✓ benchmark config: /root/forL0/benchmark/config/benchmark.yaml
+      ✓ benchmark entry: /root/forL0/benchmark/scripts/run_benchmark.py
+      ✓ requirements: /root/forL0/benchmark/requirements.txt
+      ✓ WordCount JAR: /root/forL0/docker/deploy/wordcount-benchmark-1.0-SNAPSHOT.jar
+      ✓ NexMark JAR: /root/forL0/docker/deploy/nexmark-flink-0.3-SNAPSHOT.jar
+      ✓ NexMark top-level JAR: Java 8 compatible and cancel-409 fix present
+      ✓ NexMark driver JAR: Java 8 compatible and cancel-409 fix present
+      ✓ NexMark bin: /root/forL0/docker/deploy/nexmark-flink/bin
+      ✓ NexMark conf: /root/forL0/docker/deploy/nexmark-flink/conf
+      ✓ NexMark queries: /root/forL0/docker/deploy/nexmark-flink/queries
+      ✓ Client usecase JAR: /root/forL0/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar
+      ✓ Client hotspot-drift JAR: /root/forL0/docker/deploy/client-drift-benchmark-1.0-SNAPSHOT.jar
+      ✓ ForL0 backend JAR in Flink lib: /root/flink_home/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+      ✓ native library: /root/flink_home/native/libforl0_engine.so
+[3/5] 复用依赖完整的 benchmark Python: /root/forl0-runtime/.venv-benchmark-cp310/bin/python
+      Python:       /root/forl0-runtime/.venv-benchmark-cp310/bin/python (3.10)
+      ✓ config loaded
+      ✓ nexmark queries: q4,q5,q8,q9,q11,q18,q19,q20
+      ✓ client scenarios: contract_baseline,forl0_optimized,state_pressure_300k,state_pressure_1m,hotspot_drift_300k,hotspot_drift_1m,hotspot_state_left_2m,hotspot_state_join_2m,scalar_state_probe_1m,scalar_state_probe_2m_ops64,scalar_state_probe_2m_ops16,scalar_state_probe_2m_ops16_fused,scalar_state_probe_2m_ops16_batch,scalar_state_probe_2m_ops64_batch,scalar_state_probe_1m_ops128_batch,scalar_value_probe_5m_ops16,scalar_value_probe_20m_ops16
+[preflight] 检查通过。
+[2/5] 按要求重启 Flink 集群
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /root/flink_home
+  NATIVE:     /root/flink_home/native
+  CONF:       /root/forL0/docker/conf
+  Docker:     docker
+  JM memory:  8g
+  TM memory:  16g
+  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
+  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
+
+[0/3] 清理残留 benchmark 容器...
+fea0b133e24be84fb9222c4d6e04b4827c6f0f3c9e8542d60b0bfb832b981d3c
+[1/3] 启动 JobManager...
+8ea87fe955fe8dddf5243a610137e8803fdd328ff8d1e215fa99386d9b92a204
+      JobManager IP: 192.168.96.2
+[2/3] 启动 TaskManager-1...
+5f58815662ed7ad4c044134856fac808173f52f1f7c115ea2b78eb1fcb746325
+[3/3] 启动 TaskManager-2...
+7eee14c340199d5cce284d1bfc8712b1741f8719d47b58914693e0301a4b1f6e
+
+等待 JobManager 就绪...
+...
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+  TaskManagers: 2
+  Slots:        8
+
+  查看 TaskManager 日志: /root/forL0/docker/docker_run.sh logs tm1
+  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+      ✓ Flink 集群健康:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 192.168.96.3:39201-004bc2 slots=4 free=4 heartbeatMs=0
+TM 192.168.96.4:44251-ac5349 slots=4 free=4 heartbeatMs=0
+Ascend reproduction manifest: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results/run_logs/ascend_reproduction_20260817_210859.tsv
+
+==> Ascend reproduction N05: nexmark_q19_tps_hashmap
+Command: /root/forL0/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_tps_probe --query q19 --backend hashmap --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /root/forL0
+  Results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results
+  Test:        nexmark
+  Backend:     hashmap
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   unavailable
+  RunID:       full_20260816_190623_trial_047_37d19ecf_N05
+  ControlRev:  unavailable
+  Date:        2026-08-17 21:08:59 +0800
+
+[2/5] 按要求重启 Flink 集群
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /root/flink_home
+  NATIVE:     /root/flink_home/native
+  CONF:       /root/forL0/docker/conf
+  Docker:     docker
+  JM memory:  8g
+  TM memory:  16g
+  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
+  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
+
+[0/3] 清理残留 benchmark 容器...
+dda540e3f3d1ac1ccbc3a2be7fc64563be9451319ce91b99bb19f252b1fb7e02
+[1/3] 启动 JobManager...
+4cb9fc15c4df697953ce092d2be7ce9632f5f42f9671f4478d022c5c32b537c4
+      JobManager IP: 192.168.112.2
+[2/3] 启动 TaskManager-1...
+9414f0eab5c82d50e2adcae84d946cbc77be5bf7e8eb09082d3f61e956d1163c
+[3/3] 启动 TaskManager-2...
+5ea204214b09b74c1c909ca77d7d0cfd9aabafea503ff725fff57a1fbe0fb5bb
+
+等待 JobManager 就绪...
+..
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+  TaskManagers: 2
+  Slots:        8
+
+  查看 TaskManager 日志: /root/forL0/docker/docker_run.sh logs tm1
+  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+      ✓ Flink 集群健康:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 192.168.112.3:41709-495ca4 slots=4 free=4 heartbeatMs=0
+TM 192.168.112.4:37595-cd3667 slots=4 free=4 heartbeatMs=0
+[3/5] 复用依赖完整的 benchmark Python: /root/forl0-runtime/.venv-benchmark-cp310/bin/python
+      Python:       /root/forl0-runtime/.venv-benchmark-cp310/bin/python (3.10)
+[4/5] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forL0/benchmark/scripts/run_benchmark.py --test nexmark --backend hashmap --scenario forl0_tps_probe --query q19
+[NexMark] Scenario: forl0_tps_probe — Non-contract probe: per-query NexMark steady-state TPS mode with sink throughput
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: hashmap
+NexMark Queries: q19
+NexMark Scenario: forl0_tps_probe
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q19']
+Backends: ['hashmap']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: hashmap
+============================================================
+[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-yvz9ho35/nexmark-home/queries)
+
+=== Running Nexmark Q19 (hashmap backend) ===
+Events: 0, TPS: 1000000
+Proportions: Person(1):Auction(1):Bid(98)
+Command: java -Dlog.file=/root/forL0/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-yvz9ho35/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-yvz9ho35/log4j.properties -Dstate.backend.type=org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory -Dstate.backend.forl0.l0-cache.expected-engines=4 -Dstate.backend.forl0.l0-cache.strict-allocation=true -cp /root/forL0/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-yvz9ho35/nexmark-home --queries q19 --category oa
+
+Benchmark Queries: [q19]
+==================================================================
+Start to run query q19 with workload [tps=1 M, eventsNum=0, percentage=bid:98,auction:1,person:1,kafkaServers:null]
+Monitor metrics after 50 seconds.
+Start to monitor metrics for 60 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q19[8]__Writer.numRecordsInPerSecond
+Current Throughput=1 M, Cores=10.47 (2 TMs)
+Current Throughput=1 M, Cores=10.2 (2 TMs)
+Current Throughput=1 M, Cores=10.48 (2 TMs)
+Current Throughput=1.2 M, Cores=9.75 (2 TMs)
+Current Throughput=1.2 M, Cores=10.61 (2 TMs)
+Current Throughput=1.2 M, Cores=9.97 (2 TMs)
+Current Throughput=1.2 M, Cores=10.54 (2 TMs)
+Current Throughput=1.2 M, Cores=9.66 (2 TMs)
+Current Throughput=1.2 M, Cores=10.13 (2 TMs)
+Current Throughput=1.2 M, Cores=9.81 (2 TMs)
+Current Throughput=1.2 M, Cores=10.03 (2 TMs)
+Current Throughput=1.2 M, Cores=9.52 (2 TMs)
+Summary Average: Throughput=1.15 M, Cores=10.1
+Stop job query q19
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q19   |1.15 M           |10.1     |113.91 K         |
+|Total |-                |-        |113.91 K         |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 1,150,000.00 events/sec
+
+--- hashmap Summary ---
+  q19: 1,150,000 events/sec (113,861/core)
+
+[Nexmark] Results saved to: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results/nexmark_20260817_210907/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)     hashmap proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q19                         1.15 M/s       1.15 M/s  113.86 K/s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results/reports/
+[evidence] TaskManager evidence: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results/run_logs/taskmanager_nexmark_hashmap_20260817_211108.log
+=== flink-taskmanager-1 ===
+=== flink-taskmanager-2 ===
+
+==> Done
+Raw results:
+  /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results/raw/
+NexMark runs:
+  /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_047_37d19ecf/workloads/N05/results/nexmark_*/
+Derived figures/reports: disabled on the experiment server
