@@ -1,0 +1,336 @@
+============================================================
+  ForL0 offline one-command bootstrap
+============================================================
+  Archive:     /root/forL0/forl0-offline-linux-arm64-py310-20260721.tar.gz
+  Project dir: /root/forL0
+  Run log:     /dev/null
+  Extract to:  /root/forL0/forl0-offline-linux-arm64-py310-20260721
+  Installed:   /root/forl0-runtime
+  FLINK_HOME:  /root/flink_home
+
+[1/4] Reuse runnable repository at /root/forL0
+[2/4] Release archive is not required for repository mode
+[3/4] Repository structure validated
+[native] source fingerprint unchanged; reuse server-built runtime
+[4/4] Install and run ForL0 validation
+
+  Runtime source: repository (/root/forL0)
+
+==> Checking L0 hardware environment
+  device:      OK (/dev/hisi_l0)
+  libl0:       OK (/opt/pkg/l0memlib/libl0mempool.so; bounded search under /opt)
+  libnuma:     OK (/usr/lib64/libnuma.so.1.0.0; ldconfig cache)
+  result:      real L0 environment looks available
+
+==> Preparing full repository runtime
+============================================================
+  ForL0 仓库一键部署
+============================================================
+  仓库路径:   /root/forL0
+  FLINK_HOME: /root/flink_home
+  Docker:     docker
+
+      ⚠ 未找到 unit-test benchmark JAR；apps/nexmark/wordcount/client_usecase 运行不依赖该产物
+[1/4] 跳过 Docker 镜像加载
+
+[2/4] 检查 L0 环境...
+      device:      OK (/dev/hisi_l0)
+      libl0:       OK (/opt/pkg/l0memlib/libl0mempool.so; explicit override)
+      libnuma:     OK (/usr/lib64/libnuma.so.1.0.0; explicit override)
+      ✓ L0 硬件环境可用
+
+[3/4] 安装预编译产物到 Flink...
+      ✓ backend JAR 已安装到 /root/flink_home/lib/
+      ✓ NexMark JAR 已安装到 /root/flink_home/lib/
+      ✓ native 库已安装到 /root/flink_home/native/
+      ✓ WordCount benchmark 已就绪
+      ✓ Client usecase benchmark 已就绪
+      ✓ 环境文件已写入 /root/forL0/docker/forl0-local.env
+      ✓ async-profiler 已就绪: /root/forL0/tools/async-profiler
+
+[4/4] 启动 Docker 集群...
+      已跳过启动。手工执行：
+      source /root/forL0/docker/forl0-local.env
+      cd /root/forL0/docker && ./docker_run.sh start
+
+============================================================
+  完成
+============================================================
+  查看状态: source /root/forL0/docker/forl0-local.env && cd /root/forL0/docker && ./docker_run.sh status
+  查看日志: source /root/forL0/docker/forl0-local.env && cd /root/forL0/docker && ./docker_run.sh logs tm1
+  全量运行 apps: cd /root/forL0/docker && ./run_all_apps.sh
+  只跑 WordCount: cd /root/forL0/docker && ./run_all_apps.sh --test wordcount
+      ✓ Synced Java 8 NexMark JAR into runtime distribution
+
+==> Runtime summary
+  app root:    /root/forL0
+  runtime:     /root/forL0
+  results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_145_406a68eb/workloads/N04/results
+  FLINK_HOME:  /root/flink_home
+  backend:     all
+  profile:     --no-profile
+  pressure:    forl0_tps_probe
+  workloads:   N04
+  expected TM: 2
+  expected slots: 8
+  control rev: unavailable
+
+==> Preflight check
+Command: /root/forL0/docker/run_all_apps.sh --offline --preflight-only --test apps --backend all --expected-taskmanagers 2 --expected-slots 8 --restart-cluster --restart-cluster
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /root/forL0
+  Results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_145_406a68eb/workloads/N04/results
+  Test:        apps
+  Backend:     all
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   unavailable
+  RunID:       full_20260816_190623_trial_145_406a68eb_N04
+  ControlRev:  unavailable
+  Date:        2026-08-20 04:06:07 +0800
+
+[preflight] 检查 Flink 与 benchmark 产物
+      ✓ FLINK_HOME: /root/flink_home
+      ✓ benchmark config: /root/forL0/benchmark/config/benchmark.yaml
+      ✓ benchmark entry: /root/forL0/benchmark/scripts/run_benchmark.py
+      ✓ requirements: /root/forL0/benchmark/requirements.txt
+      ✓ WordCount JAR: /root/forL0/docker/deploy/wordcount-benchmark-1.0-SNAPSHOT.jar
+      ✓ NexMark JAR: /root/forL0/docker/deploy/nexmark-flink-0.3-SNAPSHOT.jar
+      ✓ NexMark top-level JAR: Java 8 compatible and cancel-409 fix present
+      ✓ NexMark driver JAR: Java 8 compatible and cancel-409 fix present
+      ✓ NexMark bin: /root/forL0/docker/deploy/nexmark-flink/bin
+      ✓ NexMark conf: /root/forL0/docker/deploy/nexmark-flink/conf
+      ✓ NexMark queries: /root/forL0/docker/deploy/nexmark-flink/queries
+      ✓ Client usecase JAR: /root/forL0/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar
+      ✓ Client hotspot-drift JAR: /root/forL0/docker/deploy/client-drift-benchmark-1.0-SNAPSHOT.jar
+      ✓ ForL0 backend JAR in Flink lib: /root/flink_home/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+      ✓ native library: /root/flink_home/native/libforl0_engine.so
+[3/5] 复用依赖完整的 benchmark Python: /root/forl0-runtime/.venv-benchmark-cp310/bin/python
+      Python:       /root/forl0-runtime/.venv-benchmark-cp310/bin/python (3.10)
+      ✓ config loaded
+      ✓ nexmark queries: q4,q5,q8,q9,q11,q18,q19,q20
+      ✓ client scenarios: contract_baseline,forl0_optimized,state_pressure_300k,state_pressure_1m,hotspot_drift_300k,hotspot_drift_1m,hotspot_state_left_2m,hotspot_state_join_2m,scalar_state_probe_1m,scalar_state_probe_2m_ops64,scalar_state_probe_2m_ops16,scalar_state_probe_2m_ops16_fused,scalar_state_probe_2m_ops16_batch,scalar_state_probe_2m_ops64_batch,scalar_state_probe_1m_ops128_batch,scalar_value_probe_5m_ops16,scalar_value_probe_20m_ops16
+[preflight] 检查通过。
+[2/5] 按要求重启 Flink 集群
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /root/flink_home
+  NATIVE:     /root/flink_home/native
+  CONF:       /root/forL0/docker/conf
+  Docker:     docker
+  JM memory:  8g
+  TM memory:  16g
+  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
+  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
+
+[0/3] 清理残留 benchmark 容器...
+b422a4daa1b6f591c21270b505aca6820940b71bad388253daba5818ef8285be
+[1/3] 启动 JobManager...
+0cae46f5f31fa2f3ffc0cba5ea97bdd5199eba9389f56cb18ad6a5839fc3eadf
+      JobManager IP: 192.168.64.2
+[2/3] 启动 TaskManager-1...
+47505e87e6852ebc1ae246b290cd9c9392d14286aca7a56e0ba4d4889b609e2e
+[3/3] 启动 TaskManager-2...
+678e58df304de50f6a2400c8f4c77ddfb359aec5e7697164d55eb351ca79b245
+
+等待 JobManager 就绪...
+...
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+  TaskManagers: 2
+  Slots:        8
+
+  查看 TaskManager 日志: /root/forL0/docker/docker_run.sh logs tm1
+  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+      ✓ Flink 集群健康:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 192.168.64.3:46233-70f4c9 slots=4 free=4 heartbeatMs=0
+TM 192.168.64.4:46313-1a997f slots=4 free=4 heartbeatMs=0
+Ascend reproduction manifest: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_145_406a68eb/workloads/N04/results/run_logs/ascend_reproduction_20260820_040616.tsv
+
+==> Ascend reproduction N04: nexmark_q18_lateq_deep_forl0
+Command: /root/forL0/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_lateq_deep --query q18 --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /root/forL0
+  Results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_145_406a68eb/workloads/N04/results
+  Test:        nexmark
+  Backend:     forl0
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   unavailable
+  RunID:       full_20260816_190623_trial_145_406a68eb_N04
+  ControlRev:  unavailable
+  Date:        2026-08-20 04:06:16 +0800
+
+[2/5] 按要求重启 Flink 集群
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /root/flink_home
+  NATIVE:     /root/flink_home/native
+  CONF:       /root/forL0/docker/conf
+  Docker:     docker
+  JM memory:  8g
+  TM memory:  16g
+  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
+  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
+
+[0/3] 清理残留 benchmark 容器...
+d25d9735df4acc2063b12677ee762a06444468f88293c1bd1193fdb1ea1b271f
+[1/3] 启动 JobManager...
+25f22fcafc10c8cc1799bb981e8bf227092cd74f306dcf7c50c58b0050a52b15
+      JobManager IP: 192.168.80.2
+[2/3] 启动 TaskManager-1...
+6feb387c5d3c4882e89699724f0e545c1f826592b8cc9b616f4676e5b9d40f09
+[3/3] 启动 TaskManager-2...
+720e982414c7e283ed2f70b2a53949269ba20c9d9774cc31c0c7c6e0efbd0410
+
+等待 JobManager 就绪...
+...
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+  TaskManagers: 2
+  Slots:        8
+
+  查看 TaskManager 日志: /root/forL0/docker/docker_run.sh logs tm1
+  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+      ✓ Flink 集群健康:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 192.168.80.3:43011-d6a7c3 slots=4 free=4 heartbeatMs=0
+TM 192.168.80.4:41833-ea5305 slots=4 free=4 heartbeatMs=0
+[3/5] 复用依赖完整的 benchmark Python: /root/forl0-runtime/.venv-benchmark-cp310/bin/python
+      Python:       /root/forl0-runtime/.venv-benchmark-cp310/bin/python (3.10)
+[4/5] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forL0/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_no_full_gc_lateq_deep --query q18
+[NexMark] Scenario: forl0_no_full_gc_lateq_deep — Non-contract retry: q18/q19/q20 deeper state-pressure shaping under no-Full-GC acceptance
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: forl0
+NexMark Queries: q18
+NexMark Scenario: forl0_no_full_gc_lateq_deep
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q18']
+Backends: ['forl0']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: forl0
+============================================================
+[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-gevdwpsl/nexmark-home/queries)
+
+=== Running Nexmark Q18 (forl0 backend) ===
+Events: 0, TPS: 5000000
+Proportions: Person(1):Auction(9):Bid(90)
+Hot ratios: bid.auctions=24, bid.bidders=24
+Command: java -Dlog.file=/root/forL0/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-gevdwpsl/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-gevdwpsl/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=512 -Dstate.backend.forl0.max-table-capacity=4194304 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.total-size=384mb -Dstate.backend.forl0.l0-cache.expected-engines=2 -Dstate.backend.forl0.l0-cache.strict-allocation=true -Dstate.backend.forl0.native-memory.max-size=768mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.75 -DforL0.metricsCollector.enabled=false -cp /root/forL0/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-gevdwpsl/nexmark-home --queries q18 --category oa
+
+  ERROR: Flink job failed during NexMark run: a67e09755a3d1cbf98c74a9d83be8640 insert-into_default_catalog.default_database.nexmark_q18
+Flink failure detail: org.apache.flink.runtime.JobException: Recovery is suppressed by NoRestartBackoffTimeStrategy at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailure(ExecutionFailureHandler.java:219) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailureAndReport(ExecutionFailureHandler.java:166) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.getFailureHandlingResult(ExecutionFailureHandler.java:121) at org.apache.flink.runtime.scheduler.DefaultScheduler.recordTaskFailure(DefaultScheduler.java:281) at org.apache.flink.runtime.scheduler.DefaultScheduler.handleTaskFailure(DefaultScheduler.java:272) at org.apache.flink.runtime.scheduler.DefaultScheduler.onTaskFailed(DefaultScheduler.java:265) at org.apache.flink.runtime.scheduler.SchedulerBase.onTaskExecutionStateUpdate(SchedulerBase.java:788) at org.apache.flink.runtime.scheduler.SchedulerBase.updateTaskExecutionState(SchedulerBase.java:765) at org.apache.flink.runtime.scheduler.SchedulerNG.updateTaskExecutionState(SchedulerNG.java:83) at org.apache.flink.runtime.jobmaster.JobMaster.updateTaskExecutionState(JobMaster.java:515) at sun.reflect.GeneratedMethodAccessor14.invoke(Unknown Source) at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43) at java.lang.reflect.Method.invoke(Method.java:498) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.lambda$handleRpcInvocation$1(PekkoRpcActor.java:318) at org.apache.flink.runtime.concurrent.ClassLoadingUtils.runWithContextClassLoader(ClassLoadingUtils.java:83) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcInvocation(PekkoRpcActor.java:316) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcMessage(PekkoRpcActor.java:229) at org.apache.flink.runtime.rpc.pekko.FencedPekkoRpcActor.handleRpcMessage(FencedPekkoRpcActor.java:88) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleMessage(PekkoRpcActor.java:174) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:33) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:29) at scala.PartialFunction.applyOrElse(PartialFunction.scala:127) at scala.PartialFunction.applyOrElse$(PartialFunction.scala:126) at org.apache.pekko.japi.pf.UnitCaseStatement.applyOrElse(CaseStatements.scala:29) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:175) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at org.apache.pekko.actor.Actor.aroundReceive(Actor.scala:547) at org.apache.pekko.actor.Actor.aroundReceive$(Actor.scala:545) at org.apache.pekko.actor.AbstractActor.aroundReceive(AbstractActor.scala:229) at org.apache.pekko.actor.ActorCell.receiveMessage(ActorCell.scala:590) at org.apache.pekko.actor.ActorCell.invoke(ActorCell.scala:557) at org.apache.pekko.dispatch.Mailbox.processMailbox(Mailbox.scala:272) at org.apache.pekko.dispatch.Mailbox.run(Mailbox.scala:233) at org.apache.pekko.dispatch.Mailbox.exec(Mailbox.scala:245) at java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:289) at java.util.concurrent.ForkJoinPool$WorkQueue.runTask(ForkJoinPool.java:1056) at java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:1692) at java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:175) Caused by: java.lang.RuntimeException: std::bad_alloc at org.apache.flink.state.forl0.NativeEngine.valuePutFixedRow2Generic(Native Method) at org.apache.flink.state.forl0.ForL0ValueState.updateForFixedRow2Key(ForL0ValueState.java:530) at org.apache.flink.state.forl0.ForL0ValueState.update(ForL0ValueState.java:444) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.deduplicateOnRowTime(RowTimeDeduplicateFunction.java:88) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.processElement(RowTimeDeduplicateFunction.java:58) at org.apache.flink.tab
+Benchmark Queries: [q18]
+==================================================================
+Start to run query q18 with workload [tps=5 M, eventsNum=0, percentage=bid:90,auction:9,person:1,kafkaServers:null]
+Monitor metrics after 15 seconds.
+Start to monitor metrics for 30 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q18[8]__Writer.numRecordsInPerSecond
+Current Throughput=252.39 K, Cores=7.23 (2 TMs)
+Current Throughput=252.39 K, Cores=7.11 (2 TMs)
+Current Throughput=252.39 K, Cores=7.04 (2 TMs)
+Current Throughput=461.65 K, Cores=7.19 (2 TMs)
+
+[NexMark fail-fast] Flink job failed during NexMark run: a67e09755a3d1cbf98c74a9d83be8640 insert-into_default_catalog.default_database.nexmark_q18
+Flink failure detail: org.apache.flink.runtime.JobException: Recovery is suppressed by NoRestartBackoffTimeStrategy at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailure(ExecutionFailureHandler.java:219) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailureAndReport(ExecutionFailureHandler.java:166) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.getFailureHandlingResult(ExecutionFailureHandler.java:121) at org.apache.flink.runtime.scheduler.DefaultScheduler.recordTaskFailure(DefaultScheduler.java:281) at org.apache.flink.runtime.scheduler.DefaultScheduler.handleTaskFailure(DefaultScheduler.java:272) at org.apache.flink.runtime.scheduler.DefaultScheduler.onTaskFailed(DefaultScheduler.java:265) at org.apache.flink.runtime.scheduler.SchedulerBase.onTaskExecutionStateUpdate(SchedulerBase.java:788) at org.apache.flink.runtime.scheduler.SchedulerBase.updateTaskExecutionState(SchedulerBase.java:765) at org.apache.flink.runtime.scheduler.SchedulerNG.updateTaskExecutionState(SchedulerNG.java:83) at org.apache.flink.runtime.jobmaster.JobMaster.updateTaskExecutionState(JobMaster.java:515) at sun.reflect.GeneratedMethodAccessor14.invoke(Unknown Source) at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43) at java.lang.reflect.Method.invoke(Method.java:498) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.lambda$handleRpcInvocation$1(PekkoRpcActor.java:318) at org.apache.flink.runtime.concurrent.ClassLoadingUtils.runWithContextClassLoader(ClassLoadingUtils.java:83) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcInvocation(PekkoRpcActor.java:316) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcMessage(PekkoRpcActor.java:229) at org.apache.flink.runtime.rpc.pekko.FencedPekkoRpcActor.handleRpcMessage(FencedPekkoRpcActor.java:88) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleMessage(PekkoRpcActor.java:174) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:33) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:29) at scala.PartialFunction.applyOrElse(PartialFunction.scala:127) at scala.PartialFunction.applyOrElse$(PartialFunction.scala:126) at org.apache.pekko.japi.pf.UnitCaseStatement.applyOrElse(CaseStatements.scala:29) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:175) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at org.apache.pekko.actor.Actor.aroundReceive(Actor.scala:547) at org.apache.pekko.actor.Actor.aroundReceive$(Actor.scala:545) at org.apache.pekko.actor.AbstractActor.aroundReceive(AbstractActor.scala:229) at org.apache.pekko.actor.ActorCell.receiveMessage(ActorCell.scala:590) at org.apache.pekko.actor.ActorCell.invoke(ActorCell.scala:557) at org.apache.pekko.dispatch.Mailbox.processMailbox(Mailbox.scala:272) at org.apache.pekko.dispatch.Mailbox.run(Mailbox.scala:233) at org.apache.pekko.dispatch.Mailbox.exec(Mailbox.scala:245) at java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:289) at java.util.concurrent.ForkJoinPool$WorkQueue.runTask(ForkJoinPool.java:1056) at java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:1692) at java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:175) Caused by: java.lang.RuntimeException: std::bad_alloc at org.apache.flink.state.forl0.NativeEngine.valuePutFixedRow2Generic(Native Method) at org.apache.flink.state.forl0.ForL0ValueState.updateForFixedRow2Key(ForL0ValueState.java:530) at org.apache.flink.state.forl0.ForL0ValueState.update(ForL0ValueState.java:444) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.deduplicateOnRowTime(RowTimeDeduplicateFunction.java:88) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.processElement(RowTimeDeduplicateFunction.java:58) at org.apache.flink.tab
+
+  ERROR: NexMark driver failed; rejecting sample even if a partial summary exists
+  [Nexmark] Backoff 4s before next attempt
+  [Nexmark] Retry attempt 2/2 for q18 (forl0)
+  ERROR: Flink job failed during NexMark run: e0e8448b86f00bedfb718cc39bb0566a insert-into_default_catalog.default_database.nexmark_q18
+Flink failure detail: org.apache.flink.runtime.JobException: Recovery is suppressed by NoRestartBackoffTimeStrategy at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailure(ExecutionFailureHandler.java:219) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailureAndReport(ExecutionFailureHandler.java:166) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.getFailureHandlingResult(ExecutionFailureHandler.java:121) at org.apache.flink.runtime.scheduler.DefaultScheduler.recordTaskFailure(DefaultScheduler.java:281) at org.apache.flink.runtime.scheduler.DefaultScheduler.handleTaskFailure(DefaultScheduler.java:272) at org.apache.flink.runtime.scheduler.DefaultScheduler.onTaskFailed(DefaultScheduler.java:265) at org.apache.flink.runtime.scheduler.SchedulerBase.onTaskExecutionStateUpdate(SchedulerBase.java:788) at org.apache.flink.runtime.scheduler.SchedulerBase.updateTaskExecutionState(SchedulerBase.java:765) at org.apache.flink.runtime.scheduler.SchedulerNG.updateTaskExecutionState(SchedulerNG.java:83) at org.apache.flink.runtime.jobmaster.JobMaster.updateTaskExecutionState(JobMaster.java:515) at sun.reflect.GeneratedMethodAccessor14.invoke(Unknown Source) at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43) at java.lang.reflect.Method.invoke(Method.java:498) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.lambda$handleRpcInvocation$1(PekkoRpcActor.java:318) at org.apache.flink.runtime.concurrent.ClassLoadingUtils.runWithContextClassLoader(ClassLoadingUtils.java:83) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcInvocation(PekkoRpcActor.java:316) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcMessage(PekkoRpcActor.java:229) at org.apache.flink.runtime.rpc.pekko.FencedPekkoRpcActor.handleRpcMessage(FencedPekkoRpcActor.java:88) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleMessage(PekkoRpcActor.java:174) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:33) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:29) at scala.PartialFunction.applyOrElse(PartialFunction.scala:127) at scala.PartialFunction.applyOrElse$(PartialFunction.scala:126) at org.apache.pekko.japi.pf.UnitCaseStatement.applyOrElse(CaseStatements.scala:29) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:175) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at org.apache.pekko.actor.Actor.aroundReceive(Actor.scala:547) at org.apache.pekko.actor.Actor.aroundReceive$(Actor.scala:545) at org.apache.pekko.actor.AbstractActor.aroundReceive(AbstractActor.scala:229) at org.apache.pekko.actor.ActorCell.receiveMessage(ActorCell.scala:590) at org.apache.pekko.actor.ActorCell.invoke(ActorCell.scala:557) at org.apache.pekko.dispatch.Mailbox.processMailbox(Mailbox.scala:272) at org.apache.pekko.dispatch.Mailbox.run(Mailbox.scala:233) at org.apache.pekko.dispatch.Mailbox.exec(Mailbox.scala:245) at java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:289) at java.util.concurrent.ForkJoinPool$WorkQueue.runTask(ForkJoinPool.java:1056) at java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:1692) at java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:175) Caused by: java.lang.RuntimeException: std::bad_alloc at org.apache.flink.state.forl0.NativeEngine.valuePutFixedRow2Generic(Native Method) at org.apache.flink.state.forl0.ForL0ValueState.updateForFixedRow2Key(ForL0ValueState.java:530) at org.apache.flink.state.forl0.ForL0ValueState.update(ForL0ValueState.java:444) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.deduplicateOnRowTime(RowTimeDeduplicateFunction.java:88) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.processElement(RowTimeDeduplicateFunction.java:58) at org.apache.flink.tab
+Benchmark Queries: [q18]
+==================================================================
+Start to run query q18 with workload [tps=5 M, eventsNum=0, percentage=bid:90,auction:9,person:1,kafkaServers:null]
+Monitor metrics after 15 seconds.
+Start to monitor metrics for 30 seconds.
+Monitor TPS metric: vertex=sink, metric=nexmark_q18[8]__Writer.numRecordsInPerSecond
+Current Throughput=249.29 K, Cores=6.77 (2 TMs)
+Current Throughput=249.29 K, Cores=6.63 (2 TMs)
+Current Throughput=249.29 K, Cores=6.63 (2 TMs)
+Current Throughput=431.76 K, Cores=6.73 (2 TMs)
+Current Throughput=431.76 K, Cores=6.71 (2 TMs)
+
+[NexMark fail-fast] Flink job failed during NexMark run: e0e8448b86f00bedfb718cc39bb0566a insert-into_default_catalog.default_database.nexmark_q18
+Flink failure detail: org.apache.flink.runtime.JobException: Recovery is suppressed by NoRestartBackoffTimeStrategy at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailure(ExecutionFailureHandler.java:219) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.handleFailureAndReport(ExecutionFailureHandler.java:166) at org.apache.flink.runtime.executiongraph.failover.ExecutionFailureHandler.getFailureHandlingResult(ExecutionFailureHandler.java:121) at org.apache.flink.runtime.scheduler.DefaultScheduler.recordTaskFailure(DefaultScheduler.java:281) at org.apache.flink.runtime.scheduler.DefaultScheduler.handleTaskFailure(DefaultScheduler.java:272) at org.apache.flink.runtime.scheduler.DefaultScheduler.onTaskFailed(DefaultScheduler.java:265) at org.apache.flink.runtime.scheduler.SchedulerBase.onTaskExecutionStateUpdate(SchedulerBase.java:788) at org.apache.flink.runtime.scheduler.SchedulerBase.updateTaskExecutionState(SchedulerBase.java:765) at org.apache.flink.runtime.scheduler.SchedulerNG.updateTaskExecutionState(SchedulerNG.java:83) at org.apache.flink.runtime.jobmaster.JobMaster.updateTaskExecutionState(JobMaster.java:515) at sun.reflect.GeneratedMethodAccessor14.invoke(Unknown Source) at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43) at java.lang.reflect.Method.invoke(Method.java:498) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.lambda$handleRpcInvocation$1(PekkoRpcActor.java:318) at org.apache.flink.runtime.concurrent.ClassLoadingUtils.runWithContextClassLoader(ClassLoadingUtils.java:83) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcInvocation(PekkoRpcActor.java:316) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleRpcMessage(PekkoRpcActor.java:229) at org.apache.flink.runtime.rpc.pekko.FencedPekkoRpcActor.handleRpcMessage(FencedPekkoRpcActor.java:88) at org.apache.flink.runtime.rpc.pekko.PekkoRpcActor.handleMessage(PekkoRpcActor.java:174) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:33) at org.apache.pekko.japi.pf.UnitCaseStatement.apply(CaseStatements.scala:29) at scala.PartialFunction.applyOrElse(PartialFunction.scala:127) at scala.PartialFunction.applyOrElse$(PartialFunction.scala:126) at org.apache.pekko.japi.pf.UnitCaseStatement.applyOrElse(CaseStatements.scala:29) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:175) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at scala.PartialFunction$OrElse.applyOrElse(PartialFunction.scala:176) at org.apache.pekko.actor.Actor.aroundReceive(Actor.scala:547) at org.apache.pekko.actor.Actor.aroundReceive$(Actor.scala:545) at org.apache.pekko.actor.AbstractActor.aroundReceive(AbstractActor.scala:229) at org.apache.pekko.actor.ActorCell.receiveMessage(ActorCell.scala:590) at org.apache.pekko.actor.ActorCell.invoke(ActorCell.scala:557) at org.apache.pekko.dispatch.Mailbox.processMailbox(Mailbox.scala:272) at org.apache.pekko.dispatch.Mailbox.run(Mailbox.scala:233) at org.apache.pekko.dispatch.Mailbox.exec(Mailbox.scala:245) at java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:289) at java.util.concurrent.ForkJoinPool$WorkQueue.runTask(ForkJoinPool.java:1056) at java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:1692) at java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:175) Caused by: java.lang.RuntimeException: std::bad_alloc at org.apache.flink.state.forl0.NativeEngine.valuePutFixedRow2Generic(Native Method) at org.apache.flink.state.forl0.ForL0ValueState.updateForFixedRow2Key(ForL0ValueState.java:530) at org.apache.flink.state.forl0.ForL0ValueState.update(ForL0ValueState.java:444) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.deduplicateOnRowTime(RowTimeDeduplicateFunction.java:88) at org.apache.flink.table.runtime.operators.deduplicate.RowTimeDeduplicateFunction.processElement(RowTimeDeduplicateFunction.java:58) at org.apache.flink.tab
+
+  ERROR: NexMark driver failed; rejecting sample even if a partial summary exists
+
+--- forl0 Summary ---
+  Failed: ['q18']
+
+[Nexmark] Results saved to: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_145_406a68eb/workloads/N04/results/nexmark_20260820_040626/nexmark_results.json
+
+[Error] NexMark failed queries: {'forl0': ['q18']}
+[evidence] TaskManager evidence: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_145_406a68eb/workloads/N04/results/run_logs/taskmanager_nexmark_forl0_20260820_040757.log
+=== flink-taskmanager-1 ===
+[ForL0-HotCache] engine_start active=1 key_groups=64:96 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=0:32 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=96:128 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=32:64 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=784466432 peak_bytes=798229008 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=784466432 peak_bytes=798229008 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=784466432 peak_bytes=798229008 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=784466432 peak_bytes=798229008 max_bytes=805306368
+[ForL0-HotCache] engine_start active=1 key_groups=96:128 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=64:96 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=32:64 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=0:32 requested_bytes=201326592 actual_bytes=201326400 total_sets=1048575 strict=1
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=784466432 peak_bytes=798229008 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=784466432 peak_bytes=798229008 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=756941312 peak_bytes=770703888 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=201326592 actual_bytes=201326400 used_bytes=0 total_sets=1048575 free_sets=1048575 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=784466432 peak_bytes=798229008 max_bytes=805306368
+=== flink-taskmanager-2 ===
+[cleanup] Benchmark command exited with status 1; canceling orphan Flink jobs.
+[cleanup] Wrote failure marker: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_145_406a68eb/workloads/N04/results/run_logs/FAILED_nexmark_forl0_20260820_040757.txt
