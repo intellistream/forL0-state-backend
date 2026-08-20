@@ -1449,6 +1449,92 @@ Client usecase 全部默认场景均可一键完成。合同基线、3000 条优
 
 为减少后续访问离线服务器的次数，\texttt{reproduce-all} 现在在 Flink 启动前自动生成 \texttt{hardware\_snapshot.json} 与 \texttt{l0\_calibration.json}。前者记录 CPU/cache/NUMA/内存拓扑、内核、L0 设备、\texttt{libl0mempool.so} 指纹及工具链版本；后者把密集延迟/带宽测量限制在已验证的 1 MiB，并按 1/2/4/6 MiB 采集与生产 192 字节 HotSet 布局一致的稀疏标签/键/值压力曲线和双 TaskManager 实例证据，避免把整个 tuner 配额错误地整区清零。开发机的 \texttt{reproduce-all --full --simulate} 会将最新真实 L0 曲线与本机 DRAM 曲线构造成带源文件 SHA 的 \texttt{simulation/model} 成本表后再进行候选搜索；它不等同于 \texttt{real-online} 吞吐证据，最终候选仍需少量真实 L0 复核。
 
+\subsubsection{2026-08-20 全因子调优阶段性结果}
+
+截至仓库提交 \texttt{01029104}，离线 L0 服务器已上传
+\texttt{benchmark/results/tuning/full\_20260816\_190623/} 中的 trial 001--159。
+其中 78 组同时完成 24 个 workload，81 组因至少一项失败而不进入综合排名；
+3792 个 workload 执行中共有 98 个失败（2.58\%）。失败根因分为：51 个
+768 MiB native 上限下的 \texttt{std::bad\_alloc}、43 个 TaskManager 连接丢失、3 个
+\texttt{l0\_mem\_alloc} 运行时分配失败和 1 个集群重启后残留作业竞态。失败或部分完成的 trial
+只作为稳定性证据，其已产生的局部性能数字不进入下表。trial 160--162 和 campaign
+最终 \texttt{ranking.json} 在该提交中尚未产生，因此本小节为阶段性结果。
+
+\paragraph{全局配置与按负载配置}
+
+不同 query 的状态基数、状态类型、增长速率与访问局部性不同，因此允许为不同 workload
+选择不同 ForL0 后端参数。本报告同时保留两种口径，不将二者混用：
+
+\begin{itemize}
+  \item \textbf{全局推荐配置}：所有 workload 使用同一组参数，表示开箱即用的部署效果。当前完整 trial 中的阶段性第一名为 \texttt{trial\_129\_a42bb3ae}，12 个配对比值的几何平均为 1.3737$\times$；参数为 initial capacity 512、max capacity 2,097,152、load factor 0.8、L0 cache 384 MiB、native memory 1280 MiB。
+  \item \textbf{按负载候选配置}：每个 workload 在调优集上独立选择候选参数，表示可达性能上限。下表的“观测最大”是搜索阶段最大值，不是独立测试集上的最终数字；最终交付数字必须在固定参数后重复至少 3 次。
+\end{itemize}
+
+表中 Client scalar batch 对应编号 C07/C08：C07 是 HashMap 对照，C08 是 ForL0。二者均运行
+\texttt{scalar\_state\_probe\_2m\_ops64\_batch}，每条记录批量执行 64 次
+\texttt{MapState<Long,Long>} 更新，用于诊断 map-heavy 状态访问与批量 JNI 路径；
+它是非合同诊断压力项，不代表普通 Client 业务路径。
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{L{2.6cm} L{2.8cm} R{1.8cm} R{1.8cm} X}
+\toprule
+\textbf{Workload} & \textbf{候选 trial} & \textbf{观测最大} & \textbf{78 组中位数} & \textbf{L0 Cache 证据} \\
+\midrule
+WordCount & \texttt{trial\_089} & 1.454$\times$ & 1.103$\times$ & 显式关闭，收益不归因于 L0 \\
+q18 TPS & \texttt{trial\_087} & 2.643$\times$ & 2.201$\times$ & 本场景关闭 \\
+q18 deep & \texttt{trial\_034} & 2.389$\times$ & 1.766$\times$ & 启用，但 lookup/hit 为 0 \\
+q19 & \texttt{trial\_122} & 1.523$\times$ & 1.363$\times$ & 本场景关闭 \\
+q20 & \texttt{trial\_150} & 1.694$\times$ & 1.376$\times$ & 启用，但 lookup/hit 为 0 \\
+q9 & \texttt{trial\_129} & 1.236$\times$ & 0.925$\times$ & 启用，但 lookup/hit 为 0 \\
+q4 & \texttt{trial\_136} & 1.885$\times$ & 1.303$\times$ & 启用，但 lookup/hit 为 0 \\
+q3 & \texttt{trial\_144} & 1.550$\times$ & 1.159$\times$ & 启用，但 lookup/hit 为 0 \\
+Client contract & \texttt{trial\_142} & 1.005$\times$ & 1.000$\times$ & 启用，但 lookup/hit 为 0 \\
+Client optimized & \texttt{trial\_144} & 1.007$\times$ & 1.000$\times$ & 启用，但 lookup/hit 为 0 \\
+Client state pressure & \texttt{trial\_130} & 1.002$\times$ & 1.000$\times$ & 启用，但 lookup/hit 为 0 \\
+Client scalar batch & \texttt{trial\_089} & 2.980$\times$ & 1.994$\times$ & 实际访问，约 51.0\% hit/lookup \\
+\bottomrule
+\end{tabularx}
+\caption{完整 real-online trial 中的按负载候选结果。观测最大值只用于选择后续复核点；中位数用于展示搜索空间的典型表现。}
+\end{table}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\begin{tabularx}{\textwidth}{L{2.45cm} R{1.3cm} R{1.8cm} R{1.25cm} R{1.4cm} R{1.55cm} X}
+\toprule
+\textbf{Workload} & \textbf{Initial} & \textbf{Max} & \textbf{Load} & \textbf{Cache} & \textbf{Native} & \textbf{备注} \\
+\midrule
+WordCount & 512 & 2,097,152 & 0.875 & 384 MiB & 1280 MiB & L0-off \\
+q18 TPS & 8192 & 2,097,152 & 0.8 & 256 MiB & 1024 MiB & L0-off \\
+q18 deep & 8192 & 4,194,304 & 0.8 & 256 MiB & 1024 MiB & 增长上限 4M \\
+q19 & 2048 & 2,097,152 & 0.8 & 256 MiB & 1024 MiB & L0-off \\
+q20 & 8192 & 2,097,152 & 0.8 & 128 MiB & 1024 MiB & --- \\
+q9 & 512 & 2,097,152 & 0.8 & 384 MiB & 1280 MiB & 必须复核回退风险 \\
+q4 & 2048 & 2,097,152 & 0.8 & 384 MiB & 1280 MiB & --- \\
+q3 & 2048 & 4,194,304 & 0.8 & 384 MiB & 1024 MiB & 按需增长上限 4M \\
+Client contract & 2048 & 4,194,304 & 0.75 & 384 MiB & 1024 MiB & 性能持平 \\
+Client optimized & 2048 & 4,194,304 & 0.8 & 384 MiB & 1024 MiB & 性能持平 \\
+Client state pressure & 512 & 4,194,304 & 0.875 & 384 MiB & 1280 MiB & 性能持平 \\
+Client scalar batch & 512 & 2,097,152 & 0.875 & 384 MiB & 1280 MiB & 唯一明确 L0-hit 候选 \\
+\bottomrule
+\end{tabularx}
+\caption{按负载复核候选参数。Cache 列为配置值；实际是否使用 L0 以上表的运行时 lookup/hit 证据为准。}
+\end{table}
+
+\paragraph{公平性与结论边界}
+
+按负载配置不改变查询 SQL、输入比例、operator 并行度、TaskManager/slot 拓扑、监控窗口或
+HashMap 对照的 workload 语义；只允许调整 ForL0 自身的 table、native-memory 和 HotCache 参数。
+如果后续调整 Flink 共享参数（例如并行度、slot、heap 或 checkpoint），HashMap 和 ForL0 必须获得相同的搜索预算。
+调优 trial 用于选择候选，固定配置后的重复实验用于报告最终吞吐、方差和置信区间，两者必须分开。
+
+最后，“ForL0 State Backend 收益”与“L0 HotCache 收益”是两个不同层次的结论。
+WordCount、q18 TPS 和 q19 的当前候选显式关闭 L0；其他多个 NexMark/Client 候选虽预留了缓存池，
+但运行时 lookup/hit 为 0。这些收益应归因于 native/off-heap State Backend、SwissTable、融合 JNI 与低 GC 路径，
+不归因于 L0 Cache。当前只有 Client scalar batch 候选具有明确的 L0 lookup/hit 证据，可用于单独讨论 L0 热点访问上限。
+
 \section{测试结论}
 
 
@@ -1459,6 +1545,7 @@ Client usecase 全部默认场景均可一键完成。合同基线、3000 条优
   \item \textbf{性能特征（Intel 平台收益显著）}：在 Intel x86\_64 参考平台，\project{} 在 WordCount 全部 36 组网格扫描点上一致领先于 HashMapStateBackend，平均吞吐量比值 \textbf{1.270}、最高 1.414；这一加速与 VTune 微架构剖析高度吻合——Memory Bound 从 48.1\% 降至 15.3\%、DRAM Bound 从 30.8\% 降至 2.2\%、CPI 从 0.615 降至 0.375。NexMark 端到端查询在 Intel 18\,/\,20\,GB 可完成配置下，q19 / q20 分别由 HashMap 的 279\,s / 313\,s 和 123\,s / 84\,s 降至 \project{} 的 45\,s / 38\,s 和 43\,s / 38\,s。\textbf{Flink 状态算子级 JMH 基准} 进一步佐证：14 个操作点中 13 个正向提升，\texttt{value.Add} +87.2\%、\texttt{map.Add} +110.0\%、\texttt{list.GetAndIterate} +131.5\%。鲲鹏 micro profile 也显示，ForL0 将状态访问集中到 \texttt{NativeEngine.valueGet/Put}（22.8\%），并将 GC worker/promotion 热点从 12.5\% 降至 3.5\%。
   \item \textbf{鲲鹏平台收益边界}：在合同基线与默认 NexMark event-count SQL 场景下，鲲鹏平台的 NexMark 逐查询差异整体接近 0；v4.0 主表因此直接采用 ForL0/L0 友好、但后端之间公平的压力配置。2026-07-12 Ascend 一键清单中，NexMark q18 TPS / q18 lateq-deep / q4 / q3 分别达到 \textbf{$+$23.4\% / $+$28.8\% / $+$11.9\% / $+$16.8\%} 的吞吐提升；q19/q20/q9 吞吐小幅正向，同时 CPU/core 效率显著提升。q5/q8/q11 不纳入默认清单，因为它们未形成稳定、显著、公平的吞吐收益。
   \item \textbf{v4.0 复跑结论}：v4.0 性能主表不再纳入非调优 event-count、contract 或 benchset 口径，直接采用 ForL0/L0 友好的调优配置；同时保持 HashMap 与 ForL0 的 operator 并行度、slot 数和输入设置一致。2026-07-12 Ascend 编号化一键复现完整跑通，WordCount p4 best-of-3 为 $+$24.9\%；NexMark q18、q19、q20、q9、q4、q3 均为正向；Client 原始业务路径持平无回退，map-heavy scalar diagnostic 为 $+$149.5\%。\texttt{state\_pressure\_1m}、\texttt{hotspot\_drift\_1m}、q5、q8、q11 和 benchset 已从默认清单移除。
+  \item \textbf{2026-08 调优策略}：全因子 campaign 明确分离“全局单配置”与“按 workload 配置”两种交付口径。截至 trial 159，全局阶段性候选为 \texttt{trial\_129} 的 1.3737$\times$；WordCount、q18 TPS/deep、q19、q20、q9、q4、q3 与 Client 四类负载分别保留自身的参数候选。调优集最大值只用于选点，最终数字需固定参数后独立重复至少 3 次；768 MiB native 上限因大量 \texttt{std::bad\_alloc} 不进入推荐配置。当前除 Client scalar batch 外，其他候选没有有效 L0 hit 证据，因此其收益表述为 ForL0 State Backend 收益，不扩大为 L0 Cache 收益。
   \item \textbf{后续改造与交付保障}：后续优化明确收敛在 ForL0 后端内部，不要求 workload 调用专有 API；其中 \texttt{ForL0ValueState} 增加 primitive long 热 key 透明缓存，MapState 融合 JNI 保留为诊断能力，用于说明 JNI/API 粒度瓶颈和指导后续 runtime 层 compound state operation。L0 manager 已改为 TaskManager 进程内共享并具备线程安全账本与 per-state rebalance；WordCount 融合计数探针明确采用 L0-off 口径。离线一键脚本已补充 smoke 门禁、TaskManager/slot 健康检查、强制重启、失败 marker 与 orphan job 清理、campaign 隔离及成功后 flat-latest 发布；ForL0 HotCache metrics 改为显式开关，从而降低脏集群、中断、错误产物或采集开销导致实验失效的风险。
 \end{enumerate}
 
