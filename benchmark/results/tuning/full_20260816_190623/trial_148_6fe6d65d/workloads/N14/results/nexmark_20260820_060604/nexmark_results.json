@@ -1,0 +1,203 @@
+{
+  "timestamp": "2026-08-20T06:06:55.095255",
+  "run_id": "full_20260816_190623_trial_148_6fe6d65d_N14",
+  "run_started_epoch": 1787177144,
+  "variant": "trial_148_6fe6d65d_N14",
+  "control_revision": "unavailable",
+  "mode": "benchmark",
+  "scenario_name": "forl0_no_full_gc_extra_sql",
+  "selected_queries": [
+    "q3"
+  ],
+  "cli_args": {},
+  "nexmark_config": {
+    "queries": "q3",
+    "q4_events": 80000000,
+    "q5_events": 80000000,
+    "q8_events": 100000000,
+    "q9_events": 40000000,
+    "q11_events": 80000000,
+    "q18_events": 80000000,
+    "q19_events": 80000000,
+    "q20_events": 60000000,
+    "tps": 1000000,
+    "warmup_events": 0,
+    "warmup_duration": 0,
+    "min_profile_cpu_cores": 0.0,
+    "person_proportion": 1,
+    "auction_proportion": 3,
+    "bid_proportion": 46,
+    "timeout_seconds": 21600,
+    "max_attempts_per_query": 2,
+    "repeat_per_query": 1,
+    "min_success_samples": 1,
+    "min_cpu_cores": 0.0,
+    "flink_config_overrides": {
+      "parallelism.default": 4,
+      "taskmanager.numberOfTaskSlots": 4,
+      "table.exec.mini-batch.enabled": false,
+      "table.optimizer.distinct-agg.split.enabled": false,
+      "execution.checkpointing.checkpoints-after-tasks-finish.enabled": false,
+      "pipeline.object-reuse": true
+    },
+    "metric_monitor_delay": "15s",
+    "metric_monitor_interval": "5s",
+    "metric_monitor_duration": "60s",
+    "metric_tps_vertex": "sink",
+    "reject_full_gc": true,
+    "max_full_gc_delta": 0,
+    "query_overrides": {
+      "q0": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      },
+      "q1": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      },
+      "q2": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      },
+      "q3": {
+        "tps": 200000,
+        "person_proportion": 50,
+        "auction_proportion": 50,
+        "bid_proportion": 0,
+        "auction_hot_ratio_sellers": 12,
+        "metric_monitor_delay": "10s",
+        "metric_monitor_duration": "30s"
+      },
+      "q6": {
+        "tps": 600000,
+        "person_proportion": 1,
+        "auction_proportion": 49,
+        "bid_proportion": 50,
+        "bid_hot_ratio_auctions": 16,
+        "auction_hot_ratio_sellers": 12,
+        "metric_monitor_delay": "25s",
+        "metric_monitor_duration": "90s"
+      },
+      "q7": {
+        "tps": 2000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "bid_hot_ratio_auctions": 16,
+        "bid_hot_ratio_bidders": 8,
+        "metric_monitor_delay": "20s",
+        "metric_monitor_duration": "60s"
+      },
+      "q10": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      },
+      "q12": {
+        "tps": 1000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "bid_hot_ratio_bidders": 16,
+        "metric_monitor_delay": "25s",
+        "metric_monitor_duration": "90s"
+      },
+      "q13": {
+        "tps": 2000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "bid_hot_ratio_auctions": 16,
+        "metric_monitor_delay": "20s",
+        "metric_monitor_duration": "60s"
+      },
+      "q14": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      },
+      "q15": {
+        "tps": 1000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "bid_hot_ratio_auctions": 16,
+        "bid_hot_ratio_bidders": 16,
+        "metric_monitor_delay": "30s",
+        "metric_monitor_duration": "90s"
+      },
+      "q16": {
+        "tps": 1000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "bid_hot_ratio_auctions": 16,
+        "bid_hot_ratio_bidders": 16,
+        "metric_monitor_delay": "30s",
+        "metric_monitor_duration": "90s"
+      },
+      "q17": {
+        "tps": 1000000,
+        "person_proportion": 1,
+        "auction_proportion": 1,
+        "bid_proportion": 98,
+        "bid_hot_ratio_auctions": 16,
+        "metric_monitor_delay": "30s",
+        "metric_monitor_duration": "90s"
+      },
+      "q21": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      },
+      "q22": {
+        "tps": 5000000,
+        "metric_monitor_delay": "10s"
+      }
+    },
+    "category": "oa",
+    "q0_events": 0,
+    "q1_events": 0,
+    "q2_events": 0,
+    "q3_events": 0,
+    "q6_events": 0,
+    "q7_events": 0,
+    "q10_events": 0,
+    "q12_events": 0,
+    "q13_events": 0,
+    "q14_events": 0,
+    "q15_events": 0,
+    "q16_events": 0,
+    "q17_events": 0,
+    "q21_events": 0,
+    "q22_events": 0,
+    "scenario_name": "forl0_no_full_gc_extra_sql"
+  },
+  "results": {
+    "forl0": {
+      "query_results": {
+        "q3": {
+          "cpu": 2.97,
+          "throughput": 16730.0,
+          "throughput_per_core": 5632.996632996633,
+          "benchmark": "nexmark",
+          "backend": "forl0",
+          "query": "q3",
+          "parallelism": 4,
+          "checkpoint_interval": 0,
+          "person_proportion": 50,
+          "auction_proportion": 50,
+          "bid_proportion": 0,
+          "bid_hot_ratio_auctions": null,
+          "bid_hot_ratio_bidders": null,
+          "auction_hot_ratio_sellers": 12,
+          "configured_tps": 200000,
+          "metric_tps_vertex": "sink",
+          "metric_monitor_duration": "30s",
+          "collect_full_gc": true,
+          "reject_full_gc": true,
+          "max_full_gc_delta": 0,
+          "full_gc_delta": 0
+        }
+      },
+      "failed_queries": []
+    }
+  }
+}
