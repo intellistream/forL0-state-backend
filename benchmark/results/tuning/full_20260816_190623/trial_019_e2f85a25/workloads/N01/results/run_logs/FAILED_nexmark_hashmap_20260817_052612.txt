@@ -1,0 +1,22 @@
+ForL0 benchmark failed
+date=2026-08-17 05:26:12 +0800
+repo=/root/forL0
+test=nexmark
+backend=hashmap
+status=1
+profile=disabled
+expected_taskmanagers=2
+expected_slots=8
+extra_args=--scenario forl0_tps_probe --query q18
+taskmanager_evidence=/root/forL0/benchmark/results/tuning/full_20260816_190623/trial_019_e2f85a25/workloads/N01/results/run_logs/taskmanager_nexmark_hashmap_20260817_052611.log
+evidence_since_epoch=1786915480
+
+cluster_summary:
+TASKMANAGERS=1
+SLOTS_TOTAL=4
+SLOTS_AVAILABLE=4
+JOBS_RUNNING=0
+TM 192.168.0.4:36919-81ece1 slots=4 free=4 heartbeatMs=1786915568459
+
+running_or_recent_jobs:
+{'jid': 'ee1201c6b3b61974dc319bc765ed0cd6', 'name': 'insert-into_default_catalog.default_database.nexmark_q18', 'start-time': 1786915488192, 'end-time': 1786915558478, 'duration': 70286, 'state': 'FAILED', 'last-modification': 1786915558478, 'tasks': {'running': 0, 'canceling': 0, 'canceled': 7, 'total': 8, 'created': 0, 'scheduled': 0, 'deploying': 0, 'reconciling': 0, 'finished': 0, 'initializing': 0, 'failed': 1}}
