@@ -1,0 +1,354 @@
+============================================================
+  ForL0 offline one-command bootstrap
+============================================================
+  Archive:     /root/forL0/forl0-offline-linux-arm64-py310-20260721.tar.gz
+  Project dir: /root/forL0
+  Run log:     /dev/null
+  Extract to:  /root/forL0/forl0-offline-linux-arm64-py310-20260721
+  Installed:   /root/forl0-runtime
+  FLINK_HOME:  /root/flink_home
+
+[1/4] Reuse runnable repository at /root/forL0
+[2/4] Release archive is not required for repository mode
+[3/4] Repository structure validated
+[native] source fingerprint unchanged; reuse server-built runtime
+[4/4] Install and run ForL0 validation
+
+  Runtime source: repository (/root/forL0)
+
+==> Checking L0 hardware environment
+  device:      OK (/dev/hisi_l0)
+  libl0:       OK (/opt/pkg/l0memlib/libl0mempool.so; bounded search under /opt)
+  libnuma:     OK (/usr/lib64/libnuma.so.1.0.0; ldconfig cache)
+  result:      real L0 environment looks available
+
+==> Preparing full repository runtime
+============================================================
+  ForL0 仓库一键部署
+============================================================
+  仓库路径:   /root/forL0
+  FLINK_HOME: /root/flink_home
+  Docker:     docker
+
+      ⚠ 未找到 unit-test benchmark JAR；apps/nexmark/wordcount/client_usecase 运行不依赖该产物
+[1/4] 跳过 Docker 镜像加载
+
+[2/4] 检查 L0 环境...
+      device:      OK (/dev/hisi_l0)
+      libl0:       OK (/opt/pkg/l0memlib/libl0mempool.so; explicit override)
+      libnuma:     OK (/usr/lib64/libnuma.so.1.0.0; explicit override)
+      ✓ L0 硬件环境可用
+
+[3/4] 安装预编译产物到 Flink...
+      ✓ backend JAR 已安装到 /root/flink_home/lib/
+      ✓ NexMark JAR 已安装到 /root/flink_home/lib/
+      ✓ native 库已安装到 /root/flink_home/native/
+      ✓ WordCount benchmark 已就绪
+      ✓ Client usecase benchmark 已就绪
+      ✓ 环境文件已写入 /root/forL0/docker/forl0-local.env
+      ✓ async-profiler 已就绪: /root/forL0/tools/async-profiler
+
+[4/4] 启动 Docker 集群...
+      已跳过启动。手工执行：
+      source /root/forL0/docker/forl0-local.env
+      cd /root/forL0/docker && ./docker_run.sh start
+
+============================================================
+  完成
+============================================================
+  查看状态: source /root/forL0/docker/forl0-local.env && cd /root/forL0/docker && ./docker_run.sh status
+  查看日志: source /root/forL0/docker/forl0-local.env && cd /root/forL0/docker && ./docker_run.sh logs tm1
+  全量运行 apps: cd /root/forL0/docker && ./run_all_apps.sh
+  只跑 WordCount: cd /root/forL0/docker && ./run_all_apps.sh --test wordcount
+      ✓ Synced Java 8 NexMark JAR into runtime distribution
+
+==> Runtime summary
+  app root:    /root/forL0
+  runtime:     /root/forL0
+  results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results
+  FLINK_HOME:  /root/flink_home
+  backend:     all
+  profile:     --no-profile
+  pressure:    forl0_tps_probe
+  workloads:   N10
+  expected TM: 2
+  expected slots: 8
+  control rev: unavailable
+
+==> Preflight check
+Command: /root/forL0/docker/run_all_apps.sh --offline --preflight-only --test apps --backend all --expected-taskmanagers 2 --expected-slots 8 --restart-cluster --restart-cluster
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /root/forL0
+  Results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results
+  Test:        apps
+  Backend:     all
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   unavailable
+  RunID:       full_20260816_190623_trial_078_32c9d8a6_N10
+  ControlRev:  unavailable
+  Date:        2026-08-18 14:31:13 +0800
+
+[preflight] 检查 Flink 与 benchmark 产物
+      ✓ FLINK_HOME: /root/flink_home
+      ✓ benchmark config: /root/forL0/benchmark/config/benchmark.yaml
+      ✓ benchmark entry: /root/forL0/benchmark/scripts/run_benchmark.py
+      ✓ requirements: /root/forL0/benchmark/requirements.txt
+      ✓ WordCount JAR: /root/forL0/docker/deploy/wordcount-benchmark-1.0-SNAPSHOT.jar
+      ✓ NexMark JAR: /root/forL0/docker/deploy/nexmark-flink-0.3-SNAPSHOT.jar
+      ✓ NexMark top-level JAR: Java 8 compatible and cancel-409 fix present
+      ✓ NexMark driver JAR: Java 8 compatible and cancel-409 fix present
+      ✓ NexMark bin: /root/forL0/docker/deploy/nexmark-flink/bin
+      ✓ NexMark conf: /root/forL0/docker/deploy/nexmark-flink/conf
+      ✓ NexMark queries: /root/forL0/docker/deploy/nexmark-flink/queries
+      ✓ Client usecase JAR: /root/forL0/docker/deploy/flink-keyedcoprocessfunction-example-1.0-SNAPSHOT-jar-with-dependencies.jar
+      ✓ Client hotspot-drift JAR: /root/forL0/docker/deploy/client-drift-benchmark-1.0-SNAPSHOT.jar
+      ✓ ForL0 backend JAR in Flink lib: /root/flink_home/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar
+      ✓ native library: /root/flink_home/native/libforl0_engine.so
+[3/5] 复用依赖完整的 benchmark Python: /root/forl0-runtime/.venv-benchmark-cp310/bin/python
+      Python:       /root/forl0-runtime/.venv-benchmark-cp310/bin/python (3.10)
+      ✓ config loaded
+      ✓ nexmark queries: q4,q5,q8,q9,q11,q18,q19,q20
+      ✓ client scenarios: contract_baseline,forl0_optimized,state_pressure_300k,state_pressure_1m,hotspot_drift_300k,hotspot_drift_1m,hotspot_state_left_2m,hotspot_state_join_2m,scalar_state_probe_1m,scalar_state_probe_2m_ops64,scalar_state_probe_2m_ops16,scalar_state_probe_2m_ops16_fused,scalar_state_probe_2m_ops16_batch,scalar_state_probe_2m_ops64_batch,scalar_state_probe_1m_ops128_batch,scalar_value_probe_5m_ops16,scalar_value_probe_20m_ops16
+[preflight] 检查通过。
+[2/5] 按要求重启 Flink 集群
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /root/flink_home
+  NATIVE:     /root/flink_home/native
+  CONF:       /root/forL0/docker/conf
+  Docker:     docker
+  JM memory:  8g
+  TM memory:  16g
+  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
+  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
+
+[0/3] 清理残留 benchmark 容器...
+43094de07dc53f0a723b5721e337300fd239dbe6e823bf94fb13ac38decff287
+[1/3] 启动 JobManager...
+d0dc038e2cdac781dbe9f7f81207dd1d0ae02b65bb8fb30e0d610c863c932f83
+      JobManager IP: 172.22.0.2
+[2/3] 启动 TaskManager-1...
+593fccc8787db9024e2cc5333b3879ce40dc4db719e2a05282a3a7519dcb6bbc
+[3/3] 启动 TaskManager-2...
+6758426da6ab77d9dd8db6709448e83a735bd732c9f6809a249cd29642c41bb3
+
+等待 JobManager 就绪...
+...
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+  TaskManagers: 2
+  Slots:        8
+
+  查看 TaskManager 日志: /root/forL0/docker/docker_run.sh logs tm1
+  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+      ✓ Flink 集群健康:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 172.22.0.4:42577-b020e2 slots=4 free=4 heartbeatMs=0
+TM 172.22.0.3:42633-6c0a9c slots=4 free=4 heartbeatMs=0
+Ascend reproduction manifest: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results/run_logs/ascend_reproduction_20260818_143123.tsv
+
+==> Ascend reproduction N10: nexmark_q9_allq_pressure_forl0
+Command: /root/forL0/docker/run_all_apps.sh --offline --test nexmark --scenario forl0_no_full_gc_allq_pressure --query q9 --backend forl0 --no-profile --no-report --expected-taskmanagers 2 --expected-slots 8 --restart-cluster
+============================================================
+  ForL0 benchmark run context
+============================================================
+  Repo:        /root/forL0
+  Results:     /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results
+  Test:        nexmark
+  Backend:     forl0
+  Profile:     disabled
+  Offline:     true
+  Expect TMs:  2
+  Expect slots:8
+  GitCommit:   unavailable
+  RunID:       full_20260816_190623_trial_078_32c9d8a6_N10
+  ControlRev:  unavailable
+  Date:        2026-08-18 14:31:23 +0800
+
+[2/5] 按要求重启 Flink 集群
+=== 停止 BriskState Flink Docker 集群 ===
+flink-taskmanager-2
+flink-taskmanager-1
+flink-jobmanager
+flink-net
+已停止
+=== 启动 BriskState Flink Docker 集群 ===
+  FLINK_HOME: /root/flink_home
+  NATIVE:     /root/flink_home/native
+  CONF:       /root/forL0/docker/conf
+  Docker:     docker
+  JM memory:  8g
+  TM memory:  16g
+  libnuma:    /usr/lib64/libnuma.so.1.0.0 -> /usr/lib/libnuma.so.1
+  libl0:      /opt/pkg/l0memlib/libl0mempool.so -> /usr/lib[64]/libl0mempool.so
+
+[0/3] 清理残留 benchmark 容器...
+cd9276489214cb7baf4e7ad08bf8a7419104bbfb1f5ace3b31e0ff914c4e6dde
+[1/3] 启动 JobManager...
+ca8e5f549a1bf471a60d0440232bbf29eb4c24f92ad5965344d4c07d74a94bfb
+      JobManager IP: 172.23.0.2
+[2/3] 启动 TaskManager-1...
+848426998dacaca2d4fe76dd57caeebc325de4fd62755e57204425f9f056f429
+[3/3] 启动 TaskManager-2...
+128815761bfe46bdbd86286872cddfd43a6e950ebcfe5f70504136df305c2afb
+
+等待 JobManager 就绪...
+..
+=== 集群启动成功! ===
+  Web UI: http://localhost:8081
+  TaskManagers: 2
+  Slots:        8
+
+  查看 TaskManager 日志: /root/forL0/docker/docker_run.sh logs tm1
+  提交作业:     /root/flink_home/bin/flink run -m localhost:8081 -c <MainClass> <jar>
+      ✓ Flink 集群健康:
+TASKMANAGERS=2
+SLOTS_TOTAL=8
+SLOTS_AVAILABLE=8
+JOBS_RUNNING=0
+TM 172.23.0.3:35427-289d9b slots=4 free=4 heartbeatMs=0
+TM 172.23.0.4:34173-88b951 slots=4 free=4 heartbeatMs=0
+[3/5] 复用依赖完整的 benchmark Python: /root/forl0-runtime/.venv-benchmark-cp310/bin/python
+      Python:       /root/forl0-runtime/.venv-benchmark-cp310/bin/python (3.10)
+[4/5] 开始运行 benchmark/scripts/run_benchmark.py
+Command: /root/forl0-runtime/.venv-benchmark-cp310/bin/python /root/forL0/benchmark/scripts/run_benchmark.py --test nexmark --backend forl0 --scenario forl0_no_full_gc_allq_pressure --query q9
+[NexMark] Scenario: forl0_no_full_gc_allq_pressure — Non-contract pressure sweep: tune every stateful NexMark query under no-Full-GC acceptance
+============================================================
+ForL0 StateBackend Benchmark
+============================================================
+Test: nexmark
+Backends: forl0
+NexMark Queries: q9
+NexMark Scenario: forl0_no_full_gc_allq_pressure
+============================================================
+
+============================================================
+Running NexMark Benchmark
+============================================================
+
+============================================================
+Nexmark DataStream Benchmark
+============================================================
+Queries: ['q9']
+Backends: ['forl0']
+Repeat per query: 1
+Min successful samples: 1
+Mode: benchmark
+============================================================
+
+
+============================================================
+Backend: forl0
+============================================================
+[Nexmark] Category compatibility view: forl0 -> oa (/tmp/nexmark-conf-rygp02ys/nexmark-home/queries)
+
+=== Running Nexmark Q9 (forl0 backend) ===
+Events: 0, TPS: 200000
+Proportions: Person(1):Auction(49):Bid(50)
+Hot ratios: bid.auctions=16, bid.bidders=default
+Command: java -Dlog.file=/root/forL0/docker/deploy/nexmark-flink/log/nexmark-flink.log -Dlog4j.configuration=file:/tmp/nexmark-conf-rygp02ys/log4j.properties -Dlog4j.configurationFile=file:/tmp/nexmark-conf-rygp02ys/log4j.properties -Dstate.backend.type=org.apache.flink.state.forl0.ForL0StateBackendFactory -Dstate.backend.forl0.initial-table-capacity=512 -Dstate.backend.forl0.max-table-capacity=2097152 -Dstate.backend.forl0.l0-cache.enabled=true -Dstate.backend.forl0.l0-cache.total-size=128mb -Dstate.backend.forl0.l0-cache.expected-engines=2 -Dstate.backend.forl0.l0-cache.strict-allocation=true -Dstate.backend.forl0.native-memory.max-size=768mb -Dstate.backend.forl0.main-table.load-factor-threshold=0.875 -DforL0.metricsCollector.enabled=false -cp /root/forL0/docker/deploy/nexmark-flink/lib/*:/root/flink_home/lib/* com.github.nexmark.flink.Benchmark --location /tmp/nexmark-conf-rygp02ys/nexmark-home --queries q9 --category oa
+
+Benchmark Queries: [q9]
+==================================================================
+Start to run query q9 with workload [tps=200 K, eventsNum=0, percentage=bid:50,auction:49,person:1,kafkaServers:null]
+Monitor metrics after 25 seconds.
+Start to monitor metrics for 30 seconds.
+Monitor TPS metric: vertex=sink, metric=Rank[13].numRecordsInPerSecond
+Current Throughput=34.38 K, Cores=9.73 (2 TMs)
+Current Throughput=34.38 K, Cores=12.38 (2 TMs)
+Current Throughput=34.38 K, Cores=12.07 (2 TMs)
+Current Throughput=48.37 K, Cores=11.71 (2 TMs)
+Current Throughput=48.37 K, Cores=10.97 (2 TMs)
+Current Throughput=62.29 K, Cores=11.63 (2 TMs)
+Summary Average: Throughput=43.7 K, Cores=11.42
+Stop job query q9
+-------------------------------- Nexmark Results --------------------------------
+
++------+-----------------+---------+-----------------+
+| Query| Throughput (r/s)| Cores   | Throughput/Cores|
++------+-----------------+---------+-----------------+
+|q9    |43.7 K           |11.42    |3.83 K           |
+|Total |-                |-        |3.83 K           |
++------+-----------------+---------+-----------------+
+
+
+
+  Result: 43,700.00 events/sec
+
+--- forl0 Summary ---
+  q9: 43,700 events/sec (3,827/core)
+
+[Nexmark] Results saved to: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results/nexmark_20260818_143130/nexmark_results.json
+
+======================================================================
+                    BENCHMARK SUMMARY
+======================================================================
+
+## Unit Test Benchmark
+--------------------------------------------------
+
+## WordCount Benchmark
+--------------------------------------------------
+
+## Client Usecase Benchmark
+--------------------------------------------------
+
+## NexMark Benchmark
+--------------------------------------------------
+Query   Proc(s)       forl0 proc eps     report eps     (/core)
+---------------------------------------------------------------
+Q9                         43.70 K/s      43.70 K/s    3.83 K/s
+
+======================================================================
+
+Next steps:
+  1. Review raw results in: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results/raw/
+  2. Generate report: python scripts/generate_report.py
+  3. View report in: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results/reports/
+[evidence] TaskManager evidence: /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results/run_logs/taskmanager_nexmark_forl0_20260818_143236.log
+=== flink-taskmanager-1 ===
+=== flink-taskmanager-2 ===
+[ForL0-HotCache] engine_start active=1 key_groups=0:32 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=32:64 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=64:96 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=96:128 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=32:64 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=96:128 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=64:96 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_reuse active=1 key_groups=0:32 requested_bytes=67108864 actual_bytes=67108800 total_sets=349525 strict=1
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=204473344 peak_bytes=205538320 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=204473344 peak_bytes=205538320 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=204473344 peak_bytes=205538320 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=40976896 peak_bytes=41648656 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=204473344 peak_bytes=205538320 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=40976896 peak_bytes=41648656 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=40976896 peak_bytes=41648656 max_bytes=805306368
+[ForL0-HotCache] engine_summary requested_bytes=67108864 actual_bytes=67108800 used_bytes=0 total_sets=349525 free_sets=349525 caches=0 lookups=0 hits=0 invalidations=0 writes=0 bypass_events=0
+[ForL0-Memory] engine_summary used_bytes=40976896 peak_bytes=41648656 max_bytes=805306368
+
+==> Done
+Raw results:
+  /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results/raw/
+NexMark runs:
+  /root/forL0/benchmark/results/tuning/full_20260816_190623/trial_078_32c9d8a6/workloads/N10/results/nexmark_*/
+Derived figures/reports: disabled on the experiment server
