@@ -3,6 +3,7 @@
 
 % ===================== Packages =====================
 \usepackage{fontspec}
+\usepackage{xeCJK}
 \usepackage[a4paper,top=2.8cm,bottom=2.8cm,left=2.6cm,right=2.6cm,headheight=15pt,headsep=10pt,footskip=22pt]{geometry}
 \usepackage{array}
 \usepackage{amsmath}
@@ -25,9 +26,36 @@
 \usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,backgrounds}
 
 % ===================== Fonts =====================
-\setmainfont{Noto Serif CJK SC}
-\setsansfont{Noto Sans CJK SC}
-\setmonofont{Noto Sans Mono CJK SC}
+\IfFontExistsTF{Noto Sans CJK SC}{%
+  \setCJKmainfont{Noto Sans CJK SC}%
+  \setCJKsansfont{Noto Sans CJK SC}%
+  \setCJKmonofont{Noto Sans CJK SC}%
+}{%
+  \IfFontExistsTF{PingFang SC}{%
+    \setCJKmainfont{PingFang SC}%
+    \setCJKsansfont{PingFang SC}%
+    \setCJKmonofont{PingFang SC}%
+  }{%
+    \setCJKmainfont{AR PL UMing CN}%
+    \setCJKsansfont{AR PL UKai CN}%
+    \setCJKmonofont{AR PL UMing CN}%
+  }%
+}
+\IfFontExistsTF{Noto Serif CJK SC}{%
+  \setmainfont{Noto Serif CJK SC}%
+}{%
+  \IfFontExistsTF{Songti SC}{\setmainfont{Songti SC}}{\setmainfont{DejaVu Serif}}%
+}
+\IfFontExistsTF{Noto Sans CJK SC}{%
+  \setsansfont{Noto Sans CJK SC}%
+}{%
+  \IfFontExistsTF{PingFang SC}{\setsansfont{PingFang SC}}{\setsansfont{DejaVu Sans}}%
+}
+\IfFontExistsTF{Noto Sans Mono CJK SC}{%
+  \setmonofont{Noto Sans Mono CJK SC}%
+}{%
+  \IfFontExistsTF{Menlo}{\setmonofont{Menlo}}{\setmonofont{DejaVu Sans Mono}}%
+}
 
 % \XeTeXlinebreaklocale "zh"  % Tectonic's bundled ICU may not provide this locale
 \XeTeXlinebreakskip = 0pt plus 1pt
@@ -208,7 +236,7 @@
 
 \vfill
 
-{\sffamily\large\color{accent!85} 2026 年 4 月\par}
+{\sffamily\large\color{accent!85} 2026 年 8 月\par}
 
 \vspace{1.2cm}
 \end{titlepage}
@@ -245,12 +273,12 @@
 处理器 & 鲲鹏系列处理器 \\
 操作系统 & openEuler \\
 架构 & aarch64（ARM64） \\
-内核特性 & 支持鲲鹏 L0 Cache 的内核驱动及 \texttt{/dev/hisi\_l0} 设备节点（若计划启用 L0 模式） \\
+内核特性 & 支持鲲鹏 L0 Cache 的内核驱动及 \texttt{/dev/hisi\_l0} 或 \texttt{/dev/l0} 设备节点（若计划启用 L0 HotCache） \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-L0 Cache 相关的硬件与驱动并非编译期依赖。若目标机器缺少 L0 硬件或内存池库，原生引擎会在运行时自动退回至堆内存分配，不影响功能完整性。
+L0 Cache 相关的硬件与驱动并非编译期依赖。若目标机器缺少 L0 硬件或内存池库，L0 HotCache 保持关闭，权威状态仍由原生 SwissTable 正常提供。
 
 \subsection{构建产物}
 
@@ -264,9 +292,9 @@ L0 Cache 相关的硬件与驱动并非编译期依赖。若目标机器缺少 L
 \textbf{产物} & \textbf{说明} \\
 \midrule
 \texttt{libforl0\_engine.so} & 原生状态引擎共享库（aarch64 版本） \\
-\texttt{flink-statebackend-forL0-1.0-SNAPSHOT.jar} & Java 控制层与 JNI 桥接打包的状态后端 JAR \\
-\texttt{wordcount-benchmark-*.jar} & WordCount 基线性能测试 JAR \\
-\texttt{nexmark-datastream-*.jar} & NexMark 基线性能测试 JAR（DataStream 实现） \\
+\nolinkurl{flink-statebackend-forL0-1.0-SNAPSHOT.jar} & Java 控制层与 JNI 桥接打包的状态后端 JAR \\
+\nolinkurl{wordcount-benchmark-*.jar} & WordCount 基线性能测试 JAR \\
+\nolinkurl{nexmark-flink-0.3-SNAPSHOT.jar} & NexMark 基线性能测试 JAR \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -336,26 +364,20 @@ $FLINK_HOME/bin/flink --version
 
 \subsection{L0 Cache 依赖检测}
 
-鲲鹏 L0 Cache 加速依赖两项条件：L0 设备节点 \texttt{/dev/hisi\_l0} 和 L0 内存池共享库 \texttt{libl0mempool.so}。二者均为运行期依赖，构建期无需参与链接，但在部署前应提前检查，避免运行阶段再回查环境。
+鲲鹏 L0 Cache 加速依赖 L0 设备节点和内存池共享库 \texttt{libl0mempool.so}。二者均为运行期依赖，构建期无需参与链接，但在部署前应提前检查。
 
 \begin{lstlisting}[language=shellcmd]
-# L0 设备节点
-ls -la /dev/hisi_l0 2>/dev/null \
-  && echo "[OK] L0 设备可用" \
-  || echo "[WARN] L0 设备不存在，将回退至模拟模式"
+# 检查设备节点、共享库与可调用符号
+bash docker/lib/l0_detector.sh
 
-# L0 内存池共享库
-ls -la /usr/lib64/libl0mempool.so 2>/dev/null \
-  && echo "[OK] L0 库可用" \
-  || echo "[WARN] L0 库未安装，将回退至模拟模式"
+# 也可分别检查设备节点
+ls -la /dev/hisi_l0 /dev/l0 2>/dev/null
 
-# 确认 L0 库所在目录已在 LD_LIBRARY_PATH 中
-echo $LD_LIBRARY_PATH | grep -q "/usr/lib64" \
-  && echo "[OK] LD_LIBRARY_PATH 已包含 /usr/lib64" \
-  || echo "[WARN] 建议将 /usr/lib64 加入 LD_LIBRARY_PATH"
+# 检查共享库解析结果
+ldconfig -p 2>/dev/null | grep libl0mempool || true
 \end{lstlisting}
 
-若两项条件均满足，原生引擎将在初始化阶段激活 L0 模式；若任何一项缺失，则以透明方式退回至堆内存分配。构建期无需任何 L0 依赖参与。
+设备节点、共享库、必要符号及首次 L0 分配均通过后，运行时才会激活 HotCache。任一条件不满足时，非 strict 配置保持 HotCache 关闭，SwissTable 路径不受影响。构建期无需任何 L0 依赖参与。
 
 \subsection{环境变量汇总}
 
@@ -374,28 +396,26 @@ export PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$FLINK_HOME/bin:$PATH
 
 \subsection{构建步骤}
 
-原生引擎位于 \texttt{src/main/native} 下，使用 CMake 组织。推荐的构建流程如下：
+原生引擎位于 \texttt{src/main/native} 下。交付构建与离线脚本使用仓库内 Makefile，推荐流程如下：
 
 \begin{lstlisting}[language=shellcmd]
 cd src/main/native
-
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+make clean
 make -j$(nproc)
 make install
 \end{lstlisting}
 
-\texttt{make install} 会将生成的 \texttt{libforl0\_engine.so} 复制到 \texttt{src/main/resources/native/} 下，随后 Java 测试和打包流程即可直接引用该产物。
+\texttt{make install} 会将生成的 \texttt{libforl0\_engine.so} 复制到 \texttt{src/main/resources/native/}，随后 Java 测试和打包流程即可引用该产物。CMake 主要用于构建原生单元测试，也会在共享库构建完成后复制同一产物。
 
-\subsection{头文件依赖与离线重建指纹}
+\subsection{完整重建与产物一致性}
 
-native 引擎的大量实现位于模板头文件中，只比较 \texttt{.cpp} 时间戳可能留下 ABI 或结构布局已经变化的旧 object。仓库根入口 \texttt{run-forl0-offline.sh} 在 repository mode 下会对 \texttt{engine/}、\texttt{platform/}、\texttt{checkpoint/}、\texttt{jni/} 内全部 \texttt{.h}/\texttt{.cpp} 以及 Makefile 计算 SHA-256 指纹。指纹变化时，aarch64 服务器会在 smoke/formal 之前执行干净 native 重建，并把新指纹写入 \texttt{src/main/native/.forl0-source.sha256}；缺少 make、g++、Java 或摘要工具时直接失败，避免继续使用 stale native 库。
+native 引擎的大量实现位于模板头文件中。头文件、JNI 声明或类型布局发生变化后，应执行 \texttt{make clean} 再重新构建，避免残留 object 与当前源码不一致。
 
-手工构建后必须保持以下副本一致：\texttt{src/main/native/libforl0\_engine.so}、\texttt{src/main/resources/native/libforl0\_engine.so}、\texttt{docker/deploy/libforl0\_engine.so}、backend JAR 内嵌 native resource，以及 Flink \texttt{lib/}/\texttt{native/} 中的运行副本。仅替换 JAR 或仅替换外部 \texttt{.so} 都可能产生 Java/JNI/native 版本错配。
+部署前必须保持以下副本一致：\nolinkurl{src/main/resources/native/libforl0_engine.so}、\nolinkurl{docker/deploy/libforl0_engine.so}、backend JAR 内嵌 native resource，以及 Flink \texttt{lib/}/\texttt{native/} 中的运行副本。仅替换 JAR 或仅替换外部 \texttt{.so} 都可能产生 Java/JNI/native 版本错配。
 
 \subsection{鲲鹏平台默认启用的编译选项}
 
-在 aarch64 上，CMake 脚本会根据平台自动启用下列优化，不需要在命令行显式指定：
+在 aarch64 上，Makefile 与 CMake 脚本会根据平台自动启用下列优化，不需要在命令行显式指定：
 
 \begin{itemize}
   \item \texttt{-O3 -DNDEBUG -march=native}：以鲲鹏 CPU 为目标的最高级别优化。
@@ -413,14 +433,14 @@ nm -D src/main/resources/native/libforl0_engine.so | grep Java_org_apache | head
 
 \subsection{可选的 C++ 单元测试}
 
-当需要验证原生引擎自身的行为时，可在 CMake 阶段启用 \texttt{FORL0\_BUILD\_TESTS} 选项：
+原生单元测试由 CMake 构建，\texttt{FORL0\_BUILD\_TESTS} 默认启用：
 
 \begin{lstlisting}[language=shellcmd]
 cd src/main/native
 rm -rf build && mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release -DFORL0_BUILD_TESTS=ON
 make -j$(nproc)
-./forl0_tests
+ctest --output-on-failure
 \end{lstlisting}
 
 \subsection{CMake 选项汇总}
@@ -432,8 +452,8 @@ make -j$(nproc)
 \toprule
 \textbf{选项} & \textbf{默认值} & \textbf{说明} \\
 \midrule
-\texttt{CMAKE\_BUILD\_TYPE} & \texttt{Release} & 取 \texttt{Release} 或 \texttt{Debug}。生产交付必须使用 \texttt{Release}。 \\
-\texttt{FORL0\_BUILD\_TESTS} & \texttt{OFF} & 置为 \texttt{ON} 时编译 C++ 单元测试，生成 \texttt{forl0\_tests} 可执行文件。 \\
+\texttt{CMAKE\_BUILD\_TYPE} & 未指定 & 未指定时使用调试编译参数；生产交付必须显式设置为 \texttt{Release}。 \\
+\texttt{FORL0\_BUILD\_TESTS} & \texttt{ON} & 置为 \texttt{OFF} 时跳过 C++ 单元测试可执行文件。 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -445,7 +465,7 @@ make -j$(nproc)
   \node[lane, minimum width=14.6cm, minimum height=3.6cm] at (7.3,1.8) {};
 
   \node[box, minimum width=2.4cm] (env)    at (1.9,1.8) {环境准备\\JDK / Maven\\CMake / GCC};
-  \node[accentbox, minimum width=2.4cm] (cmake)  at (5.2,1.8) {CMake 配置\\Release + NEON};
+  \node[accentbox, minimum width=2.4cm] (cmake)  at (5.2,1.8) {Native 构建\\Release + NEON};
   \node[accentbox, minimum width=2.4cm] (make)   at (8.5,1.8) {make -j\\\texttt{libforl0\_engine.so}};
   \node[box, minimum width=2.4cm] (mvn)    at (11.8,1.8) {Maven 打包\\ForL0 JAR};
 
@@ -512,7 +532,8 @@ ls target/wordcount-benchmark-*.jar
 \begin{lstlisting}[language=shellcmd]
 cd benchmark/nexmark-src
 mvn clean package -DskipTests
-ls nexmark-flink/nexmark-datastream/target/nexmark-datastream-*.jar
+ls nexmark-flink/target/nexmark-flink-0.3-SNAPSHOT.jar
+ls nexmark-flink/target/nexmark-flink-bin/nexmark-flink/bin
 \end{lstlisting}
 
 \subsection{（可选）JMH Benchmark}
@@ -537,233 +558,39 @@ pip3 install -r requirements.txt
 pip3 install --no-index --find-links=offline-packages/ -r requirements.txt
 \end{lstlisting}
 
-\section{一键构建脚本}
+\section{一键构建与离线打包}
 
-在验证通过的基础上，建议将构建步骤封装为脚本。项目交付目录下提供如下参考脚本，供在鲲鹏服务器上直接使用：
-
-\begin{lstlisting}[language=shellcmd]
-#!/usr/bin/env bash
-set -euo pipefail
-
-PROJECT_ROOT=$(pwd)
-NATIVE_DIR=$PROJECT_ROOT/src/main/native
-RES_DIR=$PROJECT_ROOT/src/main/resources/native
-
-echo "[1/4] 构建原生引擎"
-cd "$NATIVE_DIR"
-rm -rf build && mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j"$(nproc)"
-make install
-ls "$RES_DIR/libforl0_engine.so"
-
-echo "[2/4] 构建 ForL0 主 JAR"
-cd "$PROJECT_ROOT"
-mvn clean package -DskipTests
-ls target/flink-statebackend-forL0-*.jar
-
-echo "[3/4] 构建 WordCount Benchmark"
-cd "$PROJECT_ROOT/benchmark/wordcount"
-mvn clean package -DskipTests
-ls target/wordcount-benchmark-*.jar
-
-echo "[4/4] 构建 NexMark Benchmark"
-cd "$PROJECT_ROOT/benchmark/nexmark-src"
-mvn clean package -DskipTests
-ls nexmark-flink/nexmark-datastream/target/nexmark-datastream-*.jar
-
-echo "构建完成"
-\end{lstlisting}
-
-\section{离线仓库校验与一键入口}
-
-当目标服务器直接接收完整仓库覆盖时，推荐让仓库自身作为最新 control/artifact root，不再复用遗留离线包目录。确认架构和脚本格式后执行：
+仓库提供正式的一键构建与离线打包入口。该脚本依次构建后端 JAR、native 库、Benchmark 产物，并收集离线运行依赖：
 
 \begin{lstlisting}[language=shellcmd]
-cd /root/forL0
-uname -m                       # expected: aarch64
-git diff --check
-chmod +x reproduce-all stop-reproduce-all run-forl0-offline.sh
-./reproduce-all
+cd $PROJECT_ROOT
+chmod +x docker/package_offline_bundle.sh
+
+# 输出到指定目录，并固定目标 Python ABI
+./docker/package_offline_bundle.sh \
+  --arch arm64 \
+  --python-version 3.10 \
+  --output-dir "$PWD/offline-artifacts/forl0-offline-linux-arm64-py310"
 \end{lstlisting}
-
-\texttt{reproduce-all} 在后台先执行 smoke，成功后运行正式编号矩阵；repository mode 会在进入实验前执行上述 native 指纹检查与必要重建，并同步当前 backend JAR、native 库、NexMark driver 与 workload JAR。不要只覆盖 Python/shell 控制脚本而保留旧 runtime artifact，也不要让不完整的旧 bundle 目录遮蔽完整仓库。
-
-所有无扩展名 launcher 和 \texttt{.sh} 文件必须保持 LF 行尾与 executable bit。若出现 \texttt{bash\textbackslash r: No such file or directory}，应重新以 LF/二进制方式传输；临时修复可用 \texttt{sed -i 's/\textbackslash r\$//' <script>}，但正式交付应以仓库 \texttt{.gitattributes} 和正确上传方式为准。
-
-构建/运行证据全部写入 \texttt{benchmark/results/runs/<run\_id>/}；成功后发布的 \texttt{benchmark/results/latest/} 为扁平文件集合。每轮还自动写入 \texttt{hardware\_snapshot.json} 与 \texttt{l0\_calibration.json}，分别保存目标机硬件/软件指纹、1 MiB 内的密集 L0--DRAM 延迟/带宽曲线、1/2/4 worker 并发曲线，以及 1/2/4/6 MiB 生产 HotSet 稀疏压力曲线。标定程序在 campaign 目录临时编译，执行后删除二进制，只保留小型 JSON。服务器端不构建交付 PDF 或 figure，避免离线 Python/字体/LaTeX 差异污染结果；PDF 在本地从已上传的 raw、JSON 和 log 派生。
-
-开发机可生成本机 DRAM 曲线并与目标机标定对齐：
-
-\begin{lstlisting}[language=shellcmd]
-./benchmark/scripts/calibrate-local-l0-model /tmp/local-calibration.json
-python3 benchmark/scripts/compare_l0_calibrations.py \
-  --target benchmark/results/latest/l0_calibration.json \
-  --local /tmp/local-calibration.json \
-  --output /tmp/l0-model.json
-\end{lstlisting}
-
-输出明确标记为 \texttt{simulation/model}。\texttt{./reproduce-all --full --simulate} 会自动选择最新真实 L0 calibration、生成带 SHA 的本机对齐模型并用于候选筛选；交付性能数字仍必须来自真实 L0 服务器的 \texttt{real-online} 作业。
 
 \section{常见问题与排查}
 
 \begin{table}[H]
 \centering
 \small
-\begin{tabularx}{\textwidth}{L{5.4cm} L{3.6cm} X}
+\begin{tabularx}{\textwidth}{L{4.8cm} L{3.2cm} X}
 \toprule
 \textbf{现象} & \textbf{可能原因} & \textbf{处理方式} \\
 \midrule
-\texttt{CMake Error: Could not find JNI} & \texttt{JAVA\_HOME} 未正确设置 & \texttt{export JAVA\_HOME=/opt/bisheng-jdk1.8.0} 后重新配置 \\
+\texttt{CMake Error: Could not find JNI} & \texttt{JAVA\_HOME} 未正确设置 & \nolinkurl{export JAVA_HOME=/opt/bisheng-jdk1.8.0} 后重新配置 \\
 \texttt{unrecognized option `-march=native'} & GCC 版本低于 7.0 & 升级 GCC（\texttt{sudo yum install devtoolset-8}）或使用 BiSheng 编译器 \\
-\texttt{jni.h: No such file or directory} & 缺少 JDK 开发包 & 安装 \texttt{java-1.8.0-openjdk-devel} 或确认 BiSheng JDK 路径完整 \\
+\texttt{jni.h: No such file or directory} & 缺少 JDK 开发包 & 安装 \nolinkurl{java-1.8.0-openjdk-devel} 或确认 BiSheng JDK 路径完整 \\
 \texttt{cannot find -lstdc++fs} & libstdc++ 版本过低 & 安装 \texttt{libstdc++-devel} 或切换至新版 GCC \\
-\texttt{mvn test} 抛出 \texttt{UnsatisfiedLinkError} & 未先构建原生库 & 先执行 \S3 节构建并 \texttt{make install} \\
+\texttt{mvn test} 抛出 \texttt{UnsatisfiedLinkError} & 原生库缺失或与 Java 代码版本不一致 & 重新执行 \S3 节的 \texttt{make clean}、\texttt{make} 和 \texttt{make install} \\
  NexMark 编译卡在依赖下载 & 仓库不可达 & 配置内网 Maven 镜像或使用离线仓库 \\
 \bottomrule
 \end{tabularx}
 \end{table}
-
-% --- REMOVED: Flink 集群部署 / L0 模式验证 / 运行期排查（属于使用说明书范围）---
-\iffalse
-\section{Flink 集群部署}
-
-构建产物就绪后，可按以下步骤将 \project{} 部署至鲲鹏服务器上的 Flink 集群。以下步骤以 Standalone 集群为例，YARN 与 Kubernetes 部署模型下主要差别在于 JAR 与原生库的同步方式。
-
-\subsection{JAR 与原生库的放置}
-
-\begin{lstlisting}[language=shellcmd]
-# 1. 复制状态后端 JAR
-cp target/flink-statebackend-forL0-1.0-SNAPSHOT.jar $FLINK_HOME/lib/
-
-# 2. 复制原生引擎共享库到 Flink 侧固定目录
-mkdir -p $FLINK_HOME/native
-cp src/main/resources/native/libforl0_engine.so $FLINK_HOME/native/
-
-# 3. 多节点集群下，逐一同步到所有 TaskManager 节点
-# scp $FLINK_HOME/lib/flink-statebackend-forL0-*.jar  user@tm-node:$FLINK_HOME/lib/
-# scp $FLINK_HOME/native/libforl0_engine.so          user@tm-node:$FLINK_HOME/native/
-\end{lstlisting}
-
-\subsection{Flink 配置}
-
-在 \texttt{\$FLINK\_HOME/conf/config.yaml} 中追加状态后端配置与原生库路径：
-
-\begin{lstlisting}[language=yamlcmd]
-state:
-  backend:
-    type: forl0
-
-env:
-  java:
-    opts:
-      all: -Djava.library.path=/opt/flink-1.20.3/native
-
-# Checkpoint 存储（按集群实际情况配置）
-state:
-  checkpoints:
-    dir: file:///data/flink/checkpoints
-  checkpoint-storage: filesystem
-\end{lstlisting}
-
-作业级别的状态接口、并发度和 Checkpoint 间隔配置不在本文档范围内，由《使用说明书》单独说明。
-
-\subsection{启动集群并验证加载}
-
-\begin{lstlisting}[language=shellcmd]
-$FLINK_HOME/bin/start-cluster.sh
-
-# 核对状态后端加载
-grep "\[ForL0\]" $FLINK_HOME/log/flink-*-taskexecutor-*.log
-
-# 核对 REST 接口
-curl -s http://localhost:8081/overview
-\end{lstlisting}
-
-\section{L0 模式验证}
-
-\project{} 的 L0 加速在运行期通过自检机制确定。部署完成后建议运行一个轻量作业（例如 WordCount Benchmark）触发状态路径，以确认当前模式。
-
-\subsection{自检流程}
-
-原生引擎在首次访问状态前执行以下步骤：
-
-\begin{enumerate}
-  \item \texttt{dlopen("libl0mempool.so")} 加载 L0 内存池库。
-  \item 通过 \texttt{dlsym} 解析 \texttt{cache\_tuner\_init}、\texttt{cache\_tuner\_destroy}、\texttt{l0\_mem\_alloc}、\texttt{l0\_mem\_free} 四个符号。
-  \item 调用 \texttt{cache\_tuner\_init} 初始化 L0 Cache Tuner。该调用内部会检查 \texttt{/dev/hisi\_l0} 设备是否可用。
-\end{enumerate}
-
-任一环节失败，原生引擎自动转入以堆内存为后端的模拟模式，不会阻断作业运行。
-
-\subsection{日志特征}
-
-启用 L0 模式时，TaskManager 日志中可观察到类似如下条目：
-
-\begin{lstlisting}[language=shellcmd]
-[ForL0] Native engine loaded via java.library.path
-[ForL0] Running in L0 mode (Kunpeng L0 Cache enabled)
-[ForL0-L0Allocator] L0 memory initialized: capacity=256MB, max_per_alloc=64KB
-\end{lstlisting}
-
-当 L0 库或设备不满足条件时，日志会提示回退到模拟模式：
-
-\begin{lstlisting}[language=shellcmd]
-[ForL0] Native engine loaded via java.library.path
-[ForL0-L0Allocator] L0 library not available, all allocations will use heap memory
-\end{lstlisting}
-
-\subsection{L0 容量与分配策略}
-
-L0 相关参数通过 Flink 配置暴露，可按状态规模调整：
-
-\begin{table}[H]
-\centering
-\small
-\begin{tabularx}{\textwidth}{L{5.8cm} L{2.8cm} X}
-\toprule
-\textbf{配置项} & \textbf{默认值} & \textbf{说明} \\
-\midrule
-\texttt{state.backend.forl0.l0-cache.enabled} & \texttt{false} & 是否启用 L0 Cache 加速。需同时满足设备与库存在。 \\
-\texttt{state.backend.forl0.l0-cache.size} & 256 MB & L0 内存池总容量。 \\
-\texttt{state.backend.forl0.l0-cache.max-per-alloc} & 64 KB & 单次最大 L0 分配，超出该阈值则回退至堆内存。 \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-L0 Allocator 采用 Small-Table-First 策略：当 SwissTable 当前所需内存不超过 \texttt{max-per-alloc}、且 L0 池仍有余量时分配到 L0，否则回落堆内存。在典型作业（128 个 KeyGroup、3 个 State、每表初始约 3\,KB）下，L0 池消耗通常在 1--2\,MB 量级，完全可被默认容量覆盖。
-
-\subsection{L0 运行统计}
-
-作业结束时，原生引擎会在进程 stderr 中输出一条统计记录：
-
-\begin{lstlisting}[language=shellcmd]
-[ForL0-L0Allocator] Shutdown: l0_active=1, l0_total_allocs=384,
-  heap_allocs=0, l0_current=10, l0_used=4800KB/256MB
-\end{lstlisting}
-
-其中 \texttt{l0\_active=1} 表示本次运行处于 L0 模式；\texttt{heap\_allocs} 较大则说明 L0 池容量或单次上限偏低，可调大 \texttt{l0-cache.size} 或 \texttt{l0-cache.max-per-alloc}。
-
-\fi
-\iffalse
-\subsection{运行与 L0 模式}
-
-\begin{table}[H]
-\centering
-\small
-\begin{tabularx}{\textwidth}{L{5.4cm} L{3.6cm} X}
-\toprule
-\textbf{现象} & \textbf{可能原因} & \textbf{处理方式} \\
-\midrule
-\texttt{L0 library not available} & \texttt{libl0mempool.so} 不在系统库路径 & 确认存在于 \texttt{/usr/lib64} 或将其路径加入 \texttt{LD\_LIBRARY\_PATH} \\
-\texttt{dlopen failed} & L0 库依赖缺失 & 以 \texttt{ldd} 检查依赖完整性 \\
-\texttt{cache\_tuner\_init failed} & \texttt{/dev/hisi\_l0} 设备不可用 & 核实内核驱动与 CPU 型号；若环境不具备 L0，可接受模拟模式 \\
-配置了 \texttt{l0-cache.enabled: true} 但仍为模拟模式 & 硬件条件不满足 & L0 需同时满足：设备存在、库可加载、配置启用 \\
-\texttt{l0\_used} 已贴近 \texttt{l0\_capacity} & 池容量不足 & 增大 \texttt{l0-cache.size} \\
-\bottomrule
-\end{tabularx}
-\end{table}
-\fi
 
 \section{附录}
 
@@ -780,16 +607,16 @@ forL0-state-backend/
 |   |   |   `-- org/apache/flink/state/forl0/
 |   |   |-- native/                  # 原生引擎源码
 |   |   |   |-- CMakeLists.txt
-|   |   |   |-- cpp/                 # 核心实现
-|   |   |   |-- engine/              # 引擎头文件
+|   |   |   |-- Makefile
+|   |   |   |-- engine/              # 引擎与 HotCache 实现
 |   |   |   |   |-- swiss_table.h    # Swiss Tables 哈希表
 |   |   |   |   |-- allocator.h      # 分配器抽象
-|   |   |   |   |-- l0_allocator.h   # L0 分配器（运行时 dlopen）
+|   |   |   |   |-- hot_cache.h       # L0 HotCache
 |   |   |   |   `-- state_engine.h
 |   |   |   |-- jni/                 # JNI 桥接
 |   |   |   |-- checkpoint/          # 快照序列化
 |   |   |   `-- test/                # C++ 单元测试
-|   |   `-- resources/native/        # make install 产出的 .so
+|   |   `-- resources/native/         # native 构建复制的共享库
 |   `-- test/java/                   # Java 测试代码
 |-- benchmark/
 |   |-- wordcount/                   # WordCount Benchmark
