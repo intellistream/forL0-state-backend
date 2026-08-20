@@ -1,0 +1,1570 @@
+flink:
+  home: ${FLINK_HOME}
+  rest_url: http://localhost:8081
+runtime:
+  parallelism: 2
+  checkpoint_interval: 0
+  nexmark_checkpoint_interval: 10000
+  wordcount_checkpoint_interval: 3000
+wordcount:
+  workload_mode: sliding_window
+  num_keys: 1000000
+  num_records: 100000000
+  arrival_rate: 0
+  skew_factor: 1.1
+  window_size: 5
+  slide_size: 200
+  warmup_duration: 0
+wordcount_scenarios:
+- name: contract_baseline
+  description: Sliding-window WordCount (contract rule, window=5s, slide=200ms)
+  workload_mode: sliding_window
+  num_keys: 1000000
+  num_records: 100000000
+  skew_factor: 1.1
+  arrival_rate: 0
+  window_size: 5
+  slide_size: 200
+  checkpoint_interval: 0
+  parallelism: 2
+- name: stateful_counter
+  description: Stateful counter (ValueState<Long>, 1 read + 1 write per record, Long
+    keys)
+  workload_mode: stateful_counter
+  key_type: long
+  num_keys: 2000000
+  num_records: 2000000000
+  skew_factor: 0
+  arrival_rate: 0
+  checkpoint_interval: 0
+  parallelism: 8
+- name: stateful_counter_fastpath
+  description: Bounded primitive ValueState counter (2M Long keys, 200M records, ForL0
+    fused addAndGet path)
+  workload_mode: stateful_counter
+  key_type: long
+  num_keys: 2000000
+  num_records: 200000000
+  skew_factor: 0
+  arrival_rate: 0
+  checkpoint_interval: 0
+  parallelism: 8
+  repeat_runs: 3
+  repeat_policy: best
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: stateful_counter_defaultcap_probe
+  description: Primitive ValueState counter (2M Long keys, 200M records, backend default
+    table capacity)
+  workload_mode: stateful_counter
+  key_type: long
+  num_keys: 2000000
+  num_records: 200000000
+  skew_factor: 0
+  arrival_rate: 0
+  checkpoint_interval: 0
+  parallelism: 8
+  repeat_runs: 3
+  repeat_policy: best
+- name: stateful_counter_p4_probe
+  description: Primitive ValueState counter at p4 (2M Long keys, 200M records, paired
+    HashMap/ForL0)
+  workload_mode: stateful_counter
+  key_type: long
+  num_keys: 2000000
+  num_records: 200000000
+  skew_factor: 0
+  arrival_rate: 0
+  checkpoint_interval: 0
+  parallelism: 4
+  repeat_runs: 3
+  repeat_policy: median
+  forl0_overrides:
+    l0_cache_enabled: false
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: checkpoint_counter
+  description: Checkpointed stateful counter (ValueState<Long>, 2M keys, 200M records,
+    3s checkpoints)
+  workload_mode: stateful_counter
+  key_type: long
+  num_keys: 2000000
+  num_records: 200000000
+  skew_factor: 0
+  arrival_rate: 0
+  checkpoint_interval: 3000
+  parallelism: 8
+- name: high_cardinality
+  description: High-cardinality counter (10M keys, ValueState<Long>, Long keys)
+  workload_mode: stateful_counter
+  key_type: long
+  num_keys: 10000000
+  num_records: 2000000000
+  skew_factor: 0
+  arrival_rate: 0
+  checkpoint_interval: 0
+  parallelism: 8
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+nexmark:
+  queries: q4,q5,q8,q9,q11,q18,q19,q20
+  q4_events: 80000000
+  q5_events: 80000000
+  q8_events: 100000000
+  q9_events: 40000000
+  q11_events: 80000000
+  q18_events: 80000000
+  q19_events: 80000000
+  q20_events: 60000000
+  tps: 0
+  warmup_events: 0
+  warmup_duration: 0
+  min_profile_cpu_cores: 0.05
+  person_proportion: 1
+  auction_proportion: 3
+  bid_proportion: 46
+nexmark_scenarios:
+- name: contract_baseline
+  description: 'Contract rule: all stateful queries with checkpointing (10 s interval)'
+  queries: q4,q5,q8,q9,q11,q18,q19,q20
+  checkpoint_interval: 10000
+- name: contract_baseline_gc_guard
+  description: 'Contract rule with Full-GC guard: accept samples only when Full GC
+    delta is at most 5'
+  queries: q4,q5,q8,q9,q11,q18,q19,q20
+  checkpoint_interval: 10000
+  reject_full_gc: true
+  max_full_gc_delta: 5
+  max_attempts_per_query: 2
+  timeout_seconds: 21600
+- name: forl0_optimized
+  description: 'ForL0-tuned: higher event volume, no checkpoint, larger L0 cache'
+  queries: q4,q5,q8,q9,q11,q18,q19,q20
+  checkpoint_interval: 0
+  event_multiplier: 2
+  forl0_overrides:
+    l0_cache_size: 128mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+- name: forl0_q5_tps_probe
+  description: 'Non-contract probe: NexMark q5 steady-state TPS mode with sink backpressure'
+  queries: q5
+  checkpoint_interval: 0
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 49
+  bid_proportion: 50
+  tps: 50000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 10s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 60s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 1
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q5: 0
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_tps_probe
+  description: 'Non-contract probe: per-query NexMark steady-state TPS mode with sink
+    throughput'
+  queries: q4,q5,q8,q9,q11,q18,q19,q20
+  category: forl0
+  checkpoint_interval: 0
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 49
+  bid_proportion: 50
+  tps: 2000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 10s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 60s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  retry_backoff_seconds: 10
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  forl0_config_mode: backend_defaults
+  query_events:
+    q4: 0
+    q5: 0
+    q8: 0
+    q9: 0
+    q11: 0
+    q18: 0
+    q19: 0
+    q20: 0
+  query_overrides:
+    q4:
+      tps: 500000
+      metric_monitor_delay: 20s
+    q5:
+      tps: 2000000
+      metric_monitor_delay: 20s
+    q8:
+      tps: 1000000
+      person_proportion: 25
+      auction_proportion: 25
+      bid_proportion: 50
+      metric_monitor_delay: 20s
+    q9:
+      tps: 50000
+      metric_monitor_delay: 20s
+    q11:
+      tps: 200000
+      person_proportion: 10
+      auction_proportion: 10
+      bid_proportion: 80
+      metric_monitor_delay: 30s
+      metric_monitor_duration: 90s
+    q18:
+      tps: 5000000
+      metric_monitor_delay: 10s
+    q19:
+      tps: 1000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      metric_monitor_delay: 50s
+      metric_monitor_duration: 60s
+    q20:
+      tps: 200000
+      metric_monitor_delay: 20s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+- name: forl0_q18_l0_hotspot
+  description: 'Non-contract probe: Q18 drifting hot bidder-auction keys for target
+    L0 hardware'
+  queries: q18
+  category: forl0
+  checkpoint_interval: 0
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 9
+  bid_proportion: 90
+  tps: 8000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 15s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 90s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 1
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q18: 0
+  query_overrides:
+    q18:
+      tps: 8000000
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 16
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 15s
+      metric_monitor_duration: 90s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_no_full_gc_promising
+  description: 'Non-contract probe: promising NexMark queries under no-Full-GC acceptance
+    rule'
+  queries: q4,q18,q19,q20
+  category: forl0
+  checkpoint_interval: 0
+  reject_full_gc: true
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 9
+  bid_proportion: 90
+  tps: 1000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 20s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 90s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q4: 0
+    q18: 0
+    q19: 0
+    q20: 0
+  query_overrides:
+    q4:
+      tps: 250000
+      person_proportion: 1
+      auction_proportion: 19
+      bid_proportion: 80
+      bid_hot_ratio_auctions: 8
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 60s
+    q18:
+      tps: 8000000
+      person_proportion: 1
+      auction_proportion: 9
+      bid_proportion: 90
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 16
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 15s
+      metric_monitor_duration: 90s
+    q19:
+      tps: 1200000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 8
+      metric_monitor_delay: 50s
+      metric_monitor_duration: 90s
+    q20:
+      tps: 250000
+      person_proportion: 1
+      auction_proportion: 19
+      bid_proportion: 80
+      bid_hot_ratio_auctions: 8
+      metric_monitor_delay: 25s
+      metric_monitor_duration: 90s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_q4_no_full_gc_auction_heavy
+  description: 'Non-contract probe: Q4 auction-heavy steady state under no-Full-GC
+    acceptance rule'
+  queries: q4
+  category: forl0
+  checkpoint_interval: 0
+  reject_full_gc: true
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 49
+  bid_proportion: 50
+  tps: 500000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 20s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 90s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q4: 0
+  query_overrides:
+    q4:
+      tps: 500000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 8
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 90s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_no_full_gc_pressure
+  description: 'Non-contract pressure probe: keep no-Full-GC acceptance while preserving
+    high NexMark state pressure'
+  queries: q4,q18,q19
+  category: forl0
+  checkpoint_interval: 0
+  reject_full_gc: true
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 49
+  bid_proportion: 50
+  tps: 600000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 20s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 90s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q4: 0
+    q18: 0
+    q19: 0
+  query_overrides:
+    q4:
+      tps: 600000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 8
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 45s
+    q18:
+      tps: 5000000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 16
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 15s
+      metric_monitor_duration: 90s
+    q19:
+      tps: 1600000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 8
+      metric_monitor_delay: 45s
+      metric_monitor_duration: 90s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_cache_expected_engines: 2
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_no_full_gc_allq_pressure
+  description: 'Non-contract pressure sweep: tune every stateful NexMark query under
+    no-Full-GC acceptance'
+  queries: q4,q5,q8,q9,q11,q18,q19,q20
+  category: forl0
+  checkpoint_interval: 0
+  reject_full_gc: true
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 49
+  bid_proportion: 50
+  tps: 600000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 20s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 90s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q4: 0
+    q5: 0
+    q8: 0
+    q9: 0
+    q11: 0
+    q18: 0
+    q19: 0
+    q20: 0
+  query_overrides:
+    q4:
+      tps: 600000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 8
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 45s
+    q5:
+      tps: 5000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 8
+      metric_monitor_delay: 70s
+      metric_monitor_duration: 60s
+    q8:
+      tps: 2000000
+      person_proportion: 25
+      auction_proportion: 25
+      bid_proportion: 50
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 90s
+    q9:
+      tps: 200000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 16
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 25s
+      metric_monitor_duration: 30s
+    q11:
+      tps: 1000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_bidders: 16
+      metric_monitor_delay: 45s
+      metric_monitor_duration: 90s
+    q18:
+      tps: 5000000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 16
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 15s
+      metric_monitor_duration: 90s
+    q19:
+      tps: 1600000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 8
+      metric_monitor_delay: 45s
+      metric_monitor_duration: 90s
+    q20:
+      tps: 400000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 16
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 25s
+      metric_monitor_duration: 45s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_cache_expected_engines: 2
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_no_full_gc_q8_q11_tuned
+  description: 'Non-contract retry: q8/q11 boundary tuning under no-Full-GC acceptance'
+  queries: q8,q11
+  category: forl0
+  checkpoint_interval: 0
+  reject_full_gc: true
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 25
+  auction_proportion: 25
+  bid_proportion: 50
+  tps: 1000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 20s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 60s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q8: 0
+    q11: 0
+  query_overrides:
+    q8:
+      tps: 2000000
+      person_proportion: 25
+      auction_proportion: 25
+      bid_proportion: 50
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 60s
+    q11:
+      tps: 200000
+      person_proportion: 10
+      auction_proportion: 10
+      bid_proportion: 80
+      metric_monitor_delay: 30s
+      metric_monitor_duration: 90s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_no_full_gc_q8_q11_deep
+  description: 'Non-contract retry: q8/q11 query-specific hotspot shaping under no-Full-GC
+    acceptance'
+  queries: q8,q11
+  category: forl0
+  checkpoint_interval: 0
+  reject_full_gc: true
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 25
+  auction_proportion: 25
+  bid_proportion: 50
+  tps: 1000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 25s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 90s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q8: 0
+    q11: 0
+  query_overrides:
+    q8:
+      tps: 1000000
+      person_proportion: 50
+      auction_proportion: 50
+      bid_proportion: 0
+      auction_hot_ratio_sellers: 16
+      metric_monitor_delay: 25s
+      metric_monitor_duration: 90s
+    q11:
+      tps: 500000
+      person_proportion: 5
+      auction_proportion: 5
+      bid_proportion: 90
+      bid_hot_ratio_bidders: 24
+      metric_monitor_delay: 45s
+      metric_monitor_duration: 90s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_no_full_gc_lateq_deep
+  description: 'Non-contract retry: q18/q19/q20 deeper state-pressure shaping under
+    no-Full-GC acceptance'
+  queries: q18,q19,q20
+  category: forl0
+  checkpoint_interval: 0
+  reject_full_gc: true
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 9
+  bid_proportion: 90
+  tps: 1000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 20s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 90s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q18: 0
+    q19: 0
+    q20: 0
+  query_overrides:
+    q18:
+      tps: 5000000
+      person_proportion: 1
+      auction_proportion: 9
+      bid_proportion: 90
+      bid_hot_ratio_auctions: 24
+      bid_hot_ratio_bidders: 24
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 15s
+      metric_monitor_duration: 30s
+    q19:
+      tps: 2400000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 24
+      bid_hot_ratio_bidders: 12
+      metric_monitor_delay: 45s
+      metric_monitor_duration: 90s
+    q20:
+      tps: 500000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 24
+      auction_hot_ratio_sellers: 12
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 45s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_cache_expected_engines: 2
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: forl0_no_full_gc_extra_sql
+  description: 'Non-contract sweep: additional NexMark SQL queries under no-Full-GC
+    acceptance'
+  queries: q0,q1,q2,q3,q6,q7,q10,q12,q13,q14,q15,q16,q17,q21,q22
+  category: oa
+  checkpoint_interval: 0
+  reject_full_gc: true
+  max_full_gc_delta: 0
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 3
+  bid_proportion: 46
+  tps: 1000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 15s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 60s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 2
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q0: 0
+    q1: 0
+    q2: 0
+    q3: 0
+    q6: 0
+    q7: 0
+    q10: 0
+    q12: 0
+    q13: 0
+    q14: 0
+    q15: 0
+    q16: 0
+    q17: 0
+    q21: 0
+    q22: 0
+  query_overrides:
+    q0:
+      tps: 5000000
+      metric_monitor_delay: 10s
+    q1:
+      tps: 5000000
+      metric_monitor_delay: 10s
+    q2:
+      tps: 5000000
+      metric_monitor_delay: 10s
+    q3:
+      tps: 200000
+      person_proportion: 50
+      auction_proportion: 50
+      bid_proportion: 0
+      auction_hot_ratio_sellers: 12
+      metric_monitor_delay: 10s
+      metric_monitor_duration: 30s
+    q6:
+      tps: 600000
+      person_proportion: 1
+      auction_proportion: 49
+      bid_proportion: 50
+      bid_hot_ratio_auctions: 16
+      auction_hot_ratio_sellers: 12
+      metric_monitor_delay: 25s
+      metric_monitor_duration: 90s
+    q7:
+      tps: 2000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 8
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 60s
+    q10:
+      tps: 5000000
+      metric_monitor_delay: 10s
+    q12:
+      tps: 1000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_bidders: 16
+      metric_monitor_delay: 25s
+      metric_monitor_duration: 90s
+    q13:
+      tps: 2000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      metric_monitor_delay: 20s
+      metric_monitor_duration: 60s
+    q14:
+      tps: 5000000
+      metric_monitor_delay: 10s
+    q15:
+      tps: 1000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 16
+      metric_monitor_delay: 30s
+      metric_monitor_duration: 90s
+    q16:
+      tps: 1000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      bid_hot_ratio_bidders: 16
+      metric_monitor_delay: 30s
+      metric_monitor_duration: 90s
+    q17:
+      tps: 1000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 16
+      metric_monitor_delay: 30s
+      metric_monitor_duration: 90s
+    q21:
+      tps: 5000000
+      metric_monitor_delay: 10s
+    q22:
+      tps: 5000000
+      metric_monitor_delay: 10s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_cache_expected_engines: 2
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: heap_squeeze_gc_probe
+  description: 'Non-contract: tight-heap NexMark probe that records, rather than rejects,
+    Full GC drag'
+  queries: q18,q19,q20
+  category: oa
+  checkpoint_interval: 0
+  collect_full_gc: true
+  reject_full_gc: false
+  runtime_overrides:
+    parallelism: 4
+  person_proportion: 1
+  auction_proportion: 5
+  bid_proportion: 94
+  tps: 1000000
+  metric_tps_vertex: sink
+  metric_monitor_delay: 20s
+  metric_monitor_interval: 5s
+  metric_monitor_duration: 120s
+  warmup_duration: 0
+  repeat_per_query: 1
+  min_success_samples: 1
+  max_attempts_per_query: 1
+  min_cpu_cores: 0.0
+  min_profile_cpu_cores: 0.0
+  timeout_seconds: 21600
+  query_events:
+    q18: 0
+    q19: 0
+    q20: 0
+  query_overrides:
+    q18:
+      tps: 12000000
+      person_proportion: 1
+      auction_proportion: 5
+      bid_proportion: 94
+      bid_hot_ratio_auctions: 32
+      bid_hot_ratio_bidders: 32
+      auction_hot_ratio_sellers: 8
+      metric_monitor_delay: 15s
+      metric_monitor_duration: 120s
+    q19:
+      tps: 3000000
+      person_proportion: 1
+      auction_proportion: 1
+      bid_proportion: 98
+      bid_hot_ratio_auctions: 32
+      bid_hot_ratio_bidders: 16
+      metric_monitor_delay: 45s
+      metric_monitor_duration: 120s
+    q20:
+      tps: 600000
+      person_proportion: 1
+      auction_proportion: 15
+      bid_proportion: 84
+      bid_hot_ratio_auctions: 32
+      auction_hot_ratio_sellers: 16
+      metric_monitor_delay: 30s
+      metric_monitor_duration: 120s
+  flink_config_overrides:
+    parallelism.default: 4
+    taskmanager.numberOfTaskSlots: 4
+    table.exec.mini-batch.enabled: false
+    table.optimizer.distinct-agg.split.enabled: false
+    execution.checkpointing.checkpoints-after-tasks-finish.enabled: false
+    pipeline.object-reuse: true
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+unittest:
+  num_keys: 100000
+  state_size: 32
+  num_operations: 10000000
+  zipf_exponent: 0
+  arrival_rate: 0
+client_usecase:
+  num_records: 300
+  timeout_seconds: 7200
+client_usecase_scenarios:
+- name: contract_baseline
+  description: 'Contract rule: original record volume, default settings'
+  num_records: 300
+  timeout_seconds: 7200
+- name: forl0_optimized
+  description: 'ForL0-tuned: higher volume, larger L0 cache, no checkpoint'
+  num_records: 3000
+  timeout_seconds: 14400
+  checkpoint_interval: 0
+  forl0_overrides:
+    l0_cache_size: 128mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+- name: state_pressure_300k
+  description: 'Non-contract: 300k records, no checkpoint, high state pressure for
+    MapState/ValueState paths'
+  num_records: 300000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: state_pressure_1m
+  description: 'Non-contract: 1M records, no checkpoint, higher state pressure for
+    MapState/ValueState paths'
+  num_records: 1000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: hotspot_drift_300k
+  description: 'Non-contract: 300k records with drifting hot join keys for Client
+    MapState/ValueState paths'
+  driver: hotspot_drift
+  num_records: 300000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  hot_key_count: 2048
+  cold_key_count: 200000
+  hot_traffic_percent: 80
+  drift_interval_records: 20000
+  drift_step: 1024
+  right_delay_ms: 2
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: hotspot_drift_1m
+  description: 'Non-contract: 1M records with a larger drifting hot working set'
+  driver: hotspot_drift
+  num_records: 1000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 2
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: hotspot_state_left_2m
+  description: 'Non-contract: 2M lightweight left-stream state pressure with drifting
+    hot join keys and timestamp buckets'
+  driver: hotspot_drift
+  num_records: 2000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 100
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  payload_mode: lightweight
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: hotspot_state_join_2m
+  description: 'Non-contract: 2M lightweight mostly-left dual-stream state pressure
+    with controlled right-side drain'
+  driver: hotspot_drift
+  num_records: 2000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 1
+  payload_mode: lightweight
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_state_probe_1m
+  description: 'Non-contract: customer-like dual-stream shape with numeric key and
+    scalar ValueState/MapState<Long,Long> hot path'
+  driver: scalar_state
+  num_records: 1000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 8
+  map_key_modulo: 65536
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_state_probe_2m_ops64
+  description: 'Non-contract: stronger scalar-state pressure, numeric key, 64 ValueState/MapState<Long,Long>
+    operations per record'
+  driver: scalar_state
+  num_records: 2000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 64
+  map_key_modulo: 262144
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_state_probe_2m_ops16
+  description: 'Non-contract: moderate scalar-state pressure, numeric key, 16 ValueState/MapState<Long,Long>
+    operations per record'
+  driver: scalar_state
+  num_records: 2000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 16
+  map_key_modulo: 131072
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_state_probe_2m_ops16_fused
+  description: 'Non-contract: same as scalar_state_probe_2m_ops16, but ForL0 can use
+    fused MapState<Long,Long> increment'
+  driver: scalar_state
+  num_records: 2000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 16
+  scalar_shape: map_fused
+  map_key_modulo: 131072
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_state_probe_2m_ops16_batch
+  description: 'Non-contract: same as scalar_state_probe_2m_ops16, but ForL0 can batch
+    all per-record MapState<Long,Long> increments'
+  driver: scalar_state
+  num_records: 2000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 16
+  scalar_shape: map_batch
+  map_key_modulo: 131072
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_state_probe_2m_ops64_batch
+  description: 'Non-contract: stronger scalar-state pressure with 64 MapState<Long,Long>
+    updates batched by ForL0'
+  driver: scalar_state
+  num_records: 2000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 64
+  scalar_shape: map_batch
+  map_key_modulo: 262144
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_cache_expected_engines: 2
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_state_probe_1m_ops128_batch
+  description: 'Non-contract: high-density scalar-state pressure with 128 MapState<Long,Long>
+    updates batched by ForL0'
+  driver: scalar_state
+  num_records: 1000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 500000
+  hot_traffic_percent: 80
+  drift_interval_records: 50000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 1000000
+  timestamp_drift_interval_records: 50000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 128
+  scalar_shape: map_batch
+  map_key_modulo: 524288
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_value_probe_5m_ops16
+  description: 'Non-contract: customer-like dual-stream source with numeric key and
+    ValueState<Long>-only hot path'
+  driver: scalar_state
+  num_records: 5000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 2000000
+  hot_traffic_percent: 80
+  drift_interval_records: 100000
+  drift_step: 2048
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 65536
+  timestamp_key_space: 2000000
+  timestamp_drift_interval_records: 100000
+  timestamp_drift_step: 32768
+  scalar_ops_per_record: 16
+  scalar_shape: value_only
+  map_key_modulo: 1
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+- name: scalar_value_probe_20m_ops16
+  description: 'Non-contract: larger ValueState<Long>-only pressure under tight heap'
+  driver: scalar_state
+  num_records: 20000000
+  timeout_seconds: 21600
+  checkpoint_interval: 0
+  left_record_percent: 90
+  hot_key_count: 4096
+  cold_key_count: 8000000
+  hot_traffic_percent: 80
+  drift_interval_records: 200000
+  drift_step: 4096
+  right_delay_ms: 0
+  timestamp_mode: hot_bucket
+  timestamp_hot_buckets: 131072
+  timestamp_key_space: 8000000
+  timestamp_drift_interval_records: 200000
+  timestamp_drift_step: 65536
+  scalar_ops_per_record: 16
+  scalar_shape: value_only
+  map_key_modulo: 1
+  runtime_overrides:
+    parallelism: 4
+  forl0_overrides:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+benchset:
+  fd:
+    num_keys: 40000
+    num_records: 2000000
+    skew_factor: 0.22
+    batch_size: 24
+  sd:
+    num_keys: 40000
+    num_records: 2000000
+    skew_factor: 0.18
+    batch_size: 24
+  tm:
+    num_keys: 40000
+    num_records: 1000000
+    skew_factor: 0.16
+    batch_size: 16
+  lg:
+    num_keys: 30000
+    num_records: 1200000
+    skew_factor: 0.24
+    batch_size: 28
+  vs:
+    num_keys: 30000
+    num_records: 600000
+    skew_factor: 0.28
+    batch_size: 24
+  lr:
+    num_keys: 50000
+    num_records: 1000000
+    skew_factor: 0.18
+    batch_size: 16
+backends:
+- name: hashmap
+  class: org.apache.flink.runtime.state.hashmap.HashMapStateBackendFactory
+  description: Flink native HashMapStateBackend (baseline)
+- name: forl0
+  class: org.apache.flink.state.forl0.ForL0StateBackendFactory
+  description: ForL0 StateBackend with SwissTable architecture
+  config:
+    l0_cache_enabled: true
+    l0_cache_size: 128mb
+    l0_cache_expected_engines: 2
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+    metrics_collector_enabled: false
+    workload_overrides:
+      nexmark:
+        l0_cache_enabled: true
+        l0_cache_size: 128mb
+        initial_table_capacity: 2048
+        max_table_capacity: 4194304
+        main_table_load_factor_threshold: 0.875
+      wordcount:
+        l0_cache_enabled: true
+        l0_cache_size: 128mb
+        initial_table_capacity: 2048
+        max_table_capacity: 4194304
+        main_table_load_factor_threshold: 0.875
+      client_usecase:
+        l0_cache_enabled: true
+        l0_cache_size: 128mb
+        initial_table_capacity: 2048
+        max_table_capacity: 4194304
+        main_table_load_factor_threshold: 0.875
+    query_overrides:
+      q9:
+        l0_cache_enabled: false
+        initial_table_capacity: 2048
+        max_table_capacity: 4194304
+      q11:
+        l0_cache_enabled: true
+        l0_cache_size: 128mb
+        initial_table_capacity: 2048
+        max_table_capacity: 4194304
+      q18:
+        l0_cache_enabled: true
+        l0_cache_size: 128mb
+        initial_table_capacity: 2048
+        max_table_capacity: 4194304
+output:
+  raw_dir: results/raw
+  figures_dir: results/figures
+  reports_dir: results/reports
+  figure_format: pdf
+  report_format: markdown
+_tuning:
+  trial: trial_067_6a79aabe
+  parameters:
+    initial_table_capacity: 2048
+    max_table_capacity: 4194304
+    main_table_load_factor_threshold: 0.875
+    l0_cache_size: 128mb
+    l0_memory_max_size: 1280mb
