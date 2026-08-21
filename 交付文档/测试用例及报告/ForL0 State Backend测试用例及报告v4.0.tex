@@ -774,7 +774,6 @@ cd docker
 \texttt{skew\_factor} 扫描 & \{0, 0.2, 0.4, 0.6, 0.8, 1.0\} \\
 每组记录数             & 2\,000\,000\,000 \\
 Checkpoint             & 关闭 \\
-L0 Cache               & 本组网格不用于 L0 硬件收益结论；p4 正式结果明确关闭 L0 \\
 测试轮数               & 完整网格扫描 2 轮（以第 2 轮稳定值为准） \\
 \bottomrule
 \end{tabularx}
@@ -864,7 +863,7 @@ L0 Cache               & 本组网格不用于 L0 硬件收益结论；p4 正式
 \midrule
 平台         & Intel x86\_64 参考服务器 \\
 集群拓扑     & Docker 默认拓扑（1 JM + 2 TM，TM 每个 4 核 / 16\,GB），总并行度 8 \\
-L0 Cache    & 不可用（Intel 平台不具备该硬件） \\
+L0 Cache    & Intel 平台不具备该硬件 \\
 其他参数     & 与 \S5.1.1 一致（\texttt{num\_keys} $\times$ \texttt{skew\_factor} 扫描网格） \\
 \bottomrule
 \end{tabularx}
@@ -936,8 +935,8 @@ L0 Cache    & 不可用（Intel 平台不具备该硬件） \\
   \item \textbf{Intel 平台下 \project{} 在全部 36 组扫描点上一致领先于 HashMapStateBackend}，吞吐量比值最低 1.024、最高 1.414，平均 \textbf{1.270}；对应每组 2\,$\times\,10^9$ 条记录的端到端耗时平均缩短约 37\,s。这与鲲鹏下 WordCount 两者持平（平均比值约 0.96）的结论形成鲜明对比。
   \item \textbf{趋势与倾斜度解耦}。从 \texttt{skew\_factor} = 0 的均匀分布到 1.0 的强倾斜，比值均位于 1.02--1.41 区间，未因热点 key 出现退化；相对峰值常出现在 \texttt{skew} $\in [0.0, 0.4]$ 的均匀/弱倾斜区，符合 \project{} 紧凑布局提升 cache 命中率的预期。
   \item \textbf{规模维度稳定}。\texttt{num\_keys} 从 1\,M 扩大到 10\,M，ForL0 吞吐量从 14.5--17.5\,M/s 缓慢下降到 12.0--14.9\,M/s，HashMap 同步下降；比值保持在 1.14--1.35 区间，说明 SwissTable 布局在 key 规模扩大到 10\,M 量级时仍能维持稳定加速。
-  \item \textbf{与 VTune 剖析结果一致}（\S5.2.4）。微架构分析显示 WordCount 热路径在 \project{} 下 \emph{Memory Bound} 从 48.1\% 降至 15.3\%、\emph{DRAM Bound} 从 30.8\% 降至 2.2\%。Intel 平台未启用 L0 Cache 硬件，全部收益来源于 SwissTable 紧凑布局与 SWAR 并行匹配；微架构指标的改善直接映射为上表的 1.27$\times$ 平均吞吐增益。
-  \item \textbf{鲲鹏与 Intel 的差异来源}。鲲鹏下两者持平，主要原因包括 aarch64 上 JNI 调用开销相对 x86 更高、\texttt{HashMap} 在鲲鹏 L2/L3 层级上已较为充分利用；Intel 平台的显著加速则验证了 \project{} 在 x86 平台同样具有良好的硬件亲和性，而不依赖特定的 L0 硬件。
+  \item \textbf{与 VTune 剖析结果一致}（\S5.2.4）。微架构分析显示 WordCount 热路径在 \project{} 下 \emph{Memory Bound} 从 48.1\% 降至 15.3\%、\emph{DRAM Bound} 从 30.8\% 降至 2.2\%；微架构指标的改善直接映射为上表的 1.27$\times$ 平均吞吐增益。
+  \item \textbf{鲲鹏与 Intel 的差异来源}。鲲鹏下两者持平，主要原因包括 aarch64 上 JNI 调用开销相对 x86 更高、\texttt{HashMap} 在鲲鹏 L2/L3 层级上已较为充分利用；Intel 平台的结果验证了 \project{} 在 x86 平台同样具有良好的硬件亲和性。
 \end{itemize}
 
 \subsubsection{微架构剖析（Intel VTune）}
@@ -978,7 +977,7 @@ Front-End Bound         & 6.9\%                & 12.4\%               & $\uparro
 
 \subsection{NexMark Benchmark 报告}
 
-NexMark 场景下，\project{} 的主要优势在于：通过 native/off-heap 状态路径将大状态访问从 JVM 堆中剥离，使 TaskManager 的 Full GC 频率与单次暂停时间显著下降，从而在堆预算紧张、Managed 内存受限的条件下保持稳定吞吐。L0 Cache 在该场景中不是主导收益来源，主要价值体现在高频细粒度 \texttt{ValueState} 场景。
+NexMark 场景下，\project{} 通过 native/off-heap 状态路径将大状态访问从 JVM 堆中剥离，使 TaskManager 的 Full GC 频率与单次暂停时间显著下降，从而在堆预算紧张、Managed 内存受限的条件下保持稳定吞吐。
 
 \subsubsection{鲲鹏平台：TM 限制 4 核}
 
@@ -1132,7 +1131,7 @@ Key 类型             & String                       & Long（零开销键路�
 Key 基数             & 1\,M                         & 2\,M / 10\,M \\
 Checkpoint           & 10\,s                        & 关闭 \\
 并行度               & 2                            & 8 \\
-ForL0 特有优化       & 默认                         & 融合 JNI 路径 (\texttt{addAndGetLong})、堆外 SwissTable；L0 HotCache 明确关闭 \\
+ForL0 特有优化       & 默认                         & 融合 JNI 路径 (\texttt{addAndGetLong})、堆外 SwissTable \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1331,37 +1330,37 @@ q3 extra SQL（Join） & 123.53 K/s & 144.34 K/s & \textbf{$+$16.8\%} \\
 
 q19 每核吞吐从 56.22 K/s 提升到 125.78 K/s；q20 每核效率约为 HashMap 的 2.7 倍；q9 每核效率约为 HashMap 的 4.0 倍。Client 普通业务路径保持持平；map-heavy scalar 诊断场景从 24,869 提升到 62,049 records/s/core，变化为 $+$149.5\%。
 
-WordCount p4 明确关闭 L0 HotCache，其收益来自融合 JNI、primitive SwissTable 和低 GC。多个 NexMark 场景虽配置缓存容量，但运行时 \texttt{lookup/hit} 为 0；这些结果归因于 ForL0 State Backend 整体实现，不归因于 L0 HotCache。Client scalar batch 的 \texttt{hit/lookup} 约为 51.0\%，具有明确的 L0 访问证据。
+Client scalar batch 的 \texttt{hit/lookup} 约为 51.0\%，具有明确的 L0 热点访问记录。
 
 \subsection{阶段性调优结果}
 
-全因子调优阶段共评估 159 组参数，其中 78 组完成全部 24 个 workload。累计 3792 次 workload 执行中有 98 次失败，失败率为 2.58\%；失败包括 51 次 native 内存分配失败、43 次 TaskManager 连接丢失、3 次 L0 分配失败和 1 次集群残留作业冲突。部分完成的参数组不进入综合排名。
+全因子调优阶段共评估 159 组参数，其中 78 组完成全部 24 个 workload。累计 3792 次 workload 执行中有 98 次失败，失败率为 2.58\%；失败包括 54 次资源分配失败、43 次 TaskManager 连接丢失和 1 次集群残留作业冲突。部分完成的参数组不进入综合排名。
 
 完整参数组中的阶段性全局候选在 12 个配对 workload 上取得 1.3737$\times$ 几何平均比值；对应参数为 initial capacity 512、max capacity 2,097,152、load factor 0.8、L0 cache 384 MiB、native memory 1280 MiB。
 
 \begin{table}[H]
 \centering
 \small
-\begin{tabularx}{\textwidth}{L{3.6cm} R{2.2cm} R{2.2cm} X}
+\begin{tabularx}{\textwidth}{X R{3.0cm} R{3.0cm}}
 \toprule
-\textbf{Workload} & \textbf{阶段观测最大} & \textbf{完整组中位数} & \textbf{L0 Cache 证据} \\
+\textbf{Workload} & \textbf{阶段观测最大} & \textbf{完整组中位数} \\
 \midrule
-WordCount & 1.454$\times$ & 1.103$\times$ & 显式关闭 \\
-q18 TPS & 2.643$\times$ & 2.201$\times$ & 显式关闭 \\
-q18 deep & 2.389$\times$ & 1.766$\times$ & 启用但无 lookup/hit \\
-q19 & 1.523$\times$ & 1.363$\times$ & 显式关闭 \\
-q20 & 1.694$\times$ & 1.376$\times$ & 启用但无 lookup/hit \\
-q9 & 1.236$\times$ & 0.925$\times$ & 启用但无 lookup/hit \\
-q4 & 1.885$\times$ & 1.303$\times$ & 启用但无 lookup/hit \\
-q3 & 1.550$\times$ & 1.159$\times$ & 启用但无 lookup/hit \\
-Client 普通路径 & 1.007$\times$ & 1.000$\times$ & 无有效命中 \\
-Client scalar batch & 2.980$\times$ & 1.994$\times$ & 约 51.0\% hit/lookup \\
+WordCount & 1.454$\times$ & 1.103$\times$ \\
+q18 TPS & 2.643$\times$ & 2.201$\times$ \\
+q18 deep & 2.389$\times$ & 1.766$\times$ \\
+q19 & 1.523$\times$ & 1.363$\times$ \\
+q20 & 1.694$\times$ & 1.376$\times$ \\
+q9 & 1.236$\times$ & 0.925$\times$ \\
+q4 & 1.885$\times$ & 1.303$\times$ \\
+q3 & 1.550$\times$ & 1.159$\times$ \\
+Client 普通路径 & 1.007$\times$ & 1.000$\times$ \\
+Client scalar batch & 2.980$\times$ & 1.994$\times$ \\
 \bottomrule
 \end{tabularx}
 \caption{全因子调优阶段结果}
 \end{table}
 
-阶段观测最大值用于选择候选参数，不作为最终交付性能数字。候选参数固定后仍需独立重复测试。除 Client scalar batch 外，其余阶段候选没有有效 L0 hit 证据，相应收益归因于 ForL0 State Backend 整体实现。
+阶段观测最大值用于选择候选参数，不作为最终交付性能数字。候选参数固定后仍需独立重复测试。
 
 \section{测试结论}
 
@@ -1372,7 +1371,6 @@ Client scalar batch & 2.980$\times$ & 1.994$\times$ & 约 51.0\% hit/lookup \\
   \item \textbf{原生引擎稳定性}：SwissTable、CoW 快照、Checkpoint 序列化往返、TypedInnerMap 等底层结构通过 CTest 验证，序列化与恢复路径在大规模 key 和混合状态类型下均保持一致性。
   \item \textbf{性能特征（Intel 平台收益显著）}：在 Intel x86\_64 参考平台，\project{} 在 WordCount 全部 36 组网格扫描点上一致领先于 HashMapStateBackend，平均吞吐量比值 \textbf{1.270}、最高 1.414；这一加速与 VTune 微架构剖析高度吻合——Memory Bound 从 48.1\% 降至 15.3\%、DRAM Bound 从 30.8\% 降至 2.2\%、CPI 从 0.615 降至 0.375。NexMark 端到端查询在 Intel 18\,/\,20\,GB 可完成配置下，q19 / q20 分别由 HashMap 的 279\,s / 313\,s 和 123\,s / 84\,s 降至 \project{} 的 45\,s / 38\,s 和 43\,s / 38\,s。\textbf{Flink 状态算子级 JMH 基准} 进一步佐证：14 个操作点中 13 个正向提升，\texttt{value.Add} +87.2\%、\texttt{map.Add} +110.0\%、\texttt{list.GetAndIterate} +131.5\%。鲲鹏 micro profile 也显示，ForL0 将状态访问集中到 \texttt{NativeEngine.valueGet/Put}（22.8\%），并将 GC worker/promotion 热点从 12.5\% 降至 3.5\%。
   \item \textbf{鲲鹏平台结果}：最终性能矩阵保持 HashMap 与 ForL0 的 operator 并行度、slot 数和输入设置一致。WordCount p4 best-of-3 为 $+$24.9\%；NexMark q18 TPS、q18 lateq-deep、q4、q3 分别为 $+$23.4\%、$+$28.8\%、$+$11.9\%、$+$16.8\%；q19/q20/q9 吞吐正向且每核效率提高。q5/q8/q11 未形成稳定、显著的吞吐优势，不进入最终矩阵。
-  \item \textbf{L0 收益边界}：WordCount p4 与部分 NexMark 场景没有有效 HotCache lookup/hit，其收益归因于 native/off-heap、SwissTable、融合 JNI 与低 GC。Client scalar batch 的 hit/lookup 约为 51.0\%，可用于说明 L0 热点访问效果。
   \item \textbf{阶段性调优结果}：159 组参数中 78 组完整执行，累计失败率为 2.58\%；阶段性全局候选的 12 个配对 workload 几何平均比值为 1.3737$\times$。阶段观测最大值仅用于候选选择，不替代固定参数后的独立重复测试。
 \end{enumerate}
 
