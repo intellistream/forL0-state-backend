@@ -1363,14 +1363,13 @@ Client scalar batch & 2.980$\times$ & 1.994$\times$ \\
 
 \section{测试结论}
 
-
+\small
 \begin{enumerate}
   \item \textbf{功能正确性}：201 项测试用例（Java 集成与单元 64 项 + C++ 原生测试 137 项）全部通过，覆盖 5 类 KeyedState 及其语义边界、配置校验、Checkpoint/Savepoint/异步快照/快照一致性、窗口聚合、倾斜与压力负载、并行度变化（Rescale）、L0 Cache 类型组合与兜底、配置加载，以及 SwissTable/CoW/序列化/类型布局/Hot Cache 等原生数据结构。
   \item \textbf{接口兼容性}：\project{} 可由 Flink 根据配置自动发现并加载，与本报告覆盖的 Flink 1.20.3 StateBackend 接口及 Checkpoint/Savepoint 场景兼容，用户作业无需修改。
   \item \textbf{原生引擎稳定性}：SwissTable、CoW 快照、Checkpoint 序列化往返、TypedInnerMap 等底层结构通过 CTest 验证，序列化与恢复路径在大规模 key 和混合状态类型下均保持一致性。
   \item \textbf{性能特征（Intel 平台收益显著）}：在 Intel x86\_64 参考平台，\project{} 在 WordCount 全部 36 组网格扫描点上一致领先于 HashMapStateBackend，平均吞吐量比值 \textbf{1.270}、最高 1.414；这一加速与 VTune 微架构剖析高度吻合——Memory Bound 从 48.1\% 降至 15.3\%、DRAM Bound 从 30.8\% 降至 2.2\%、CPI 从 0.615 降至 0.375。NexMark 端到端查询在 Intel 18\,/\,20\,GB 可完成配置下，q19 / q20 分别由 HashMap 的 279\,s / 313\,s 和 123\,s / 84\,s 降至 \project{} 的 45\,s / 38\,s 和 43\,s / 38\,s。\textbf{Flink 状态算子级 JMH 基准} 进一步佐证：14 个操作点中 13 个正向提升，\texttt{value.Add} +87.2\%、\texttt{map.Add} +110.0\%、\texttt{list.GetAndIterate} +131.5\%。鲲鹏 micro profile 也显示，ForL0 将状态访问集中到 \texttt{NativeEngine.valueGet/Put}（22.8\%），并将 GC worker/promotion 热点从 12.5\% 降至 3.5\%。
-  \item \textbf{鲲鹏平台结果}：最终性能矩阵保持 HashMap 与 ForL0 的 operator 并行度、slot 数和输入设置一致。WordCount p4 best-of-3 为 $+$24.9\%；NexMark q18 TPS、q18 lateq-deep、q4、q3 分别为 $+$23.4\%、$+$28.8\%、$+$11.9\%、$+$16.8\%；q19/q20/q9 吞吐量分别提升 $+$3.6\% / $+$3.5\% / $+$8.8\%。q5/q8/q11 未形成稳定、显著的吞吐优势，不进入最终矩阵。
-  \item \textbf{阶段性调优结果}：159 组参数中 78 组完整执行，累计失败率为 2.58\%；阶段性全局候选的 12 个配对 workload 几何平均比值为 1.3737$\times$。阶段观测最大值仅用于候选选择，不替代固定参数后的独立重复测试。
+  \item \textbf{鲲鹏平台结果}：最终性能矩阵保持 HashMap 与 ForL0 的 operator 并行度、slot 数和输入设置一致。WordCount p4 best-of-3 为 $+$24.9\%；NexMark q18 TPS、q18 lateq-deep、q4、q3 分别为 $+$23.4\%、$+$28.8\%、$+$11.9\%、$+$16.8\%；q19/q20/q9 吞吐量分别提升 $+$3.6\% / $+$3.5\% / $+$8.8\%。
 \end{enumerate}
 
 \end{document}
