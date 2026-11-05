@@ -1,0 +1,261 @@
+Stopping taskexecutor daemon (pid: 267944) on host coder-user-yjy-flink-32-78898f698f-m5dfg.
+Stopping taskexecutor daemon (pid: 267157) on host coder-user-yjy-flink-32-78898f698f-m5dfg.
+Stopping standalonesession daemon (pid: 266631) on host coder-user-yjy-flink-32-78898f698f-m5dfg.
++ cmake -S /root/briskstate-runtime/build/native-source -B /root/briskstate-runtime/build/native -DCMAKE_BUILD_TYPE=Release -DFORL0_FORCE_MINI_GTEST=ON
+-- ForL0 engine: arch=aarch64, system=Linux
+-- Google Test not found — using mini_gtest fallback
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /root/briskstate-runtime/build/native
++ cmake --build /root/briskstate-runtime/build/native -j 8
+[ 10%] Building CXX object CMakeFiles/forl0_tests.dir/test/state_table_cow_test.cpp.o
+[ 15%] Building CXX object CMakeFiles/forl0_tests.dir/test/time_window_namespace_test.cpp.o
+[ 20%] Building CXX object CMakeFiles/forl0_tests.dir/test/typed_inner_map_test.cpp.o
+[ 20%] Building CXX object CMakeFiles/forl0_tests.dir/test/checkpoint_round_trip_test.cpp.o
+[ 30%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o
+[ 35%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_list_state.cpp.o
+[ 40%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.o
+[ 40%] Building CXX object CMakeFiles/forl0_engine.dir/jni/forl0_jni.cpp.o
+[ 45%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o
+[ 50%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_value_state.cpp.o
+[ 55%] Linking CXX executable forl0_tests
+[ 90%] Built target forl0_tests
+[ 95%] Linking CXX shared library libforl0_engine.so
+Copying libforl0_engine to resources/native/
+[100%] Built target forl0_engine
++ ctest --test-dir /root/briskstate-runtime/build/native --output-on-failure
+Test project /root/briskstate-runtime/build/native
+    Start 1: forl0_tests
+1/1 Test #1: forl0_tests ......................   Passed    0.05 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.05 sec
++ mvn -B -ntp -Dmaven.test.skip=true package
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------< org.apache.flink:flink-statebackend-forL0 >--------------
+[INFO] Building flink-statebackend-forL0 1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:resources (default-resources) @ flink-statebackend-forL0 ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 7 resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ flink-statebackend-forL0 ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:testResources (default-testResources) @ flink-statebackend-forL0 ---
+[INFO] Not copying test resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:testCompile (default-testCompile) @ flink-statebackend-forL0 ---
+[INFO] Not compiling test sources
+[INFO] 
+[INFO] --- maven-surefire-plugin:3.2.5:test (default-test) @ flink-statebackend-forL0 ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ flink-statebackend-forL0 ---
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.644 s
+[INFO] Finished at: 2026-11-02T07:27:38Z
+[INFO] ------------------------------------------------------------------------
++ jar uf /root/forL0-state-backend/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar -C /root/briskstate-runtime/build/jar native/libforl0_engine.so
++ mvn -B -ntp -f /root/forL0-state-backend/benchmark/wordcount/pom.xml package
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -----------< org.apache.flink.benchmark:wordcount-benchmark >-----------
+[INFO] Building WordCount Benchmark for ForL0 StateBackend 1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:resources (default-resources) @ wordcount-benchmark ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /root/forL0-state-backend/benchmark/wordcount/src/main/resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ wordcount-benchmark ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:testResources (default-testResources) @ wordcount-benchmark ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /root/forL0-state-backend/benchmark/wordcount/src/test/resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:testCompile (default-testCompile) @ wordcount-benchmark ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- maven-surefire-plugin:3.2.5:test (default-test) @ wordcount-benchmark ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running org.apache.flink.benchmark.wordcount.source.LongKeySourceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.065 s -- in org.apache.flink.benchmark.wordcount.source.LongKeySourceTest
+[INFO] Running org.apache.flink.benchmark.wordcount.WordCountBenchmarkTest
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+LongKeyStatefulCounter state=org.apache.flink.benchmark.wordcount.WordCountBenchmarkTest$PrimitiveOnlyState fused=true ops=8
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.072 s -- in org.apache.flink.benchmark.wordcount.WordCountBenchmarkTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ wordcount-benchmark ---
+[INFO] 
+[INFO] --- maven-shade-plugin:3.5.0:shade (default) @ wordcount-benchmark ---
+[INFO] Including org.apache.commons:commons-math3:jar:3.6.1 in the shaded jar.
+[INFO] Including com.google.code.gson:gson:jar:2.10.1 in the shaded jar.
+[INFO] Dependency-reduced POM written at: /root/forL0-state-backend/benchmark/wordcount/dependency-reduced-pom.xml
+[WARNING] commons-math3-3.6.1.jar, wordcount-benchmark-1.0-SNAPSHOT.jar define 1307 overlapping classes and resources: 
+[WARNING]   - META-INF/LICENSE.txt
+[WARNING]   - META-INF/NOTICE.txt
+[WARNING]   - META-INF/maven/org.apache.commons/commons-math3/pom.properties
+[WARNING]   - META-INF/maven/org.apache.commons/commons-math3/pom.xml
+[WARNING]   - assets/org/apache/commons/math3/exception/util/LocalizedFormats_fr.properties
+[WARNING]   - assets/org/apache/commons/math3/random/new-joe-kuo-6.1000
+[WARNING]   - org.apache.commons.math3.Field
+[WARNING]   - org.apache.commons.math3.FieldElement
+[WARNING]   - org.apache.commons.math3.RealFieldElement
+[WARNING]   - org.apache.commons.math3.analysis.BivariateFunction
+[WARNING]   - 1297 more...
+[WARNING] commons-math3-3.6.1.jar, gson-2.10.1.jar, wordcount-benchmark-1.0-SNAPSHOT.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/MANIFEST.MF
+[WARNING] gson-2.10.1.jar, wordcount-benchmark-1.0-SNAPSHOT.jar define 220 overlapping classes and resources: 
+[WARNING]   - META-INF.versions.9.module-info
+[WARNING]   - META-INF/maven/com.google.code.gson/gson/pom.properties
+[WARNING]   - META-INF/maven/com.google.code.gson/gson/pom.xml
+[WARNING]   - com.google.gson.ExclusionStrategy
+[WARNING]   - com.google.gson.FieldAttributes
+[WARNING]   - com.google.gson.FieldNamingPolicy
+[WARNING]   - com.google.gson.FieldNamingPolicy$1
+[WARNING]   - com.google.gson.FieldNamingPolicy$2
+[WARNING]   - com.google.gson.FieldNamingPolicy$3
+[WARNING]   - com.google.gson.FieldNamingPolicy$4
+[WARNING]   - 210 more...
+[WARNING] maven-shade-plugin has detected that some files are
+[WARNING] present in two or more JARs. When this happens, only one
+[WARNING] single version of the file is copied to the uber jar.
+[WARNING] Usually this is not harmful and you can skip these warnings,
+[WARNING] otherwise try to manually exclude artifacts based on
+[WARNING] mvn dependency:tree -Ddetail=true and the above output.
+[WARNING] See https://maven.apache.org/plugins/maven-shade-plugin/
+[INFO] Replacing original artifact with shaded artifact.
+[INFO] Replacing /root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar with /root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT-shaded.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  3.098 s
+[INFO] Finished at: 2026-11-02T07:27:43Z
+[INFO] ------------------------------------------------------------------------
++ start jm CPU 0-3
+Starting standalonesession daemon on host coder-user-yjy-flink-32-78898f698f-m5dfg.
++ start tm1 CPU 4-7
+Starting taskexecutor daemon on host coder-user-yjy-flink-32-78898f698f-m5dfg.
++ start tm2 CPU 8-11
+Starting taskexecutor daemon on host coder-user-yjy-flink-32-78898f698f-m5dfg.
+{
+  "taskmanagers": 2,
+  "slots-total": 8,
+  "slots-available": 8,
+  "jobs-running": 0,
+  "jobs-finished": 0,
+  "jobs-cancelled": 0,
+  "jobs-failed": 0,
+  "flink-version": "1.20.3",
+  "flink-commit": "01e3a6d"
+}
+CACHE_READY
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 32000000
+numRecords: 128000000
+parallelism: 8
+Job has been submitted with JobID 75ea7ed0bdfab9aa366d4b268c6b0d34
+
+PASS heap long job=75ea7ed0bdfab9aa366d4b268c6b0d34 records=128000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072756_heap_long
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 32000000
+numRecords: 128000000
+parallelism: 8
+Job has been submitted with JobID deba151717b60243e869111a8a06068e
+
+PASS forl0 long job=deba151717b60243e869111a8a06068e records=128000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072904_forl0_long
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 32000000
+numRecords: 128000000
+parallelism: 8
+Job has been submitted with JobID 7208537aeb7990a59648a477cd5a3f26
+
+PASS heap long job=7208537aeb7990a59648a477cd5a3f26 records=128000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072952_heap_long
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 32000000
+numRecords: 128000000
+parallelism: 8
+Job has been submitted with JobID 5332d24cadf38bf5e005a95276b1182c
+
+PASS forl0 long job=5332d24cadf38bf5e005a95276b1182c records=128000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073056_forl0_long
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 32000000
+numRecords: 128000000
+parallelism: 8
+Job has been submitted with JobID 17ff094186ae3f400423d843bc0d93b9
+
+PASS heap long job=17ff094186ae3f400423d843bc0d93b9 records=128000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073140_heap_long
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 32000000
+numRecords: 128000000
+parallelism: 8
+Job has been submitted with JobID b8cc673c10cdcba8efdfac83c994e3e2
+
+PASS forl0 long job=b8cc673c10cdcba8efdfac83c994e3e2 records=128000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073236_forl0_long
+CACHE_VALIDATED

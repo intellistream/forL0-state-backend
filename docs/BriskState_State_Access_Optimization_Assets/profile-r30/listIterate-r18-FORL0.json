@@ -1,0 +1,91 @@
+[
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.listIterate",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java",
+        "jvmArgs" : [
+            "-Xms8g",
+            "-Xmx8g",
+            "-XX:ActiveProcessorCount=4",
+            "-XX:+UnlockDiagnosticVMOptions",
+            "-XX:+DebugNonSafepoints",
+            "-XX:+PreserveFramePointer",
+            "-Djava.library.path=/root/briskstate-setup/deep-opt-20261103/variants/r18",
+            "-Dorg.slf4j.simpleLogger.defaultLogLevel=error"
+        ],
+        "jdkVersion" : "11.0.32",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "11.0.32+9",
+        "warmupIterations" : 3,
+        "warmupTime" : "3 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 3,
+        "measurementTime" : "4 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "backendType" : "FORL0",
+            "keyCount" : "1048576"
+        },
+        "primaryMetric" : {
+            "score" : 1546.1734824138869,
+            "scoreError" : 346.8726294504953,
+            "scoreConfidence" : [
+                1199.3008529633917,
+                1893.046111864382
+            ],
+            "scorePercentiles" : {
+                "0.0" : 1524.5654246640916,
+                "50.0" : 1553.6125582402549,
+                "90.0" : 1560.3424643373141,
+                "95.0" : 1560.3424643373141,
+                "99.0" : 1560.3424643373141,
+                "99.9" : 1560.3424643373141,
+                "99.99" : 1560.3424643373141,
+                "99.999" : 1560.3424643373141,
+                "99.9999" : 1560.3424643373141,
+                "100.0" : 1560.3424643373141
+            },
+            "scoreUnit" : "ops/ms",
+            "rawData" : [
+                [
+                    1560.3424643373141,
+                    1553.6125582402549,
+                    1524.5654246640916
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+            "async" : {
+                "score" : "NaN",
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    "NaN",
+                    "NaN"
+                ],
+                "scorePercentiles" : {
+                    "0.0" : "NaN",
+                    "50.0" : "NaN",
+                    "90.0" : "NaN",
+                    "95.0" : "NaN",
+                    "99.0" : "NaN",
+                    "99.9" : "NaN",
+                    "99.99" : "NaN",
+                    "99.999" : "NaN",
+                    "99.9999" : "NaN",
+                    "100.0" : "NaN"
+                },
+                "scoreUnit" : "---",
+                "rawData" : [
+                    [
+                        "NaN"
+                    ]
+                ]
+            }
+        }
+    }
+]
+
+

@@ -1,0 +1,378 @@
+{
+  "workload": {
+    "keys": 32000000,
+    "records": 128000000,
+    "state_updates": 2048000000,
+    "parallelism": 8,
+    "rate_limit": 0,
+    "skew": 0,
+    "checkpoint_interval_ms": 0
+  },
+  "groups": [
+    {
+      "variant": "baseline",
+      "backend": "forl0",
+      "count": 3,
+      "times_seconds": [
+        44.166,
+        43.336,
+        45.529
+      ],
+      "median_seconds": 44.166,
+      "min_seconds": 43.336,
+      "max_seconds": 45.529,
+      "median_updates_per_second": 46370511.25300005,
+      "median_tm_cpu_seconds": 324.40999999999997
+    },
+    {
+      "variant": "baseline",
+      "backend": "heap",
+      "count": 2,
+      "times_seconds": [
+        65.413,
+        52.958
+      ],
+      "median_seconds": 59.1855,
+      "min_seconds": 52.958,
+      "max_seconds": 65.413,
+      "median_updates_per_second": 34603070.00870146,
+      "median_tm_cpu_seconds": 439.5
+    },
+    {
+      "variant": "cached-table",
+      "backend": "forl0",
+      "count": 5,
+      "times_seconds": [
+        40.631,
+        39.176,
+        36.991,
+        41.727,
+        38.015
+      ],
+      "median_seconds": 39.176,
+      "min_seconds": 36.991,
+      "max_seconds": 41.727,
+      "median_updates_per_second": 52276904.2270778,
+      "median_tm_cpu_seconds": 287.78
+    },
+    {
+      "variant": "cached-table",
+      "backend": "heap",
+      "count": 3,
+      "times_seconds": [
+        62.623,
+        56.425,
+        49.266
+      ],
+      "median_seconds": 56.425,
+      "min_seconds": 49.266,
+      "max_seconds": 62.623,
+      "median_updates_per_second": 36295968.09924679,
+      "median_tm_cpu_seconds": 399.68
+    }
+  ],
+  "runs": [
+    {
+      "variant": "baseline",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 65.413,
+      "state_updates_per_second": 31308761.255407948,
+      "cpu_seconds": {
+        "tm1": 223.21000000000004,
+        "tm2": 259.12
+      },
+      "peak_rss_bytes": {
+        "tm1": 4563849216,
+        "tm2": 5583134720
+      },
+      "backend": "heap",
+      "job_id": "f1bfd02ac08828f26047adc1842954c1",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072143_heap_long"
+    },
+    {
+      "variant": "baseline",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 44.166,
+      "state_updates_per_second": 46370511.25300005,
+      "cpu_seconds": {
+        "tm1": 170.88999999999993,
+        "tm2": 153.52000000000004
+      },
+      "peak_rss_bytes": {
+        "tm1": 4960436224,
+        "tm2": 5982248960
+      },
+      "backend": "forl0",
+      "job_id": "dcdccb775c0cc890a79cab4815f129e2",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072255_forl0_long"
+    },
+    {
+      "variant": "baseline",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 52.958,
+      "state_updates_per_second": 38672155.2928736,
+      "cpu_seconds": {
+        "tm1": 205.22000000000003,
+        "tm2": 191.44999999999993
+      },
+      "peak_rss_bytes": {
+        "tm1": 5953024000,
+        "tm2": 6916173824
+      },
+      "backend": "heap",
+      "job_id": "5f1129fa677294f54642cc031ce4f10c",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072343_heap_long"
+    },
+    {
+      "variant": "baseline",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 43.336,
+      "state_updates_per_second": 47258630.23813919,
+      "cpu_seconds": {
+        "tm1": 169.06000000000006,
+        "tm2": 150.4000000000001
+      },
+      "peak_rss_bytes": {
+        "tm1": 6299348992,
+        "tm2": 7243833344
+      },
+      "backend": "forl0",
+      "job_id": "2fad50a34e11d13cdd28ad1815c699dd",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072443_forl0_long"
+    },
+    {
+      "variant": "cached-table",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 62.623,
+      "state_updates_per_second": 32703639.237979658,
+      "cpu_seconds": {
+        "tm1": 241.94,
+        "tm2": 201.20999999999998
+      },
+      "peak_rss_bytes": {
+        "tm1": 4219486208,
+        "tm2": 4194553856
+      },
+      "backend": "heap",
+      "job_id": "75ea7ed0bdfab9aa366d4b268c6b0d34",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072756_heap_long"
+    },
+    {
+      "variant": "cached-table",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 40.631,
+      "state_updates_per_second": 50404863.2817307,
+      "cpu_seconds": {
+        "tm1": 158.01,
+        "tm2": 132.21000000000004
+      },
+      "peak_rss_bytes": {
+        "tm1": 4946235392,
+        "tm2": 4596326400
+      },
+      "backend": "forl0",
+      "job_id": "deba151717b60243e869111a8a06068e",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072904_forl0_long"
+    },
+    {
+      "variant": "cached-table",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 56.425,
+      "state_updates_per_second": 36295968.09924679,
+      "cpu_seconds": {
+        "tm1": 219.44000000000005,
+        "tm2": 180.23999999999995
+      },
+      "peak_rss_bytes": {
+        "tm1": 6528815104,
+        "tm2": 5450084352
+      },
+      "backend": "heap",
+      "job_id": "7208537aeb7990a59648a477cd5a3f26",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_072952_heap_long"
+    },
+    {
+      "variant": "cached-table",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 39.176,
+      "state_updates_per_second": 52276904.2270778,
+      "cpu_seconds": {
+        "tm1": 135.8499999999999,
+        "tm2": 151.93000000000006
+      },
+      "peak_rss_bytes": {
+        "tm1": 6933483520,
+        "tm2": 6358482944
+      },
+      "backend": "forl0",
+      "job_id": "5332d24cadf38bf5e005a95276b1182c",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073056_forl0_long"
+    },
+    {
+      "variant": "cached-table",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 49.266,
+      "state_updates_per_second": 41570251.28892136,
+      "cpu_seconds": {
+        "tm1": 184.46000000000004,
+        "tm2": 179.0999999999999
+      },
+      "peak_rss_bytes": {
+        "tm1": 7823020032,
+        "tm2": 14746361856
+      },
+      "backend": "heap",
+      "job_id": "17ff094186ae3f400423d843bc0d93b9",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073140_heap_long"
+    },
+    {
+      "variant": "cached-table",
+      "profiled": false,
+      "keys": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 36.991,
+      "state_updates_per_second": 55364818.46935741,
+      "cpu_seconds": {
+        "tm1": 132.10000000000002,
+        "tm2": 143.56000000000006
+      },
+      "peak_rss_bytes": {
+        "tm1": 8204476416,
+        "tm2": 15105626112
+      },
+      "backend": "forl0",
+      "job_id": "b8cc673c10cdcba8efdfac83c994e3e2",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073236_forl0_long"
+    },
+    {
+      "variant": "baseline-return",
+      "profiled": false,
+      "keys": 32000000,
+      "keys_covered": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 45.529,
+      "state_updates_per_second": 44982318.96154099,
+      "cpu_seconds": {
+        "tm1": 157.79,
+        "tm2": 173.89000000000001
+      },
+      "peak_rss_bytes": {
+        "tm1": 3216072704,
+        "tm2": 3844423680
+      },
+      "backend": "forl0",
+      "job_id": "0d8b6defc98b5d6023a51b38a24c8b52",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073624_forl0_long"
+    },
+    {
+      "variant": "cached-table-return",
+      "profiled": false,
+      "keys": 32000000,
+      "keys_covered": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 41.727,
+      "state_updates_per_second": 49080930.81218396,
+      "cpu_seconds": {
+        "tm1": 138.93,
+        "tm2": 157.77
+      },
+      "peak_rss_bytes": {
+        "tm1": 3240910848,
+        "tm2": 3819593728
+      },
+      "backend": "forl0",
+      "job_id": "b8f169417ae0ffc3a4228bddb05a1c73",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073740_forl0_long"
+    },
+    {
+      "variant": "cached-table",
+      "profiled": false,
+      "artifacts_sha256": {
+        "/root/briskstate-runtime/native/libforl0_engine.so": "a5e2fa5ef6b2c63baae0c9ab73cf22b260cec95b580cbc32b14deb74ec4d3760",
+        "/root/opt/flink-1.20.3/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "d02f6d7ebcb0f57233b20de6fd8218a658f69591a37357cc17d23dc90ed71368",
+        "/root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar": "d5227cde132912f8b70430a834177c6a1bf0d4d881a98687ced8ac47a5ddae1d"
+      },
+      "keys": 32000000,
+      "keys_covered": 32000000,
+      "records": 128000000,
+      "state_ops_per_record": 16,
+      "skew": 0.0,
+      "rate": 0,
+      "job_duration_seconds": 38.015,
+      "state_updates_per_second": 53873470.99829015,
+      "cpu_seconds": {
+        "tm1": 129.67000000000002,
+        "tm2": 146.32
+      },
+      "peak_rss_bytes": {
+        "tm1": 10353324032,
+        "tm2": 6656180224
+      },
+      "backend": "forl0",
+      "job_id": "ee24030402171a4ce6ff3b4158801e96",
+      "directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_074118_forl0_long"
+    }
+  ],
+  "notes": [
+    "Profiled jobs are excluded from timing.",
+    "All reported runs are retained; no best-run selection.",
+    "Each group includes cold/warm JVM variation; sample count is small.",
+    "ForL0 uses fused increments; heap uses ValueState read/update for the same logical increments.",
+    "This is a repeated-key-per-record fast-path workload, not a general workload ranking.",
+    "TM RSS includes JVM memory retained from previous jobs, not just live state size."
+  ]
+}

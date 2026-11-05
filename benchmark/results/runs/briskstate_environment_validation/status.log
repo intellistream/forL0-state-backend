@@ -1,0 +1,113 @@
+{
+  "taskmanagers": 2,
+  "slots-total": 8,
+  "slots-available": 8,
+  "jobs-running": 0,
+  "jobs-finished": 1,
+  "jobs-cancelled": 0,
+  "jobs-failed": 1,
+  "flink-version": "1.20.3",
+  "flink-commit": "01e3a6d"
+}
+{
+  "taskmanagers": [
+    {
+      "id": "briskstate-tm2",
+      "path": "pekko.tcp://flink@127.0.0.1:41099/user/rpc/taskmanager_0",
+      "dataPort": 37029,
+      "jmxPort": -1,
+      "timeSinceLastHeartbeat": 1793601435150,
+      "slotsNumber": 4,
+      "freeSlots": 4,
+      "totalResource": {
+        "cpuCores": 4.0,
+        "taskHeapMemory": 22272,
+        "taskOffHeapMemory": 8192,
+        "managedMemory": 256,
+        "networkMemory": 512,
+        "extendedResources": {}
+      },
+      "freeResource": {
+        "cpuCores": 4.0,
+        "taskHeapMemory": 22272,
+        "taskOffHeapMemory": 8192,
+        "managedMemory": 256,
+        "networkMemory": 512,
+        "extendedResources": {}
+      },
+      "hardware": {
+        "cpuCores": 4,
+        "physicalMemory": 206158430208,
+        "freeMemory": 23488102400,
+        "managedMemory": 268435456
+      },
+      "memoryConfiguration": {
+        "frameworkHeap": 134217728,
+        "taskHeap": 23353884672,
+        "frameworkOffHeap": 134217728,
+        "taskOffHeap": 8589934592,
+        "networkMemory": 536870912,
+        "managedMemory": 268435456,
+        "jvmMetaspace": 268435456,
+        "jvmOverhead": 1073741824,
+        "totalFlinkMemory": 33017561088,
+        "totalProcessMemory": 34359738368
+      }
+    },
+    {
+      "id": "briskstate-tm1",
+      "path": "pekko.tcp://flink@127.0.0.1:33301/user/rpc/taskmanager_0",
+      "dataPort": 40169,
+      "jmxPort": -1,
+      "timeSinceLastHeartbeat": 1793601435151,
+      "slotsNumber": 4,
+      "freeSlots": 4,
+      "totalResource": {
+        "cpuCores": 4.0,
+        "taskHeapMemory": 22272,
+        "taskOffHeapMemory": 8192,
+        "managedMemory": 256,
+        "networkMemory": 512,
+        "extendedResources": {}
+      },
+      "freeResource": {
+        "cpuCores": 4.0,
+        "taskHeapMemory": 22272,
+        "taskOffHeapMemory": 8192,
+        "managedMemory": 256,
+        "networkMemory": 512,
+        "extendedResources": {}
+      },
+      "hardware": {
+        "cpuCores": 4,
+        "physicalMemory": 206158430208,
+        "freeMemory": 23488102400,
+        "managedMemory": 268435456
+      },
+      "memoryConfiguration": {
+        "frameworkHeap": 134217728,
+        "taskHeap": 23353884672,
+        "frameworkOffHeap": 134217728,
+        "taskOffHeap": 8589934592,
+        "networkMemory": 536870912,
+        "managedMemory": 268435456,
+        "jvmMetaspace": 268435456,
+        "jvmOverhead": 1073741824,
+        "totalFlinkMemory": 33017561088,
+        "totalProcessMemory": 34359738368
+      }
+    }
+  ]
+}
+jm pid=220886
+VmRSS:	  723120 kB
+Cpus_allowed_list:	0-3
+java -Xmx7328287936 -Xms7328287936 -XX:MaxMetaspaceSize=268435456 -XX:+IgnoreUnrecognizedVMOptions -XX:ActiveProcessorCount=4 -Djava.library.path=/root/briskstate-runtime/native -Dlog.file=/root/briskstate-runtime/jm/log/flink-briskstate-jm-standalonesession-0-coder-user-yjy-flink-32-78898f698f-m5dfg.log -Dlog4j.configuration=file:/root/briskstate-runtime/jm/conf/log4j.properties -Dlog4j.configurationFile=file:/root/briskstate-runtime/jm/conf/log4j.properties -Dlogback.configurationFile=file:/root/briskstate-runtime/jm/conf/logback.xml -classpath /root/opt/flink-1.20.3/lib/flink-cep-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-connector-files-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-csv-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-json-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-scala_2.12-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar:/root/opt/flink-1.20.3/lib/flink-table-api-java-uber-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-table-planner-loader-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-table-runtime-1.20.3.jar:/root/opt/flink-1.20.3/lib/log4j-1.2-api-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-api-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-core-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-slf4j-impl-2.24.3.jar:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar:::: org.apache.flink.runtime.entrypoint.StandaloneSessionClusterEntrypoint -D jobmanager.memory.off-heap.size=134217728b -D jobmanager.memory.jvm-overhead.min=858993472b -D jobmanager.memory.jvm-metaspace.size=268435456b -D jobmanager.memory.heap.size=7328287936b -D jobmanager.memory.jvm-overhead.max=858993472b --configDir /root/briskstate-runtime/jm/conf --executionMode cluster 
+tm1 pid=221658
+VmRSS:	 1999316 kB
+Cpus_allowed_list:	4-7
+java -Xmx23488102400 -Xms23488102400 -XX:MaxDirectMemorySize=9261023232 -XX:MaxMetaspaceSize=268435456 -XX:+IgnoreUnrecognizedVMOptions -XX:ActiveProcessorCount=4 -Djava.library.path=/root/briskstate-runtime/native -Dlog.file=/root/briskstate-runtime/tm1/log/flink-briskstate-tm1-taskexecutor-0-coder-user-yjy-flink-32-78898f698f-m5dfg.log -Dlog4j.configuration=file:/root/briskstate-runtime/tm1/conf/log4j.properties -Dlog4j.configurationFile=file:/root/briskstate-runtime/tm1/conf/log4j.properties -Dlogback.configurationFile=file:/root/briskstate-runtime/tm1/conf/logback.xml -classpath /root/opt/flink-1.20.3/lib/flink-cep-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-connector-files-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-csv-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-json-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-scala_2.12-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar:/root/opt/flink-1.20.3/lib/flink-table-api-java-uber-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-table-planner-loader-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-table-runtime-1.20.3.jar:/root/opt/flink-1.20.3/lib/log4j-1.2-api-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-api-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-core-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-slf4j-impl-2.24.3.jar:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar:::: org.apache.flink.runtime.taskexecutor.TaskManagerRunner --configDir /root/briskstate-runtime/tm1/conf -D taskmanager.memory.network.min=536870912b -D taskmanager.cpu.cores=4.0 -D taskmanager.memory.task.off-heap.size=8589934592b -D taskmanager.memory.jvm-metaspace.size=268435456b -D external-resources=none -D taskmanager.memory.jvm-overhead.min=1073741824b -D taskmanager.memory.framework.off-heap.size=134217728b -D taskmanager.memory.network.max=536870912b -D taskmanager.memory.framework.heap.size=134217728b -D taskmanager.memory.managed.size=268435456b -D taskmanager.memory.task.heap.size=23353884672b -D taskmanager.numberOfTaskSlots=4 -D taskmanager.memory.jvm-overhead.max=1073741824b 
+tm2 pid=222198
+VmRSS:	 1921212 kB
+Cpus_allowed_list:	8-11
+java -Xmx23488102400 -Xms23488102400 -XX:MaxDirectMemorySize=9261023232 -XX:MaxMetaspaceSize=268435456 -XX:+IgnoreUnrecognizedVMOptions -XX:ActiveProcessorCount=4 -Djava.library.path=/root/briskstate-runtime/native -Dlog.file=/root/briskstate-runtime/tm2/log/flink-briskstate-tm2-taskexecutor-0-coder-user-yjy-flink-32-78898f698f-m5dfg.log -Dlog4j.configuration=file:/root/briskstate-runtime/tm2/conf/log4j.properties -Dlog4j.configurationFile=file:/root/briskstate-runtime/tm2/conf/log4j.properties -Dlogback.configurationFile=file:/root/briskstate-runtime/tm2/conf/logback.xml -classpath /root/opt/flink-1.20.3/lib/flink-cep-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-connector-files-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-csv-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-json-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-scala_2.12-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar:/root/opt/flink-1.20.3/lib/flink-table-api-java-uber-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-table-planner-loader-1.20.3.jar:/root/opt/flink-1.20.3/lib/flink-table-runtime-1.20.3.jar:/root/opt/flink-1.20.3/lib/log4j-1.2-api-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-api-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-core-2.24.3.jar:/root/opt/flink-1.20.3/lib/log4j-slf4j-impl-2.24.3.jar:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar:::: org.apache.flink.runtime.taskexecutor.TaskManagerRunner --configDir /root/briskstate-runtime/tm2/conf -D taskmanager.memory.network.min=536870912b -D taskmanager.cpu.cores=4.0 -D taskmanager.memory.task.off-heap.size=8589934592b -D taskmanager.memory.jvm-metaspace.size=268435456b -D external-resources=none -D taskmanager.memory.jvm-overhead.min=1073741824b -D taskmanager.memory.framework.off-heap.size=134217728b -D taskmanager.memory.network.max=536870912b -D taskmanager.memory.framework.heap.size=134217728b -D taskmanager.memory.managed.size=268435456b -D taskmanager.memory.task.heap.size=23353884672b -D taskmanager.numberOfTaskSlots=4 -D taskmanager.memory.jvm-overhead.max=1073741824b 

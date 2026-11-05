@@ -1,0 +1,312 @@
+Start testing: Nov 02 07:27 UTC
+----------------------------------------------------------
+1/1 Testing: forl0_tests
+1/1 Test: forl0_tests
+Command: "/root/briskstate-runtime/build/native/forl0_tests"
+Directory: /root/briskstate-runtime/build/native
+"forl0_tests" start time: Nov 02 07:27 UTC
+Output:
+----------------------------------------------------------
+[----------] SwissTableTest
+[ RUN      ] SwissTableTest.InsertAndFind
+[       OK ] SwissTableTest.InsertAndFind
+[ RUN      ] SwissTableTest.EraseAndSize
+[       OK ] SwissTableTest.EraseAndSize
+[ RUN      ] SwissTableTest.EmplaceInsertIfAbsent
+[       OK ] SwissTableTest.EmplaceInsertIfAbsent
+[ RUN      ] SwissTableTest.Clear
+[       OK ] SwissTableTest.Clear
+[ RUN      ] SwissTableTest.AutomaticGrowth
+[       OK ] SwissTableTest.AutomaticGrowth
+[ RUN      ] SwissTableTest.MaxCapacityFailsClosedWithoutLosingEntries
+[       OK ] SwissTableTest.MaxCapacityFailsClosedWithoutLosingEntries
+[ RUN      ] SwissTableTest.CountingAllocatorEnforcesAndReleasesBudget
+[       OK ] SwissTableTest.CountingAllocatorEnforcesAndReleasesBudget
+[ RUN      ] SwissTableTest.RejectedGrowthLeavesExistingTableUsable
+[       OK ] SwissTableTest.RejectedGrowthLeavesExistingTableUsable
+[ RUN      ] SwissTableTest.TombstoneReclamation
+[       OK ] SwissTableTest.TombstoneReclamation
+[ RUN      ] SwissTableTest.ForEachIteration
+[       OK ] SwissTableTest.ForEachIteration
+[ RUN      ] SwissTableTest.ForEachEmptyTable
+[       OK ] SwissTableTest.ForEachEmptyTable
+[ RUN      ] SwissTableTest.MoveConstruction
+[       OK ] SwissTableTest.MoveConstruction
+[ RUN      ] SwissTableTest.MoveAssignment
+[       OK ] SwissTableTest.MoveAssignment
+[ RUN      ] SwissTableTest.StringValues
+[       OK ] SwissTableTest.StringValues
+[ RUN      ] SwissTableTest.FixedRowKey
+[       OK ] SwissTableTest.FixedRowKey
+[ RUN      ] SwissTableTest.FullLoadAndRehash
+[       OK ] SwissTableTest.FullLoadAndRehash
+[ RUN      ] SwissTableTest.DeleteAllThenInsert
+[       OK ] SwissTableTest.DeleteAllThenInsert
+[ RUN      ] SwissTableTest.StressManyEntries
+[       OK ] SwissTableTest.StressManyEntries
+[ RUN      ] SwissTableTest.StressMixedOps
+[       OK ] SwissTableTest.StressMixedOps
+[----------] SwissTableSplitTest
+[ RUN      ] SwissTableSplitTest.BasicInsertFindWithSplit
+[       OK ] SwissTableSplitTest.BasicInsertFindWithSplit
+[ RUN      ] SwissTableSplitTest.EraseWithSplit
+[       OK ] SwissTableSplitTest.EraseWithSplit
+[ RUN      ] SwissTableSplitTest.ClearWithSplit
+[       OK ] SwissTableSplitTest.ClearWithSplit
+[ RUN      ] SwissTableSplitTest.GrowthTransitionUnifiedToSplit
+[       OK ] SwissTableSplitTest.GrowthTransitionUnifiedToSplit
+[ RUN      ] SwissTableSplitTest.RehashWithTombstonesInSplit
+[       OK ] SwissTableSplitTest.RehashWithTombstonesInSplit
+[ RUN      ] SwissTableSplitTest.MoveConstructionWithSplit
+[       OK ] SwissTableSplitTest.MoveConstructionWithSplit
+[ RUN      ] SwissTableSplitTest.MoveAssignmentWithSplit
+[       OK ] SwissTableSplitTest.MoveAssignmentWithSplit
+[ RUN      ] SwissTableSplitTest.StringValuesWithSplit
+[       OK ] SwissTableSplitTest.StringValuesWithSplit
+[ RUN      ] SwissTableSplitTest.IterationWithSplit
+[       OK ] SwissTableSplitTest.IterationWithSplit
+[ RUN      ] SwissTableSplitTest.NoMemoryLeaks
+[       OK ] SwissTableSplitTest.NoMemoryLeaks
+[ RUN      ] SwissTableSplitTest.StressSplitManyEntries
+[       OK ] SwissTableSplitTest.StressSplitManyEntries
+[ RUN      ] SwissTableSplitTest.EmplaceWithSplit
+[       OK ] SwissTableSplitTest.EmplaceWithSplit
+[----------] StateTableCOWTest
+[ RUN      ] StateTableCOWTest.VoidNamespacePutGet
+[       OK ] StateTableCOWTest.VoidNamespacePutGet
+[ RUN      ] StateTableCOWTest.VoidNamespaceRemove
+[       OK ] StateTableCOWTest.VoidNamespaceRemove
+[ RUN      ] StateTableCOWTest.VoidNamespaceForEach
+[       OK ] StateTableCOWTest.VoidNamespaceForEach
+[ RUN      ] StateTableCOWTest.SnapshotSeesOldValues
+[       OK ] StateTableCOWTest.SnapshotSeesOldValues
+[ RUN      ] StateTableCOWTest.SnapshotIncludesDeleted
+[       OK ] StateTableCOWTest.SnapshotIncludesDeleted
+[ RUN      ] StateTableCOWTest.SnapshotMultipleOverwrites
+[       OK ] StateTableCOWTest.SnapshotMultipleOverwrites
+[ RUN      ] StateTableCOWTest.ReleaseAndRePrepare
+[       OK ] StateTableCOWTest.ReleaseAndRePrepare
+[ RUN      ] StateTableCOWTest.NoSnapshotForEachEqualsNormal
+[       OK ] StateTableCOWTest.NoSnapshotForEachEqualsNormal
+[ RUN      ] StateTableCOWTest.StressHeavyModifications
+[       OK ] StateTableCOWTest.StressHeavyModifications
+[ RUN      ] StateTableCOWTest.MultipleKeyGroupsIndependent
+[       OK ] StateTableCOWTest.MultipleKeyGroupsIndependent
+[ RUN      ] StateTableCOWTest.TotalSize
+[       OK ] StateTableCOWTest.TotalSize
+[ RUN      ] StateTableCOWTest.StateEngineSnapshotCoordination
+[       OK ] StateTableCOWTest.StateEngineSnapshotCoordination
+[ RUN      ] StateTableCOWTest.CachedJniTableSurvivesRegistryGrowthRehashAndSnapshot
+[       OK ] StateTableCOWTest.CachedJniTableSurvivesRegistryGrowthRehashAndSnapshot
+[----------] CheckpointRoundTripTest
+[ RUN      ] CheckpointRoundTripTest.ValueStateInt64
+[       OK ] CheckpointRoundTripTest.ValueStateInt64
+[ RUN      ] CheckpointRoundTripTest.ValueStateString
+[       OK ] CheckpointRoundTripTest.ValueStateString
+[ RUN      ] CheckpointRoundTripTest.ValueStateFixedRow
+[       OK ] CheckpointRoundTripTest.ValueStateFixedRow
+[ RUN      ] CheckpointRoundTripTest.ValueStateTimeWindow
+[       OK ] CheckpointRoundTripTest.ValueStateTimeWindow
+[ RUN      ] CheckpointRoundTripTest.MapStateStringString
+[       OK ] CheckpointRoundTripTest.MapStateStringString
+[ RUN      ] CheckpointRoundTripTest.MapStateLongLong
+[       OK ] CheckpointRoundTripTest.MapStateLongLong
+[ RUN      ] CheckpointRoundTripTest.MapStateLongString
+[       OK ] CheckpointRoundTripTest.MapStateLongString
+[ RUN      ] CheckpointRoundTripTest.MapStateStringLong
+[       OK ] CheckpointRoundTripTest.MapStateStringLong
+[ RUN      ] CheckpointRoundTripTest.ListState
+[       OK ] CheckpointRoundTripTest.ListState
+[ RUN      ] CheckpointRoundTripTest.COWConsistency
+[       OK ] CheckpointRoundTripTest.COWConsistency
+[ RUN      ] CheckpointRoundTripTest.EmptyState
+[       OK ] CheckpointRoundTripTest.EmptyState
+[ RUN      ] CheckpointRoundTripTest.MultipleKeyGroups
+[       OK ] CheckpointRoundTripTest.MultipleKeyGroups
+[----------] TypeLayoutParserTest
+[ RUN      ] TypeLayoutParserTest.ParseInt32
+[       OK ] TypeLayoutParserTest.ParseInt32
+[ RUN      ] TypeLayoutParserTest.ParseInt64
+[       OK ] TypeLayoutParserTest.ParseInt64
+[ RUN      ] TypeLayoutParserTest.ParseFloat32
+[       OK ] TypeLayoutParserTest.ParseFloat32
+[ RUN      ] TypeLayoutParserTest.ParseFloat64
+[       OK ] TypeLayoutParserTest.ParseFloat64
+[ RUN      ] TypeLayoutParserTest.ParseBool
+[       OK ] TypeLayoutParserTest.ParseBool
+[ RUN      ] TypeLayoutParserTest.ParseString
+[       OK ] TypeLayoutParserTest.ParseString
+[ RUN      ] TypeLayoutParserTest.ParseBytes
+[       OK ] TypeLayoutParserTest.ParseBytes
+[ RUN      ] TypeLayoutParserTest.ParseFixedRowArity3
+[       OK ] TypeLayoutParserTest.ParseFixedRowArity3
+[ RUN      ] TypeLayoutParserTest.ParseFixedRowArity8
+[       OK ] TypeLayoutParserTest.ParseFixedRowArity8
+[ RUN      ] TypeLayoutParserTest.ParseFixedRowArity1
+[       OK ] TypeLayoutParserTest.ParseFixedRowArity1
+[ RUN      ] TypeLayoutParserTest.ParseListInt64
+[       OK ] TypeLayoutParserTest.ParseListInt64
+[ RUN      ] TypeLayoutParserTest.ParseListString
+[       OK ] TypeLayoutParserTest.ParseListString
+[ RUN      ] TypeLayoutParserTest.ParseMapStringString
+[       OK ] TypeLayoutParserTest.ParseMapStringString
+[ RUN      ] TypeLayoutParserTest.ParseMapInt64Int64
+[       OK ] TypeLayoutParserTest.ParseMapInt64Int64
+[ RUN      ] TypeLayoutParserTest.ParseVoidNamespace
+[       OK ] TypeLayoutParserTest.ParseVoidNamespace
+[ RUN      ] TypeLayoutParserTest.ParseTimeWindow
+[       OK ] TypeLayoutParserTest.ParseTimeWindow
+[ RUN      ] TypeLayoutParserTest.EmptyDescriptorThrows
+[       OK ] TypeLayoutParserTest.EmptyDescriptorThrows
+[ RUN      ] TypeLayoutParserTest.UnknownTypeIdThrows
+[       OK ] TypeLayoutParserTest.UnknownTypeIdThrows
+[ RUN      ] TypeLayoutParserTest.TruncatedFixedRowThrows
+[       OK ] TypeLayoutParserTest.TruncatedFixedRowThrows
+[ RUN      ] TypeLayoutParserTest.ParseAtOffset
+[       OK ] TypeLayoutParserTest.ParseAtOffset
+[----------] TimeWindowNamespaceTest
+[ RUN      ] TimeWindowNamespaceTest.PutAndGet
+[       OK ] TimeWindowNamespaceTest.PutAndGet
+[ RUN      ] TimeWindowNamespaceTest.SameKeyDifferentWindows
+[       OK ] TimeWindowNamespaceTest.SameKeyDifferentWindows
+[ RUN      ] TimeWindowNamespaceTest.NonExistentWindowReturnsNull
+[       OK ] TimeWindowNamespaceTest.NonExistentWindowReturnsNull
+[ RUN      ] TimeWindowNamespaceTest.Remove
+[       OK ] TimeWindowNamespaceTest.Remove
+[ RUN      ] TimeWindowNamespaceTest.RemoveLastEntryRemovesNamespace
+[       OK ] TimeWindowNamespaceTest.RemoveLastEntryRemovesNamespace
+[ RUN      ] TimeWindowNamespaceTest.IterateAllNamespaces
+[       OK ] TimeWindowNamespaceTest.IterateAllNamespaces
+[ RUN      ] TimeWindowNamespaceTest.EmptyIterationNoCallback
+[       OK ] TimeWindowNamespaceTest.EmptyIterationNoCallback
+[ RUN      ] TimeWindowNamespaceTest.Update
+[       OK ] TimeWindowNamespaceTest.Update
+[ RUN      ] TimeWindowNamespaceTest.MultipleKeyGroups
+[       OK ] TimeWindowNamespaceTest.MultipleKeyGroups
+[ RUN      ] TimeWindowNamespaceTest.StringValues
+[       OK ] TimeWindowNamespaceTest.StringValues
+[ RUN      ] TimeWindowNamespaceTest.InnerMapValue
+[       OK ] TimeWindowNamespaceTest.InnerMapValue
+[ RUN      ] TimeWindowNamespaceTest.HashDistinguishesWindows
+[       OK ] TimeWindowNamespaceTest.HashDistinguishesWindows
+[ RUN      ] TimeWindowNamespaceTest.EqualityOperator
+[       OK ] TimeWindowNamespaceTest.EqualityOperator
+[ RUN      ] TimeWindowNamespaceTest.COWSnapshotPutOverwrite
+[       OK ] TimeWindowNamespaceTest.COWSnapshotPutOverwrite
+[ RUN      ] TimeWindowNamespaceTest.COWSnapshotDelete
+[       OK ] TimeWindowNamespaceTest.COWSnapshotDelete
+[ RUN      ] TimeWindowNamespaceTest.COWSnapshotAddAfter
+[       OK ] TimeWindowNamespaceTest.COWSnapshotAddAfter
+[ RUN      ] TimeWindowNamespaceTest.COWSnapshotOverwriteThenDelete
+[       OK ] TimeWindowNamespaceTest.COWSnapshotOverwriteThenDelete
+[ RUN      ] TimeWindowNamespaceTest.COWSnapshotMultipleWindows
+[       OK ] TimeWindowNamespaceTest.COWSnapshotMultipleWindows
+[----------] TypedInnerMapTest
+[ RUN      ] TypedInnerMapTest.LongLongBasicOps
+[       OK ] TypedInnerMapTest.LongLongBasicOps
+[ RUN      ] TypedInnerMapTest.LongLongUpdate
+[       OK ] TypedInnerMapTest.LongLongUpdate
+[ RUN      ] TypedInnerMapTest.LongLongDelete
+[       OK ] TypedInnerMapTest.LongLongDelete
+[ RUN      ] TypedInnerMapTest.LongStringBasicOps
+[       OK ] TypedInnerMapTest.LongStringBasicOps
+[ RUN      ] TypedInnerMapTest.LongStringEmptyValue
+[       OK ] TypedInnerMapTest.LongStringEmptyValue
+[ RUN      ] TypedInnerMapTest.StringLongBasicOps
+[       OK ] TypedInnerMapTest.StringLongBasicOps
+[ RUN      ] TypedInnerMapTest.GenericStringString
+[       OK ] TypedInnerMapTest.GenericStringString
+[ RUN      ] TypedInnerMapTest.MultipleMapTypesInEngine
+[       OK ] TypedInnerMapTest.MultipleMapTypesInEngine
+[ RUN      ] TypedInnerMapTest.COWSnapshotLongLong
+[       OK ] TypedInnerMapTest.COWSnapshotLongLong
+[ RUN      ] TypedInnerMapTest.LargeInnerMapLongLong
+[       OK ] TypedInnerMapTest.LargeInnerMapLongLong
+[ RUN      ] TypedInnerMapTest.LargeInnerMapStringString
+[       OK ] TypedInnerMapTest.LargeInnerMapStringString
+[ RUN      ] TypedInnerMapTest.EmptyInnerMap
+[       OK ] TypedInnerMapTest.EmptyInnerMap
+[----------] HotSetLayout
+[ RUN      ] HotSetLayout.SizeAndAlignment
+[       OK ] HotSetLayout.SizeAndAlignment
+[ RUN      ] HotSetLayout.InitEmptyMarksAllSlotsEmpty
+[       OK ] HotSetLayout.InitEmptyMarksAllSlotsEmpty
+[----------] HotCacheLL
+[ RUN      ] HotCacheLL.PutThenGet
+[       OK ] HotCacheLL.PutThenGet
+[ RUN      ] HotCacheLL.MissOnUnknownKey
+[       OK ] HotCacheLL.MissOnUnknownKey
+[ RUN      ] HotCacheLL.UpdateInPlace
+[       OK ] HotCacheLL.UpdateInPlace
+[ RUN      ] HotCacheLL.Invalidate
+[       OK ] HotCacheLL.Invalidate
+[ RUN      ] HotCacheLL.Clear
+[       OK ] HotCacheLL.Clear
+[ RUN      ] HotCacheLL.RoundRobinEviction
+[       OK ] HotCacheLL.RoundRobinEviction
+[ RUN      ] HotCacheLL.EmptyTagDoesNotMatchRealKey
+[       OK ] HotCacheLL.EmptyTagDoesNotMatchRealKey
+[ RUN      ] HotCacheLL.RandomFillNoFalseHits
+[       OK ] HotCacheLL.RandomFillNoFalseHits
+[----------] HotCacheManager
+[ RUN      ] HotCacheManager.LoaderFailureLeavesManagerInactive
+[       OK ] HotCacheManager.LoaderFailureLeavesManagerInactive
+[ RUN      ] HotCacheManager.TunerInitFailureLeavesManagerInactive
+[       OK ] HotCacheManager.TunerInitFailureLeavesManagerInactive
+[ RUN      ] HotCacheManager.AllocFailureLeavesManagerInactive
+[       OK ] HotCacheManager.AllocFailureLeavesManagerInactive
+[ RUN      ] HotCacheManager.AcquireAndReleaseAccountsForFreeSets
+[       OK ] HotCacheManager.AcquireAndReleaseAccountsForFreeSets
+[ RUN      ] HotCacheManager.NonPow2RequestRoundsDown
+[       OK ] HotCacheManager.NonPow2RequestRoundsDown
+[ RUN      ] HotCacheManager.MultipleCachesAreIndependent
+[       OK ] HotCacheManager.MultipleCachesAreIndependent
+[ RUN      ] HotCacheManager.PowerOfTwoFloor
+[       OK ] HotCacheManager.PowerOfTwoFloor
+[ RUN      ] HotCacheManager.StrictAllocationNeverSilentlyHalvesQuota
+[       OK ] HotCacheManager.StrictAllocationNeverSilentlyHalvesQuota
+[ RUN      ] HotCacheManager.ConsecutiveWriteOnlyPhaseBypassesCacheSafely
+[       OK ] HotCacheManager.ConsecutiveWriteOnlyPhaseBypassesCacheSafely
+[ RUN      ] HotCacheManager.ProcessRegistryReusesOneHardwareTuner
+[       OK ] HotCacheManager.ProcessRegistryReusesOneHardwareTuner
+[ RUN      ] HotCacheManager.ProcessRegistryRejectsOverlappingIncompatibleConfig
+[       OK ] HotCacheManager.ProcessRegistryRejectsOverlappingIncompatibleConfig
+[----------] HotCacheEncoders
+[ RUN      ] HotCacheEncoders.Int32KeySignExtendsDistinctly
+[       OK ] HotCacheEncoders.Int32KeySignExtendsDistinctly
+[ RUN      ] HotCacheEncoders.DoubleRoundtripPreservesBits
+[       OK ] HotCacheEncoders.DoubleRoundtripPreservesBits
+[----------] HotCacheFolders
+[ RUN      ] HotCacheFolders.TwKeyFoldCollidesRarely
+[       OK ] HotCacheFolders.TwKeyFoldCollidesRarely
+[ RUN      ] HotCacheFolders.FixedRowFoldIsInputDependent
+[       OK ] HotCacheFolders.FixedRowFoldIsInputDependent
+[----------] HotSet32Layout
+[ RUN      ] HotSet32Layout.SizeAndAlignment
+[       OK ] HotSet32Layout.SizeAndAlignment
+[----------] HotCacheR32
+[ RUN      ] HotCacheR32.RoundtripPreserves24ByteRow
+[       OK ] HotCacheR32.RoundtripPreserves24ByteRow
+[ RUN      ] HotCacheR32.MissThenPutThenHit
+[       OK ] HotCacheR32.MissThenPutThenHit
+[ RUN      ] HotCacheR32.InvalidateMakesKeyMiss
+[       OK ] HotCacheR32.InvalidateMakesKeyMiss
+[----------] HotCacheManagerRebalance
+[ RUN      ] HotCacheManagerRebalance.DoesNothingBelowInterval
+[       OK ] HotCacheManagerRebalance.DoesNothingBelowInterval
+[ RUN      ] HotCacheManagerRebalance.ClearsCacheWhenMissRateHigh
+[       OK ] HotCacheManagerRebalance.ClearsCacheWhenMissRateHigh
+[----------] HotCacheManagerAggregateStats
+[ RUN      ] HotCacheManagerAggregateStats.SumsPerCacheCounters
+[       OK ] HotCacheManagerAggregateStats.SumsPerCacheCounters
+[==========] 138 test(s) ran.
+[  PASSED  ] 138 test(s).
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"forl0_tests" end time: Nov 02 07:27 UTC
+"forl0_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 02 07:27 UTC

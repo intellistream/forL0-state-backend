@@ -1,0 +1,122 @@
+{
+  "nodes": [
+    {
+      "name": "Data Source",
+      "parallelism": 8
+    },
+    {
+      "name": "Dispatcher",
+      "parallelism": 8
+    },
+    {
+      "name": "Average Speed",
+      "parallelism": 8
+    },
+    {
+      "name": "Toll Notification",
+      "parallelism": 8
+    },
+    {
+      "name": "Last Average Speed",
+      "parallelism": 8
+    },
+    {
+      "name": "Account Balance",
+      "parallelism": 8
+    },
+    {
+      "name": "Accident Detection",
+      "parallelism": 8
+    },
+    {
+      "name": "Count Vehicles",
+      "parallelism": 8
+    },
+    {
+      "name": "Sink",
+      "parallelism": 8
+    },
+    {
+      "name": "Accident Notification",
+      "parallelism": 8
+    },
+    {
+      "name": "Daily Expenses",
+      "parallelism": 8
+    }
+  ],
+  "edges": [
+    {
+      "from": "Data Source",
+      "to": "Dispatcher"
+    },
+    {
+      "from": "Dispatcher",
+      "to": "Average Speed"
+    },
+    {
+      "from": "Dispatcher",
+      "to": "Accident Detection"
+    },
+    {
+      "from": "Dispatcher",
+      "to": "Count Vehicles"
+    },
+    {
+      "from": "Dispatcher",
+      "to": "Accident Notification"
+    },
+    {
+      "from": "Dispatcher",
+      "to": "Daily Expenses"
+    },
+    {
+      "from": "Dispatcher",
+      "to": "Toll Notification"
+    },
+    {
+      "from": "Dispatcher",
+      "to": "Account Balance"
+    },
+    {
+      "from": "Average Speed",
+      "to": "Last Average Speed"
+    },
+    {
+      "from": "Toll Notification",
+      "to": "Account Balance"
+    },
+    {
+      "from": "Toll Notification",
+      "to": "Sink"
+    },
+    {
+      "from": "Last Average Speed",
+      "to": "Toll Notification"
+    },
+    {
+      "from": "Account Balance",
+      "to": "Sink"
+    },
+    {
+      "from": "Accident Detection",
+      "to": "Accident Notification"
+    },
+    {
+      "from": "Accident Detection",
+      "to": "Toll Notification"
+    },
+    {
+      "from": "Count Vehicles",
+      "to": "Toll Notification"
+    },
+    {
+      "from": "Accident Notification",
+      "to": "Sink"
+    },
+    {
+      "from": "Daily Expenses",
+      "to": "Sink"
+    }
+  ]
+}

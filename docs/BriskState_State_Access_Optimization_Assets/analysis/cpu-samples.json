@@ -1,0 +1,664 @@
+[
+  {
+    "case": "listIterate-r18-FORL0",
+    "samples": {
+      "timed_context_or_loop": 213,
+      "timed_state": 2654,
+      "other_or_unclassified": 60,
+      "gc_worker": 21,
+      "invocation_setup": 121
+    },
+    "jni_samples": 2639,
+    "jni_pct_of_timed": 92.04743634461109,
+    "top_timed_leaves": [
+      [
+        "Java_org_apache_flink_state_forl0_NativeEngine_listGetLongElements",
+        1031
+      ],
+      [
+        "_Copy_conjoint_jlongs_atomic",
+        508
+      ],
+      [
+        "ObjArrayAllocator::initialize",
+        437
+      ],
+      [
+        "jni_NewLongArray",
+        155
+      ],
+      [
+        "org/apache/flink/state/forl0/NativeEngine.listGetLongElements",
+        135
+      ],
+      [
+        "ThreadStateTransition::transition_from_native",
+        68
+      ],
+      [
+        "ThreadStateTransition::transition_and_fence",
+        67
+      ],
+      [
+        "/usr/lib64/libc.so.6",
+        60
+      ],
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.listIterate",
+        53
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        41
+      ],
+      [
+        "MemAllocator::allocate",
+        39
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        37
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKey",
+        29
+      ],
+      [
+        "jni_SetLongArrayRegion",
+        27
+      ],
+      [
+        "JNIHandleBlock::allocate_handle",
+        25
+      ]
+    ],
+    "collapsed": "profile-r30/listIterate-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.listIterate-Throughput-backendType-FORL0-keyCount-1048576/collapsed-cpu.csv"
+  },
+  {
+    "case": "listIterate-r30-FORL0",
+    "samples": {
+      "gc_worker": 206,
+      "other_or_unclassified": 169,
+      "timed_context_or_loop": 948,
+      "invocation_setup": 348,
+      "timed_state": 1638
+    },
+    "jni_samples": 0,
+    "jni_pct_of_timed": 0.0,
+    "top_timed_leaves": [
+      [
+        "org/apache/flink/state/forl0/PrimitiveLongAccess.cacheListRead",
+        1162
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKey",
+        616
+      ],
+      [
+        "jdk/internal/misc/Unsafe.getInt",
+        194
+      ],
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.listIterate",
+        154
+      ],
+      [
+        "jdk/internal/misc/Unsafe.getLong",
+        93
+      ],
+      [
+        "org/apache/flink/state/forl0/NativeLongListSnapshot$Values.next",
+        71
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0ListState.get",
+        62
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        54
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        53
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0ListState.primitiveListView",
+        38
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRange.contains",
+        30
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.setCurrentKey",
+        14
+      ],
+      [
+        "org/apache/flink/state/forl0/NativeLongListSnapshot$Values.hasNext",
+        14
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.notifyKeySelected",
+        13
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKeyGroupIndex",
+        8
+      ]
+    ],
+    "collapsed": "profile-r30/listIterate-r30-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.listIterate-Throughput-backendType-FORL0-keyCount-1048576/collapsed-cpu.csv"
+  },
+  {
+    "case": "listIterate-r30-HEAP",
+    "samples": {
+      "other_or_unclassified": 48,
+      "timed_state": 1792,
+      "timed_context_or_loop": 1015,
+      "invocation_setup": 181
+    },
+    "jni_samples": 0,
+    "jni_pct_of_timed": 0.0,
+    "top_timed_leaves": [
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.get",
+        1646
+      ],
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.listIterate",
+        667
+      ],
+      [
+        "java/util/ArrayList$Itr.next",
+        204
+      ],
+      [
+        "org/apache/flink/runtime/state/InternalKeyContextImpl.setCurrentKey",
+        40
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/HeapListState.get",
+        40
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        33
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.selectActiveTable",
+        26
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        25
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRange.contains",
+        18
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.isRehashing",
+        16
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.incrementalRehash",
+        14
+      ],
+      [
+        "java/lang/Long.longValue",
+        10
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.setCurrentKey",
+        9
+      ],
+      [
+        "org/apache/flink/util/MathUtils.bitMix",
+        9
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/StateTable.getMapForKeyGroup",
+        9
+      ]
+    ],
+    "collapsed": "profile-r30/listIterate-r30-HEAP/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.listIterate-Throughput-backendType-HEAP-keyCount-1048576/collapsed-cpu.csv"
+  },
+  {
+    "case": "mapAdd-r18-FORL0",
+    "samples": {
+      "other_or_unclassified": 162,
+      "timed_state": 1253,
+      "invocation_setup": 1636,
+      "timed_context_or_loop": 104,
+      "gc_worker": 6
+    },
+    "jni_samples": 1224,
+    "jni_pct_of_timed": 90.19896831245394,
+    "top_timed_leaves": [
+      [
+        "Java_org_apache_flink_state_forl0_NativeEngine_mapLongLongDenseView",
+        215
+      ],
+      [
+        "std::pair<forl0::LongInnerMap*, bool> forl0::SwissTable<long, forl0::LongInnerMap, forl0::SwissDefaultHash<long>, std::equal_to<long> >::insert_or_assign_impl<forl0::LongInnerMap>",
+        191
+      ],
+      [
+        "org/apache/flink/state/forl0/NativeEngine.mapPutLongLong",
+        176
+      ],
+      [
+        "Java_org_apache_flink_state_forl0_NativeEngine_mapPutLongLong",
+        125
+      ],
+      [
+        "org/apache/flink/state/forl0/NativeEngine.mapLongLongDenseView",
+        106
+      ],
+      [
+        "forl0::StateTable<long, forl0::LongInnerMap>::put",
+        75
+      ],
+      [
+        "/usr/lib64/libjemalloc.so.2",
+        63
+      ],
+      [
+        "ThreadStateTransition::transition_from_native",
+        54
+      ],
+      [
+        "ThreadStateTransition::transition_and_fence",
+        50
+      ],
+      [
+        "jni_SetLongArrayRegion",
+        29
+      ],
+      [
+        "/usr/lib64/libc.so.6",
+        28
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        27
+      ],
+      [
+        "operator new",
+        26
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        24
+      ],
+      [
+        "std::_Hashtable<long, std::pair<long const, long>, std::allocator<std::pair<long const, long> >, std::__detail::_Select1st, std::equal_to<long>, std::hash<long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::_M_insert_unique_node",
+        22
+      ]
+    ],
+    "collapsed": "profile-r30/mapAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd-Throughput-backendType-FORL0-keyCount-1048576-touchesPerKey-64/collapsed-cpu.csv"
+  },
+  {
+    "case": "mapAdd-r30-FORL0",
+    "samples": {
+      "invocation_setup": 2427,
+      "other_or_unclassified": 100,
+      "timed_state": 481,
+      "timed_context_or_loop": 77,
+      "gc_worker": 9
+    },
+    "jni_samples": 0,
+    "jni_pct_of_timed": 0.0,
+    "top_timed_leaves": [
+      [
+        "jdk/internal/misc/Unsafe.getLong",
+        151
+      ],
+      [
+        "org/apache/flink/state/forl0/PrimitiveLongAccess.fullMapView",
+        96
+      ],
+      [
+        "org/apache/flink/state/forl0/PrimitiveLongAccess.putMap",
+        95
+      ],
+      [
+        "sun/misc/Unsafe.putOrderedLong",
+        43
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0MapState.denseSlot",
+        26
+      ],
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.mapAdd",
+        22
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0MapState.put",
+        18
+      ],
+      [
+        "jdk/internal/misc/Unsafe.putLong",
+        18
+      ],
+      [
+        "java/lang/Long.longValue",
+        17
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        12
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRange.contains",
+        12
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        9
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKey",
+        8
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKeyGroupIndex",
+        6
+      ],
+      [
+        "jdk/internal/misc/Unsafe.getInt",
+        6
+      ]
+    ],
+    "collapsed": "profile-r30/mapAdd-r30-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd-Throughput-backendType-FORL0-keyCount-1048576-touchesPerKey-64/collapsed-cpu.csv"
+  },
+  {
+    "case": "mapAdd-r30-HEAP",
+    "samples": {
+      "gc_worker": 9934,
+      "other_or_unclassified": 52,
+      "invocation_setup": 1196,
+      "timed_state": 389,
+      "timed_context_or_loop": 413
+    },
+    "jni_samples": 0,
+    "jni_pct_of_timed": 0.0,
+    "top_timed_leaves": [
+      [
+        "org/apache/flink/runtime/state/InternalKeyContextImpl.setCurrentKey",
+        325
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.get",
+        74
+      ],
+      [
+        "java/util/HashMap.resize",
+        61
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.putEntry",
+        60
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.selectActiveTable",
+        36
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.compositeHash",
+        26
+      ],
+      [
+        "SATBMarkQueue::filter",
+        24
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        22
+      ],
+      [
+        "java/util/HashMap.putVal",
+        19
+      ],
+      [
+        "java/util/HashMap.<init>",
+        19
+      ],
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.mapAdd",
+        18
+      ],
+      [
+        "zero_blocks",
+        13
+      ],
+      [
+        "org/apache/flink/util/MathUtils.bitMix",
+        12
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.computeHashForOperationAndDoIncrementalRehash",
+        10
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/StateTable.getKeyGroupOffset",
+        9
+      ]
+    ],
+    "collapsed": "profile-r30/mapAdd-r30-HEAP/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd-Throughput-backendType-HEAP-keyCount-1048576-touchesPerKey-64/collapsed-cpu.csv"
+  },
+  {
+    "case": "valueAdd-r18-FORL0",
+    "samples": {
+      "invocation_setup": 1894,
+      "timed_context_or_loop": 139,
+      "other_or_unclassified": 79,
+      "timed_state": 955,
+      "gc_worker": 7
+    },
+    "jni_samples": 941,
+    "jni_pct_of_timed": 86.0146252285192,
+    "top_timed_leaves": [
+      [
+        "Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongLong",
+        714
+      ],
+      [
+        "org/apache/flink/state/forl0/NativeEngine.valuePutLongLong",
+        227
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        40
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        34
+      ],
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.valueAdd",
+        32
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0ValueState.update",
+        14
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.setCurrentKey",
+        12
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRange.contains",
+        7
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKey",
+        6
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKeyGroupIndex",
+        4
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.notifyKeySelected",
+        3
+      ],
+      [
+        "org/apache/flink/util/MathUtils.bitMix",
+        1
+      ]
+    ],
+    "collapsed": "profile-r30/valueAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd-Throughput-backendType-FORL0-keyCount-1048576/collapsed-cpu.csv"
+  },
+  {
+    "case": "valueAdd-r30-FORL0",
+    "samples": {
+      "timed_context_or_loop": 211,
+      "other_or_unclassified": 44,
+      "timed_state": 288,
+      "invocation_setup": 2494,
+      "gc_worker": 2
+    },
+    "jni_samples": 0,
+    "jni_pct_of_timed": 0.0,
+    "top_timed_leaves": [
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.valueAdd",
+        114
+      ],
+      [
+        "jdk/internal/misc/Unsafe.getInt",
+        114
+      ],
+      [
+        "jdk/internal/misc/Unsafe.getLong",
+        52
+      ],
+      [
+        "org/apache/flink/state/forl0/PrimitiveLongAccess.put",
+        41
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0ValueState.update",
+        36
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.notifyKeySelected",
+        23
+      ],
+      [
+        "jdk/internal/misc/Unsafe.putInt",
+        17
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.setCurrentKey",
+        17
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        16
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        13
+      ],
+      [
+        "org/apache/flink/state/forl0/PrimitiveLongAccess.page",
+        11
+      ],
+      [
+        "org/apache/flink/state/forl0/ForL0KeyContext.setCurrentKeyGroupIndex",
+        10
+      ],
+      [
+        "java/lang/Long.longValue",
+        10
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRange.contains",
+        8
+      ],
+      [
+        "org/apache/flink/util/MathUtils.bitMix",
+        7
+      ]
+    ],
+    "collapsed": "profile-r30/valueAdd-r30-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd-Throughput-backendType-FORL0-keyCount-1048576/collapsed-cpu.csv"
+  },
+  {
+    "case": "valueAdd-r30-HEAP",
+    "samples": {
+      "invocation_setup": 1908,
+      "gc_worker": 6273,
+      "other_or_unclassified": 58,
+      "timed_state": 929,
+      "timed_context_or_loop": 90
+    },
+    "jni_samples": 0,
+    "jni_pct_of_timed": 0.0,
+    "top_timed_leaves": [
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.putEntry",
+        651
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.incrementalRehash",
+        129
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.selectActiveTable",
+        40
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.addNewStateMapEntry",
+        30
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRangeAssignment.computeKeyGroupForKeyHash",
+        20
+      ],
+      [
+        "org/apache/flink/state/benchmark/LongStateMicrobenchmarks.valueAdd",
+        18
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/StateTable.getMapForKeyGroup",
+        17
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/StateTable.getKeyGroupOffset",
+        15
+      ],
+      [
+        "org/apache/flink/util/MathUtils.murmurHash",
+        14
+      ],
+      [
+        "org/apache/flink/util/MathUtils.bitMix",
+        13
+      ],
+      [
+        "org/apache/flink/runtime/state/KeyGroupRange.contains",
+        13
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/CopyOnWriteStateMap.compositeHash",
+        11
+      ],
+      [
+        "org/apache/flink/runtime/state/heap/HeapValueState.update",
+        10
+      ],
+      [
+        "org/apache/flink/runtime/state/AbstractKeyedStateBackend.setCurrentKey",
+        9
+      ],
+      [
+        "org/apache/flink/runtime/state/InternalKeyContextImpl.setCurrentKey",
+        7
+      ]
+    ],
+    "collapsed": "profile-r30/valueAdd-r30-HEAP/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd-Throughput-backendType-HEAP-keyCount-1048576/collapsed-cpu.csv"
+  }
+]

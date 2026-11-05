@@ -1,0 +1,88 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-setup/micro-opt-20261104/variants/r30 -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll
+# Parameters: (backendType = HEAP, keyCount = 1048576, touchesPerKey = 64)
+
+# Run progress: 0.00% complete, ETA 00:00:24
+# Fork: 1 of 1
+# Warmup Iteration   1: 618.951 ops/ms
+# Warmup Iteration   2: 801.088 ops/ms
+# Warmup Iteration   3: 804.247 ops/ms
+Iteration   1: 795.047 ops/ms
+                 gc.alloc.rate:      35.319 MB/sec
+                 gc.alloc.rate.norm: 48.000 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 742.121 ops/ms
+                 gc.alloc.rate:      32.861 MB/sec
+                 gc.alloc.rate.norm: 48.000 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 878.851 ops/ms
+                 gc.alloc.rate:      38.382 MB/sec
+                 gc.alloc.rate.norm: 47.999 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 898.095 ops/ms
+                 gc.alloc.rate:      38.727 MB/sec
+                 gc.alloc.rate.norm: 47.999 B/op
+                 gc.count:           1.000 counts
+                 gc.time:            44.000 ms
+
+Iteration   5: 866.524 ops/ms
+                 gc.alloc.rate:      38.174 MB/sec
+                 gc.alloc.rate.norm: 49.214 B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll":
+  836.127 ±(99.9%) 251.872 ops/ms [Average]
+  (min, avg, max) = (742.121, 836.127, 898.095), stdev = 65.410
+  CI (99.9%): [584.255, 1088.000] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate":
+  36.693 ±(99.9%) 9.771 MB/sec [Average]
+  (min, avg, max) = (32.861, 36.693, 38.727), stdev = 2.538
+  CI (99.9%): [26.922, 46.464] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate.norm":
+  48.242 ±(99.9%) 2.092 B/op [Average]
+  (min, avg, max) = (47.999, 48.242, 49.214), stdev = 0.543
+  CI (99.9%): [46.151, 50.334] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll:gc.count":
+  1.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (≈ 0, 0.200, 1.000), stdev = 0.447
+  CI (99.9%): [1.000, 1.000] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll:gc.time":
+  44.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (≈ 0, 8.800, 44.000), stdev = 19.677
+  CI (99.9%): [44.000, 44.000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:00:34
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                              (backendType)  (keyCount)  (touchesPerKey)   Mode  Cnt    Score     Error   Units
+LongStateMicrobenchmarks.mapPutAll                              HEAP     1048576               64  thrpt    5  836.127 ± 251.872  ops/ms
+LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate                HEAP     1048576               64  thrpt    5   36.693 ±   9.771  MB/sec
+LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate.norm           HEAP     1048576               64  thrpt    5   48.242 ±   2.092    B/op
+LongStateMicrobenchmarks.mapPutAll:gc.count                     HEAP     1048576               64  thrpt    5    1.000            counts
+LongStateMicrobenchmarks.mapPutAll:gc.time                      HEAP     1048576               64  thrpt    5   44.000                ms
+
+Benchmark result is saved to /root/briskstate-setup/micro-opt-20261104/formal-r30/mapPutAll-3-HEAP.json

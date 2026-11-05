@@ -1,0 +1,56 @@
+{
+  "validated_at": "2026-11-02T06:43:50.500098+00:00",
+  "flink_version": "1.20.3",
+  "native_tests_passed": 137,
+  "benchmark_tests_passed": 2,
+  "l0_hardware_enabled": false,
+  "cluster": {
+    "taskmanagers": 2,
+    "slots-total": 8,
+    "slots-available": 8,
+    "jobs-running": 0,
+    "jobs-finished": 5,
+    "jobs-cancelled": 0,
+    "jobs-failed": 1,
+    "flink-version": "1.20.3",
+    "flink-commit": "01e3a6d"
+  },
+  "runs": [
+    {
+      "backend": "heap",
+      "key_type": "string",
+      "job_id": "e754d0a4da56dc5c29724f0a3f65e613",
+      "state": "FINISHED",
+      "records": 1000000,
+      "completed_checkpoints": 6,
+      "result_directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_063900_heap_string"
+    },
+    {
+      "backend": "forl0",
+      "key_type": "string",
+      "job_id": "2d6d0d0114c1a2b6b6972a657d18d68f",
+      "state": "FINISHED",
+      "records": 1000000,
+      "completed_checkpoints": 6,
+      "result_directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_063916_forl0_string"
+    },
+    {
+      "backend": "heap",
+      "key_type": "long",
+      "job_id": "d84c57692d5867d4b7658f103a1b754d",
+      "state": "FINISHED",
+      "records": 1000000,
+      "completed_checkpoints": 6,
+      "result_directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_063931_heap_long"
+    },
+    {
+      "backend": "forl0",
+      "key_type": "long",
+      "job_id": "97c1ebee1562caa3bf81ec038ebfdbb8",
+      "state": "FINISHED",
+      "records": 1000000,
+      "completed_checkpoints": 6,
+      "result_directory": "/root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_063947_forl0_long"
+    }
+  ]
+}

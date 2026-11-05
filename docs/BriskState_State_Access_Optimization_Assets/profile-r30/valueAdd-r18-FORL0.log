@@ -1,0 +1,61 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-setup/deep-opt-20261103/variants/r18 -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 10 iterations, 5 s each
+# Measurement: 3 iterations, 4 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd
+# Parameters: (backendType = FORL0, keyCount = 1048576)
+
+# Run progress: 0.00% complete, ETA 00:01:02
+# Fork: 1 of 1
+# Preparing profilers: AsyncProfiler 
+# Warmup Iteration   1: [ForL0-HotCache] L0 cache disabled by config.
+5224.713 ops/ms
+# Warmup Iteration   2: 5589.686 ops/ms
+# Warmup Iteration   3: 5596.361 ops/ms
+# Warmup Iteration   4: 5566.954 ops/ms
+# Warmup Iteration   5: 5582.681 ops/ms
+# Warmup Iteration   6: 5599.544 ops/ms
+# Warmup Iteration   7: 5577.013 ops/ms
+# Warmup Iteration   8: 5626.895 ops/ms
+# Warmup Iteration   9: 5612.341 ops/ms
+# Warmup Iteration  10: 5609.285 ops/ms
+Iteration   1: 5598.820 ops/ms
+Iteration   2: 5579.774 ops/ms
+Iteration   3: [ForL0-Memory] engine_summary used_bytes=71303200 peak_bytes=89129008 max_bytes=0
+5131.552 ops/ms
+                 async: (text only)
+
+# Processing profiler results: AsyncProfiler 
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd":
+  5436.715 ±(99.9%) 4824.571 ops/ms [Average]
+  (min, avg, max) = (5131.552, 5436.715, 5598.820), stdev = 264.451
+  CI (99.9%): [612.144, 10261.286] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:async":
+Async profiler results:
+  /root/briskstate-setup/micro-opt-20261104/profile-r30/valueAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd-Throughput-backendType-FORL0-keyCount-1048576/flame-cpu-forward.html
+  /root/briskstate-setup/micro-opt-20261104/profile-r30/valueAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd-Throughput-backendType-FORL0-keyCount-1048576/flame-cpu-reverse.html
+  /root/briskstate-setup/micro-opt-20261104/profile-r30/valueAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd-Throughput-backendType-FORL0-keyCount-1048576/collapsed-cpu.csv
+
+
+# Run complete. Total time: 00:01:03
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                (backendType)  (keyCount)   Mode  Cnt     Score      Error   Units
+LongStateMicrobenchmarks.valueAdd                FORL0     1048576  thrpt    3  5436.715 ± 4824.571  ops/ms
+LongStateMicrobenchmarks.valueAdd:async          FORL0     1048576  thrpt            NaN                ---
+
+Benchmark result is saved to /root/briskstate-setup/micro-opt-20261104/profile-r30/valueAdd-r18-FORL0.json

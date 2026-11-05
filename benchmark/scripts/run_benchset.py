@@ -1,493 +1,178 @@
 #!/usr/bin/env python3
-"""
-Run the seven-application paper benchset aligned with Zhang et al. 2017.
-
-Available benchmarks:
-    - wc: Stateful Word Count
-    - fd: Fraud Detection
-    - sd: Spike Detection
-    - tm: Traffic Monitoring
-    - lg: Log Processing
-    - vs: Spam Detection in VoIP
-    - lr: Linear Road
-
-Usage:
-        python run_benchset.py --backend all
-        python run_benchset.py --backend forl0 --benchmark wc
-        python run_benchset.py --backend all --profile cpu
-"""
-
+"""Fixed ICDE 2017 task graphs with Long state-pressure workloads; no checkpoints."""
 import argparse
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+import datetime
+import hashlib
+import importlib.util
 import json
+from pathlib import Path
 import re
 import subprocess
-import sys
 import time
-from pathlib import Path
-from typing import Optional, List, Dict
+import uuid
+import urllib.parse
 
-sys.path.insert(0, str(Path(__file__).parent))
-from utils import requests_shim as requests  # type: ignore[assignment]
-
-from utils.config import (
-    load_config, get_benchmark_root,
-    get_flink_home, get_results_dir,
-    get_timestamp, save_result
-)
-from utils.profiler import AsyncProfiler, find_taskmanager_pids
-from generate_report import generate_benchset_paper_artifacts
-from run_wordcount import run_wordcount, get_forl0_config_args
+REPO=Path(__file__).resolve().parents[2]
+spec=importlib.util.spec_from_file_location('briskstate_dev',REPO/'docker/lib/briskstate_dev.py')
+dev=importlib.util.module_from_spec(spec);spec.loader.exec_module(dev)
+CONTRACT=json.loads((REPO/'benchmark/benchset/reference/topology-contract.json').read_text())
+PROFILER=Path('/root/opt/async-profiler-4.4-linux-arm64/bin/asprof')
+LONG_RECORDS={'wc':48000000,'fd':32000000,'sd':24000000,'tm':24000000,'lg':12000000,'vs':3000000,'lr':3000000}
 
 
-# Benchmark configurations from the paper
-BENCHMARKS = ['wc', 'fd', 'sd', 'tm', 'lg', 'vs', 'lr']
+def validate_graph(path,workload):
+    actual=json.loads(path.read_text()); expected=CONTRACT['workloads'][workload]
+    assert {n['name'] for n in actual['nodes']}==set(expected['nodes']),(workload,actual)
+    count=lambda es:Counter((e['from'],e['to']) for e in es)
+    assert count(actual['edges'])==count(expected['edges']),(workload,actual['edges'])
+    for n in actual['nodes']:
+        assert n['parallelism']==(1 if n['name']=='Global ACD' else 8),n
 
 
-def get_benchset_jar() -> Optional[str]:
-    """Get path to benchset JAR file."""
-    benchmark_root = get_benchmark_root()
-    candidate_paths = [
-        benchmark_root / 'benchset' / 'target' / 'benchset-1.0-SNAPSHOT.jar',
-        benchmark_root / 'docker' / 'deploy' / 'benchset-1.0-SNAPSHOT.jar',
-    ]
+def signed(n):return ((n+(1<<63))%(1<<64))-(1<<63)
 
-    for jar_path in candidate_paths:
-        if jar_path.exists():
-            return str(jar_path)
-    return None
+def mix(x):
+    mask=(1<<64)-1
+    x=((x^(x>>30))*0xbf58476d1ce4e5b9)&mask
+    x=((x^(x>>27))*0x94d049bb133111eb)&mask
+    return x^(x>>31)
 
 
-def check_flink_cluster(rest_url: str) -> bool:
-    """Check if Flink cluster is running."""
-    try:
-        resp = requests.get(f"{rest_url}/overview", timeout=5)
-        return resp.status_code == 200
-    except Exception:
-        return False
+def pids():
+    return {role:int(next((dev.RUNTIME/role/'pid').glob('*.pid')).read_text().strip()) for role in ('tm1','tm2')}
 
 
-def submit_job_and_wait(cmd: list, rest_url: str, num_records: int, timeout: int = 7200) -> Optional[dict]:
-    """Submit job asynchronously, wait for completion, and return results.
-    
-    Args:
-        cmd: Flink run command
-        rest_url: Flink REST API URL
-        num_records: Number of input records (for throughput calculation)
-        timeout: Job timeout in seconds
-        
-    Returns:
-        Result dict with throughput = numRecords / time
-    """
-    
-    # Submit in detached mode
-    detached_cmd = cmd.copy()
-    run_idx = detached_cmd.index('run')
-    detached_cmd.insert(run_idx + 1, '-d')
-    
-    try:
-        result = subprocess.run(
-            detached_cmd,
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-        
-        output = result.stdout + result.stderr
-
-        if result.returncode != 0:
-            print("  ERROR: Job submission failed before JobID was returned")
-            if output.strip():
-                print(output.strip())
-            return None
-        
-        # Parse job ID
-        match = re.search(r'JobID\s*[:=]?\s*([A-Fa-f0-9]+)', output)
-        if not match:
-            print(f"  ERROR: Could not parse job ID from output")
-            if output.strip():
-                print(output.strip())
-            return None
-        
-        job_id = match.group(1)
-        print(f"  Job submitted: {job_id}")
-        
-    except subprocess.TimeoutExpired:
-        print("  ERROR: Job submission timed out")
-        return None
-    except Exception as e:
-        print(f"  ERROR: Job submission failed: {e}")
-        return None
-    
-    # Wait for job completion
-    start_time = time.time()
-    last_state = None
-    
-    while time.time() - start_time < timeout:
-        try:
-            resp = requests.get(f"{rest_url}/jobs/{job_id}", timeout=10)
-            if resp.status_code == 200:
-                status = resp.json()
-                state = status.get('state', 'UNKNOWN')
-                
-                if state != last_state:
-                    print(f"  Job state: {state}")
-                    last_state = state
-                
-                if state in ['FINISHED', 'FAILED', 'CANCELED']:
-                    if state == 'FINISHED':
-                        # Get job duration from REST API
-                        duration_ms = status.get('duration', 0)
-                        duration_sec = duration_ms / 1000.0
-                        return calculate_throughput(num_records, duration_sec)
-                    return None
-        except Exception:
-            pass
-        
-        time.sleep(2)
-    
-    print("  ERROR: Job timed out")
-    return None
+def process_stats(pid):
+    proc=Path('/proc')/str(pid); fields=(proc/'stat').read_text().split()
+    import os
+    rss=int(next(x.split()[1] for x in (proc/'status').read_text().splitlines() if x.startswith('VmRSS:')))*1024
+    return {'cpu_seconds':(int(fields[13])+int(fields[14]))/os.sysconf('SC_CLK_TCK'),'rss_bytes':rss}
 
 
-def calculate_throughput(num_records: int, duration_sec: float) -> Optional[dict]:
-    """Calculate throughput from num_records and duration.
-    
-    Args:
-        num_records: Number of input records
-        duration_sec: Job duration in seconds
-        
-    Returns:
-        Result dict with throughput = num_records / duration
-    """
-    if duration_sec <= 0:
-        print("  WARN: Invalid duration")
-        return None
-    
-    throughput = num_records / duration_sec
-    
-    return {
-        'total_records': num_records,
-        'time_seconds': duration_sec,
-        'throughput': throughput
-    }
-
-
-def run_single_benchmark(
-    config: dict, 
-    backend: str, 
-    benchmark_name: str,
-    profile_mode: Optional[str] = None
-) -> Optional[dict]:
-    """Run a single benchmark from the benchset.
-    
-    Args:
-        config: Benchmark configuration
-        backend: State backend ('hashmap' or 'forl0')
-        benchmark_name: Benchmark name ('wc', 'fd', 'sd', 'tm', 'lg', 'vs', 'lr')
-        profile_mode: Profiling mode ('cpu', 'cache', None)
-        
-    Returns:
-        Result dict or None if failed
-    """
-    if benchmark_name == 'wc':
-        return run_wordcount_via_original_benchmark(config, backend, profile_mode)
-
-    runtime_config = config.get('runtime', {})
-    benchset_config = config.get('benchset', {})
-    benchmark_config = benchset_config.get(benchmark_name, {})
-    flink_config = config.get('flink', {})
-    
-    flink_home = get_flink_home()
-    rest_url = flink_config.get('rest_url', 'http://localhost:8081')
-    
-    if not flink_home:
-        print("ERROR: FLINK_HOME not set")
-        return None
-    
-    if not check_flink_cluster(rest_url):
-        print(f"ERROR: Flink cluster not running at {rest_url}")
-        return None
-    
-    jar_path = get_benchset_jar()
-    if not jar_path:
-        print("ERROR: Benchset JAR not found.")
-        print("  Run: cd benchmark/benchset && mvn package -DskipTests")
-        return None
-    
-    # Find backend class
-    backends_list = {b['name']: b['class'] for b in config.get('backends', [])}
-    backend_class = backends_list.get(backend, '')
-    
-    # Build flink run command
-    flink_bin = Path(flink_home) / 'bin' / 'flink'
-    
-    cmd = [str(flink_bin), 'run']
-    
-    # Add state backend configuration
-    if backend_class:
-        cmd.append(f'-Dstate.backend.type={backend_class}')
-    cmd.extend(get_forl0_config_args(config, backend))
-    
-    # Get benchmark-specific parameters
-    num_keys = benchmark_config.get('num_keys', 1000000)
-    num_records = benchmark_config.get('num_records', 100000000)
-    skew_factor = benchmark_config.get('skew_factor', 0)
-    batch_size = benchmark_config.get('batch_size', 10)
-    
-    # Add JAR and arguments
-    cmd.extend([
-        jar_path,
-        '--benchmark', benchmark_name,
-        '--numKeys', str(num_keys),
-        '--numRecords', str(num_records),
-        '--skewFactor', str(skew_factor),
-        '--batchSize', str(batch_size),
-        '--parallelism', str(runtime_config.get('parallelism', 8)),
-        '--checkpointInterval', str(runtime_config.get('checkpoint_interval', 0)),
-        '--backend', backend,
-    ])
-    
-    print(f"\n=== Running {benchmark_name.upper()} Benchmark ({backend}) ===")
-    print(f"  numKeys: {num_keys:,}")
-    print(f"  numRecords: {num_records:,}")
-    print(f"  batchSize: {batch_size}")
-    print(f"  Command: {' '.join(cmd[:6])} ... {benchmark_name}\n")
-    
-    # Initialize profiler if enabled
-    profiler = None
-    tm_pids = []
-    
-    if profile_mode == 'cpu':
-        profiler = AsyncProfiler()
-        if profiler.is_available():
-            tm_pids = find_taskmanager_pids(flink_home)
-            if tm_pids:
-                profiles_dir = get_results_dir('profiles')
-                profiler.start(
-                    pid=tm_pids[0],
-                    events=['cpu', 'alloc'],
-                    output_dir=str(profiles_dir),
-                    backend=f"{backend}_{benchmark_name}",
-                    output_format='html',
-                    duration=None
-                )
-                print(f"  Started CPU profiling")
-    
-    try:
-        # Submit job and wait for results
-        # Throughput = numRecords / time_seconds
-        parallelism = runtime_config.get('parallelism', 8)
-        result = submit_job_and_wait(cmd, rest_url, num_records)
-        
-        # Stop profiler
-        if profiler and tm_pids:
-            profiler.stop(tm_pids[0])
-            print(f"  Profiler stopped, files saved to profiles/")
-        
-        if result:
-            result['backend'] = backend
-            result['benchmark'] = benchmark_name
-            result['parallelism'] = parallelism
-            result['throughput_per_core'] = result['throughput'] / parallelism
-            print(f"\n  Result: {result.get('throughput', 0):,.0f} records/s")
-            print(f"          {result.get('throughput_per_core', 0):,.0f} records/s/core")
-        
-        return result
-        
-    except Exception as e:
-        print(f"  ERROR: {e}")
-        if profiler and tm_pids:
-            profiler.stop(tm_pids[0])
-        return None
-
-
-def run_wordcount_via_original_benchmark(
-    config: dict,
-    backend: str,
-    profile_mode: Optional[str] = None,
-) -> Optional[dict]:
-    """Run the benchset WC entry via the original WordCount benchmark."""
-    print("\n=== Running WC Benchmark via original WordCount benchmark ===")
-    result = run_wordcount(config, backend, profile_mode)
-    if not result:
-        return None
-
-    result['benchmark'] = 'wc'
-    if 'total_time_seconds' in result and 'time_seconds' not in result:
-        result['time_seconds'] = result['total_time_seconds']
-    return result
-
-
-def run_benchset(
-    config: dict, 
-    backends: List[str], 
-    benchmarks: List[str],
-    profile_mode: Optional[str] = None
-) -> Dict[str, Dict[str, dict]]:
-    """Run the complete benchmark set.
-    
-    Args:
-        config: Benchmark configuration
-        backends: List of backends to test
-        benchmarks: List of benchmarks to run
-        profile_mode: Profiling mode
-        
-    Returns:
-        Nested dict: results[benchmark_name][backend] = result
-    """
-    results = {b: {} for b in benchmarks}
-    
-    for benchmark in benchmarks:
-        print(f"\n{'='*60}")
-        print(f"  BENCHMARK: {benchmark.upper()}")
-        print(f"{'='*60}")
-        
-        for backend in backends:
-            result = run_single_benchmark(config, backend, benchmark, profile_mode)
-            if result:
-                results[benchmark][backend] = result
-                save_result(result, f'benchset_{benchmark}', backend)
-    
-    return results
-
-
-def print_benchset_summary(results: Dict[str, Dict[str, dict]], backends: List[str]):
-    """Print summary of all benchmark results."""
-    print("\n" + "=" * 70)
-    print("                    BENCHSET SUMMARY")
-    print("=" * 70)
-    
-    # Header
-    header = f"{'Benchmark':<15}{'Metric':<20}"
-    for backend in backends:
-        header += f"{backend:>15}"
-    if len(backends) == 2:
-        header += f"{'Improvement':>12}"
-    print(header)
-    print("-" * len(header))
-    
-    total_improvement = []
-    
-    for benchmark, backend_results in results.items():
-        # Throughput row
-        row = f"{benchmark:<15}{'Throughput (M/s)':<20}"
-        tputs = {}
-        for backend in backends:
-            if backend in backend_results:
-                tput = backend_results[backend].get('throughput', 0)
-                tputs[backend] = tput
-                row += f"{tput/1e6:>15.2f}"
-            else:
-                row += f"{'N/A':>15}"
-        
-        # Improvement
-        if len(backends) == 2 and 'hashmap' in tputs and 'forl0' in tputs:
-            h, f = tputs['hashmap'], tputs['forl0']
-            if h > 0:
-                imp = ((f - h) / h) * 100
-                row += f"{imp:>11.1f}%"
-                total_improvement.append(imp)
-        print(row)
-        
-        # Throughput/core row
-        row = f"{'':<15}{'Per Core (M/s)':<20}"
-        for backend in backends:
-            if backend in backend_results:
-                tpc = backend_results[backend].get('throughput_per_core', 0)
-                row += f"{tpc/1e6:>15.2f}"
-            else:
-                row += f"{'N/A':>15}"
-        print(row)
-        print()
-    
-    # Average improvement
-    if total_improvement:
-        avg_imp = sum(total_improvement) / len(total_improvement)
-        print("-" * 70)
-        print(f"Average ForL0 improvement: {avg_imp:.1f}%")
-        if avg_imp >= 60:
-            print("Status: ✓ PASS (>= 60% improvement target)")
+def profile(action,targets,directory,event='cpu'):
+    def one(item):
+        role,pid=item
+        if action=='start':
+            sampling=['-e','cpu','-i','5ms','--cstack','dwarf'] if event=='cpu' else ['-e','alloc','--alloc','1m']
+            cmd=[str(PROFILER),'start']+sampling+[str(pid)]
+            subprocess.run(cmd,check=True,stdout=subprocess.DEVNULL)
         else:
-            print(f"Status: ✗ Below target (< 60% improvement)")
-    
-    print("=" * 70)
+            for command,fmt,suffix in [('dump','flamegraph','html'),('stop','collapsed','collapsed')]:
+                subprocess.run([str(PROFILER),command,'-o',fmt,'-f',str(directory/(role+'-'+event+'.'+suffix)),str(pid)],check=True,stdout=subprocess.DEVNULL)
+    with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(one,targets.items()))
+
+
+def gc_snapshot():
+    keys=['Status.JVM.GarbageCollector.All.Count','Status.JVM.GarbageCollector.All.Time',
+          'Status.JVM.GarbageCollector.G1_Young_Generation.Count','Status.JVM.GarbageCollector.G1_Young_Generation.Time',
+          'Status.JVM.GarbageCollector.G1_Old_Generation.Count','Status.JVM.GarbageCollector.G1_Old_Generation.Time',
+          'Status.JVM.Memory.Heap.Used','Status.JVM.Memory.Heap.Committed','Status.JVM.Memory.Heap.Max']
+    return {r:{x['id']:float(x['value']) for x in dev.api('/taskmanagers/briskstate-'+r+'/metrics?get='+urllib.parse.quote(','.join(keys),safe=','))} for r in ('tm1','tm2')}
+
+
+def run_one(args,workload,backend,round_index,campaign):
+    directory=campaign/(f'{round_index:02d}_{workload}_{backend}_{uuid.uuid4().hex[:6]}');directory.mkdir()
+    factory='hashmap' if backend=='heap' else 'org.apache.flink.state.forl0.ForL0StateBackendFactory'
+    command=[str(dev.FLINK/'bin/flink'),'run','-d','-m','127.0.0.1:8081',
+             '-Dstate.backend.type='+factory,'-Dstate.backend.forl0.l0-cache.enabled=false',
+             '-Drestart-strategy.type=none','-p','8','-c','org.apache.flink.benchmark.benchset.BenchsetMain',
+             str(REPO/'benchmark/benchset/target/benchset-1.0-SNAPSHOT.jar'),
+             '--benchmark',workload,'--numKeys',str(args.keys),
+             '--numRecords',str(args.records),'--featureWidth',str(args.width),'--touches',str(args.touches),
+             '--parallelism','8','--checkpointInterval','0',
+             '--outputDirectory',str(directory)]
+    (directory/'command.json').write_text(json.dumps(command,indent=2)+'\n')
+    targets=pids();before={r:process_stats(pid) for r,pid in targets.items()};peak={r:x['rss_bytes'] for r,x in before.items()}
+    gc_before=gc_snapshot()
+    result=subprocess.run(command,env=dev.role_env('jm'),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=120)
+    (directory/'submission.log').write_text(result.stdout)
+    if result.returncode:raise RuntimeError(result.stdout)
+    jid=re.search(r'Job has been submitted with JobID ([0-9a-f]{32})',result.stdout)
+    assert jid,result.stdout
+    jid=jid[1];started=False;t0=time.monotonic()
+    try:
+        while time.monotonic()-t0<args.timeout:
+            job=dev.api('/jobs/'+jid)
+            for r,pid in targets.items():peak[r]=max(peak[r],process_stats(pid)['rss_bytes'])
+            if args.profile and not started and job['state']=='RUNNING' and time.monotonic()-t0>5:
+                profile('start',targets,directory,args.profile_event);started=True
+            if job['state'] in ('FINISHED','FAILED','CANCELED'):break
+            time.sleep(1)
+        else:
+            subprocess.run([str(dev.FLINK/'bin/flink'),'cancel','-m','127.0.0.1:8081',jid],check=True,env=dev.role_env('jm'))
+            raise TimeoutError(jid)
+    finally:
+        if started:profile('stop',targets,directory,args.profile_event)
+    for name,suffix in [('job',''),('checkpoints','/checkpoints'),('exceptions','/exceptions'),('config','/config')]:
+        (directory/(name+'.json')).write_text(json.dumps(dev.api('/jobs/'+jid+suffix),indent=2)+'\n')
+    assert job['state']=='FINISHED',(jid,job['state'],str(directory))
+    validate_graph(directory/'topology.json',workload)
+    checkpoints=json.loads((directory/'checkpoints.json').read_text())
+    assert checkpoints['counts']['total']==0,checkpoints
+    sink_rows=[json.loads(f.read_text()) for f in (directory/'sinks').glob('*.json')]
+    observed={field:signed(sum(row[field] for row in sink_rows)) for field in ('records','feature_projection','source_signature')}
+    expected=CONTRACT['workloads'][workload]['sink_multiplier']*args.records
+    assert observed['records']==expected,(workload,observed,expected)
+    if args.validate:
+        signature=signed(sum(mix(i) for i in range(args.records))*CONTRACT['workloads'][workload]['sink_multiplier'])
+        assert observed['source_signature']==signature,(workload,observed,signature)
+    after={r:process_stats(pid) for r,pid in targets.items()}
+    row=dict(workload=workload,backend=backend,round=round_index,variant=args.variant,
+             keys=args.keys,records=args.records,width=args.width,touches=args.touches,
+             access_protocol="standard-flink-api-v2-large-long",profiled=args.profile,profile_event=args.profile_event if args.profile else None,checkpointing=False,
+             job_id=jid,seconds=job['duration']/1000,records_per_second=args.records*1000/job['duration'],
+             sink=observed,peak_rss_bytes=peak,
+             taskmanager_pids=targets,
+             cpu_seconds={r:after[r]['cpu_seconds']-before[r]['cpu_seconds'] for r in targets},directory=str(directory))
+    gc_after=gc_snapshot()
+    row['gc_metrics']={'before':gc_before,'after':gc_after}
+    row['native_sha256']=hashlib.sha256((dev.RUNTIME/'native/libforl0_engine.so').read_bytes()).hexdigest()
+    row['jar_sha256']=hashlib.sha256((REPO/'benchmark/benchset/target/benchset-1.0-SNAPSHOT.jar').read_bytes()).hexdigest()
+    (directory/'measurement.json').write_text(json.dumps(row,indent=2)+'\n')
+    print('PASS',workload,backend,f"{row['seconds']:.3f}s",'sink='+str(observed['records']),str(directory),flush=True)
+    return row
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='ForL0 Benchmark Set Runner',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run all benchmarks with both backends
-  python run_benchset.py --backend all
-  
-  # Run specific benchmark with one backend
-  python run_benchset.py --backend forl0 --benchmark iot
-  
-  # Run with CPU profiling
-  python run_benchset.py --backend all --profile cpu
-  
-  # Run subset of benchmarks
-  python run_benchset.py --backend all --benchmark adclick,userprofile
-        """
-    )
-    
-    parser.add_argument('--backend', choices=['hashmap', 'forl0', 'all'], default='all',
-                       help='State backend to use (default: all)')
-    parser.add_argument('--benchmark', type=str, default=None,
-                       help='Benchmarks to run (comma-separated). Default: all')
-    parser.add_argument('--profile', '-p', type=str, default=None,
-                       choices=['cpu', 'cache'],
-                       help='Enable profiling: cpu (flame graphs), cache (cache stats)')
-    
-    args = parser.parse_args()
-    
-    config = load_config()
-    
-    # Determine backends
-    backends = ['hashmap', 'forl0'] if args.backend == 'all' else [args.backend]
-    
-    # Determine benchmarks
-    if args.benchmark:
-        benchmarks = [b.strip() for b in args.benchmark.split(',')]
-        for b in benchmarks:
-            if b not in BENCHMARKS:
-                print(f"ERROR: Unknown benchmark '{b}'")
-                print(f"Available: {', '.join(BENCHMARKS)}")
-                sys.exit(1)
-    else:
-        benchmarks = BENCHMARKS
-    
-    print("=" * 60)
-    print("ForL0 Benchmark Set - Seven Paper Workloads")
-    print("=" * 60)
-    print(f"Backends: {', '.join(backends)}")
-    print(f"Benchmarks: {', '.join(benchmarks)}")
-    if args.profile:
-        print(f"Profiling: {args.profile}")
-    print("=" * 60)
-    
-    # Check JAR exists
-    if not get_benchset_jar():
-        print("\nERROR: Benchset JAR not found. Build it first:")
-        print("  cd benchmark/benchset && mvn package -DskipTests")
-        sys.exit(1)
-    
-    # Run benchmarks
-    results = run_benchset(config, backends, benchmarks, args.profile)
-    
-    # Print summary
-    print_benchset_summary(results, backends)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--backend',choices=['all','heap','forl0'],default='all')
+    parser.add_argument('--benchmarks',default='wc,fd,sd,tm,lg,vs,lr')
+    parser.add_argument('--rounds',type=int,default=2)
+    parser.add_argument('--keys',type=int,default=524288)
+    parser.add_argument('--records',type=int,help='Override the per-workload long-run record count')
+    parser.add_argument('--width',type=int,default=64)
+    parser.add_argument('--touches',type=int,default=128)
+    parser.add_argument('--timeout',type=int,default=1800)
+    parser.add_argument('--fresh-jvm',action='store_true',help='Restart the idle cluster before each measurement')
+    parser.add_argument('--profile',action='store_true')
+    parser.add_argument('--profile-event',choices=['cpu','alloc'],default='cpu')
+    parser.add_argument('--validate',action='store_true',help='Independent source signature check; use a small input')
+    parser.add_argument('--variant',default='standard-api-v2-large-long')
+    args=parser.parse_args()
+    benchmarks=args.benchmarks.split(',');assert all(x in CONTRACT['workloads'] for x in benchmarks)
+    assert args.keys>0 and args.rounds>0
+    assert args.records is None or args.records>=args.keys
+    overview=dev.api('/overview');assert overview['taskmanagers']==2 and overview['slots-total']==8,overview
+    campaign=REPO/'benchmark/results/runs'/('icde_'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:6]);campaign.mkdir()
+    (campaign/'settings.json').write_text(json.dumps({**vars(args),'effective_records':{w:args.records if args.records is not None else LONG_RECORDS[w] for w in benchmarks}},indent=2)+'\n')
+    rows=[]
+    for index in range(1,args.rounds+1):
+        for workload in benchmarks:
+            backends=['heap','forl0'] if args.backend=='all' else [args.backend]
+            if index%2==0:backends.reverse()
+            pair=[]
+            run_args=argparse.Namespace(**vars(args))
+            run_args.records=args.records if args.records is not None else LONG_RECORDS[workload]
+            for backend in backends:
+                assert dev.api('/overview')['jobs-running']==0, 'A job is already running'
+                if args.fresh_jvm:
+                    dev.stop();dev.start()
+                row=run_one(run_args,workload,backend,index,campaign);rows.append(row);pair.append(row)
+                (campaign/'summary.json').write_text(json.dumps(rows,indent=2)+'\n')
+            if len(pair)==2:
+                assert pair[0]['sink']==pair[1]['sink'],('Paired output mismatch',pair)
+    print('CAMPAIGN_COMPLETE',str(campaign),flush=True)
 
-    print("\nGenerating benchset paper figures...")
-    artifacts = generate_benchset_paper_artifacts()
-    if artifacts:
-        print(f"Figures saved to: {get_results_dir('figures')}/")
-        print(f"Summary saved to: {get_results_dir('reports') / 'benchset_summary.md'}")
-
-    print(f"\nResults saved to: {get_results_dir('raw')}/")
-
-
-if __name__ == '__main__':
-    main()
+if __name__=='__main__':main()

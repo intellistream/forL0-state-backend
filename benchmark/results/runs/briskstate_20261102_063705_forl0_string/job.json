@@ -1,0 +1,194 @@
+{
+  "jid": "e22baacb676c27164e72b66a59ab8b28",
+  "name": "Stateful WordCount Benchmark",
+  "isStoppable": false,
+  "state": "FAILED",
+  "job-type": "STREAMING",
+  "start-time": 1793601429212,
+  "end-time": 1793601429763,
+  "duration": 551,
+  "maxParallelism": -1,
+  "now": 1793601433387,
+  "timestamps": {
+    "RUNNING": 1793601429231,
+    "CANCELED": 0,
+    "RECONCILING": 0,
+    "FAILED": 1793601429763,
+    "RESTARTING": 0,
+    "SUSPENDED": 0,
+    "INITIALIZING": 1793601429212,
+    "CREATED": 1793601429218,
+    "FAILING": 1793601429624,
+    "CANCELLING": 0,
+    "FINISHED": 0
+  },
+  "vertices": [
+    {
+      "id": "bc764cd8ddf7a0cff126f51c16239658",
+      "slotSharingGroupId": "6ea42c36251c1f432149d9092f5ba90f",
+      "name": "Source: SkewedKeySource",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "CANCELED",
+      "start-time": 1793601429334,
+      "end-time": 1793601429708,
+      "duration": 374,
+      "tasks": {
+        "RUNNING": 0,
+        "CANCELED": 8,
+        "DEPLOYING": 0,
+        "RECONCILING": 0,
+        "SCHEDULED": 0,
+        "FAILED": 0,
+        "INITIALIZING": 0,
+        "FINISHED": 0,
+        "CANCELING": 0,
+        "CREATED": 0
+      },
+      "metrics": {
+        "read-bytes": 0,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 0,
+        "read-records-complete": true,
+        "write-records": 13125,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 0,
+        "accumulated-busy-time": "NaN"
+      }
+    },
+    {
+      "id": "0a448493b4782967b150582570326227",
+      "slotSharingGroupId": "6ea42c36251c1f432149d9092f5ba90f",
+      "name": "StatefulCounter",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FAILED",
+      "start-time": 1793601429341,
+      "end-time": 1793601429667,
+      "duration": 326,
+      "tasks": {
+        "RUNNING": 0,
+        "CANCELED": 7,
+        "DEPLOYING": 0,
+        "RECONCILING": 0,
+        "SCHEDULED": 0,
+        "FAILED": 1,
+        "INITIALIZING": 0,
+        "FINISHED": 0,
+        "CANCELING": 0,
+        "CREATED": 0
+      },
+      "metrics": {
+        "read-bytes": 11032,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 8,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 101,
+        "accumulated-busy-time": 274.0
+      }
+    },
+    {
+      "id": "ea632d67b7d595e5b851708ae9ad79d6",
+      "slotSharingGroupId": "6ea42c36251c1f432149d9092f5ba90f",
+      "name": "Sink: MetricsSink",
+      "maxParallelism": 128,
+      "parallelism": 1,
+      "status": "CANCELED",
+      "start-time": 1793601429354,
+      "end-time": 1793601429760,
+      "duration": 406,
+      "tasks": {
+        "RUNNING": 0,
+        "CANCELED": 1,
+        "DEPLOYING": 0,
+        "RECONCILING": 0,
+        "SCHEDULED": 0,
+        "FAILED": 0,
+        "INITIALIZING": 0,
+        "FINISHED": 0,
+        "CANCELING": 0,
+        "CREATED": 0
+      },
+      "metrics": {
+        "read-bytes": 32,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 0,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 144,
+        "accumulated-busy-time": 93.0
+      }
+    }
+  ],
+  "status-counts": {
+    "RUNNING": 0,
+    "CANCELED": 2,
+    "DEPLOYING": 0,
+    "RECONCILING": 0,
+    "SCHEDULED": 0,
+    "FAILED": 1,
+    "INITIALIZING": 0,
+    "FINISHED": 0,
+    "CANCELING": 0,
+    "CREATED": 0
+  },
+  "plan": {
+    "jid": "e22baacb676c27164e72b66a59ab8b28",
+    "name": "Stateful WordCount Benchmark",
+    "type": "STREAMING",
+    "nodes": [
+      {
+        "id": "ea632d67b7d595e5b851708ae9ad79d6",
+        "parallelism": 1,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Sink: MetricsSink<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "0a448493b4782967b150582570326227",
+            "ship_strategy": "REBALANCE",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "0a448493b4782967b150582570326227",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "StatefulCounter<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "bc764cd8ddf7a0cff126f51c16239658",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "bc764cd8ddf7a0cff126f51c16239658",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Source: SkewedKeySource<br/>",
+        "optimizer_properties": {}
+      }
+    ]
+  }
+}

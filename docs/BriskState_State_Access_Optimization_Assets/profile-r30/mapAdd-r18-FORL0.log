@@ -1,0 +1,54 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-setup/deep-opt-20261103/variants/r18 -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 3 s each
+# Measurement: 3 iterations, 4 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd
+# Parameters: (backendType = FORL0, keyCount = 1048576, touchesPerKey = 64)
+
+# Run progress: 0.00% complete, ETA 00:00:21
+# Fork: 1 of 1
+# Preparing profilers: AsyncProfiler 
+# Warmup Iteration   1: [ForL0-HotCache] L0 cache disabled by config.
+1645.408 ops/ms
+# Warmup Iteration   2: 2260.019 ops/ms
+# Warmup Iteration   3: 2254.697 ops/ms
+Iteration   1: 2240.143 ops/ms
+Iteration   2: 2243.030 ops/ms
+Iteration   3: [ForL0-Memory] engine_summary used_bytes=306184224 peak_bytes=382730288 max_bytes=0
+2243.599 ops/ms
+                 async: (text only)
+
+# Processing profiler results: AsyncProfiler 
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd":
+  2242.258 ±(99.9%) 33.806 ops/ms [Average]
+  (min, avg, max) = (2240.143, 2242.258, 2243.599), stdev = 1.853
+  CI (99.9%): [2208.452, 2276.063] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd:async":
+Async profiler results:
+  /root/briskstate-setup/micro-opt-20261104/profile-r30/mapAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd-Throughput-backendType-FORL0-keyCount-1048576-touchesPerKey-64/flame-cpu-forward.html
+  /root/briskstate-setup/micro-opt-20261104/profile-r30/mapAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd-Throughput-backendType-FORL0-keyCount-1048576-touchesPerKey-64/flame-cpu-reverse.html
+  /root/briskstate-setup/micro-opt-20261104/profile-r30/mapAdd-r18-FORL0/org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapAdd-Throughput-backendType-FORL0-keyCount-1048576-touchesPerKey-64/collapsed-cpu.csv
+
+
+# Run complete. Total time: 00:00:30
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                              (backendType)  (keyCount)  (touchesPerKey)   Mode  Cnt     Score    Error   Units
+LongStateMicrobenchmarks.mapAdd                FORL0     1048576               64  thrpt    3  2242.258 ± 33.806  ops/ms
+LongStateMicrobenchmarks.mapAdd:async          FORL0     1048576               64  thrpt            NaN              ---
+
+Benchmark result is saved to /root/briskstate-setup/micro-opt-20261104/profile-r30/mapAdd-r18-FORL0.json

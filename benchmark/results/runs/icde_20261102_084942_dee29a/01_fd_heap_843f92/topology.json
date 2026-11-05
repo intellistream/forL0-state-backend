@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {
+      "name": "Data Source",
+      "parallelism": 8
+    },
+    {
+      "name": "Predict",
+      "parallelism": 8
+    },
+    {
+      "name": "Sink",
+      "parallelism": 8
+    }
+  ],
+  "edges": [
+    {
+      "from": "Data Source",
+      "to": "Predict"
+    },
+    {
+      "from": "Predict",
+      "to": "Sink"
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -----------< org.apache.flink.benchmark:wordcount-benchmark >-----------
+[INFO] Building WordCount Benchmark for ForL0 StateBackend 1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:resources (default-resources) @ wordcount-benchmark ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /root/forL0-state-backend/benchmark/wordcount/src/main/resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ wordcount-benchmark ---
+[INFO] Changes detected - recompiling the module! :source
+[INFO] Compiling 4 source files with javac [debug target 1.8] to target/classes
+[WARNING] bootstrap class path not set in conjunction with -source 8
+[INFO] /root/forL0-state-backend/benchmark/wordcount/src/main/java/org/apache/flink/benchmark/wordcount/source/SkewedWordSource.java: Some input files use or override a deprecated API.
+[INFO] /root/forL0-state-backend/benchmark/wordcount/src/main/java/org/apache/flink/benchmark/wordcount/source/SkewedWordSource.java: Recompile with -Xlint:deprecation for details.
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:testResources (default-testResources) @ wordcount-benchmark ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /root/forL0-state-backend/benchmark/wordcount/src/test/resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:testCompile (default-testCompile) @ wordcount-benchmark ---
+[INFO] Changes detected - recompiling the module! :dependency
+[INFO] Compiling 2 source files with javac [debug target 1.8] to target/test-classes
+[WARNING] bootstrap class path not set in conjunction with -source 8
+[INFO] 
+[INFO] --- maven-surefire-plugin:3.2.5:test (default-test) @ wordcount-benchmark ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running org.apache.flink.benchmark.wordcount.source.LongKeySourceTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.068 s -- in org.apache.flink.benchmark.wordcount.source.LongKeySourceTest
+[INFO] Running org.apache.flink.benchmark.wordcount.WordCountBenchmarkTest
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+LongKeyStatefulCounter state=org.apache.flink.benchmark.wordcount.WordCountBenchmarkTest$BasicHeapState fused=false ops=8
+LongKeyStatefulCounter state=org.apache.flink.benchmark.wordcount.WordCountBenchmarkTest$PrimitiveOnlyState fused=true ops=8
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.076 s -- in org.apache.flink.benchmark.wordcount.WordCountBenchmarkTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] 
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ wordcount-benchmark ---
+[INFO] Building jar: /root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar
+[INFO] 
+[INFO] --- maven-shade-plugin:3.5.0:shade (default) @ wordcount-benchmark ---
+[INFO] Including org.apache.commons:commons-math3:jar:3.6.1 in the shaded jar.
+[INFO] Including com.google.code.gson:gson:jar:2.10.1 in the shaded jar.
+[INFO] Dependency-reduced POM written at: /root/forL0-state-backend/benchmark/wordcount/dependency-reduced-pom.xml
+[WARNING] commons-math3-3.6.1.jar, gson-2.10.1.jar, wordcount-benchmark-1.0-SNAPSHOT.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/MANIFEST.MF
+[WARNING] maven-shade-plugin has detected that some files are
+[WARNING] present in two or more JARs. When this happens, only one
+[WARNING] single version of the file is copied to the uber jar.
+[WARNING] Usually this is not harmful and you can skip these warnings,
+[WARNING] otherwise try to manually exclude artifacts based on
+[WARNING] mvn dependency:tree -Ddetail=true and the above output.
+[WARNING] See https://maven.apache.org/plugins/maven-shade-plugin/
+[INFO] Replacing original artifact with shaded artifact.
+[INFO] Replacing /root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar with /root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT-shaded.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  4.676 s
+[INFO] Finished at: 2026-11-02T07:39:04Z
+[INFO] ------------------------------------------------------------------------
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 10000
+numRecords: 1000000
+parallelism: 8
+Job has been submitted with JobID 0d6680e7eb245cc1d70d98bebe9a6ea7
+
+PASS heap long job=0d6680e7eb245cc1d70d98bebe9a6ea7 records=1000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073905_heap_long
+WARNING: An illegal reflective access operation has occurred
+WARNING: Illegal reflective access by org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator (file:/root/opt/flink-1.20.3/lib/flink-dist-1.20.3.jar) to field java.util.Collections$UnmodifiableMap.m
+WARNING: Please consider reporting this to the maintainers of org.apache.flink.streaming.runtime.translators.DataStreamV2SinkTransformationTranslator
+WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
+WARNING: All illegal access operations will be denied in a future release
+=== WordCount Benchmark (Long keys) ===
+workloadMode: stateful_counter
+keyType: long (direct, full key-space coverage)
+stateOpsPerRecord: 16
+numKeys: 10000
+numRecords: 1000000
+parallelism: 8
+Job has been submitted with JobID 6e203aa6dd7bfba6f30f463317e0823d
+
+PASS forl0 long job=6e203aa6dd7bfba6f30f463317e0823d records=1000000 /root/forL0-state-backend/benchmark/results/runs/briskstate_20261102_073912_forl0_long
+ORACLE_VALIDATED

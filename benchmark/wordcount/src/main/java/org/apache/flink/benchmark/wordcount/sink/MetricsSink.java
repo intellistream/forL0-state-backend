@@ -43,7 +43,7 @@ import java.util.Map;
  * <p>At the end of execution, metrics are printed to stdout and optionally
  * saved to a JSON file.
  */
-public class MetricsSink extends RichSinkFunction<Tuple2<String, Long>> {
+public class MetricsSink<K> extends RichSinkFunction<Tuple2<K, Long>> {
     
     private static final long serialVersionUID = 1L;
     
@@ -56,8 +56,15 @@ public class MetricsSink extends RichSinkFunction<Tuple2<String, Long>> {
     // Metrics collection
     private transient long startTime;
     private transient long sinkRecordCount;
+    private final long verifyStep;
+    private transient Map<K, Long> previousCounts;
     
     public MetricsSink(String outputPath, int parallelism, String backend, long numRecords) {
+        this(outputPath, parallelism, backend, numRecords, 0);
+    }
+
+    public MetricsSink(String outputPath, int parallelism, String backend, long numRecords, long verifyStep) {
+        this.verifyStep = verifyStep;
         this.outputPath = outputPath;
         this.parallelism = parallelism;
         this.backend = backend;
@@ -69,10 +76,19 @@ public class MetricsSink extends RichSinkFunction<Tuple2<String, Long>> {
         super.open(parameters);
         startTime = System.currentTimeMillis();
         sinkRecordCount = 0;
+        previousCounts = verifyStep > 0 ? new HashMap<>() : null;
     }
     
     @Override
-    public void invoke(Tuple2<String, Long> value, Context context) throws Exception {
+    public void invoke(Tuple2<K, Long> value, Context context) throws Exception {
+        if (previousCounts != null) {
+            long expected = previousCounts.getOrDefault(value.f0, 0L) + verifyStep;
+            if (value.f1 == null || value.f1.longValue() != expected) {
+                throw new IllegalStateException("Incorrect count for key " + value.f0
+                    + ": expected " + expected + ", got " + value.f1);
+            }
+            previousCounts.put(value.f0, expected);
+        }
         sinkRecordCount++;
     }
     
@@ -97,6 +113,8 @@ public class MetricsSink extends RichSinkFunction<Tuple2<String, Long>> {
         result.put("throughput_per_core", throughputPerCore);
         result.put("parallelism", parallelism);
         result.put("sink_records", sinkRecordCount);
+        result.put("counts_verified", previousCounts != null);
+        if (previousCounts != null) result.put("verified_distinct_keys", previousCounts.size());
         
         // Print results
         System.out.println("\n========================================");

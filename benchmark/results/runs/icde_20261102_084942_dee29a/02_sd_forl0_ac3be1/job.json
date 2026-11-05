@@ -1,0 +1,246 @@
+{
+  "jid": "06c62e5fae848d83b724e4db9fb63d71",
+  "name": "ICDE numeric pressure sd",
+  "isStoppable": false,
+  "state": "FINISHED",
+  "job-type": "STREAMING",
+  "start-time": 1793610519928,
+  "end-time": 1793610529209,
+  "duration": 9281,
+  "maxParallelism": -1,
+  "now": 1793610532093,
+  "timestamps": {
+    "RUNNING": 1793610519933,
+    "CREATED": 1793610519930,
+    "SUSPENDED": 0,
+    "CANCELLING": 0,
+    "FAILED": 0,
+    "RESTARTING": 0,
+    "RECONCILING": 0,
+    "INITIALIZING": 1793610519928,
+    "FAILING": 0,
+    "CANCELED": 0,
+    "FINISHED": 1793610529209
+  },
+  "vertices": [
+    {
+      "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+      "slotSharingGroupId": "998e6f70e699762cd73b196e227acd48",
+      "name": "Source: Data Source",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793610520008,
+      "end-time": 1793610528648,
+      "duration": 8640,
+      "tasks": {
+        "CANCELING": 0,
+        "CANCELED": 0,
+        "CREATED": 0,
+        "RUNNING": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "FAILED": 0,
+        "RECONCILING": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 0,
+        "read-bytes-complete": true,
+        "write-bytes": 560000832,
+        "write-bytes-complete": true,
+        "read-records": 0,
+        "read-records-complete": true,
+        "write-records": 8000000,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 64579,
+        "accumulated-idle-time": 0,
+        "accumulated-busy-time": "NaN"
+      }
+    },
+    {
+      "id": "6011ed461eed1c026289da51eceda82b",
+      "slotSharingGroupId": "998e6f70e699762cd73b196e227acd48",
+      "name": "Moving Average",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793610520009,
+      "end-time": 1793610529166,
+      "duration": 9157,
+      "tasks": {
+        "CANCELING": 0,
+        "CANCELED": 0,
+        "CREATED": 0,
+        "RUNNING": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "FAILED": 0,
+        "RECONCILING": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 560001664,
+        "read-bytes-complete": true,
+        "write-bytes": 560000832,
+        "write-bytes-complete": true,
+        "read-records": 8000000,
+        "read-records-complete": true,
+        "write-records": 8000000,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 583,
+        "accumulated-idle-time": 11567,
+        "accumulated-busy-time": 58455.0
+      }
+    },
+    {
+      "id": "1a0f35cd3d187574f3e5ee524016279c",
+      "slotSharingGroupId": "998e6f70e699762cd73b196e227acd48",
+      "name": "Spike Detection",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793610520009,
+      "end-time": 1793610529185,
+      "duration": 9176,
+      "tasks": {
+        "CANCELING": 0,
+        "CANCELED": 0,
+        "CREATED": 0,
+        "RUNNING": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "FAILED": 0,
+        "RECONCILING": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 560001664,
+        "read-bytes-complete": true,
+        "write-bytes": 560000104,
+        "write-bytes-complete": true,
+        "read-records": 8000000,
+        "read-records-complete": true,
+        "write-records": 8000000,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 152,
+        "accumulated-idle-time": 45793,
+        "accumulated-busy-time": 26372.0
+      }
+    },
+    {
+      "id": "fdaaed869c7e767a4ba54f74c039d468",
+      "slotSharingGroupId": "998e6f70e699762cd73b196e227acd48",
+      "name": "Sink: Sink",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793610520010,
+      "end-time": 1793610529208,
+      "duration": 9198,
+      "tasks": {
+        "CANCELING": 0,
+        "CANCELED": 0,
+        "CREATED": 0,
+        "RUNNING": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "FAILED": 0,
+        "RECONCILING": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 560000208,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 8000000,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 57949,
+        "accumulated-busy-time": 14292.0
+      }
+    }
+  ],
+  "status-counts": {
+    "CANCELING": 0,
+    "CANCELED": 0,
+    "CREATED": 0,
+    "RUNNING": 0,
+    "INITIALIZING": 0,
+    "SCHEDULED": 0,
+    "FINISHED": 4,
+    "FAILED": 0,
+    "RECONCILING": 0,
+    "DEPLOYING": 0
+  },
+  "plan": {
+    "jid": "06c62e5fae848d83b724e4db9fb63d71",
+    "name": "ICDE numeric pressure sd",
+    "type": "STREAMING",
+    "nodes": [
+      {
+        "id": "fdaaed869c7e767a4ba54f74c039d468",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Sink: Sink<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "1a0f35cd3d187574f3e5ee524016279c",
+            "ship_strategy": "FORWARD",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "1a0f35cd3d187574f3e5ee524016279c",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Spike Detection<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "6011ed461eed1c026289da51eceda82b",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "6011ed461eed1c026289da51eceda82b",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Moving Average<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Source: Data Source<br/>",
+        "optimizer_properties": {}
+      }
+    ]
+  }
+}

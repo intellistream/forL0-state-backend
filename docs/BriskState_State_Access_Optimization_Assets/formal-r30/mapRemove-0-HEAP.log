@@ -1,0 +1,104 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-setup/micro-opt-20261104/variants/r30 -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove
+# Parameters: (backendType = HEAP, keyCount = 1048576, touchesPerKey = 64)
+
+# Run progress: 0.00% complete, ETA 00:00:24
+# Fork: 1 of 1
+# Warmup Iteration   1: 2729.126 ops/ms
+# Warmup Iteration   2: 3768.198 ops/ms
+# Warmup Iteration   3: 3466.853 ops/ms
+Iteration   1: 3805.103 ops/ms
+                 gc.alloc.rate:      63.897 MB/sec
+                 gc.alloc.rate.norm: 79.999 B/op
+                 gc.count:           1.000 counts
+                 gc.time:            519.000 ms
+
+Iteration   2: 3819.079 ops/ms
+                 gc.alloc.rate:      78.345 MB/sec
+                 gc.alloc.rate.norm: 79.999 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 4298.087 ops/ms
+                 gc.alloc.rate:      82.882 MB/sec
+                 gc.alloc.rate.norm: 79.999 B/op
+                 gc.count:           1.000 counts
+                 gc.time:            5.000 ms
+
+Iteration   4: 4334.173 ops/ms
+                 gc.alloc.rate:      83.080 MB/sec
+                 gc.alloc.rate.norm: 79.999 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 4007.002 ops/ms
+                 gc.alloc.rate:      80.144 MB/sec
+                 gc.alloc.rate.norm: 80.947 B/op
+                 gc.count:           1.000 counts
+                 gc.time:            4.000 ms
+
+<JMH had finished, but forked VM did not exit, are there stray running threads? Waiting 24 seconds more...>
+
+Non-finished threads:
+
+Thread[DestroyJavaVM,5,main]
+
+
+<JMH had finished, but forked VM did not exit, are there stray running threads? Waiting 19 seconds more...>
+
+Non-finished threads:
+
+Thread[DestroyJavaVM,5,main]
+
+
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove":
+  4052.689 ±(99.9%) 976.829 ops/ms [Average]
+  (min, avg, max) = (3805.103, 4052.689, 4334.173), stdev = 253.679
+  CI (99.9%): [3075.860, 5029.518] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove:gc.alloc.rate":
+  77.670 ±(99.9%) 30.606 MB/sec [Average]
+  (min, avg, max) = (63.897, 77.670, 83.080), stdev = 7.948
+  CI (99.9%): [47.064, 108.276] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove:gc.alloc.rate.norm":
+  80.189 ±(99.9%) 1.632 B/op [Average]
+  (min, avg, max) = (79.999, 80.189, 80.947), stdev = 0.424
+  CI (99.9%): [78.557, 81.821] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove:gc.count":
+  3.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (≈ 0, 0.600, 1.000), stdev = 0.548
+  CI (99.9%): [3.000, 3.000] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove:gc.time":
+  528.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (≈ 0, 105.600, 519.000), stdev = 231.109
+  CI (99.9%): [528.000, 528.000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:00:45
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                              (backendType)  (keyCount)  (touchesPerKey)   Mode  Cnt     Score     Error   Units
+LongStateMicrobenchmarks.mapRemove                              HEAP     1048576               64  thrpt    5  4052.689 ± 976.829  ops/ms
+LongStateMicrobenchmarks.mapRemove:gc.alloc.rate                HEAP     1048576               64  thrpt    5    77.670 ±  30.606  MB/sec
+LongStateMicrobenchmarks.mapRemove:gc.alloc.rate.norm           HEAP     1048576               64  thrpt    5    80.189 ±   1.632    B/op
+LongStateMicrobenchmarks.mapRemove:gc.count                     HEAP     1048576               64  thrpt    5     3.000            counts
+LongStateMicrobenchmarks.mapRemove:gc.time                      HEAP     1048576               64  thrpt    5   528.000                ms
+
+Benchmark result is saved to /root/briskstate-setup/micro-opt-20261104/formal-r30/mapRemove-0-HEAP.json

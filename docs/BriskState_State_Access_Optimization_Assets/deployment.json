@@ -1,0 +1,54 @@
+{
+  "revision": "r30",
+  "git_branch": "briskstate_workspace",
+  "git_head": "13d23f2612654b86f57a112ee1855213631f0f1d",
+  "changed_source_files": [
+    "pom.xml",
+    "src/test/java/org/apache/flink/state/forl0/ForL0StateSemanticsTest.java",
+    "src/main/java/org/apache/flink/state/forl0/ForL0ValueState.java",
+    "src/main/java/org/apache/flink/state/forl0/ForL0MapState.java",
+    "src/main/java/org/apache/flink/state/forl0/PrimitiveLongAccess.java",
+    "src/main/java/org/apache/flink/state/forl0/NativeLongListSnapshot.java",
+    "src/main/java/org/apache/flink/state/forl0/NativeEngine.java",
+    "src/main/java/org/apache/flink/state/forl0/ForL0ListState.java",
+    "src/main/native/test/state_table_cow_test.cpp",
+    "src/main/native/jni/jni_list_state.cpp",
+    "src/main/native/jni/jni_value_state.cpp",
+    "src/main/native/engine/long_element_list.h",
+    "src/main/native/engine/type_layout.h",
+    "src/main/native/engine/long_inner_map.h",
+    "src/main/native/engine/state_engine.h",
+    "src/main/native/engine/long_key_table.h"
+  ],
+  "backend_sha256": "81d12bb9dc9366053b15159fb6a8b90ed1dfaf28cffdb4b4ba5104af9627f37b",
+  "native_sha256": "8ffa4d449766e03f9fe06efea91b59337c814fa34a71314ecfe1f34fd833ba03",
+  "future_micro_sha256": "cbbd6d2e83559fc0501211df54d11a1e6d0f09533a8429416fa37581f732107c",
+  "overview": {
+    "taskmanagers": 2,
+    "slots-total": 8,
+    "slots-available": 8,
+    "jobs-running": 0,
+    "jobs-finished": 0,
+    "jobs-cancelled": 0,
+    "jobs-failed": 0,
+    "flink-version": "1.20.3",
+    "flink-commit": "01e3a6d"
+  },
+  "roles": {
+    "jm": {
+      "pid": 3951813,
+      "cpu_mask": "0-3",
+      "config": "env.java.home: \"/usr/lib/jvm/java-11-openjdk\"\nenv.java.opts.all: \"-XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-runtime/native -Xlog:gc*,safepoint:file=/root/briskstate-runtime/jm/log/gc-%p.log:time,uptime,level,tags:filecount=4,filesize=64M\"\njobmanager.rpc.address: \"127.0.0.1\"\njobmanager.rpc.port: 6123\njobmanager.bind-host: \"127.0.0.1\"\njobmanager.memory.process.size: \"8g\"\ntaskmanager.host: \"127.0.0.1\"\ntaskmanager.bind-host: \"127.0.0.1\"\ntaskmanager.rpc.port: 0\ntaskmanager.data.port: 0\ntaskmanager.resource-id: \"briskstate-jm\"\ntaskmanager.cpu.cores: 4.0\ntaskmanager.numberOfTaskSlots: 4\ntaskmanager.memory.process.size: \"32g\"\ntaskmanager.memory.task.off-heap.size: \"8g\"\ntaskmanager.memory.managed.size: \"256m\"\ntaskmanager.memory.network.min: \"512m\"\ntaskmanager.memory.network.max: \"512m\"\nparallelism.default: 8\nrest.address: \"127.0.0.1\"\nrest.bind-address: \"127.0.0.1\"\nrest.port: 8081\nrest.bind-port: \"8081\"\nstate.backend.type: \"hashmap\"\nstate.backend.forl0.l0-cache.enabled: false\nstate.backend.forl0.native-memory.max-size: \"1g\"\nstate.checkpoint-storage: \"filesystem\"\nstate.checkpoints.dir: \"file:///root/briskstate-runtime/checkpoints\"\nstate.savepoints.dir: \"file:///root/briskstate-runtime/savepoints\"\nio.tmp.dirs: \"/root/briskstate-runtime/jm/tmp\"\n"
+    },
+    "tm1": {
+      "pid": 3952334,
+      "cpu_mask": "4-7",
+      "config": "env.java.home: \"/usr/lib/jvm/java-11-openjdk\"\nenv.java.opts.all: \"-XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-runtime/native -Xlog:gc*,safepoint:file=/root/briskstate-runtime/tm1/log/gc-%p.log:time,uptime,level,tags:filecount=4,filesize=64M\"\njobmanager.rpc.address: \"127.0.0.1\"\njobmanager.rpc.port: 6123\njobmanager.bind-host: \"127.0.0.1\"\njobmanager.memory.process.size: \"8g\"\ntaskmanager.host: \"127.0.0.1\"\ntaskmanager.bind-host: \"127.0.0.1\"\ntaskmanager.rpc.port: 0\ntaskmanager.data.port: 0\ntaskmanager.resource-id: \"briskstate-tm1\"\ntaskmanager.cpu.cores: 4.0\ntaskmanager.numberOfTaskSlots: 4\ntaskmanager.memory.process.size: \"32g\"\ntaskmanager.memory.task.off-heap.size: \"8g\"\ntaskmanager.memory.managed.size: \"256m\"\ntaskmanager.memory.network.min: \"512m\"\ntaskmanager.memory.network.max: \"512m\"\nparallelism.default: 8\nrest.address: \"127.0.0.1\"\nrest.bind-address: \"127.0.0.1\"\nrest.port: 8081\nrest.bind-port: \"8081\"\nstate.backend.type: \"hashmap\"\nstate.backend.forl0.l0-cache.enabled: false\nstate.backend.forl0.native-memory.max-size: \"1g\"\nstate.checkpoint-storage: \"filesystem\"\nstate.checkpoints.dir: \"file:///root/briskstate-runtime/checkpoints\"\nstate.savepoints.dir: \"file:///root/briskstate-runtime/savepoints\"\nio.tmp.dirs: \"/root/briskstate-runtime/tm1/tmp\"\n"
+    },
+    "tm2": {
+      "pid": 3952879,
+      "cpu_mask": "8-11",
+      "config": "env.java.home: \"/usr/lib/jvm/java-11-openjdk\"\nenv.java.opts.all: \"-XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-runtime/native -Xlog:gc*,safepoint:file=/root/briskstate-runtime/tm2/log/gc-%p.log:time,uptime,level,tags:filecount=4,filesize=64M\"\njobmanager.rpc.address: \"127.0.0.1\"\njobmanager.rpc.port: 6123\njobmanager.bind-host: \"127.0.0.1\"\njobmanager.memory.process.size: \"8g\"\ntaskmanager.host: \"127.0.0.1\"\ntaskmanager.bind-host: \"127.0.0.1\"\ntaskmanager.rpc.port: 0\ntaskmanager.data.port: 0\ntaskmanager.resource-id: \"briskstate-tm2\"\ntaskmanager.cpu.cores: 4.0\ntaskmanager.numberOfTaskSlots: 4\ntaskmanager.memory.process.size: \"32g\"\ntaskmanager.memory.task.off-heap.size: \"8g\"\ntaskmanager.memory.managed.size: \"256m\"\ntaskmanager.memory.network.min: \"512m\"\ntaskmanager.memory.network.max: \"512m\"\nparallelism.default: 8\nrest.address: \"127.0.0.1\"\nrest.bind-address: \"127.0.0.1\"\nrest.port: 8081\nrest.bind-port: \"8081\"\nstate.backend.type: \"hashmap\"\nstate.backend.forl0.l0-cache.enabled: false\nstate.backend.forl0.native-memory.max-size: \"1g\"\nstate.checkpoint-storage: \"filesystem\"\nstate.checkpoints.dir: \"file:///root/briskstate-runtime/checkpoints\"\nstate.savepoints.dir: \"file:///root/briskstate-runtime/savepoints\"\nio.tmp.dirs: \"/root/briskstate-runtime/tm2/tmp\"\n"
+    }
+  }
+}

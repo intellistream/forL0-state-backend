@@ -1,0 +1,42 @@
+{
+  "nodes" : [ {
+    "id" : 1,
+    "type" : "Source: Data Source",
+    "pact" : "Data Source",
+    "contents" : "Source: Data Source",
+    "parallelism" : 8
+  }, {
+    "id" : 2,
+    "type" : "Split",
+    "pact" : "Operator",
+    "contents" : "Split",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 1,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 4,
+    "type" : "Count",
+    "pact" : "Operator",
+    "contents" : "Count",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 5,
+    "type" : "Sink: Sink",
+    "pact" : "Data Sink",
+    "contents" : "Sink: Sink",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 4,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  } ]
+}

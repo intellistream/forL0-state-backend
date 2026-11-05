@@ -1,0 +1,1267 @@
+--- a/pom.xml
++++ b/pom.xml
+@@ -10,8 +10,8 @@
+     <packaging>jar</packaging>
+ 
+     <properties>
+-        <maven.compiler.source>8</maven.compiler.source>
+-        <maven.compiler.target>8</maven.compiler.target>
++        <maven.compiler.source>11</maven.compiler.source>
++        <maven.compiler.target>11</maven.compiler.target>
+         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+         <scala.binary.version>2.12</scala.binary.version>
+         <flink.version>1.20.3</flink.version>
+@@ -119,8 +119,7 @@
+                 <artifactId>maven-compiler-plugin</artifactId>
+                 <version>3.11.0</version>
+                 <configuration>
+-                    <source>8</source>
+-                    <target>8</target>
++                    <release>11</release>
+                     <!-- Enable debug information (line numbers, variables, source file names) -->
+                     <debug>true</debug>
+                     <debuglevel>lines,vars,source</debuglevel>
+--- a/src/main/java/org/apache/flink/state/forl0/ForL0ListState.java
++++ b/src/main/java/org/apache/flink/state/forl0/ForL0ListState.java
+@@ -15,8 +15,6 @@
+ import java.util.Collection;
+ import java.util.Collections;
+ import java.util.List;
+-import java.util.Iterator;
+-import java.util.NoSuchElementException;
+ 
+ /**
+  * ForL0 implementation of {@link InternalListState}.
+@@ -49,6 +47,37 @@
+ 
+     private enum ListStrategy { LONG_ELEM_LONG_VOID, LONG_VOID, LONG_TW, GENERIC }
+     private final ListStrategy listStrategy;
++    private final PrimitiveLongAccess primitiveAccess;
++    private NativeLongListSnapshot[][] readViews;
++
++    private Iterable<Long> primitiveListView(long key,int group) {
++        long row=primitiveAccess.row(key,group);
++        // One-off reads use a cheap copied array; only repeated reads of the
++        // same version pay for a Cleaner-owned immutable native snapshot.
++        if(row==0 || !PrimitiveLongAccess.cacheListRead(row)) {
++            long[] values=row==0?NativeEngine.listGetLongElements(stateHandle,key,group)
++                    :PrimitiveLongAccess.copyList(row);
++            return values==null?null:new NativeLongListSnapshot(values);
++        }
++        int page=(int)(key>>>8),index=(int)key&255;
++        if(readViews==null)readViews=new NativeLongListSnapshot[1<<16][];
++        NativeLongListSnapshot[] entries=readViews[page];
++        if(entries==null)readViews[page]=entries=new NativeLongListSnapshot[256];
++        NativeLongListSnapshot view=entries[index];
++        if(view!=null && view.keyGroup==group && view.version==PrimitiveLongAccess.read(row+32))return view;
++        view=(NativeLongListSnapshot)NativeEngine.listGetLongView(stateHandle,key,group);
++        entries[index]=view;
++        return view;
++    }
++
++    private void invalidateReadView() {
++        if(readViews==null)return;
++        long key=resolveKeyAsLong(keyContext.currentKey);
++        if(key>=0 && key<(1L<<24)) {
++            NativeLongListSnapshot[] entries=readViews[(int)(key>>>8)];
++            if(entries!=null)entries[(int)key&255]=null;
++        }
++    }
+     private long[] primitiveValues = new long[0];
+ 
+     private long[] primitiveValues(List<V> values) {
+@@ -56,24 +85,6 @@
+         int index=0;
+         for (V value:values) primitiveValues[index++]=(Long)value;
+         return primitiveValues;
+-    }
+-
+-    private static final class LongArraySnapshot<T> implements Iterable<T> {
+-        private final long[] values;
+-        LongArraySnapshot(long[] values) { this.values=values; }
+-        public Iterator<T> iterator() { return new LongArrayIterator<>(values); }
+-    }
+-
+-    private static final class LongArrayIterator<T> implements Iterator<T> {
+-        private final long[] values;
+-        private int index;
+-        LongArrayIterator(long[] values) { this.values=values; }
+-        public boolean hasNext() { return index<values.length; }
+-        @SuppressWarnings("unchecked")
+-        public T next() {
+-            if (index>=values.length) throw new NoSuchElementException();
+-            return (T) new Long(values[index++]); // Avoid the valueOf cache merge; verified with allocation profiling.
+-        }
+     }
+ 
+     /** Reusable serialization buffers (single-threaded access). */
+@@ -115,6 +126,8 @@
+         } else {
+             this.listStrategy = ListStrategy.GENERIC;
+         }
++        this.primitiveAccess=listStrategy==ListStrategy.LONG_ELEM_LONG_VOID
++                ?new PrimitiveLongAccess(stateHandle):null;
+     }
+ 
+     @SuppressWarnings("unchecked")
+@@ -123,10 +136,10 @@
+         try {
+             switch (listStrategy) {
+                 case LONG_ELEM_LONG_VOID: {
+-                    long[] arr = NativeEngine.listGetLongElements(stateHandle,
++                    Iterable<Long> view = primitiveListView(
+                             resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+-                    if (arr == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+-                    return (Iterable<V>)(Iterable<?>)new LongArraySnapshot(arr);
++                    if (view == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
++                    return (Iterable<V>)(Iterable<?>)view;
+                 }
+                 case LONG_VOID: {
+                     byte[] data = NativeEngine.listGet(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
+@@ -154,9 +167,12 @@
+     @Override
+     public void add(V value) {
+         Preconditions.checkNotNull(value, "You cannot add null to a ListState.");
++        invalidateReadView();
+         try {
+             switch (listStrategy) {
+                 case LONG_ELEM_LONG_VOID:
++                    if(primitiveAccess.append(resolveKeyAsLong(keyContext.currentKey),
++                            keyContext.currentKeyGroupIndex,(Long)value))return;
+                     NativeEngine.listAddLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                             keyContext.currentKeyGroupIndex, (Long) value);
+                     return;
+@@ -182,6 +198,7 @@
+     @Override
+     public void update(List<V> values) {
+         Preconditions.checkNotNull(values, "List of values to add cannot be null.");
++        invalidateReadView();
+         if (values.isEmpty()) {
+             clear();
+             return;
+@@ -190,6 +207,8 @@
+             switch (listStrategy) {
+                 case LONG_ELEM_LONG_VOID: {
+                     long[] arr = primitiveValues(values);
++                    if(primitiveAccess.writeList(resolveKeyAsLong(keyContext.currentKey),
++                            keyContext.currentKeyGroupIndex,arr,false))return;
+                     NativeEngine.listUpdateLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                             keyContext.currentKeyGroupIndex, arr);
+                     return;
+@@ -210,6 +229,7 @@
+     @Override
+     public void addAll(List<V> values) {
+         Preconditions.checkNotNull(values, "List of values to add cannot be null.");
++        invalidateReadView();
+         if (values.isEmpty()) {
+             return;
+         }
+@@ -217,6 +237,8 @@
+             switch (listStrategy) {
+                 case LONG_ELEM_LONG_VOID: {
+                     long[] arr = primitiveValues(values);
++                    if(primitiveAccess.writeList(resolveKeyAsLong(keyContext.currentKey),
++                            keyContext.currentKeyGroupIndex,arr,true))return;
+                     NativeEngine.listAddAllLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                             keyContext.currentKeyGroupIndex, arr);
+                     return;
+@@ -308,6 +330,7 @@
+ 
+     @Override
+     public void updateInternal(List<V> valueToStore) {
++        invalidateReadView();
+         try {
+             switch (listStrategy) {
+                 case LONG_ELEM_LONG_VOID: {
+@@ -332,6 +355,7 @@
+ 
+     @Override
+     public void clear() {
++        invalidateReadView();
+         try {
+             switch (listStrategy) {
+                 case LONG_ELEM_LONG_VOID:
+--- a/src/main/java/org/apache/flink/state/forl0/ForL0MapState.java
++++ b/src/main/java/org/apache/flink/state/forl0/ForL0MapState.java
+@@ -60,6 +60,7 @@
+         LONG_MAP_VOID, LONG_MAP_TW, GENERIC
+     }
+     private final MapStrategy mapStrategy;
++    private final PrimitiveLongAccess primitiveAccess;
+ 
+     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
+     private final DataOutputSerializer ukOut = new DataOutputSerializer(64);
+@@ -76,7 +77,8 @@
+         if (!denseChecked || denseKey != key || denseKeyGroup != keyGroup
+                 || (denseAddress == 0 && ++denseProbeCount >= 64)
+                 || (denseAddress != 0 && MEMORY.getLongVolatile(null, denseEpochAddress) != denseEpoch)) {
+-            NativeEngine.mapLongLongDenseView(stateHandle, key, keyGroup, denseView);
++            if(primitiveAccess==null || !primitiveAccess.fullMapView(key,keyGroup,denseView))
++                NativeEngine.mapLongLongDenseView(stateHandle, key, keyGroup, denseView);
+             denseKey=key; denseKeyGroup=keyGroup; denseChecked=true; denseProbeCount=0;
+             denseAddress=denseView[0]; denseSpan=denseView[1];
+             denseEpochAddress=denseView[2]; denseEpoch=denseView[3];
+@@ -128,6 +130,7 @@
+         } else {
+             this.mapStrategy = MapStrategy.GENERIC;
+         }
++        this.primitiveAccess=mapStrategy==MapStrategy.LONG_LONG_VOID?new PrimitiveLongAccess(stateHandle):null;
+     }
+ 
+     /**
+@@ -181,6 +184,7 @@
+             long key = resolveKeyAsLong(keyContext.currentKey);
+             long mapKey = resolveUKAsLong(userKey);
+             long address=denseSlot(key,keyContext.currentKeyGroupIndex,mapKey);
++            if(address==0)address=primitiveAccess.mapValueSlot(key,keyContext.currentKeyGroupIndex,mapKey);
+             if (address!=0) return wrapLongAsUV(MEMORY.getLong(address));
+             long value = NativeEngine.mapGetLongLong(stateHandle, key,
+                     keyContext.currentKeyGroupIndex, mapKey);
+@@ -245,7 +249,8 @@
+             long value=resolveUVAsLong(userValue);
+             long address=denseSlot(key,keyContext.currentKeyGroupIndex,mapKey);
+             if (address!=0) MEMORY.putLong(address,value);
+-            else NativeEngine.mapPutLongLong(stateHandle,key,keyContext.currentKeyGroupIndex,mapKey,value);
++            else if(!primitiveAccess.putMap(key,keyContext.currentKeyGroupIndex,mapKey,value))
++                NativeEngine.mapPutLongLong(stateHandle,key,keyContext.currentKeyGroupIndex,mapKey,value);
+             return;
+         }
+         putOther(userKey, userValue);
+@@ -293,8 +298,25 @@
+         if (newMap == null || newMap.isEmpty()) {
+             return;
+         }
++        if(mapStrategy==MapStrategy.LONG_LONG_VOID
++                && primitiveAccess.fullMapView(resolveKeyAsLong(keyContext.currentKey),
++                        keyContext.currentKeyGroupIndex,denseView) && denseView[0]!=0) {
++            putAllDense(newMap,denseView[0],denseView[1],denseView[2],denseView[3]);
++            return;
++        }
+         for (Map.Entry<UK, UV> entry : newMap.entrySet()) {
+             put(entry.getKey(), entry.getValue());
++        }
++    }
++
++    private void putAllDense(Map<UK,UV> values,long base,long span,long epochAddress,long epoch) {
++        for(Map.Entry<UK,UV> entry:values.entrySet()) {
++            long key=resolveUKAsLong(entry.getKey()),value=resolveUVAsLong(entry.getValue());
++            // An out-of-range insertion can promote the row and free its dense
++            // buffer. Recheck the epoch after obtaining each input entry.
++            if(key>=0 && key<span && MEMORY.getLongVolatile(null,epochAddress)==epoch)
++                MEMORY.putLong(base+key*8,value);
++            else put(entry.getKey(),entry.getValue());
+         }
+     }
+ 
+@@ -359,6 +381,8 @@
+             long k;
+             switch (mapStrategy) {
+                 case LONG_LONG_VOID:
++                    if(primitiveAccess.removeMap(resolveKeyAsLong(keyContext.currentKey),
++                            keyContext.currentKeyGroupIndex,resolveUKAsLong(userKey)))return;
+                     NativeEngine.mapRemoveLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                             keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
+                     return;
+--- a/src/main/java/org/apache/flink/state/forl0/ForL0ValueState.java
++++ b/src/main/java/org/apache/flink/state/forl0/ForL0ValueState.java
+@@ -79,6 +79,7 @@
+         GENERIC              // fallback (generic namespace / unsupported key type)
+     }
+     private final KeyNsStrategy keyNsStrategy;
++    private final PrimitiveLongAccess primitiveAccess;
+ 
+     ForL0ValueState(
+             long stateHandle,
+@@ -131,6 +132,9 @@
+         } else {
+             this.keyNsStrategy = KeyNsStrategy.GENERIC;
+         }
++        this.primitiveAccess=keyNsStrategy==KeyNsStrategy.LONG_VOID && !isRowDataValue
++                && valueSerializer instanceof org.apache.flink.api.common.typeutils.base.LongSerializer
++                ?new PrimitiveLongAccess(stateHandle):null;
+     }
+ 
+     @Override
+@@ -146,6 +150,8 @@
+     private V primitiveLongValue() {
+         long key = (Long) keyContext.currentKey;
+         int group = keyContext.currentKeyGroupIndex;
++        long direct=primitiveAccess==null?0:primitiveAccess.row(key,group);
++        if(direct!=0)return (V)new Long(PrimitiveLongAccess.read(direct));
+         long value = NativeEngine.valueGetLongLong(stateHandle, key, group);
+         if (value == 0L) {
+             if (!NativeEngine.valueGetLongLongSafe(stateHandle, key, group, primitiveBuf))
+@@ -440,6 +446,10 @@
+ 
+     @Override
+     public void update(V value) {
++        if(primitiveAccess!=null) {
++            long key=(Long)keyContext.currentKey;int group=keyContext.currentKeyGroupIndex;
++            if(value==null?primitiveAccess.clear(key,group):primitiveAccess.put(key,group,(Long)value))return;
++        }
+         if (value != null && keyNsStrategy == KeyNsStrategy.LONG_VOID
+                 && valueTypeId == TypeAnalyzer.TYPE_INT64 && !isRowDataValue) {
+             NativeEngine.valuePutLongLong(stateHandle, (Long) keyContext.currentKey,
+@@ -583,6 +593,8 @@
+ 
+     @Override
+     public void clear() {
++        if(primitiveAccess!=null && primitiveAccess.clear((Long)keyContext.currentKey,
++                keyContext.currentKeyGroupIndex))return;
+         K key = keyContext.currentKey;
+         int keyGroup = keyContext.currentKeyGroupIndex;
+ 
+--- a/src/main/java/org/apache/flink/state/forl0/NativeEngine.java
++++ b/src/main/java/org/apache/flink/state/forl0/NativeEngine.java
+@@ -273,6 +273,11 @@
+     public static native void listAddGeneric(long stateHandle, byte[] key, int keyGroup, byte[] element);
+ 
+     /** Get list elements as long[] (int64 key + long elements). Returns null if absent. */
++    public static native long[] primitiveLongDirectory(long handle);
++
++    public static native Iterable<Long> listGetLongView(long stateHandle, long key, int keyGroup);
++    public static native void releaseLongListView(long token);
++
+     public static native long[] listGetLongElements(long stateHandle, long key, int keyGroup);
+ 
+     /** Replace entire list with long[] (int64 key + long elements). */
+--- a/src/main/java/org/apache/flink/state/forl0/NativeLongListSnapshot.java
++++ b/src/main/java/org/apache/flink/state/forl0/NativeLongListSnapshot.java
+@@ -0,0 +1,53 @@
++package org.apache.flink.state.forl0;
++
++import java.lang.ref.Cleaner;
++import java.lang.ref.Reference;
++import java.util.Iterator;
++import java.util.NoSuchElementException;
++
++/** Immutable native read snapshot, reusable until this list is modified. */
++final class NativeLongListSnapshot implements Iterable<Long> {
++    private static final Cleaner CLEANER = Cleaner.create();
++    private static final sun.misc.Unsafe MEMORY = org.apache.flink.core.memory.MemoryUtils.UNSAFE;
++    private final long address;
++    private final long[] array;
++    final long version;
++    final int keyGroup;
++    private final int size;
++    private final Cleaner.Cleanable cleanable;
++
++    private static final class Release implements Runnable {
++        private final long token;
++        Release(long token) { this.token=token; }
++        public void run() { NativeEngine.releaseLongListView(token); }
++    }
++
++    NativeLongListSnapshot(long[] array) {
++        this.array=array;this.address=0;this.size=array.length;
++        this.version=0;this.keyGroup=-1;this.cleanable=null;
++    }
++
++    NativeLongListSnapshot(long token,long address,long version,int size,int keyGroup) {
++        this.array=null;
++        this.version=version;this.keyGroup=keyGroup;
++        this.address=address;
++        this.size=size;
++        this.cleanable=CLEANER.register(this,new Release(token));
++    }
++
++    public Iterator<Long> iterator() { return new Values(this); }
++
++    private static final class Values implements Iterator<Long> {
++        private final NativeLongListSnapshot owner;
++        private int index;
++        Values(NativeLongListSnapshot owner) { this.owner=owner; }
++        public boolean hasNext() { return index<owner.size; }
++        public Long next() {
++            if(index>=owner.size)throw new NoSuchElementException();
++            int i=index++;
++            long value=owner.array!=null?owner.array[i]:MEMORY.getLong(owner.address+8L*i);
++            Reference.reachabilityFence(owner);
++            return new Long(value);
++        }
++    }
++}
+--- a/src/main/java/org/apache/flink/state/forl0/PrimitiveLongAccess.java
++++ b/src/main/java/org/apache/flink/state/forl0/PrimitiveLongAccess.java
+@@ -0,0 +1,160 @@
++package org.apache.flink.state.forl0;
++
++/** Native pages have stable addresses for the lifetime of a keyed backend. */
++final class PrimitiveLongAccess {
++    private static final sun.misc.Unsafe M=org.apache.flink.core.memory.MemoryUtils.UNSAFE;
++    private static final long ARRAY_BASE=M.arrayBaseOffset(long[].class);
++    private final long pages,blocked,counts,stride,valueOffset,epoch;
++    private final int startGroup;
++    PrimitiveLongAccess(long handle) {
++        long[] info=NativeEngine.primitiveLongDirectory(handle);
++        pages=info==null?0:info[0];blocked=info==null?0:info[1];counts=info==null?0:info[2];
++        epoch=info==null?0:info[6];
++        startGroup=info==null?0:(int)info[3];stride=info==null?0:info[4];valueOffset=info==null?0:info[5];
++    }
++    private long page(long key) {
++        return pages!=0 && key>=0 && key<(1L<<24)?M.getLong(pages+(key>>>8)*8):0;
++    }
++    long row(long key,int group) {
++        long p=page(key);int index=(int)key&255;
++        return p!=0 && M.getInt(p+index*4L)==group?p+valueOffset+index*stride:0;
++    }
++    // Direct mutations run on the mailbox thread, and are blocked throughout
++    // asynchronous snapshots. Snapshot preparation publishes preceding writes
++    // through the per-group mutex before handing work to the snapshot thread.
++    // Existing page tags therefore need ordinary aligned stores on this path;
++    // a per-record release store adds no synchronization with a concurrent reader.
++    boolean put(long key,int group,long value) {
++        if(pages==0 || M.getLongVolatile(null,blocked)!=0)return false;
++        long p=page(key);if(p==0)return false;
++        int index=(int)key&255;long tag=p+index*4L;
++        int owner=M.getInt(tag);
++        if(owner==group) {M.putLong(p+valueOffset+index*stride,value);return true;}
++        // A tombstone for this group proves that no fallback entry exists for
++        // this key/group. Virgin slots and group collisions use native insertion.
++        if(owner!=-2-group)return false;
++        M.putLong(p+valueOffset+index*stride,value);
++        M.putInt(tag,group);
++        long counter=counts+(group-startGroup)*8L;M.putLong(counter,M.getLong(counter)+1);
++        return true;
++    }
++    boolean clear(long key,int group) {
++        if(pages==0 || M.getLongVolatile(null,blocked)!=0)return false;
++        long p=page(key);if(p==0)return false;
++        long tag=p+((int)key&255)*4L;int owner=M.getInt(tag);
++        if(owner==-2-group)return true;
++        if(owner!=group)return false;
++        M.putInt(tag,-2-group);
++        long counter=counts+(group-startGroup)*8L;M.putLong(counter,M.getLong(counter)-1);
++        return true;
++    }
++    boolean append(long key,int group,long value) {
++        if(pages==0 || M.getLongVolatile(null,blocked)!=0)return false;
++        long row=row(key,group);
++        if(row==0 || (M.getLong(row+24)&1)!=0)return false;
++        long end=M.getLong(row+8),limit=M.getLong(row+16);
++        if(end==limit)return false;
++        M.putLong(end,value);M.putLong(row+8,end+8);listChanged(row);return true;
++    }
++    boolean writeList(long key,int group,long[] values,boolean append) {
++        if(pages==0 || M.getLongVolatile(null,blocked)!=0)return false;
++        long row=row(key,group);
++        if(row==0 || (M.getLong(row+24)&1)!=0)return false;
++        long begin=M.getLong(row),end=append?M.getLong(row+8):begin;
++        long bytes=values.length*8L;
++        if(M.getLong(row+16)-end<bytes)return false;
++        M.copyMemory(values,ARRAY_BASE,null,end,bytes);M.putLong(row+8,end+bytes);listChanged(row);return true;
++    }
++    static long[] copyList(long row) {
++        long first=M.getLong(row),bytes=M.getLong(row+8)-first;
++        if(bytes==0)return null;
++        long[] copy=new long[(int)(bytes>>>3)];
++        M.copyMemory(null,first,copy,ARRAY_BASE,bytes);
++        return copy;
++    }
++    private static void listChanged(long row) {
++        M.putLong(row+24,0);M.putLong(row+32,M.getLong(row+32)+1);
++    }
++    static boolean cacheListRead(long row) {
++        long reads=M.getLong(row+24);
++        if((reads&1)!=0 || reads>=16)return true;
++        M.putLong(row+24,reads+2);return false;
++    }
++    private void mapChanged() {M.putOrderedLong(null,epoch,M.getLong(epoch)+1);}
++    boolean fullMapView(long key,int group,long[] out) {
++        if(pages==0)return false;
++        long p=page(key);if(p==0)return false;
++        int i=(int)key&255;int owner=M.getInt(p+i*4L);
++        if(owner!=group && owner!=-2-group)return false;
++        out[0]=0;out[1]=0;out[2]=epoch;out[3]=M.getLongVolatile(null,epoch);
++        if(owner!=group || M.getLongVolatile(null,blocked)!=0)return true;
++        long row=p+valueOffset+i*stride;
++        long span=M.getLong(row+32),used=M.getLong(row+16);
++        if(span!=0 && M.getLong(row+24)==0 && M.getLong(used)==span) {
++            out[0]=M.getLong(row);out[1]=span;
++        }
++        return true;
++    }
++    long mapValueSlot(long key,int group,long mapKey) {
++        long row=row(key,group);if(row==0)return 0;
++        long span=M.getLong(row+32);if(span==0)return 0;
++        long keys=M.getLong(row+24),values=M.getLong(row);
++        if(keys!=0) {
++            int n=(int)M.getLong(M.getLong(row+16));
++            for(int i=0;i<n;i++)if(M.getLong(keys+i*8L)==mapKey)return values+i*8L;
++            return 0;
++        }
++        if(mapKey<0 || mapKey>=span)return 0;
++        long bits=M.getLong(M.getLong(row+8)+(mapKey>>>6)*8);
++        return (bits&(1L<<(int)mapKey))!=0?values+mapKey*8:0;
++    }
++    boolean putMap(long key,int group,long mapKey,long value) {
++        if(pages==0 || M.getLongVolatile(null,blocked)!=0)return false;
++        long p=page(key);if(p==0)return false;
++        int i=(int)key&255;long tag=p+i*4L;int owner=M.getInt(tag);
++        if(owner!=group && owner!=-2-group)return false;
++        long row=p+valueOffset+i*stride,span=M.getLong(row+32);
++        if(span==0)return false;
++        long keys=M.getLong(row+24),values=M.getLong(row),used=M.getLong(row+16);
++        if(keys!=0) {
++            int n=(int)M.getLong(used);
++            for(int j=0;j<n;j++)if(M.getLong(keys+j*8L)==mapKey) {
++                M.putLong(values+j*8L,value);return true;
++            }
++            if(n==4)return false;
++            M.putLong(keys+n*8L,mapKey);M.putLong(values+n*8L,value);M.putLong(used,n+1);
++            if(owner!=group) {
++                M.putInt(tag,group);
++                long counter=counts+(group-startGroup)*8L;M.putLong(counter,M.getLong(counter)+1);
++            }
++            mapChanged();return true;
++        }
++        if(owner!=group || mapKey<0 || mapKey>=span)return false;
++        long word=M.getLong(row+8)+(mapKey>>>6)*8,mask=1L<<(int)mapKey,bits=M.getLong(word);
++        M.putLong(values+mapKey*8,value);
++        if((bits&mask)==0){M.putLong(word,bits|mask);M.putLong(used,M.getLong(used)+1);mapChanged();}
++        return true;
++    }
++    boolean removeMap(long key,int group,long mapKey) {
++        if(pages==0 || M.getLongVolatile(null,blocked)!=0)return false;
++        long row=row(key,group);if(row==0)return false;
++        long span=M.getLong(row+32);if(span==0)return false;
++        long used=M.getLong(row+16),n=M.getLong(used),keys=M.getLong(row+24);
++        if(keys!=0) {
++            long values=M.getLong(row);
++            for(int j=0;j<n;j++)if(M.getLong(keys+j*8L)==mapKey) {
++                if(n==1)return false;
++                M.putLong(keys+j*8L,M.getLong(keys+(n-1)*8));
++                M.putLong(values+j*8L,M.getLong(values+(n-1)*8));
++                M.putLong(used,n-1);mapChanged();return true;
++            }
++            return true;
++        }
++        if(mapKey<0 || mapKey>=span)return true;
++        long word=M.getLong(row+8)+(mapKey>>>6)*8,mask=1L<<(int)mapKey,bits=M.getLong(word);
++        if((bits&mask)==0)return true;
++        if(n==1)return false;
++        M.putLong(word,bits&~mask);M.putLong(used,n-1);mapChanged();return true;
++    }
++    static long read(long address) {return M.getLong(address);}
++}
+--- a/src/main/native/engine/long_element_list.h
++++ b/src/main/native/engine/long_element_list.h
+@@ -0,0 +1,77 @@
++#pragma once
++#include <vector>
++#include <memory>
++#include <cstdint>
++#include <cstring>
++#include <algorithm>
++#include <stdexcept>
++
++namespace forl0 {
++// Explicit primitive-buffer header. Java may append/replace in existing capacity
++// only when no snapshot is active and no immutable read view is published.
++class LongElementList {
++public:
++    int64_t* first=nullptr;
++    int64_t* last=nullptr;
++    int64_t* limit=nullptr;
++    uint64_t view_published=0;
++    uint64_t version=0;
++    mutable std::shared_ptr<void> read_cache;
++    LongElementList()=default;
++    LongElementList(const LongElementList& o){assign(o.begin(),o.end());}
++    LongElementList(LongElementList&& o)noexcept{swap(o);}
++    explicit LongElementList(const std::vector<int64_t>& o){assign(o.begin(),o.end());}
++    LongElementList(std::initializer_list<int64_t> o){assign(o.begin(),o.end());}
++    ~LongElementList(){delete[] first;}
++    LongElementList& operator=(const LongElementList& o){if(this!=&o)assign(o.begin(),o.end());return *this;}
++    LongElementList& operator=(const std::vector<int64_t>& o){assign(o.begin(),o.end());return *this;}
++    LongElementList& operator=(LongElementList&& o)noexcept{
++        const uint64_t next=version+1;LongElementList tmp(std::move(o));swap(tmp);version=next;return *this;
++    }
++    void swap(LongElementList& o)noexcept {
++        std::swap(first,o.first);std::swap(last,o.last);std::swap(limit,o.limit);
++        std::swap(view_published,o.view_published);std::swap(version,o.version);read_cache.swap(o.read_cache);
++    }
++    void invalidate_view(){read_cache.reset();view_published=0;++version;}
++    void publish_view(std::shared_ptr<void> v)const {
++        read_cache=std::move(v);const_cast<LongElementList*>(this)->view_published=1;
++    }
++    size_t size()const{return first?size_t(last-first):0;}
++    size_t capacity()const{return first?size_t(limit-first):0;}
++    bool empty()const{return last==first;}
++    const int64_t* begin()const{return first;}
++    const int64_t* end()const{return last;}
++    const int64_t* data()const{return first;}
++    int64_t* begin(){invalidate_view();return first;}
++    int64_t* end(){invalidate_view();return last;}
++    int64_t* data(){invalidate_view();return first;}
++    const int64_t& operator[](size_t i)const{return first[i];}
++    int64_t& operator[](size_t i){invalidate_view();return first[i];}
++    void clear(){invalidate_view();last=first;}
++    void reserve(size_t n) {
++        if(n<=capacity())return;
++        const size_t old=size();
++        std::unique_ptr<int64_t[]> p(new int64_t[n]);
++        if(old)std::memcpy(p.get(),first,old*sizeof(int64_t));
++        delete[] first;first=p.release();last=first+old;limit=first+n;
++    }
++    void resize(size_t n) {
++        invalidate_view();const size_t old=size();
++        if(n>capacity())reserve(std::max(n,std::max(size_t(1),capacity()*2)));
++        if(n>old)std::fill(first+old,first+n,0);
++        last=first?first+n:nullptr;
++    }
++    void push_back(int64_t v) {
++        invalidate_view();if(last==limit)reserve(std::max(size_t(1),capacity()*2));
++        *last++=v;
++    }
++    template<class It>void assign(It begin,It end) {
++        invalidate_view();const size_t n=begin==end?0:size_t(end-begin);reserve(n);
++        if(n)std::copy(begin,end,first);
++        last=first?first+n:nullptr;
++    }
++};
++static_assert(offsetof(LongElementList,first)==0 && offsetof(LongElementList,last)==8
++        && offsetof(LongElementList,limit)==16 && offsetof(LongElementList,view_published)==24
++        && offsetof(LongElementList,version)==32,"PrimitiveLongAccess list header ABI");
++}
+--- a/src/main/native/engine/long_inner_map.h
++++ b/src/main/native/engine/long_inner_map.h
+@@ -20,6 +20,13 @@
+ // Arbitrary keys promote them back to hashing; the public MapState API and
+ // checkpoint iteration still expose ordinary key/value pairs.
+ class LongInnerMap {
++    struct DirectHeader {
++        int64_t* values=nullptr;
++        uint64_t* present=nullptr;
++        size_t* used=nullptr;
++        int64_t* keys=nullptr;
++        uint64_t span=0;
++    } direct_;
+     using Hash = std::unordered_map<int64_t, int64_t>;
+     struct Dense {
+         std::vector<int64_t> values;
+@@ -29,18 +36,32 @@
+         bool has(size_t i) const { return (valid[i / 64] >> (i % 64)) & 1; }
+         void mark(size_t i) { valid[i / 64] |= uint64_t(1) << (i % 64); }
+     };
+-    std::variant<Hash, Dense> storage_;
++    struct Small {
++        int64_t keys[4],values[4];
++        size_t used=0;
++    };
++    std::variant<Hash, Dense, Small> storage_{Small{}};
++    Small* small(){return std::get_if<Small>(&storage_);}
++    const Small* small()const{return std::get_if<Small>(&storage_);}
+     Dense* dense() { return std::get_if<Dense>(&storage_); }
+     const Dense* dense() const { return std::get_if<Dense>(&storage_); }
+     Hash& hash() { return std::get<Hash>(storage_); }
+     const Hash& hash() const { return std::get<Hash>(storage_); }
++    void refresh_direct_header() {
++        if(auto* m=small())direct_={m->values,nullptr,&m->used,m->keys,4};
++        else if(auto* d=dense())direct_={d->values.data(),d->valid.data(),&d->used,nullptr,d->values.size()};
++        else direct_={};
++    }
+     void promote_hash() {
+-        const auto& d = *dense();
+         Hash h;
+-        h.reserve(d.used);
+-        for (size_t i = 0; i < d.values.size(); ++i)
+-            if (d.has(i)) h.emplace(static_cast<int64_t>(i), d.values[i]);
+-        storage_ = std::move(h);
++        if(auto* m=small()) {
++            h.reserve(std::max(size_t(8),m->used));
++            for(size_t i=0;i<m->used;++i)h.emplace(m->keys[i],m->values[i]);
++        } else {
++            const auto& d=*dense();h.reserve(d.used);
++            for(size_t i=0;i<d.values.size();++i)if(d.has(i))h.emplace(int64_t(i),d.values[i]);
++        }
++        storage_=std::move(h);refresh_direct_header();
+     }
+ public:
+     template<bool Const> class Iter {
+@@ -56,6 +77,7 @@
+         mutable std::optional<Entry> arrow_;
+         void skip() {
+             auto* d = owner_->dense();
++            if(!d)return;
+             while (index_ < d->values.size() && !d->has(index_)) ++index_;
+         }
+     public:
+@@ -68,29 +90,35 @@
+         }
+         Entry operator*() const {
+             if (auto* d = owner_->dense()) return {static_cast<int64_t>(index_), d->values[index_]};
++            if(auto* m=owner_->small())return {m->keys[index_],m->values[index_]};
+             return {hash_it_->first, hash_it_->second};
+         }
+         const Entry* operator->() const { arrow_.emplace(operator*()); return &*arrow_; }
+         Iter& operator++() {
+             arrow_.reset();
+-            if (owner_->dense()) { ++index_; skip(); } else ++hash_it_;
++            if (owner_->dense() || owner_->small()) { ++index_; skip(); } else ++hash_it_;
+             return *this;
+         }
+         Iter operator++(int) { auto old=*this; ++*this; return old; }
+         bool operator==(const Iter& o) const {
+             if (owner_ != o.owner_) return false;
+             if (!owner_) return true;
+-            return owner_->dense() ? index_ == o.index_ : hash_it_ == o.hash_it_;
++            return (owner_->dense() || owner_->small()) ? index_ == o.index_ : hash_it_ == o.hash_it_;
+         }
+         bool operator!=(const Iter& o) const { return !(*this == o); }
+     };
+     using iterator = Iter<false>;
+     using const_iterator = Iter<true>;
+-    LongInnerMap() = default;
++    LongInnerMap(){refresh_direct_header();}
++    LongInnerMap(const LongInnerMap& o):storage_(o.storage_){refresh_direct_header();}
++    LongInnerMap(LongInnerMap&& o)noexcept:storage_(std::move(o.storage_)){refresh_direct_header();o.refresh_direct_header();}
++    LongInnerMap& operator=(const LongInnerMap& o){storage_=o.storage_;refresh_direct_header();return *this;}
++    LongInnerMap& operator=(LongInnerMap&& o)noexcept{storage_=std::move(o.storage_);refresh_direct_header();o.refresh_direct_header();return *this;}
+     LongInnerMap(std::initializer_list<std::pair<int64_t,int64_t>> items) {
+         for (const auto& kv : items) emplace(kv.first,kv.second);
+-    }
+-    size_t size() const { auto* d=dense(); return d ? d->used : hash().size(); }
++        refresh_direct_header();
++    }
++    size_t size() const { auto* d=dense(); return d ? d->used : small()?small()->used:hash().size(); }
+     bool empty() const { return size()==0; }
+     bool is_dense() const { return dense()!=nullptr; }
+     int64_t* full_dense_data(size_t& span) {
+@@ -99,25 +127,34 @@
+         span=d->values.size();
+         return d->values.data();
+     }
+-    void reserve(size_t n) { if (!dense()) hash().reserve(n); }
++    void reserve(size_t n) { if(small() && n>4)promote_hash();if (!dense() && !small()) hash().reserve(n); }
+     void clear() {
+         if (auto* d=dense()) { std::fill(d->valid.begin(),d->valid.end(),0); d->used=0; }
++        else if(auto* m=small())m->used=0;
+         else hash().clear();
+     }
+-    iterator begin() { return dense()?iterator(this,size_t(0)):iterator(this,hash().begin()); }
+-    iterator end() { return dense()?iterator(this,dense()->values.size()):iterator(this,hash().end()); }
+-    const_iterator begin() const { return dense()?const_iterator(this,size_t(0)):const_iterator(this,hash().begin()); }
+-    const_iterator end() const { return dense()?const_iterator(this,dense()->values.size()):const_iterator(this,hash().end()); }
++    iterator begin() { return dense() || small()?iterator(this,size_t(0)):iterator(this,hash().begin()); }
++    iterator end() { return dense() || small()?iterator(this,dense()?dense()->values.size():small()->used):iterator(this,hash().end()); }
++    const_iterator begin() const { return dense() || small()?const_iterator(this,size_t(0)):const_iterator(this,hash().begin()); }
++    const_iterator end() const { return dense() || small()?const_iterator(this,dense()?dense()->values.size():small()->used):const_iterator(this,hash().end()); }
+     iterator find(int64_t key) {
+         if (auto* d=dense()) {
+             if (key>=0 && uint64_t(key)<d->values.size() && d->has(key)) return iterator(this,size_t(key));
+             return end();
+         }
++        if(auto* m=small()) {
++            for(size_t i=0;i<m->used;++i)if(m->keys[i]==key)return iterator(this,i);
++            return end();
++        }
+         return iterator(this,hash().find(key));
+     }
+     const_iterator find(int64_t key) const {
+         if (auto* d=dense()) {
+             if (key>=0 && uint64_t(key)<d->values.size() && d->has(key)) return const_iterator(this,size_t(key));
++            return end();
++        }
++        if(auto* m=small()) {
++            for(size_t i=0;i<m->used;++i)if(m->keys[i]==key)return const_iterator(this,i);
+             return end();
+         }
+         return const_iterator(this,hash().find(key));
+@@ -125,6 +162,10 @@
+     const int64_t* find_value(int64_t key) const {
+         if (const auto* d=dense()) {
+             if (key>=0 && uint64_t(key)<d->values.size() && d->has(key)) return &d->values[key];
++            return nullptr;
++        }
++        if(auto* m=small()) {
++            for(size_t i=0;i<m->used;++i)if(m->keys[i]==key)return &m->values[i];
+             return nullptr;
+         }
+         auto it=hash().find(key);
+@@ -140,6 +181,13 @@
+     }
+     size_t count(int64_t key) const { return find_value(key)!=nullptr; }
+     std::pair<iterator,bool> emplace(int64_t key,int64_t value) {
++        if(auto* m=small()) {
++            for(size_t i=0;i<m->used;++i)if(m->keys[i]==key)return {iterator(this,i),false};
++            if(m->used<4) {
++                size_t i=m->used++;m->keys[i]=key;m->values[i]=value;return {iterator(this,i),true};
++            }
++            promote_hash();
++        }
+         if (auto* d=dense()) {
+             if (key>=0 && uint64_t(key)<d->values.size()) {
+                 bool added=!d->has(key);
+@@ -166,6 +214,12 @@
+     }
+     int64_t& operator[](int64_t key) { return emplace(key,0).first->second; }
+     size_t erase(int64_t key) {
++        if(auto* m=small()) {
++            for(size_t i=0;i<m->used;++i)if(m->keys[i]==key) {
++                --m->used;m->keys[i]=m->keys[m->used];m->values[i]=m->values[m->used];return 1;
++            }
++            return 0;
++        }
+         if (auto* d=dense()) {
+             if (key<0 || uint64_t(key)>=d->values.size() || !d->has(key)) return 0;
+             d->valid[key/64] &= ~(uint64_t(1)<<(key%64)); --d->used; return 1;
+@@ -215,10 +269,10 @@
+     bool enable_dense(int64_t span) {
+         if (span<=0 || span>256) return false;
+         if (auto* d=dense()) return d->values.size()>=size_t(span);
+-        for (const auto& kv:hash()) if (kv.first<0 || kv.first>=span) return false;
++        for (const auto& kv:*this) if (kv.first<0 || kv.first>=span) return false;
+         Dense d(static_cast<size_t>(span));
+-        for (const auto& kv:hash()) { d.values[kv.first]=kv.second; d.mark(kv.first); ++d.used; }
+-        storage_=std::move(d); return true;
++        for (const auto& kv:*this) { d.values[kv.first]=kv.second; d.mark(kv.first); ++d.used; }
++        storage_=std::move(d); refresh_direct_header(); return true;
+     }
+ };
+ } // namespace forl0
+--- a/src/main/native/engine/long_key_table.h
++++ b/src/main/native/engine/long_key_table.h
+@@ -0,0 +1,148 @@
++#pragma once
++
++#include "swiss_table.h"
++#include <memory>
++#include <vector>
++#include <atomic>
++
++namespace forl0 {
++
++// One directory per state, shared by its key groups. A key-group tag prevents
++// aliases even when a caller explicitly places the same key in two groups.
++// Only a growing, sufficiently occupied small-integer domain uses pages;
++// sparse, negative and large keys remain in the ordinary Swiss table.
++template<class V> class LongKeyDirectory {
++public:
++    static constexpr size_t PAGE_BITS=8, PAGE_SIZE=1<<PAGE_BITS;
++    static constexpr size_t LIMIT=1<<24, PAGE_COUNT=LIMIT/PAGE_SIZE;
++    struct Page {
++        std::atomic<int32_t> groups[PAGE_SIZE];
++        V values[PAGE_SIZE];
++        Page() { for(auto& g:groups)g.store(-1,std::memory_order_relaxed); }
++    };
++    explicit LongKeyDirectory(Allocator* alloc,int start,int groups):alloc_(alloc),counts_(groups),start_(start) {
++        pages_=static_cast<std::atomic<Page*>*>(alloc_->allocate(PAGE_COUNT*sizeof(std::atomic<Page*>),8));
++        for(size_t i=0;i<PAGE_COUNT;++i)new(pages_+i)std::atomic<Page*>(nullptr);
++    }
++    ~LongKeyDirectory() {
++        for(auto i:allocated_) { auto* p=pages_[i].load(std::memory_order_relaxed);p->~Page(); alloc_->deallocate(p,sizeof(Page)); }
++        if(pages_) alloc_->deallocate(pages_,PAGE_COUNT*sizeof(Page*));
++    }
++    Page* page(int64_t key) const {
++        return uint64_t(key)<LIMIT && pages_ ? pages_[size_t(key)>>PAGE_BITS].load(std::memory_order_acquire) : nullptr;
++    }
++    Page* for_insert(int64_t key) {
++        if(uint64_t(key)>=LIMIT) return nullptr;
++        if(auto* p=page(key)) return p;
++        if(size_t(key)>frontier_+4096 || allocated_.size()*PAGE_SIZE>peak_entries_*4+4096) return nullptr;
++        void* mem=alloc_->allocate(sizeof(Page),std::max(size_t(8),alignof(Page)));
++        Page* p;
++        try { p=new(mem) Page(); }
++        catch(...) { alloc_->deallocate(mem,sizeof(Page));throw; }
++        const size_t index=size_t(key)>>PAGE_BITS;
++        try { allocated_.push_back(index); }
++        catch(...) { p->~Page();alloc_->deallocate(mem,sizeof(Page));throw; }
++        pages_[index].store(p,std::memory_order_release);frontier_=std::max(frontier_,size_t(key));
++        return p;
++    }
++    uintptr_t pages_address() const {return reinterpret_cast<uintptr_t>(pages_);}
++    uintptr_t counts_address() {return reinterpret_cast<uintptr_t>(counts_.data());}
++    uint64_t& count(int group){return counts_[group-start_];}
++    void inserted(bool virgin) { if(virgin)++peak_entries_; }
++    void erased() {}
++    template<class F> void each(int group,F&& fn) const {
++        for(size_t i=0;i<PAGE_COUNT;++i) {
++            auto* p=pages_[i].load(std::memory_order_acquire);
++            if(!p)continue;
++            for(size_t j=0;j<PAGE_SIZE;++j)
++                if(p->groups[j].load(std::memory_order_acquire)==group) fn(int64_t((i<<PAGE_BITS)+j),p->values[j]);
++        }
++    }
++private:
++    Allocator* alloc_;
++    std::atomic<Page*>* pages_=nullptr;
++    std::vector<size_t> allocated_;
++    size_t peak_entries_=0,frontier_=0;
++    std::vector<uint64_t> counts_;
++    int start_;
++};
++
++template<class K,class V> class LongKeyTable:public SwissTable<K,V> {
++public:
++    using SwissTable<K,V>::SwissTable;
++    void attach(LongKeyDirectory<V>*,int) {}
++};
++
++template<class V> class LongKeyTable<int64_t,V> {
++    using Hash=SwissTable<int64_t,V>;
++    Hash fallback_;
++    LongKeyDirectory<V>* directory_=nullptr;
++    int group_=0;
++    template<class VV> std::pair<V*,bool> assign(int64_t key,VV&& value,bool overwrite) {
++        if(directory_) {
++            auto* p=directory_->page(key);
++            size_t j=size_t(key)&255;
++            if(p && p->groups[j].load(std::memory_order_acquire)==group_) {
++                if(overwrite)p->values[j]=std::forward<VV>(value);
++                return {&p->values[j],false};
++            }
++            // A key may have entered the fallback before its page was allocated.
++            if(auto* old=fallback_.find(key)) {
++                if(overwrite)*old=std::forward<VV>(value);
++                return {old,false};
++            }
++            if(!p)p=directory_->for_insert(key);
++            if(p && p->groups[j].load(std::memory_order_relaxed)<0) {
++                const bool virgin=p->groups[j].load(std::memory_order_relaxed)==-1;
++                p->values[j]=std::forward<VV>(value);
++                p->groups[j].store(group_,std::memory_order_release);++directory_->count(group_);directory_->inserted(virgin);
++                return {&p->values[j],true};
++            }
++        }
++        return overwrite?fallback_.insert_or_assign(key,std::forward<VV>(value)):
++                         fallback_.emplace(key,std::forward<VV>(value));
++    }
++public:
++    explicit LongKeyTable(size_t capacity=16,Allocator* a=&DefaultAllocator::instance(),
++                          size_t max_capacity=0,double load=.875):fallback_(capacity,a,max_capacity,load) {}
++    void attach(LongKeyDirectory<V>* d,int group){directory_=d;group_=group;}
++    V* find(int64_t key) {
++        if(directory_)if(auto* p=directory_->page(key)) {
++            auto j=size_t(key)&255;
++            if(p->groups[j].load(std::memory_order_acquire)==group_)return &p->values[j];
++        }
++        return fallback_.find(key);
++    }
++    const V* find(int64_t key) const {return const_cast<LongKeyTable*>(this)->find(key);}
++    std::pair<V*,bool> insert_or_assign(int64_t k,const V& v){return assign(k,v,true);}
++    std::pair<V*,bool> insert_or_assign(int64_t k,V&& v){return assign(k,std::move(v),true);}
++    template<class...Args>std::pair<V*,bool> emplace(int64_t k,Args&&...args) {
++        if(auto* v=find(k))return {v,false};
++        V v(std::forward<Args>(args)...);return assign(k,std::move(v),false);
++    }
++    bool erase(int64_t key) {
++        if(directory_)if(auto* p=directory_->page(key)) {
++            auto j=size_t(key)&255;
++            if(p->groups[j].load(std::memory_order_acquire)==group_) {
++                p->values[j]=V{};p->groups[j].store(-2-group_,std::memory_order_release);--directory_->count(group_);directory_->erased();return true;
++            }
++        }
++        return fallback_.erase(key);
++    }
++    size_t size()const{return (directory_?directory_->count(group_):0)+fallback_.size();}
++    bool empty()const{return size()==0;}
++    size_t capacity()const{return fallback_.capacity();}
++    void clear() {
++        if(directory_)directory_->each(group_,[&](int64_t key,V&){erase(key);});
++        fallback_.clear();
++    }
++    template<class F>void for_each(F&& f) {
++        if(directory_)directory_->each(group_,f);
++        fallback_.for_each(f);
++    }
++    template<class F>void for_each(F&& f)const {
++        if(directory_)directory_->each(group_,[&](int64_t k,const V& v){f(k,v);});
++        fallback_.for_each(f);
++    }
++};
++} // namespace forl0
+--- a/src/main/native/engine/state_engine.h
++++ b/src/main/native/engine/state_engine.h
+@@ -12,6 +12,7 @@
+ #include "hot_cache.h"
+ 
+ #include "swiss_table.h"
++#include "long_key_table.h"
+ #include "type_layout.h"
+ #include "allocator.h"
+ 
+@@ -37,7 +38,7 @@
+ template <typename K, typename V>
+ class StateTable {
+ public:
+-    using Table = SwissTable<K, V>;
++    using Table = LongKeyTable<K, V>;
+ 
+     StateTable(int start_key_group, int num_key_groups, bool void_namespace,
+                Allocator* alloc = &DefaultAllocator::instance(),
+@@ -54,10 +55,16 @@
+         // Always allocate flat tables — void-namespace API uses them directly,
+         // and they serve as fallback for non-void-namespace states when Java
+         // code calls void-namespace JNI functions (e.g., window operators).
++        if constexpr (std::is_same_v<K,int64_t> &&
++                (std::is_same_v<V,int64_t> || std::is_same_v<V,LongElementList> || std::is_same_v<V,InnerMapLongLong>)) {
++            if (void_namespace && max_table_capacity==0)
++                long_directory_=std::make_unique<LongKeyDirectory<V>>(alloc,start_key_group,num_key_groups);
++        }
+         tables_.resize(num_key_groups);
+         for (int i = 0; i < num_key_groups; ++i) {
+             tables_[i] = std::make_unique<Table>(initial_table_capacity_, alloc_,
+                                                  max_table_capacity_, max_load_factor_);
++            tables_[i]->attach(long_directory_.get(),i+start_key_group);
+         }
+         // COW state per key group
+         cow_states_.resize(num_key_groups);
+@@ -90,6 +97,9 @@
+             access_epoch_.fetch_add(1, std::memory_order_release);
+     }
+ 
++    LongKeyDirectory<V>* long_directory() {return long_directory_.get();}
++    const std::atomic<uint64_t>* direct_blocked_address()const{return &direct_blocked_;}
++
+     // ---- COW Snapshot support ----
+ 
+     // OPT-5: Merged COW tracking — single map instead of overwritten + added_after.
+@@ -108,6 +118,7 @@
+     };
+ 
+     void prepare_snapshot() {
++        direct_blocked_.store(1,std::memory_order_release);
+         invalidate_access_views();
+         for (int i = 0; i < num_key_groups_; ++i) {
+             std::lock_guard<std::recursive_mutex> lock(*cow_mutexes_[i]);
+@@ -130,6 +141,7 @@
+             str_ns_cow_[i].clear();
+             tw_ns_cow_[i].clear();
+         }
++        direct_blocked_.store(0,std::memory_order_release);
+     }
+ 
+     // Check if a snapshot is active for a given key group.
+@@ -733,6 +745,8 @@
+     }
+ 
+     std::atomic<uint64_t> access_epoch_{0};
++    std::atomic<uint64_t> direct_blocked_{0};
++    std::unique_ptr<LongKeyDirectory<V>> long_directory_;
+     int start_key_group_;
+     int num_key_groups_;
+     bool void_namespace_;
+--- a/src/main/native/engine/type_layout.h
++++ b/src/main/native/engine/type_layout.h
+@@ -4,6 +4,7 @@
+ // serialized as a descriptor byte stream, and parsed here.
+ 
+ #pragma once
++#include "long_element_list.h"
+ 
+ #include <cstddef>
+ #include <cstdint>
+@@ -315,7 +316,7 @@
+ 
+ // ListState stores elements as a vector of serialized element byte strings.
+ using ElementList = std::vector<std::string>;
+-using LongElementList = std::vector<int64_t>;
++// LongElementList is defined in long_element_list.h.
+ 
+ // MapState stores a nested map of serialized user-key → serialized user-value.
+ using InnerMap = std::unordered_map<std::string, std::string>;
+--- a/src/main/native/jni/jni_list_state.cpp
++++ b/src/main/native/jni/jni_list_state.cpp
+@@ -11,6 +11,52 @@
+ using namespace forl0;
+ 
+ extern "C" {
++
++struct ListViewReference {
++    JavaVM* vm;
++    jobject view;
++    ~ListViewReference() {
++        JNIEnv* env=nullptr;
++        if(vm->GetEnv(reinterpret_cast<void**>(&env),JNI_VERSION_1_6)==JNI_OK)
++            env->DeleteGlobalRef(view);
++    }
++};
++
++JNIEXPORT jobject JNICALL
++Java_org_apache_flink_state_forl0_NativeEngine_listGetLongView(
++        JNIEnv* env,jclass,jlong stateHandle,jlong key,jint keyGroup) {
++    JNI_ENTRY_RETURN(jobject,nullptr,{
++        auto* handle=from_handle<StateHandle>(stateHandle);
++        const auto* values=handle->get_state_table<int64_t,LongElementList>()->get(keyGroup,key);
++        if(!values || values->empty())return nullptr;
++        if(values->read_cache) return env->NewLocalRef(
++                static_cast<ListViewReference*>(values->read_cache.get())->view);
++        // Copy only once per version. The Java owner remains valid after mutation,
++        // state deletion and backend disposal, independently of the state table.
++        auto copy=std::make_unique<std::vector<int64_t>>(values->begin(),values->end());
++        jclass cls=env->FindClass("org/apache/flink/state/forl0/NativeLongListSnapshot");
++        if(!cls)return nullptr;
++        jmethodID ctor=env->GetMethodID(cls,"<init>","(JJJII)V");
++        if(!ctor)return nullptr;
++        jobject view=env->NewObject(cls,ctor,to_handle(copy.get()),to_handle(copy->data()),jlong(values->version),jint(copy->size()),keyGroup);
++        if(!view)return nullptr;
++        // Ownership was transferred to Java's Cleaner by the successful constructor.
++        copy.release();
++        JavaVM* vm=nullptr;env->GetJavaVM(&vm);
++        auto reference=std::make_shared<ListViewReference>();reference->vm=vm;
++        reference->view=env->NewGlobalRef(view);
++        if(!reference->view)return nullptr;
++        values->publish_view(std::move(reference));
++        return view;
++    })
++}
++
++JNIEXPORT void JNICALL
++Java_org_apache_flink_state_forl0_NativeEngine_releaseLongListView(
++        JNIEnv*,jclass,jlong token) {
++    delete from_handle<std::vector<int64_t>>(token);
++}
++
+ 
+ // ============================================================================
+ //  ListState: get — returns [count(4 bytes BE)][elem1_bytes][elem2_bytes]...
+--- a/src/main/native/jni/jni_value_state.cpp
++++ b/src/main/native/jni/jni_value_state.cpp
+@@ -10,7 +10,31 @@
+ 
+ using namespace forl0;
+ 
++
++template<class V> static jlongArray primitive_directory(JNIEnv* env,StateTable<int64_t,V>* table) {
++    auto* d=table->long_directory();if(!d)return nullptr;
++    using Page=typename LongKeyDirectory<V>::Page;
++    const jlong info[]={jlong(d->pages_address()),jlong(reinterpret_cast<uintptr_t>(table->direct_blocked_address())),
++        jlong(d->counts_address()),table->start_key_group(),sizeof(V),offsetof(Page,values),jlong(reinterpret_cast<uintptr_t>(table->access_epoch_address()))};
++    jlongArray arr=env->NewLongArray(7);if(arr)env->SetLongArrayRegion(arr,0,7,info);return arr;
++}
+ extern "C" {
++
++JNIEXPORT jlongArray JNICALL
++Java_org_apache_flink_state_forl0_NativeEngine_primitiveLongDirectory(JNIEnv* env,jclass,jlong stateHandle) {
++    JNI_ENTRY_RETURN(jlongArray,nullptr,{
++        auto* h=from_handle<StateHandle>(stateHandle);
++        if(h->key_type!=StateHandle::KeyType::INT64 || h->ns_type!=StateHandle::NsType::VOID_NS || h->hot_cache_ll)return nullptr;
++        if(h->value_type==StateHandle::ValueType::INT64)
++            return primitive_directory(env,h->get_state_table<int64_t,int64_t>());
++        if(h->value_type==StateHandle::ValueType::MAP && h->map_inner_kind==StateHandle::MapInnerKind::LONG_LONG)
++            return primitive_directory(env,h->get_state_table<int64_t,InnerMapLongLong>());
++        if(h->value_type==StateHandle::ValueType::LONG_LIST)
++            return primitive_directory(env,h->get_state_table<int64_t,LongElementList>());
++        return nullptr;
++    })
++}
++
+ 
+ // ============================================================================
+ //  long key + long value (VoidNamespace) — most common path
+--- a/src/main/native/test/state_table_cow_test.cpp
++++ b/src/main/native/test/state_table_cow_test.cpp
+@@ -350,3 +350,28 @@
+     ASSERT_EQ(*table->get(0, 42), 49);
+     ASSERT_EQ(*(handle.get_state_table<int64_t, int64_t>()->get(0, 10001)), 99);
+ }
++
++TEST(StateTableCOWTest, PagedDirectoryGroupCollisionAndSparseFallback) {
++    CountingAllocator allocator(0);
++    {
++        StateTable<int64_t,int64_t> st(0,2,true,&allocator);
++        st.put(0,9000,90); // Initially outside the admitted dense frontier.
++        st.put(0,-1,7);
++        st.put(1,100,10);
++        for(int64_t k=0;k<10000;++k)if(k!=9000)st.put(0,k,k+1);
++        ASSERT_EQ(*st.get(0,9000),90);
++        ASSERT_EQ(*st.get(0,100),101);
++        ASSERT_EQ(*st.get(1,100),10);
++        st.put(0,9000,91);
++        ASSERT_EQ(st.total_size(),10002u);
++        st.prepare_snapshot();
++        st.remove(0,100);st.put(0,100,999);st.remove(0,9000);st.put(0,9000,999);
++        std::map<int64_t,int64_t> old;
++        st.for_each_snapshot_in_key_group(0,[&](int64_t k,int64_t v){old[k]=v;});
++        ASSERT_EQ(old.size(),10001u);
++        ASSERT_EQ(old[100],101);ASSERT_EQ(old[9000],91);ASSERT_EQ(old[-1],7);
++        ASSERT_EQ(*st.get(1,100),10);
++        st.release_snapshot();
++    }
++    ASSERT_EQ(allocator.used_bytes(),0u);
++}
+--- a/src/test/java/org/apache/flink/state/forl0/ForL0StateSemanticsTest.java
++++ b/src/test/java/org/apache/flink/state/forl0/ForL0StateSemanticsTest.java
+@@ -146,6 +146,81 @@
+         }
+     }
+ 
++    @Test
++    void nativeLongListReadRemainsValidAfterMutationAndDisposal() throws Exception {
++        ForL0KeyedStateBackend<Long> backend=buildBackend();
++        Iterable<Long> first;
++        Iterable<Long> second;
++        try {
++            backend.setCurrentKey(17L);
++            ListState<Long> state=backend.getPartitionedState(VoidNamespace.INSTANCE,
++                    VoidNamespaceSerializer.INSTANCE,new ListStateDescriptor<>("views",LongSerializer.INSTANCE));
++            state.update(Arrays.asList(Long.MIN_VALUE,1_000_000_007L,Long.MAX_VALUE));
++            first=state.get();for(int i=0;i<10;i++)first=state.get();
++            state.add(2_000_000_014L);
++            second=state.get();for(int i=0;i<10;i++)second=state.get();
++            state.update(Collections.singletonList(7L));
++            state.clear();
++        } finally { backend.dispose(); }
++        java.util.ArrayList<Long> actual=new java.util.ArrayList<>();
++        for(Long v:first)actual.add(v);
++        assertEquals(Arrays.asList(Long.MIN_VALUE,1_000_000_007L,Long.MAX_VALUE),actual);
++        actual.clear();
++        for(Long v:second)actual.add(v);
++        assertEquals(Arrays.asList(Long.MIN_VALUE,1_000_000_007L,Long.MAX_VALUE,2_000_000_014L),actual);
++    }
++
++    @Test
++    void primitivePagesTrackCountsAndPreserveInFlightCheckpoint() throws Exception {
++        ValueStateDescriptor<Long> vd=new ValueStateDescriptor<>("direct_v",LongSerializer.INSTANCE);
++        ListStateDescriptor<Long> ld=new ListStateDescriptor<>("direct_l",LongSerializer.INSTANCE);
++        MapStateDescriptor<Long,Long> md=new MapStateDescriptor<>("direct_m",LongSerializer.INSTANCE,LongSerializer.INSTANCE);
++        ForL0KeyedStateBackend<Long> b=buildBackend();
++        org.apache.flink.runtime.state.KeyedStateHandle handle;
++        try {
++            b.setCurrentKey(17L);
++            ValueState<Long> v=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,vd);
++            ListState<Long> l=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,ld);
++            MapState<Long,Long> m=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,md);
++            v.update(1L);v.update(2L);v.clear();v.update(2L);
++            l.update(Arrays.asList(10L,20L,30L));l.update(Arrays.asList(40L,50L));l.add(60L);
++            for(long k=0;k<64;k++)m.put(k,1_000_000_007L+k);
++            java.util.LinkedHashMap<Long,Long> bulk=new java.util.LinkedHashMap<>();
++            for(long k=0;k<16;k++)bulk.put(k,1_000_000_007L+k);
++            m.putAll(bulk);
++            m.remove(3L);assertNull(m.get(3L));assertEquals(3,b.numKeyValueStateEntries());
++            java.util.concurrent.RunnableFuture<org.apache.flink.runtime.state.SnapshotResult<
++                    org.apache.flink.runtime.state.KeyedStateHandle>> f=b.snapshot(2L,2L,
++                    new org.apache.flink.runtime.state.memory.MemCheckpointStreamFactory(1<<20),
++                    org.apache.flink.runtime.checkpoint.CheckpointOptions.forCheckpointWithDefaultLocation());
++            // syncPrepare has frozen the snapshot; these calls must take COW paths.
++            v.update(999L);l.update(Collections.singletonList(999L));m.put(4L,999L);m.remove(5L);
++            m.putAll(Collections.singletonMap(6L,999L));
++            f.run();handle=f.get().getJobManagerOwnedSnapshot();
++        } finally {b.dispose();}
++        b=buildBackend(false,0L,Collections.singletonList(handle));
++        try {
++            b.setCurrentKey(17L);
++            ValueState<Long> v=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,vd);
++            ListState<Long> l=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,ld);
++            MapState<Long,Long> m=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,md);
++            assertEquals(2L,v.value());
++            java.util.ArrayList<Long> values=new java.util.ArrayList<>();for(Long x:l.get())values.add(x);
++            assertEquals(Arrays.asList(40L,50L,60L),values);
++            assertNull(m.get(3L));assertEquals(1_000_000_011L,m.get(4L));assertTrue(m.contains(5L));
++            assertEquals(1_000_000_013L,m.get(6L));
++            m.put(3L,1_000_000_010L);
++            java.util.LinkedHashMap<Long,Long> promote=new java.util.LinkedHashMap<>();
++            promote.put(4L,-7L);promote.put(1024L,Long.MIN_VALUE);promote.put(5L,-9L);
++            m.putAll(promote);
++            assertEquals(-7L,m.get(4L));assertEquals(Long.MIN_VALUE,m.get(1024L));assertEquals(-9L,m.get(5L));
++            java.util.ArrayList<Long> keys=new java.util.ArrayList<>();for(Long k:m.keys())keys.add(k);
++            assertEquals(65,keys.size());for(Long k:keys)m.remove(k);
++            assertTrue(m.isEmpty());assertEquals(2,b.numKeyValueStateEntries());
++            v.clear();l.clear();assertEquals(0,b.numKeyValueStateEntries());
++        } finally {b.dispose();handle.discardState();}
++    }
++
+     // -----------------------------------------------------------------------
+     //  ValueState: default value, null semantics
+     // -----------------------------------------------------------------------

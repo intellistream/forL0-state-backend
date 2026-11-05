@@ -119,7 +119,9 @@ public class StateBackendBenchmarkUtils {
                         Collections.emptyList(),
                         AbstractStateBackend.getCompressionDecorator(executionConfig),
                         priorityQueueSetFactory,
-                        true,  // asyncSnapshots
+                        true,  // asyncSnapshots; no snapshots are triggered by microbenchmarks
+                        false, // L0 disabled on this machine
+                        0L,
                         new CloseableRegistry());
         return backendBuilder.build();
     }

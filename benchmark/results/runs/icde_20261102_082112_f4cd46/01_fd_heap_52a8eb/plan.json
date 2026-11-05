@@ -1,0 +1,31 @@
+{
+  "nodes" : [ {
+    "id" : 1,
+    "type" : "Source: Data Source",
+    "pact" : "Data Source",
+    "contents" : "Source: Data Source",
+    "parallelism" : 8
+  }, {
+    "id" : 3,
+    "type" : "Predict",
+    "pact" : "Operator",
+    "contents" : "Predict",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 1,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 4,
+    "type" : "Sink: Sink",
+    "pact" : "Data Sink",
+    "contents" : "Sink: Sink",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 3,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  } ]
+}

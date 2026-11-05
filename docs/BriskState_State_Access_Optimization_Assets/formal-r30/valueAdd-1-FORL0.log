@@ -1,0 +1,97 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/root/briskstate-setup/micro-opt-20261104/variants/r30 -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 10 iterations, 5 s each
+# Measurement: 5 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd
+# Parameters: (backendType = FORL0, keyCount = 1048576)
+
+# Run progress: 0.00% complete, ETA 00:01:15
+# Fork: 1 of 1
+# Warmup Iteration   1: [ForL0-HotCache] L0 cache disabled by config.
+26921.113 ops/ms
+# Warmup Iteration   2: 33282.229 ops/ms
+# Warmup Iteration   3: 30245.633 ops/ms
+# Warmup Iteration   4: 17481.349 ops/ms
+# Warmup Iteration   5: 17490.680 ops/ms
+# Warmup Iteration   6: 10494.427 ops/ms
+# Warmup Iteration   7: 9276.013 ops/ms
+# Warmup Iteration   8: 9357.361 ops/ms
+# Warmup Iteration   9: 9130.099 ops/ms
+# Warmup Iteration  10: 9154.115 ops/ms
+Iteration   1: 9167.479 ops/ms
+                 gc.alloc.rate:      200.206 MB/sec
+                 gc.alloc.rate.norm: 48.000 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 9204.555 ops/ms
+                 gc.alloc.rate:      210.196 MB/sec
+                 gc.alloc.rate.norm: 48.000 B/op
+                 gc.count:           1.000 counts
+                 gc.time:            4.000 ms
+
+Iteration   3: 9384.634 ops/ms
+                 gc.alloc.rate:      230.088 MB/sec
+                 gc.alloc.rate.norm: 48.000 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 9211.072 ops/ms
+                 gc.alloc.rate:      219.627 MB/sec
+                 gc.alloc.rate.norm: 48.000 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: [ForL0-Memory] engine_summary used_bytes=43515936 peak_bytes=44470320 max_bytes=0
+9285.914 ops/ms
+                 gc.alloc.rate:      216.567 MB/sec
+                 gc.alloc.rate.norm: 48.127 B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd":
+  9250.731 ±(99.9%) 332.383 ops/ms [Average]
+  (min, avg, max) = (9167.479, 9250.731, 9384.634), stdev = 86.319
+  CI (99.9%): [8918.348, 9583.114] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.alloc.rate":
+  215.337 ±(99.9%) 42.744 MB/sec [Average]
+  (min, avg, max) = (200.206, 215.337, 230.088), stdev = 11.100
+  CI (99.9%): [172.593, 258.081] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.alloc.rate.norm":
+  48.026 ±(99.9%) 0.218 B/op [Average]
+  (min, avg, max) = (48.000, 48.026, 48.127), stdev = 0.057
+  CI (99.9%): [47.807, 48.244] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.count":
+  1.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (≈ 0, 0.200, 1.000), stdev = 0.447
+  CI (99.9%): [1.000, 1.000] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.time":
+  4.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (≈ 0, 0.800, 4.000), stdev = 1.789
+  CI (99.9%): [4.000, 4.000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:01:16
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                             (backendType)  (keyCount)   Mode  Cnt     Score     Error   Units
+LongStateMicrobenchmarks.valueAdd                             FORL0     1048576  thrpt    5  9250.731 ± 332.383  ops/ms
+LongStateMicrobenchmarks.valueAdd:gc.alloc.rate               FORL0     1048576  thrpt    5   215.337 ±  42.744  MB/sec
+LongStateMicrobenchmarks.valueAdd:gc.alloc.rate.norm          FORL0     1048576  thrpt    5    48.026 ±   0.218    B/op
+LongStateMicrobenchmarks.valueAdd:gc.count                    FORL0     1048576  thrpt    5     1.000            counts
+LongStateMicrobenchmarks.valueAdd:gc.time                     FORL0     1048576  thrpt    5     4.000                ms
+
+Benchmark result is saved to /root/briskstate-setup/micro-opt-20261104/formal-r30/valueAdd-1-FORL0.json

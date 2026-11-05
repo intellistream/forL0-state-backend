@@ -1,0 +1,194 @@
+{
+  "jid": "0d8b6defc98b5d6023a51b38a24c8b52",
+  "name": "Stateful WordCount Benchmark (Long keys)",
+  "isStoppable": false,
+  "state": "FINISHED",
+  "job-type": "STREAMING",
+  "start-time": 1793604988022,
+  "end-time": 1793605033551,
+  "duration": 45529,
+  "maxParallelism": -1,
+  "now": 1793605036791,
+  "timestamps": {
+    "RECONCILING": 0,
+    "CANCELLING": 0,
+    "SUSPENDED": 0,
+    "INITIALIZING": 1793604988022,
+    "CANCELED": 0,
+    "RESTARTING": 0,
+    "CREATED": 1793604988170,
+    "FAILED": 0,
+    "FAILING": 0,
+    "FINISHED": 1793605033551,
+    "RUNNING": 1793604988331
+  },
+  "vertices": [
+    {
+      "id": "bc764cd8ddf7a0cff126f51c16239658",
+      "slotSharingGroupId": "6a05f84c849a798f46be0432d54c14ba",
+      "name": "Source: LongKeySource",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793604988545,
+      "end-time": 1793605033201,
+      "duration": 44656,
+      "tasks": {
+        "SCHEDULED": 0,
+        "FAILED": 0,
+        "CREATED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "RECONCILING": 0,
+        "INITIALIZING": 0,
+        "DEPLOYING": 0,
+        "RUNNING": 0,
+        "CANCELED": 0
+      },
+      "metrics": {
+        "read-bytes": 0,
+        "read-bytes-complete": true,
+        "write-bytes": 2688000832,
+        "write-bytes-complete": true,
+        "read-records": 0,
+        "read-records-complete": true,
+        "write-records": 128000000,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 328168,
+        "accumulated-idle-time": 0,
+        "accumulated-busy-time": "NaN"
+      }
+    },
+    {
+      "id": "0a448493b4782967b150582570326227",
+      "slotSharingGroupId": "6a05f84c849a798f46be0432d54c14ba",
+      "name": "LongKeyStatefulCounter",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793604988555,
+      "end-time": 1793605033469,
+      "duration": 44914,
+      "tasks": {
+        "SCHEDULED": 0,
+        "FAILED": 0,
+        "CREATED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "RECONCILING": 0,
+        "INITIALIZING": 0,
+        "DEPLOYING": 0,
+        "RUNNING": 0,
+        "CANCELED": 0
+      },
+      "metrics": {
+        "read-bytes": 2688001664,
+        "read-bytes-complete": true,
+        "write-bytes": 2688000104,
+        "write-bytes-complete": true,
+        "read-records": 128000000,
+        "read-records-complete": true,
+        "write-records": 128000000,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 1410,
+        "accumulated-idle-time": 29535,
+        "accumulated-busy-time": 321635.0
+      }
+    },
+    {
+      "id": "ea632d67b7d595e5b851708ae9ad79d6",
+      "slotSharingGroupId": "6a05f84c849a798f46be0432d54c14ba",
+      "name": "Sink: MetricsSink",
+      "maxParallelism": 128,
+      "parallelism": 1,
+      "status": "FINISHED",
+      "start-time": 1793604988565,
+      "end-time": 1793605033547,
+      "duration": 44982,
+      "tasks": {
+        "SCHEDULED": 0,
+        "FAILED": 0,
+        "CREATED": 0,
+        "FINISHED": 1,
+        "CANCELING": 0,
+        "RECONCILING": 0,
+        "INITIALIZING": 0,
+        "DEPLOYING": 0,
+        "RUNNING": 0,
+        "CANCELED": 0
+      },
+      "metrics": {
+        "read-bytes": 2688000208,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 128000000,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 27576,
+        "accumulated-busy-time": 16834.0
+      }
+    }
+  ],
+  "status-counts": {
+    "SCHEDULED": 0,
+    "FAILED": 0,
+    "CREATED": 0,
+    "FINISHED": 3,
+    "CANCELING": 0,
+    "RECONCILING": 0,
+    "INITIALIZING": 0,
+    "DEPLOYING": 0,
+    "RUNNING": 0,
+    "CANCELED": 0
+  },
+  "plan": {
+    "jid": "0d8b6defc98b5d6023a51b38a24c8b52",
+    "name": "Stateful WordCount Benchmark (Long keys)",
+    "type": "STREAMING",
+    "nodes": [
+      {
+        "id": "ea632d67b7d595e5b851708ae9ad79d6",
+        "parallelism": 1,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Sink: MetricsSink<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "0a448493b4782967b150582570326227",
+            "ship_strategy": "REBALANCE",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "0a448493b4782967b150582570326227",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "LongKeyStatefulCounter<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "bc764cd8ddf7a0cff126f51c16239658",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "bc764cd8ddf7a0cff126f51c16239658",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Source: LongKeySource<br/>",
+        "optimizer_properties": {}
+      }
+    ]
+  }
+}

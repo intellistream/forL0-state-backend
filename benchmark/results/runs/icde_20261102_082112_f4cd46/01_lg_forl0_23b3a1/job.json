@@ -1,0 +1,454 @@
+{
+  "jid": "9b89185ac1ff1ec14e5e948a566bd5a9",
+  "name": "ICDE numeric pressure lg",
+  "isStoppable": false,
+  "state": "FINISHED",
+  "job-type": "STREAMING",
+  "start-time": 1793607734426,
+  "end-time": 1793607734907,
+  "duration": 481,
+  "maxParallelism": -1,
+  "now": 1793607737581,
+  "timestamps": {
+    "RESTARTING": 0,
+    "CANCELED": 0,
+    "RUNNING": 1793607734435,
+    "SUSPENDED": 0,
+    "FAILING": 0,
+    "FINISHED": 1793607734907,
+    "FAILED": 0,
+    "CANCELLING": 0,
+    "INITIALIZING": 1793607734426,
+    "CREATED": 1793607734429,
+    "RECONCILING": 0
+  },
+  "vertices": [
+    {
+      "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Source: Data Source",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734524,
+      "end-time": 1793607734880,
+      "duration": 356,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 0,
+        "read-bytes-complete": true,
+        "write-bytes": 217536,
+        "write-bytes-complete": true,
+        "read-records": 0,
+        "read-records-complete": true,
+        "write-records": 1024,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 0,
+        "accumulated-busy-time": "NaN"
+      }
+    },
+    {
+      "id": "8e218a1d8bedbf2f8b9b55b1a67881ad",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Geo Finder",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734526,
+      "end-time": 1793607734902,
+      "duration": 376,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 73344,
+        "read-bytes-complete": true,
+        "write-bytes": 72512,
+        "write-bytes-complete": true,
+        "read-records": 1024,
+        "read-records-complete": true,
+        "write-records": 1024,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 1065,
+        "accumulated-busy-time": 281.0
+      }
+    },
+    {
+      "id": "b7f3fcb18f54345ff6d7514ae41d3914",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Geo Status",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734528,
+      "end-time": 1793607734903,
+      "duration": 375,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 73344,
+        "read-bytes-complete": true,
+        "write-bytes": 71784,
+        "write-bytes-complete": true,
+        "read-records": 1024,
+        "read-records-complete": true,
+        "write-records": 1024,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 1161,
+        "accumulated-busy-time": 229.0
+      }
+    },
+    {
+      "id": "c2e935ebd28508cace5667767f8df44f",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Sink: Geo Sink",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734538,
+      "end-time": 1793607734906,
+      "duration": 368,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 71888,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 1024,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 1170,
+        "accumulated-busy-time": 420.0
+      }
+    },
+    {
+      "id": "62d806018cef8c0fa0be500f7ccc6f0b",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Status Counter",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734541,
+      "end-time": 1793607734900,
+      "duration": 359,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 73344,
+        "read-bytes-complete": true,
+        "write-bytes": 71784,
+        "write-bytes-complete": true,
+        "read-records": 1024,
+        "read-records-complete": true,
+        "write-records": 1024,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 528,
+        "accumulated-busy-time": 354.0
+      }
+    },
+    {
+      "id": "46b4c745bf53cfaed64615f4cdf1277f",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Sink: Status Sink",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734543,
+      "end-time": 1793607734905,
+      "duration": 362,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 71888,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 1024,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 809,
+        "accumulated-busy-time": 488.0
+      }
+    },
+    {
+      "id": "1eca2d8bb752c65f0fa1f41dfd157f16",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Volume Counter",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734546,
+      "end-time": 1793607734903,
+      "duration": 357,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 73344,
+        "read-bytes-complete": true,
+        "write-bytes": 71784,
+        "write-bytes-complete": true,
+        "read-records": 1024,
+        "read-records-complete": true,
+        "write-records": 1024,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 308,
+        "accumulated-busy-time": 288.0
+      }
+    },
+    {
+      "id": "c741f1df7f342ffbb5c240eb7b98a13d",
+      "slotSharingGroupId": "08996bb805402777cdb753147d6ffa3c",
+      "name": "Sink: Count Sink",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793607734547,
+      "end-time": 1793607734907,
+      "duration": 360,
+      "tasks": {
+        "CREATED": 0,
+        "RUNNING": 0,
+        "RECONCILING": 0,
+        "CANCELED": 0,
+        "INITIALIZING": 0,
+        "SCHEDULED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "DEPLOYING": 0
+      },
+      "metrics": {
+        "read-bytes": 71888,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 1024,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 111,
+        "accumulated-busy-time": 316.0
+      }
+    }
+  ],
+  "status-counts": {
+    "CREATED": 0,
+    "RUNNING": 0,
+    "RECONCILING": 0,
+    "CANCELED": 0,
+    "INITIALIZING": 0,
+    "SCHEDULED": 0,
+    "FINISHED": 8,
+    "CANCELING": 0,
+    "FAILED": 0,
+    "DEPLOYING": 0
+  },
+  "plan": {
+    "jid": "9b89185ac1ff1ec14e5e948a566bd5a9",
+    "name": "ICDE numeric pressure lg",
+    "type": "STREAMING",
+    "nodes": [
+      {
+        "id": "c2e935ebd28508cace5667767f8df44f",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Sink: Geo Sink<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "b7f3fcb18f54345ff6d7514ae41d3914",
+            "ship_strategy": "FORWARD",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "b7f3fcb18f54345ff6d7514ae41d3914",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Geo Status<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "8e218a1d8bedbf2f8b9b55b1a67881ad",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "8e218a1d8bedbf2f8b9b55b1a67881ad",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Geo Finder<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "46b4c745bf53cfaed64615f4cdf1277f",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Sink: Status Sink<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "62d806018cef8c0fa0be500f7ccc6f0b",
+            "ship_strategy": "FORWARD",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "62d806018cef8c0fa0be500f7ccc6f0b",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Status Counter<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "c741f1df7f342ffbb5c240eb7b98a13d",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Sink: Count Sink<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "1eca2d8bb752c65f0fa1f41dfd157f16",
+            "ship_strategy": "FORWARD",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "1eca2d8bb752c65f0fa1f41dfd157f16",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Volume Counter<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Source: Data Source<br/>",
+        "optimizer_properties": {}
+      }
+    ]
+  }
+}

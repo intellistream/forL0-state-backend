@@ -598,7 +598,6 @@ def run_wordcount(config: dict, backend: str, profile_mode: Optional[str] = None
         '--slideSize', str(wc_config.get('slide_size', 200)),
         '--parallelism', str(runtime_config.get('parallelism', 2)),
         '--checkpointInterval', str(checkpoint_interval),
-        '--backend', backend,
     ])
     
     print(f"\n=== Running WordCount Benchmark ({backend} backend) ===\n")

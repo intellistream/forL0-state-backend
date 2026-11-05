@@ -1,0 +1,196 @@
+{
+  "revision": "r30",
+  "bulk_pilot": {
+    "r29": [
+      1955.6284044719298,
+      1949.7782818551732
+    ],
+    "r30": [
+      3914.120476937111,
+      3918.1020129637986
+    ]
+  },
+  "criterion": "minimum candidate score > 1.03 * maximum baseline score and mean gain > 8%",
+  "native_sha256": "8ffa4d449766e03f9fe06efea91b59337c814fa34a71314ecfe1f34fd833ba03",
+  "scalar_layout_candidate": {
+    "revision": "r31",
+    "accepted": false,
+    "results": {
+      "valueAdd": {
+        "fork_scores": {
+          "r30": [
+            9427.688115694045,
+            9065.224252565245
+          ],
+          "r31": [
+            16051.3845360536,
+            16773.449800141232
+          ]
+        },
+        "candidate_vs_baseline": 1.7749953972925567
+      },
+      "valueGet": {
+        "fork_scores": {
+          "r30": [
+            15567.208513380136,
+            15225.490487118122
+          ],
+          "r31": [
+            13136.793250153112,
+            13462.25486930478
+          ]
+        },
+        "candidate_vs_baseline": 0.8638102206963894
+      },
+      "valueUpdate": {
+        "fork_scores": {
+          "r30": [
+            16152.261800532475,
+            16085.632718894027
+          ],
+          "r31": [
+            13525.02597956874,
+            13200.566429558545
+          ]
+        },
+        "candidate_vs_baseline": 0.8290117207568405
+      }
+    },
+    "reason": "Value add improved, but get/update regressed by >10% and scalar pages grew from 12 to 16 bytes/key; retain the faster normal read/overwrite layout."
+  },
+  "list_ownership_trials": {
+    "r32": {
+      "accepted": false,
+      "measurements": {
+        "listGet": {
+          "fork_scores": {
+            "r30": [
+              6384.803756874608,
+              6584.635036887031
+            ],
+            "r32": [
+              5503.85489121907,
+              5448.14866043309
+            ]
+          },
+          "candidate_vs_r30": 0.8444469900208887
+        },
+        "listIterate": {
+          "fork_scores": {
+            "r30": [
+              4417.312752512703,
+              4286.717411606932
+            ],
+            "r32": [
+              3813.508871200586,
+              4028.502135761774
+            ]
+          },
+          "candidate_vs_r30": 0.9009632157858608
+        },
+        "listAdd": {
+          "fork_scores": {
+            "r30": [
+              22454.333092548466,
+              23025.018731011343
+            ],
+            "r32": [
+              22860.222698370897,
+              23254.369620864953
+            ]
+          },
+          "candidate_vs_r30": 1.0139676681879832
+        },
+        "listUpdate": {
+          "fork_scores": {
+            "r30": [
+              4964.5515661243235,
+              5078.912850028983
+            ],
+            "r32": [
+              5163.557339426812,
+              5179.354187725968
+            ]
+          },
+          "candidate_vs_r30": 1.0298151214154612
+        }
+      }
+    },
+    "r33": {
+      "accepted": false,
+      "measurements": {
+        "listGet": {
+          "fork_scores": {
+            "r30": [
+              6753.102591567212,
+              6611.5286206830815
+            ],
+            "r33": [
+              5447.726545655118,
+              5417.073072920485
+            ]
+          },
+          "candidate_vs_r30": 0.8129516966107306
+        },
+        "listIterate": {
+          "fork_scores": {
+            "r30": [
+              4942.031576764355,
+              5090.248392945933
+            ],
+            "r33": [
+              3796.4758315400745,
+              3901.267232621203
+            ]
+          },
+          "candidate_vs_r30": 0.7672974724990227
+        },
+        "listAdd": {
+          "fork_scores": {
+            "r30": [
+              22851.393985817936,
+              22665.22606039203
+            ],
+            "r33": [
+              24113.96849326479,
+              23958.68169037234
+            ]
+          },
+          "candidate_vs_r30": 1.0561559741218087
+        }
+      }
+    },
+    "r34": {
+      "accepted": false,
+      "measurements": {
+        "listGet": {
+          "fork_scores": {
+            "r30": [
+              6617.644261394834,
+              6632.057038473071
+            ],
+            "r34": [
+              6540.523410861956,
+              6456.224797598523
+            ]
+          },
+          "candidate_vs_r30": 0.9809087702671494
+        },
+        "listIterate": {
+          "fork_scores": {
+            "r30": [
+              4683.731670636542,
+              4478.347631360564
+            ],
+            "r34": [
+              5153.277396028525,
+              4754.122556347898
+            ]
+          },
+          "candidate_vs_r30": 1.081348417298337
+        }
+      }
+    }
+  },
+  "list_ownership_decision": "Retain R30: removing native ownership or changing cache organization did not improve ordinary reads consistently; R34 iteration gain traded against slower get and additional indexing complexity."
+}

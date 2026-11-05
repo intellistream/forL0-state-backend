@@ -1,0 +1,148 @@
++ cmake -S /root/briskstate-runtime/build/native-source -B /root/briskstate-runtime/build/native -DCMAKE_BUILD_TYPE=Release -DFORL0_FORCE_MINI_GTEST=ON
+-- The CXX compiler identification is GNU 12.3.1
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found JNI: /usr/lib/jvm/java-11-openjdk/include  found components: AWT JVM
+-- ForL0 engine: arch=aarch64, system=Linux
+-- Google Test not found — using mini_gtest fallback
+-- Configuring done (0.9s)
+-- Generating done (0.0s)
+-- Build files have been written to: /root/briskstate-runtime/build/native
++ cmake --build /root/briskstate-runtime/build/native -j 8
+[  5%] Building CXX object CMakeFiles/forl0_engine.dir/engine/hot_cache.cpp.o
+[ 10%] Building CXX object CMakeFiles/forl0_tests.dir/engine/hot_cache.cpp.o
+[ 15%] Building CXX object CMakeFiles/forl0_engine.dir/jni/forl0_jni.cpp.o
+[ 20%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_value_state.cpp.o
+[ 25%] Building CXX object CMakeFiles/forl0_tests.dir/test/swiss_table_test.cpp.o
+[ 30%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_list_state.cpp.o
+[ 40%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_map_state.cpp.o
+[ 40%] Building CXX object CMakeFiles/forl0_tests.dir/test/state_table_cow_test.cpp.o
+[ 45%] Building CXX object CMakeFiles/forl0_tests.dir/test/checkpoint_round_trip_test.cpp.o
+[ 50%] Building CXX object CMakeFiles/forl0_tests.dir/test/type_layout_parser_test.cpp.o
+[ 55%] Building CXX object CMakeFiles/forl0_tests.dir/test/time_window_namespace_test.cpp.o
+[ 60%] Building CXX object CMakeFiles/forl0_tests.dir/test/typed_inner_map_test.cpp.o
+[ 65%] Building CXX object CMakeFiles/forl0_tests.dir/test/hot_cache_test.cpp.o
+[ 70%] Building CXX object CMakeFiles/forl0_tests.dir/test/hot_cache_manager_test.cpp.o
+[ 75%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_tw_state.cpp.o
+[ 80%] Building CXX object CMakeFiles/forl0_tests.dir/test/hot_cache_phase_b_test.cpp.o
+[ 85%] Building CXX object CMakeFiles/forl0_engine.dir/jni/jni_checkpoint.cpp.o
+[ 90%] Building CXX object CMakeFiles/forl0_tests.dir/test/test_main.cpp.o
+[ 95%] Linking CXX executable forl0_tests
+[ 95%] Built target forl0_tests
+[100%] Linking CXX shared library libforl0_engine.so
+Copying libforl0_engine to resources/native/
+[100%] Built target forl0_engine
++ ctest --test-dir /root/briskstate-runtime/build/native --output-on-failure
+Test project /root/briskstate-runtime/build/native
+    Start 1: forl0_tests
+1/1 Test #1: forl0_tests ......................   Passed    0.04 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.04 sec
++ mvn -B -ntp -Dmaven.test.skip=true package
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------< org.apache.flink:flink-statebackend-forL0 >--------------
+[INFO] Building flink-statebackend-forL0 1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:resources (default-resources) @ flink-statebackend-forL0 ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 7 resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ flink-statebackend-forL0 ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:testResources (default-testResources) @ flink-statebackend-forL0 ---
+[INFO] Not copying test resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:testCompile (default-testCompile) @ flink-statebackend-forL0 ---
+[INFO] Not compiling test sources
+[INFO] 
+[INFO] --- maven-surefire-plugin:3.2.5:test (default-test) @ flink-statebackend-forL0 ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ flink-statebackend-forL0 ---
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.596 s
+[INFO] Finished at: 2026-11-02T06:36:19Z
+[INFO] ------------------------------------------------------------------------
++ jar uf /root/forL0-state-backend/target/flink-statebackend-forL0-1.0-SNAPSHOT.jar -C /root/briskstate-runtime/build/jar native/libforl0_engine.so
++ mvn -B -ntp -f /root/forL0-state-backend/benchmark/wordcount/pom.xml -DskipTests package
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -----------< org.apache.flink.benchmark:wordcount-benchmark >-----------
+[INFO] Building WordCount Benchmark for ForL0 StateBackend 1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:resources (default-resources) @ wordcount-benchmark ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /root/forL0-state-backend/benchmark/wordcount/src/main/resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ wordcount-benchmark ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:testResources (default-testResources) @ wordcount-benchmark ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory /root/forL0-state-backend/benchmark/wordcount/src/test/resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:testCompile (default-testCompile) @ wordcount-benchmark ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] --- maven-surefire-plugin:2.12.4:test (default-test) @ wordcount-benchmark ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ wordcount-benchmark ---
+[INFO] 
+[INFO] --- maven-shade-plugin:3.5.0:shade (default) @ wordcount-benchmark ---
+[INFO] Including org.apache.commons:commons-math3:jar:3.6.1 in the shaded jar.
+[INFO] Including com.google.code.gson:gson:jar:2.10.1 in the shaded jar.
+[INFO] Dependency-reduced POM written at: /root/forL0-state-backend/benchmark/wordcount/dependency-reduced-pom.xml
+[WARNING] commons-math3-3.6.1.jar, wordcount-benchmark-1.0-SNAPSHOT.jar define 1307 overlapping classes and resources: 
+[WARNING]   - META-INF/LICENSE.txt
+[WARNING]   - META-INF/NOTICE.txt
+[WARNING]   - META-INF/maven/org.apache.commons/commons-math3/pom.properties
+[WARNING]   - META-INF/maven/org.apache.commons/commons-math3/pom.xml
+[WARNING]   - assets/org/apache/commons/math3/exception/util/LocalizedFormats_fr.properties
+[WARNING]   - assets/org/apache/commons/math3/random/new-joe-kuo-6.1000
+[WARNING]   - org.apache.commons.math3.Field
+[WARNING]   - org.apache.commons.math3.FieldElement
+[WARNING]   - org.apache.commons.math3.RealFieldElement
+[WARNING]   - org.apache.commons.math3.analysis.BivariateFunction
+[WARNING]   - 1297 more...
+[WARNING] commons-math3-3.6.1.jar, gson-2.10.1.jar, wordcount-benchmark-1.0-SNAPSHOT.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/MANIFEST.MF
+[WARNING] gson-2.10.1.jar, wordcount-benchmark-1.0-SNAPSHOT.jar define 220 overlapping classes and resources: 
+[WARNING]   - META-INF.versions.9.module-info
+[WARNING]   - META-INF/maven/com.google.code.gson/gson/pom.properties
+[WARNING]   - META-INF/maven/com.google.code.gson/gson/pom.xml
+[WARNING]   - com.google.gson.ExclusionStrategy
+[WARNING]   - com.google.gson.FieldAttributes
+[WARNING]   - com.google.gson.FieldNamingPolicy
+[WARNING]   - com.google.gson.FieldNamingPolicy$1
+[WARNING]   - com.google.gson.FieldNamingPolicy$2
+[WARNING]   - com.google.gson.FieldNamingPolicy$3
+[WARNING]   - com.google.gson.FieldNamingPolicy$4
+[WARNING]   - 210 more...
+[WARNING] maven-shade-plugin has detected that some files are
+[WARNING] present in two or more JARs. When this happens, only one
+[WARNING] single version of the file is copied to the uber jar.
+[WARNING] Usually this is not harmful and you can skip these warnings,
+[WARNING] otherwise try to manually exclude artifacts based on
+[WARNING] mvn dependency:tree -Ddetail=true and the above output.
+[WARNING] See https://maven.apache.org/plugins/maven-shade-plugin/
+[INFO] Replacing original artifact with shaded artifact.
+[INFO] Replacing /root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT.jar with /root/forL0-state-backend/benchmark/wordcount/target/wordcount-benchmark-1.0-SNAPSHOT-shaded.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.737 s
+[INFO] Finished at: 2026-11-02T06:36:22Z
+[INFO] ------------------------------------------------------------------------
+COMPLETE
