@@ -1,0 +1,184 @@
+[
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "/usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java",
+        "jvmArgs" : [
+            "-Xms8g",
+            "-Xmx8g",
+            "-XX:ActiveProcessorCount=4",
+            "-XX:+UnlockDiagnosticVMOptions",
+            "-XX:+DebugNonSafepoints",
+            "-XX:+PreserveFramePointer",
+            "-Dorg.slf4j.simpleLogger.defaultLogLevel=error",
+            "-Djava.library.path=/root/briskstate-setup/paper-experiments-20261104/reproduction",
+            "-Djava.io.tmpdir=/root/briskstate-setup/paper-experiments-20261104/micro-rocksdb/tmp"
+        ],
+        "jdkVersion" : "11.0.32",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "11.0.32+9",
+        "warmupIterations" : 10,
+        "warmupTime" : "5 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "5 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "backendType" : "ROCKSDB",
+            "keyCount" : "1048576"
+        },
+        "primaryMetric" : {
+            "score" : 359.15134250322524,
+            "scoreError" : 9.324215286179845,
+            "scoreConfidence" : [
+                349.8271272170454,
+                368.47555778940506
+            ],
+            "scorePercentiles" : {
+                "0.0" : 357.09432412472233,
+                "50.0" : 358.1729520385444,
+                "90.0" : 363.17317123916445,
+                "95.0" : 363.17317123916445,
+                "99.0" : 363.17317123916445,
+                "99.9" : 363.17317123916445,
+                "99.99" : 363.17317123916445,
+                "99.999" : 363.17317123916445,
+                "99.9999" : 363.17317123916445,
+                "100.0" : 363.17317123916445
+            },
+            "scoreUnit" : "ops/ms",
+            "rawData" : [
+                [
+                    359.55363783459336,
+                    357.09432412472233,
+                    357.76262727910176,
+                    363.17317123916445,
+                    358.1729520385444
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+            "gc.alloc.rate" : {
+                "score" : 23.500686823481637,
+                "scoreError" : 0.9115970951743008,
+                "scoreConfidence" : [
+                    22.589089728307336,
+                    24.412283918655937
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 23.265252648724736,
+                    "50.0" : 23.396604772505164,
+                    "90.0" : 23.825445518127477,
+                    "95.0" : 23.825445518127477,
+                    "99.0" : 23.825445518127477,
+                    "99.9" : 23.825445518127477,
+                    "99.99" : 23.825445518127477,
+                    "99.999" : 23.825445518127477,
+                    "99.9999" : 23.825445518127477,
+                    "100.0" : 23.825445518127477
+                },
+                "scoreUnit" : "MB/sec",
+                "rawData" : [
+                    [
+                        23.396604772505164,
+                        23.265252648724736,
+                        23.346291447793106,
+                        23.825445518127477,
+                        23.66983973025771
+                    ]
+                ]
+            },
+            "gc.alloc.rate.norm" : {
+                "score" : 136.69786465130818,
+                "scoreError" : 5.948503465682849,
+                "scoreConfidence" : [
+                    130.74936118562533,
+                    142.64636811699103
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 136.00648141703786,
+                    "50.0" : 136.0065593003413,
+                    "90.0" : 139.46129984445702,
+                    "95.0" : 139.46129984445702,
+                    "99.0" : 139.46129984445702,
+                    "99.9" : 139.46129984445702,
+                    "99.99" : 139.46129984445702,
+                    "99.999" : 139.46129984445702,
+                    "99.9999" : 139.46129984445702,
+                    "100.0" : 139.46129984445702
+                },
+                "scoreUnit" : "B/op",
+                "rawData" : [
+                    [
+                        136.0065369897959,
+                        136.00844570490867,
+                        136.0065593003413,
+                        136.00648141703786,
+                        139.46129984445702
+                    ]
+                ]
+            },
+            "gc.count" : {
+                "score" : 1.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    1.0,
+                    1.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 1.0,
+                    "95.0" : 1.0,
+                    "99.0" : 1.0,
+                    "99.9" : 1.0,
+                    "99.99" : 1.0,
+                    "99.999" : 1.0,
+                    "99.9999" : 1.0,
+                    "100.0" : 1.0
+                },
+                "scoreUnit" : "counts",
+                "rawData" : [
+                    [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0
+                    ]
+                ]
+            },
+            "gc.time" : {
+                "score" : 7.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    7.0,
+                    7.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 7.0,
+                    "95.0" : 7.0,
+                    "99.0" : 7.0,
+                    "99.9" : 7.0,
+                    "99.99" : 7.0,
+                    "99.999" : 7.0,
+                    "99.9999" : 7.0,
+                    "100.0" : 7.0
+                },
+                "scoreUnit" : "ms",
+                "rawData" : [
+                    [
+                        7.0
+                    ]
+                ]
+            }
+        }
+    }
+]
+
+

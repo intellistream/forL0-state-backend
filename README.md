@@ -582,3 +582,7 @@ forL0-state-backend/
 **注意**：没有 L0 设备或运行库时，backend/native table 可以继续运行，但
 HotCache 会被禁用。这类运行只能验证对应的软件路径，不能证明真实 L0 的
 功能等价性或性能收益。
+
+## 2026-11-05 实验报告与数据
+
+七项benchmark set的内存梯度、CPU/GC归因与三后端微基准见[报告与完整数据目录](experiments/2026-11-05-paper/README.md)。原始大体积采样包通过Git LFS提供。

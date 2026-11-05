@@ -1,0 +1,2814 @@
+{
+  "workload": "wc",
+  "memory_gib": 32,
+  "backend": "heap",
+  "repeat": 1,
+  "keys": 524288,
+  "width": 64,
+  "touches": 128,
+  "window": 16,
+  "backend_revision": "r30",
+  "profiled": false,
+  "job_id": "1ed881d2eba021857dfb325364ab70b7",
+  "directory": "/root/briskstate-setup/paper-experiments-20261104/formal/wc-m32-heap-r1",
+  "job_sha256": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+  "backend_sha256": "81d12bb9dc9366053b15159fb6a8b90ed1dfaf28cffdb4b4ba5104af9627f37b",
+  "native_sha256": "8ffa4d449766e03f9fe06efea91b59337c814fa34a71314ecfe1f34fd833ba03",
+  "measurement_start_ms": 1793800685957,
+  "measurement_end_ms": 1793800805957,
+  "measurement_seconds": 120,
+  "warmup_seconds_minimum": 60,
+  "coverage_seconds_including_submission": 10.464092826005071,
+  "job_seconds": 204.444,
+  "submission_seconds": 3.8614865369163454,
+  "source_records_total": 40972288,
+  "sink_records_total": 40972288,
+  "source_signature": -7421537412830442971,
+  "sink_source_signature": -7421537412830442971,
+  "source_oracle_matches": true,
+  "feature_projection": -6655200883980317952,
+  "measured_sink_records": 26805507,
+  "sink_multiplier": 1,
+  "input_equivalent_records": 26805507.0,
+  "throughput_input_records_s": 223379.225,
+  "per_second_sink_records": [
+    277471,
+    130424,
+    259514,
+    270102,
+    118434,
+    267291,
+    297722,
+    92220,
+    294910,
+    261534,
+    114363,
+    251860,
+    280855,
+    122175,
+    303340,
+    270834,
+    141574,
+    282742,
+    231875,
+    171639,
+    269634,
+    203875,
+    217895,
+    257171,
+    176620,
+    221855,
+    285237,
+    145611,
+    239206,
+    289296,
+    141402,
+    264451,
+    280869,
+    119247,
+    257117,
+    292103,
+    105621,
+    274021,
+    286486,
+    102048,
+    253756,
+    280832,
+    119520,
+    282249,
+    275122,
+    106618,
+    289877,
+    286487,
+    121708,
+    290230,
+    241738,
+    147735,
+    285080,
+    214035,
+    177541,
+    274793,
+    199175,
+    186384,
+    265099,
+    195452,
+    175192,
+    287075,
+    188287,
+    197024,
+    283853,
+    170473,
+    226486,
+    271508,
+    152045,
+    223384,
+    294443,
+    132943,
+    276188,
+    292247,
+    113603,
+    291660,
+    272744,
+    116709,
+    269632,
+    275305,
+    120860,
+    278856,
+    276644,
+    105339,
+    276654,
+    274576,
+    147664,
+    272908,
+    229846,
+    177416,
+    286954,
+    185777,
+    208477,
+    257886,
+    179726,
+    238843,
+    292913,
+    119216,
+    250589,
+    266356,
+    130135,
+    284613,
+    295382,
+    110475,
+    268698,
+    276655,
+    124051,
+    296785,
+    280399,
+    104989,
+    288695,
+    263082,
+    147641,
+    273600,
+    238330,
+    143244,
+    282740,
+    223243,
+    178983,
+    271391
+  ],
+  "jvm_flags": {
+    "tm1": {
+      "ActiveProcessorCount": "4",
+      "ConcGCThreads": "1",
+      "G1HeapRegionSize": "8388608",
+      "InitialHeapSize": "32346472448",
+      "MaxHeapSize": "32346472448",
+      "ParallelGCThreads": "4",
+      "UseCompressedClassPointers": "true",
+      "UseCompressedOops": "true",
+      "UseNUMA": "false",
+      "UseNUMAInterleaving": "false"
+    },
+    "tm2": {
+      "ActiveProcessorCount": "4",
+      "ConcGCThreads": "1",
+      "G1HeapRegionSize": "8388608",
+      "InitialHeapSize": "32346472448",
+      "MaxHeapSize": "32346472448",
+      "ParallelGCThreads": "4",
+      "UseCompressedClassPointers": "true",
+      "UseCompressedOops": "true",
+      "UseNUMA": "false",
+      "UseNUMAInterleaving": "false"
+    },
+    "jm": {
+      "ActiveProcessorCount": "4",
+      "ConcGCThreads": "1",
+      "G1HeapRegionSize": "2097152",
+      "InitialHeapSize": "7329546240",
+      "MaxHeapSize": "7329546240",
+      "ParallelGCThreads": "4",
+      "UseCompressedClassPointers": "true",
+      "UseCompressedOops": "true",
+      "UseNUMA": "false",
+      "UseNUMAInterleaving": "false"
+    }
+  },
+  "roles_capture": {
+    "tm1": {
+      "pid": 568054,
+      "process_cpu_seconds": 735.19,
+      "gc_worker_cpu_seconds": 373.17,
+      "observed_thread_cpu_seconds": 734.41,
+      "threads": [
+        {
+          "tid": 568054,
+          "start_ticks": 375713558,
+          "name": "java",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568058,
+          "start_ticks": 375713559,
+          "name": "java",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568061,
+          "start_ticks": 375713560,
+          "name": "GC Thread#0",
+          "cpu_seconds": 39.01,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568063,
+          "start_ticks": 375713560,
+          "name": "G1 Main Marker",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568064,
+          "start_ticks": 375713560,
+          "name": "G1 Conc#0",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568092,
+          "start_ticks": 375713568,
+          "name": "G1 Refine#0",
+          "cpu_seconds": 56.13,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568093,
+          "start_ticks": 375713568,
+          "name": "G1 Young RemSet",
+          "cpu_seconds": 0.52,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568096,
+          "start_ticks": 375713569,
+          "name": "VM Thread",
+          "cpu_seconds": 1.47,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568098,
+          "start_ticks": 375713569,
+          "name": "Reference Handl",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568100,
+          "start_ticks": 375713569,
+          "name": "Finalizer",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568102,
+          "start_ticks": 375713569,
+          "name": "Signal Dispatch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568104,
+          "start_ticks": 375713569,
+          "name": "Service Thread",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568106,
+          "start_ticks": 375713569,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 8.65,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568108,
+          "start_ticks": 375713569,
+          "name": "C1 CompilerThre",
+          "cpu_seconds": 1.83,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568110,
+          "start_ticks": 375713569,
+          "name": "Sweeper thread",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568113,
+          "start_ticks": 375713571,
+          "name": "VM Periodic Tas",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568115,
+          "start_ticks": 375713571,
+          "name": "Common-Cleaner",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568132,
+          "start_ticks": 375713635,
+          "name": "Log4j2-TF-3-Sch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568356,
+          "start_ticks": 375713700,
+          "name": "Log4j2-TF-5-Sch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568418,
+          "start_ticks": 375713772,
+          "name": "flink-scheduler",
+          "cpu_seconds": 0.45,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568419,
+          "start_ticks": 375713780,
+          "name": "GC Thread#1",
+          "cpu_seconds": 38.98,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568420,
+          "start_ticks": 375713780,
+          "name": "GC Thread#2",
+          "cpu_seconds": 39.01,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568421,
+          "start_ticks": 375713780,
+          "name": "GC Thread#3",
+          "cpu_seconds": 38.9,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568422,
+          "start_ticks": 375713795,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568423,
+          "start_ticks": 375713796,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568424,
+          "start_ticks": 375713799,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568425,
+          "start_ticks": 375713803,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568426,
+          "start_ticks": 375713803,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568427,
+          "start_ticks": 375713830,
+          "name": "flink-7",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568429,
+          "start_ticks": 375713834,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568430,
+          "start_ticks": 375713834,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568557,
+          "start_ticks": 375713850,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568582,
+          "start_ticks": 375713854,
+          "name": "flink-metrics-s",
+          "cpu_seconds": 0.46,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568586,
+          "start_ticks": 375713855,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568590,
+          "start_ticks": 375713856,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568592,
+          "start_ticks": 375713856,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568594,
+          "start_ticks": 375713857,
+          "name": "flink-metrics-5",
+          "cpu_seconds": 0.33,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568595,
+          "start_ticks": 375713857,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568596,
+          "start_ticks": 375713857,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568597,
+          "start_ticks": 375713858,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568601,
+          "start_ticks": 375713858,
+          "name": "flink-metrics-9",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568602,
+          "start_ticks": 375713859,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568603,
+          "start_ticks": 375713859,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568604,
+          "start_ticks": 375713859,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568605,
+          "start_ticks": 375713861,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568606,
+          "start_ticks": 375713864,
+          "name": "ForkJoinPool.co",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568621,
+          "start_ticks": 375713876,
+          "name": "Timer-0",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568622,
+          "start_ticks": 375713883,
+          "name": "Timer-1",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568623,
+          "start_ticks": 375713889,
+          "name": "Flink-Metric-Vi",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568624,
+          "start_ticks": 375713898,
+          "name": "IOManager write",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568625,
+          "start_ticks": 375713898,
+          "name": "IOManager reade",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568627,
+          "start_ticks": 375713939,
+          "name": "Flink Netty Ser",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568628,
+          "start_ticks": 375713956,
+          "name": "flink-11",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568630,
+          "start_ticks": 375713965,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568631,
+          "start_ticks": 375713965,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568632,
+          "start_ticks": 375713965,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.11,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568633,
+          "start_ticks": 375713977,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568636,
+          "start_ticks": 375713988,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568637,
+          "start_ticks": 375713988,
+          "name": "taskmanager_0-m",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568701,
+          "start_ticks": 375714303,
+          "name": "Attach Listener",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568754,
+          "start_ticks": 375714425,
+          "name": "flink-metrics-1",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569050,
+          "start_ticks": 375714815,
+          "name": "pool-4-thread-1",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569053,
+          "start_ticks": 375714820,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.21,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569057,
+          "start_ticks": 375714827,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.77,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569065,
+          "start_ticks": 375714838,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569068,
+          "start_ticks": 375714839,
+          "name": "CloseableReaper",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569069,
+          "start_ticks": 375714840,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569070,
+          "start_ticks": 375714841,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569072,
+          "start_ticks": 375714842,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569073,
+          "start_ticks": 375714846,
+          "name": "Split (1/8)#0",
+          "cpu_seconds": 4.66,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569075,
+          "start_ticks": 375714849,
+          "name": "Split (2/8)#0",
+          "cpu_seconds": 4.8,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569078,
+          "start_ticks": 375714850,
+          "name": "Split (3/8)#0",
+          "cpu_seconds": 4.62,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569080,
+          "start_ticks": 375714851,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569081,
+          "start_ticks": 375714852,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569082,
+          "start_ticks": 375714852,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569083,
+          "start_ticks": 375714852,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569085,
+          "start_ticks": 375714853,
+          "name": "Split (4/8)#0",
+          "cpu_seconds": 4.64,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569087,
+          "start_ticks": 375714854,
+          "name": "Count (1/8)#0",
+          "cpu_seconds": 73.97,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569093,
+          "start_ticks": 375714857,
+          "name": "Count (2/8)#0",
+          "cpu_seconds": 74.27,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569097,
+          "start_ticks": 375714858,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569098,
+          "start_ticks": 375714860,
+          "name": "Count (3/8)#0",
+          "cpu_seconds": 74.41,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569099,
+          "start_ticks": 375714861,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569101,
+          "start_ticks": 375714862,
+          "name": "Count (4/8)#0",
+          "cpu_seconds": 74.4,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569102,
+          "start_ticks": 375714864,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569104,
+          "start_ticks": 375714864,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569105,
+          "start_ticks": 375714864,
+          "name": "Sink: Sink (1/8",
+          "cpu_seconds": 2.72,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569107,
+          "start_ticks": 375714864,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569109,
+          "start_ticks": 375714865,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569110,
+          "start_ticks": 375714865,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569111,
+          "start_ticks": 375714865,
+          "name": "Sink: Sink (2/8",
+          "cpu_seconds": 2.78,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569112,
+          "start_ticks": 375714865,
+          "name": "Sink: Sink (3/8",
+          "cpu_seconds": 2.8,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569114,
+          "start_ticks": 375714867,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569117,
+          "start_ticks": 375714868,
+          "name": "Sink: Sink (4/8",
+          "cpu_seconds": 2.8,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569129,
+          "start_ticks": 375714883,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.28,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569141,
+          "start_ticks": 375714885,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.43,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569147,
+          "start_ticks": 375714886,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.43,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569150,
+          "start_ticks": 375714886,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.29,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569159,
+          "start_ticks": 375714887,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569160,
+          "start_ticks": 375714888,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569162,
+          "start_ticks": 375714888,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569166,
+          "start_ticks": 375714888,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569169,
+          "start_ticks": 375714889,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569170,
+          "start_ticks": 375714889,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569172,
+          "start_ticks": 375714890,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569173,
+          "start_ticks": 375714890,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569176,
+          "start_ticks": 375714891,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569177,
+          "start_ticks": 375714891,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569179,
+          "start_ticks": 375714891,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569181,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569195,
+          "start_ticks": 375714899,
+          "name": "Flink Netty Cli",
+          "cpu_seconds": 4.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569198,
+          "start_ticks": 375714913,
+          "name": "Flink Netty Ser",
+          "cpu_seconds": 3.78,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569447,
+          "start_ticks": 375715130,
+          "name": "G1 Refine#1",
+          "cpu_seconds": 54.06,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 569448,
+          "start_ticks": 375715131,
+          "name": "G1 Refine#2",
+          "cpu_seconds": 53.64,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 569449,
+          "start_ticks": 375715133,
+          "name": "G1 Refine#3",
+          "cpu_seconds": 52.92,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 569456,
+          "start_ticks": 375715422,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569459,
+          "start_ticks": 375715554,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569460,
+          "start_ticks": 375715602,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.14,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569463,
+          "start_ticks": 375715805,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.34,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569480,
+          "start_ticks": 375716516,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.61,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569481,
+          "start_ticks": 375716517,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569485,
+          "start_ticks": 375716947,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569486,
+          "start_ticks": 375716949,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569487,
+          "start_ticks": 375716950,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 570238,
+          "start_ticks": 375721558,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572397,
+          "start_ticks": 375735213,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.09,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572401,
+          "start_ticks": 375735223,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572402,
+          "start_ticks": 375735224,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572403,
+          "start_ticks": 375735224,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572404,
+          "start_ticks": 375735225,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572405,
+          "start_ticks": 375735227,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        }
+      ],
+      "affinity_violations": [],
+      "affinity_masks": [
+        "4-7"
+      ]
+    },
+    "tm2": {
+      "pid": 568587,
+      "process_cpu_seconds": 751.89,
+      "gc_worker_cpu_seconds": 370.03,
+      "observed_thread_cpu_seconds": 750.91,
+      "threads": [
+        {
+          "tid": 568587,
+          "start_ticks": 375713855,
+          "name": "java",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568593,
+          "start_ticks": 375713856,
+          "name": "java",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568598,
+          "start_ticks": 375713858,
+          "name": "GC Thread#0",
+          "cpu_seconds": 40.36,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568599,
+          "start_ticks": 375713858,
+          "name": "G1 Main Marker",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568600,
+          "start_ticks": 375713858,
+          "name": "G1 Conc#0",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568607,
+          "start_ticks": 375713866,
+          "name": "G1 Refine#0",
+          "cpu_seconds": 52.8,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568608,
+          "start_ticks": 375713866,
+          "name": "G1 Young RemSet",
+          "cpu_seconds": 0.5,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568609,
+          "start_ticks": 375713867,
+          "name": "VM Thread",
+          "cpu_seconds": 1.56,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568610,
+          "start_ticks": 375713867,
+          "name": "Reference Handl",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568611,
+          "start_ticks": 375713867,
+          "name": "Finalizer",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568612,
+          "start_ticks": 375713867,
+          "name": "Signal Dispatch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568613,
+          "start_ticks": 375713867,
+          "name": "Service Thread",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568614,
+          "start_ticks": 375713867,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 9.41,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568615,
+          "start_ticks": 375713867,
+          "name": "C1 CompilerThre",
+          "cpu_seconds": 1.92,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568616,
+          "start_ticks": 375713867,
+          "name": "Sweeper thread",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568617,
+          "start_ticks": 375713869,
+          "name": "VM Periodic Tas",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568618,
+          "start_ticks": 375713869,
+          "name": "Common-Cleaner",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568626,
+          "start_ticks": 375713933,
+          "name": "Log4j2-TF-3-Sch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568638,
+          "start_ticks": 375713996,
+          "name": "Log4j2-TF-5-Sch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568640,
+          "start_ticks": 375714067,
+          "name": "flink-scheduler",
+          "cpu_seconds": 0.45,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568642,
+          "start_ticks": 375714075,
+          "name": "GC Thread#1",
+          "cpu_seconds": 40.32,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568643,
+          "start_ticks": 375714075,
+          "name": "GC Thread#2",
+          "cpu_seconds": 40.35,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568644,
+          "start_ticks": 375714075,
+          "name": "GC Thread#3",
+          "cpu_seconds": 40.33,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 568645,
+          "start_ticks": 375714090,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568646,
+          "start_ticks": 375714092,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568647,
+          "start_ticks": 375714094,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.17,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568648,
+          "start_ticks": 375714097,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568649,
+          "start_ticks": 375714098,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.07,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568650,
+          "start_ticks": 375714124,
+          "name": "flink-7",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568651,
+          "start_ticks": 375714128,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.07,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568653,
+          "start_ticks": 375714144,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568654,
+          "start_ticks": 375714147,
+          "name": "flink-metrics-s",
+          "cpu_seconds": 0.39,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568655,
+          "start_ticks": 375714148,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568656,
+          "start_ticks": 375714148,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568657,
+          "start_ticks": 375714148,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568658,
+          "start_ticks": 375714149,
+          "name": "flink-metrics-5",
+          "cpu_seconds": 0.33,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568659,
+          "start_ticks": 375714149,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568660,
+          "start_ticks": 375714150,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568661,
+          "start_ticks": 375714151,
+          "name": "flink-metrics-8",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568662,
+          "start_ticks": 375714152,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568663,
+          "start_ticks": 375714153,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568664,
+          "start_ticks": 375714154,
+          "name": "ForkJoinPool.co",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568665,
+          "start_ticks": 375714166,
+          "name": "Timer-0",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568666,
+          "start_ticks": 375714172,
+          "name": "Timer-1",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568667,
+          "start_ticks": 375714178,
+          "name": "Flink-Metric-Vi",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568668,
+          "start_ticks": 375714188,
+          "name": "IOManager write",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568669,
+          "start_ticks": 375714188,
+          "name": "IOManager reade",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568673,
+          "start_ticks": 375714230,
+          "name": "Flink Netty Ser",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568674,
+          "start_ticks": 375714245,
+          "name": "flink-10",
+          "cpu_seconds": 0.11,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568676,
+          "start_ticks": 375714253,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.11,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568677,
+          "start_ticks": 375714253,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568678,
+          "start_ticks": 375714265,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568680,
+          "start_ticks": 375714270,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568681,
+          "start_ticks": 375714271,
+          "name": "taskmanager_0-m",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568720,
+          "start_ticks": 375714341,
+          "name": "Attach Listener",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568755,
+          "start_ticks": 375714425,
+          "name": "flink-metrics-1",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569051,
+          "start_ticks": 375714815,
+          "name": "pool-4-thread-1",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569058,
+          "start_ticks": 375714828,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.66,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569059,
+          "start_ticks": 375714833,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.06,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569060,
+          "start_ticks": 375714834,
+          "name": "CloseableReaper",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569063,
+          "start_ticks": 375714835,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569064,
+          "start_ticks": 375714836,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569066,
+          "start_ticks": 375714839,
+          "name": "Source: Data So",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569074,
+          "start_ticks": 375714848,
+          "name": "Split (5/8)#0",
+          "cpu_seconds": 4.16,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569076,
+          "start_ticks": 375714849,
+          "name": "Split (6/8)#0",
+          "cpu_seconds": 4.18,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569077,
+          "start_ticks": 375714849,
+          "name": "Split (7/8)#0",
+          "cpu_seconds": 4.15,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569079,
+          "start_ticks": 375714850,
+          "name": "Split (8/8)#0",
+          "cpu_seconds": 4.16,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569084,
+          "start_ticks": 375714853,
+          "name": "Count (5/8)#0",
+          "cpu_seconds": 80.42,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569086,
+          "start_ticks": 375714854,
+          "name": "Count (6/8)#0",
+          "cpu_seconds": 79.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569088,
+          "start_ticks": 375714856,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569089,
+          "start_ticks": 375714856,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569090,
+          "start_ticks": 375714856,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569091,
+          "start_ticks": 375714856,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569092,
+          "start_ticks": 375714856,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569094,
+          "start_ticks": 375714857,
+          "name": "Count (7/8)#0",
+          "cpu_seconds": 79.26,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569095,
+          "start_ticks": 375714857,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569096,
+          "start_ticks": 375714858,
+          "name": "Count (8/8)#0",
+          "cpu_seconds": 80.44,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569100,
+          "start_ticks": 375714861,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569103,
+          "start_ticks": 375714864,
+          "name": "Sink: Sink (5/8",
+          "cpu_seconds": 2.47,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569106,
+          "start_ticks": 375714864,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569108,
+          "start_ticks": 375714865,
+          "name": "Sink: Sink (6/8",
+          "cpu_seconds": 2.46,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569113,
+          "start_ticks": 375714866,
+          "name": "Sink: Sink (7/8",
+          "cpu_seconds": 2.53,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569115,
+          "start_ticks": 375714868,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569116,
+          "start_ticks": 375714868,
+          "name": "Sink: Sink (8/8",
+          "cpu_seconds": 2.48,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569118,
+          "start_ticks": 375714868,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.12,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569119,
+          "start_ticks": 375714869,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569120,
+          "start_ticks": 375714869,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569121,
+          "start_ticks": 375714869,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569122,
+          "start_ticks": 375714869,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569123,
+          "start_ticks": 375714870,
+          "name": "OutputFlusher f",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569124,
+          "start_ticks": 375714872,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569164,
+          "start_ticks": 375714888,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.44,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569171,
+          "start_ticks": 375714889,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.37,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569174,
+          "start_ticks": 375714890,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.36,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569175,
+          "start_ticks": 375714891,
+          "name": "Legacy Source T",
+          "cpu_seconds": 2.34,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569178,
+          "start_ticks": 375714891,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569180,
+          "start_ticks": 375714892,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569182,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569183,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569184,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569185,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569186,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569187,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569188,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569189,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569190,
+          "start_ticks": 375714893,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569191,
+          "start_ticks": 375714894,
+          "name": "System Time Tri",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569192,
+          "start_ticks": 375714895,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569193,
+          "start_ticks": 375714895,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569196,
+          "start_ticks": 375714905,
+          "name": "Flink Netty Ser",
+          "cpu_seconds": 3.91,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569197,
+          "start_ticks": 375714907,
+          "name": "Flink Netty Cli",
+          "cpu_seconds": 4.07,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569450,
+          "start_ticks": 375715143,
+          "name": "G1 Refine#1",
+          "cpu_seconds": 51.96,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 569451,
+          "start_ticks": 375715143,
+          "name": "G1 Refine#2",
+          "cpu_seconds": 51.81,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 569452,
+          "start_ticks": 375715143,
+          "name": "G1 Refine#3",
+          "cpu_seconds": 51.6,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 569453,
+          "start_ticks": 375715144,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569454,
+          "start_ticks": 375715146,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569458,
+          "start_ticks": 375715551,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.44,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569462,
+          "start_ticks": 375715755,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569482,
+          "start_ticks": 375716803,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.41,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569738,
+          "start_ticks": 375717618,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569950,
+          "start_ticks": 375718524,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 570239,
+          "start_ticks": 375721581,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572396,
+          "start_ticks": 375735211,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572406,
+          "start_ticks": 375735228,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572407,
+          "start_ticks": 375735228,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572408,
+          "start_ticks": 375735228,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572409,
+          "start_ticks": 375735228,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572411,
+          "start_ticks": 375735230,
+          "name": "flink-taskexecu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        }
+      ],
+      "affinity_violations": [],
+      "affinity_masks": [
+        "8-11"
+      ]
+    },
+    "jm": {
+      "pid": 567520,
+      "process_cpu_seconds": 12.24,
+      "gc_worker_cpu_seconds": 0.12000000000000001,
+      "observed_thread_cpu_seconds": 11.76,
+      "threads": [
+        {
+          "tid": 567520,
+          "start_ticks": 375713241,
+          "name": "java",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567524,
+          "start_ticks": 375713242,
+          "name": "java",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567528,
+          "start_ticks": 375713243,
+          "name": "GC Thread#0",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567529,
+          "start_ticks": 375713243,
+          "name": "G1 Main Marker",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567530,
+          "start_ticks": 375713243,
+          "name": "G1 Conc#0",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567546,
+          "start_ticks": 375713247,
+          "name": "G1 Refine#0",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567547,
+          "start_ticks": 375713247,
+          "name": "G1 Young RemSet",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567553,
+          "start_ticks": 375713248,
+          "name": "VM Thread",
+          "cpu_seconds": 0.09,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567554,
+          "start_ticks": 375713248,
+          "name": "Reference Handl",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567555,
+          "start_ticks": 375713248,
+          "name": "Finalizer",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567559,
+          "start_ticks": 375713248,
+          "name": "Signal Dispatch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567560,
+          "start_ticks": 375713248,
+          "name": "Service Thread",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567561,
+          "start_ticks": 375713248,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 5.28,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567562,
+          "start_ticks": 375713248,
+          "name": "C1 CompilerThre",
+          "cpu_seconds": 1.78,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567563,
+          "start_ticks": 375713248,
+          "name": "Sweeper thread",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567568,
+          "start_ticks": 375713250,
+          "name": "VM Periodic Tas",
+          "cpu_seconds": 0.11,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567571,
+          "start_ticks": 375713250,
+          "name": "Common-Cleaner",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567584,
+          "start_ticks": 375713312,
+          "name": "Log4j2-TF-3-Sch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567808,
+          "start_ticks": 375713375,
+          "name": "Log4j2-TF-5-Sch",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567871,
+          "start_ticks": 375713446,
+          "name": "flink-scheduler",
+          "cpu_seconds": 0.31,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567873,
+          "start_ticks": 375713457,
+          "name": "GC Thread#1",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567874,
+          "start_ticks": 375713457,
+          "name": "GC Thread#2",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567875,
+          "start_ticks": 375713457,
+          "name": "GC Thread#3",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": true
+        },
+        {
+          "tid": 567876,
+          "start_ticks": 375713469,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567877,
+          "start_ticks": 375713470,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567878,
+          "start_ticks": 375713472,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567879,
+          "start_ticks": 375713475,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.13,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567880,
+          "start_ticks": 375713476,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567881,
+          "start_ticks": 375713502,
+          "name": "flink-7",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567882,
+          "start_ticks": 375713506,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.12,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567885,
+          "start_ticks": 375713537,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567886,
+          "start_ticks": 375713537,
+          "name": "Timer-0",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567891,
+          "start_ticks": 375713538,
+          "name": "BLOB Server lis",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567922,
+          "start_ticks": 375713542,
+          "name": "flink-metrics-s",
+          "cpu_seconds": 0.33,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567930,
+          "start_ticks": 375713542,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567931,
+          "start_ticks": 375713542,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567937,
+          "start_ticks": 375713543,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567940,
+          "start_ticks": 375713543,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567941,
+          "start_ticks": 375713543,
+          "name": "flink-metrics-6",
+          "cpu_seconds": 0.2,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567949,
+          "start_ticks": 375713544,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567960,
+          "start_ticks": 375713545,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.06,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567968,
+          "start_ticks": 375713546,
+          "name": "flink-metrics-9",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 567969,
+          "start_ticks": 375713546,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568000,
+          "start_ticks": 375713550,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568011,
+          "start_ticks": 375713552,
+          "name": "ForkJoinPool.co",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568042,
+          "start_ticks": 375713555,
+          "name": "Flink-Metric-Vi",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568118,
+          "start_ticks": 375713607,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568119,
+          "start_ticks": 375713608,
+          "name": "Flink-Dispatche",
+          "cpu_seconds": 0.11,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568120,
+          "start_ticks": 375713611,
+          "name": "cluster-io-thre",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568121,
+          "start_ticks": 375713611,
+          "name": "pool-2-thread-1",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568122,
+          "start_ticks": 375713611,
+          "name": "cluster-io-thre",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568123,
+          "start_ticks": 375713615,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.07,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568124,
+          "start_ticks": 375713615,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.1,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568125,
+          "start_ticks": 375713616,
+          "name": "resourcemanager",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568126,
+          "start_ticks": 375713616,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.17,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568127,
+          "start_ticks": 375713617,
+          "name": "cluster-io-thre",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568128,
+          "start_ticks": 375713618,
+          "name": "ForkJoinPool.co",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568129,
+          "start_ticks": 375713618,
+          "name": "ForkJoinPool.co",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568591,
+          "start_ticks": 375713856,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.13,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568629,
+          "start_ticks": 375713958,
+          "name": "flink-13",
+          "cpu_seconds": 0.09,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568641,
+          "start_ticks": 375714075,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568671,
+          "start_ticks": 375714209,
+          "name": "Flink-Dispatche",
+          "cpu_seconds": 0.2,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568672,
+          "start_ticks": 375714222,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568675,
+          "start_ticks": 375714247,
+          "name": "flink-15",
+          "cpu_seconds": 0.09,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568682,
+          "start_ticks": 375714276,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568739,
+          "start_ticks": 375714380,
+          "name": "Attach Listener",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568740,
+          "start_ticks": 375714414,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568741,
+          "start_ticks": 375714418,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568742,
+          "start_ticks": 375714419,
+          "name": "Flink-Dispatche",
+          "cpu_seconds": 0.07,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568743,
+          "start_ticks": 375714419,
+          "name": "Flink-Dispatche",
+          "cpu_seconds": 0.09,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568744,
+          "start_ticks": 375714420,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568745,
+          "start_ticks": 375714421,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568746,
+          "start_ticks": 375714423,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568747,
+          "start_ticks": 375714423,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568748,
+          "start_ticks": 375714423,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568749,
+          "start_ticks": 375714424,
+          "name": "flink-metrics-1",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568750,
+          "start_ticks": 375714424,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568751,
+          "start_ticks": 375714424,
+          "name": "flink-metrics-1",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568798,
+          "start_ticks": 375714447,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 568799,
+          "start_ticks": 375714447,
+          "name": "flink-rest-serv",
+          "cpu_seconds": 0.02,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569037,
+          "start_ticks": 375714771,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.27,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569038,
+          "start_ticks": 375714774,
+          "name": "jobmanager-io-t",
+          "cpu_seconds": 0.22,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569043,
+          "start_ticks": 375714799,
+          "name": "jobmanager_2-ma",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569044,
+          "start_ticks": 375714804,
+          "name": "cluster-io-thre",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569046,
+          "start_ticks": 375714804,
+          "name": "jobmanager-futu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569049,
+          "start_ticks": 375714814,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.12,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569052,
+          "start_ticks": 375714816,
+          "name": "flink-pekko.rem",
+          "cpu_seconds": 0.08,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569054,
+          "start_ticks": 375714823,
+          "name": "jobmanager-futu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569055,
+          "start_ticks": 375714824,
+          "name": "jobmanager-futu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569056,
+          "start_ticks": 375714824,
+          "name": "jobmanager-futu",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569139,
+          "start_ticks": 375714885,
+          "name": "jobmanager-io-t",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569140,
+          "start_ticks": 375714885,
+          "name": "jobmanager-io-t",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569142,
+          "start_ticks": 375714885,
+          "name": "jobmanager-io-t",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569194,
+          "start_ticks": 375714895,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569457,
+          "start_ticks": 375715431,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569461,
+          "start_ticks": 375715617,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569737,
+          "start_ticks": 375717475,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569855,
+          "start_ticks": 375718482,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569945,
+          "start_ticks": 375718523,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.22,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569979,
+          "start_ticks": 375718617,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 569983,
+          "start_ticks": 375719503,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.03,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 570233,
+          "start_ticks": 375720481,
+          "name": "flink-metrics-p",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 570234,
+          "start_ticks": 375720539,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.04,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 570995,
+          "start_ticks": 375726051,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 571515,
+          "start_ticks": 375729618,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.05,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572398,
+          "start_ticks": 375735222,
+          "name": "flink-pekko.act",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572399,
+          "start_ticks": 375735223,
+          "name": "RpcService-Supe",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572400,
+          "start_ticks": 375735223,
+          "name": "cluster-io-thre",
+          "cpu_seconds": 0.0,
+          "is_gc_worker": false
+        },
+        {
+          "tid": 572410,
+          "start_ticks": 375735229,
+          "name": "C2 CompilerThre",
+          "cpu_seconds": 0.01,
+          "is_gc_worker": false
+        }
+      ],
+      "affinity_violations": [],
+      "affinity_masks": [
+        "0-3"
+      ]
+    }
+  },
+  "checkpoint_count": 0,
+  "forl0_l0_enabled": false,
+  "config_budget_is_hard_rss_limit": false,
+  "post_window_full_gc": {
+    "tm1": {
+      "diagnostic_seconds": 1.8864217139780521,
+      "heap_info": "568054:\n garbage-first heap   total 31588352K, used 1147818K [0x0000001000800000, 0x0000001788800000)\n  region size 8192K, 3 young (24576K), 0 survivors (0K)\n Metaspace       used 48269K, capacity 50219K, committed 50768K, reserved 299008K\n  class space    used 6568K, capacity 7353K, committed 7548K, reserved 253952K\n"
+    },
+    "tm2": {
+      "diagnostic_seconds": 1.961445288732648,
+      "heap_info": "568587:\n garbage-first heap   total 31588352K, used 1147997K [0x0000001000800000, 0x0000001788800000)\n  region size 8192K, 3 young (24576K), 0 survivors (0K)\n Metaspace       used 48259K, capacity 50122K, committed 50864K, reserved 299008K\n  class space    used 6568K, capacity 7321K, committed 7600K, reserved 253952K\n"
+    }
+  }
+}

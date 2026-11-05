@@ -1,0 +1,66 @@
+{
+  "nodes": [
+    {
+      "name": "Data Source",
+      "parallelism": 8
+    },
+    {
+      "name": "Geo Finder",
+      "parallelism": 8
+    },
+    {
+      "name": "Geo Status",
+      "parallelism": 8
+    },
+    {
+      "name": "Geo Sink",
+      "parallelism": 8
+    },
+    {
+      "name": "Status Counter",
+      "parallelism": 8
+    },
+    {
+      "name": "Status Sink",
+      "parallelism": 8
+    },
+    {
+      "name": "Volume Counter",
+      "parallelism": 8
+    },
+    {
+      "name": "Count Sink",
+      "parallelism": 8
+    }
+  ],
+  "edges": [
+    {
+      "from": "Data Source",
+      "to": "Geo Finder"
+    },
+    {
+      "from": "Data Source",
+      "to": "Status Counter"
+    },
+    {
+      "from": "Data Source",
+      "to": "Volume Counter"
+    },
+    {
+      "from": "Geo Finder",
+      "to": "Geo Status"
+    },
+    {
+      "from": "Geo Status",
+      "to": "Geo Sink"
+    },
+    {
+      "from": "Status Counter",
+      "to": "Status Sink"
+    },
+    {
+      "from": "Volume Counter",
+      "to": "Count Sink"
+    }
+  ]
+}

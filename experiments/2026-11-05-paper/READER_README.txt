@@ -1,0 +1,5 @@
+此包提供完整报告、所有正文链接、图表、CSV/统计JSON、逐次配置/GC日志和HTML火焰图。
+大体积JFR、线程采样gzip、微基准进程观测与冻结构建工件位于容器的完整交付包：
+/root/briskstate-setup/paper-experiments-20261104-delivery.tar.gz
+完整包SHA256：0d13d27b6d88159ea036b4adbff5c2bbbce125ebff112dbcc078f8d41110446a
+本地阅读包用READER_MANIFEST.sha256核验；MANIFEST.sha256对应容器完整包，不能用其要求阅读包包含所有二进制采样。

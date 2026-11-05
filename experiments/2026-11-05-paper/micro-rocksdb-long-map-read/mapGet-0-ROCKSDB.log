@@ -1,0 +1,360 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Dorg.slf4j.simpleLogger.defaultLogLevel=error -Djava.library.path=/root/briskstate-setup/paper-experiments-20261104/reproduction -Djava.io.tmpdir=/root/briskstate-setup/paper-experiments-20261104/micro-rocksdb-long-map-read/tmp
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 240 iterations, 5 s each
+# Measurement: 12 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapGet
+# Parameters: (backendType = ROCKSDB, keyCount = 1048576, touchesPerKey = 64)
+
+# Run progress: 0.00% complete, ETA 00:21:00
+# Fork: 1 of 1
+# Warmup Iteration   1: 72.798 ops/ms
+# Warmup Iteration   2: 72.338 ops/ms
+# Warmup Iteration   3: 73.312 ops/ms
+# Warmup Iteration   4: 75.510 ops/ms
+# Warmup Iteration   5: 75.383 ops/ms
+# Warmup Iteration   6: 76.866 ops/ms
+# Warmup Iteration   7: 75.865 ops/ms
+# Warmup Iteration   8: 76.997 ops/ms
+# Warmup Iteration   9: 75.326 ops/ms
+# Warmup Iteration  10: 174.472 ops/ms
+# Warmup Iteration  11: 171.724 ops/ms
+# Warmup Iteration  12: 170.287 ops/ms
+# Warmup Iteration  13: 173.892 ops/ms
+# Warmup Iteration  14: 174.920 ops/ms
+# Warmup Iteration  15: 182.150 ops/ms
+# Warmup Iteration  16: 176.441 ops/ms
+# Warmup Iteration  17: 175.452 ops/ms
+# Warmup Iteration  18: 178.701 ops/ms
+# Warmup Iteration  19: 185.079 ops/ms
+# Warmup Iteration  20: 183.897 ops/ms
+# Warmup Iteration  21: 180.299 ops/ms
+# Warmup Iteration  22: 179.865 ops/ms
+# Warmup Iteration  23: 183.419 ops/ms
+# Warmup Iteration  24: 189.262 ops/ms
+# Warmup Iteration  25: 182.380 ops/ms
+# Warmup Iteration  26: 181.026 ops/ms
+# Warmup Iteration  27: 183.172 ops/ms
+# Warmup Iteration  28: 184.738 ops/ms
+# Warmup Iteration  29: 186.080 ops/ms
+# Warmup Iteration  30: 180.387 ops/ms
+# Warmup Iteration  31: 180.341 ops/ms
+# Warmup Iteration  32: 182.776 ops/ms
+# Warmup Iteration  33: 187.373 ops/ms
+# Warmup Iteration  34: 183.288 ops/ms
+# Warmup Iteration  35: 180.687 ops/ms
+# Warmup Iteration  36: 184.206 ops/ms
+# Warmup Iteration  37: 187.480 ops/ms
+# Warmup Iteration  38: 189.342 ops/ms
+# Warmup Iteration  39: 183.133 ops/ms
+# Warmup Iteration  40: 183.621 ops/ms
+# Warmup Iteration  41: 186.071 ops/ms
+# Warmup Iteration  42: 186.172 ops/ms
+# Warmup Iteration  43: 183.745 ops/ms
+# Warmup Iteration  44: 181.388 ops/ms
+# Warmup Iteration  45: 182.948 ops/ms
+# Warmup Iteration  46: 184.818 ops/ms
+# Warmup Iteration  47: 188.627 ops/ms
+# Warmup Iteration  48: 179.921 ops/ms
+# Warmup Iteration  49: 179.569 ops/ms
+# Warmup Iteration  50: 183.090 ops/ms
+# Warmup Iteration  51: 185.065 ops/ms
+# Warmup Iteration  52: 182.069 ops/ms
+# Warmup Iteration  53: 177.195 ops/ms
+# Warmup Iteration  54: 177.226 ops/ms
+# Warmup Iteration  55: 180.185 ops/ms
+# Warmup Iteration  56: 184.767 ops/ms
+# Warmup Iteration  57: 180.910 ops/ms
+# Warmup Iteration  58: 178.241 ops/ms
+# Warmup Iteration  59: 180.328 ops/ms
+# Warmup Iteration  60: 184.907 ops/ms
+# Warmup Iteration  61: 187.819 ops/ms
+# Warmup Iteration  62: 181.009 ops/ms
+# Warmup Iteration  63: 181.934 ops/ms
+# Warmup Iteration  64: 184.268 ops/ms
+# Warmup Iteration  65: 186.627 ops/ms
+# Warmup Iteration  66: 185.044 ops/ms
+# Warmup Iteration  67: 178.493 ops/ms
+# Warmup Iteration  68: 180.069 ops/ms
+# Warmup Iteration  69: 182.710 ops/ms
+# Warmup Iteration  70: 186.678 ops/ms
+# Warmup Iteration  71: 181.765 ops/ms
+# Warmup Iteration  72: 179.114 ops/ms
+# Warmup Iteration  73: 181.846 ops/ms
+# Warmup Iteration  74: 184.287 ops/ms
+# Warmup Iteration  75: 185.995 ops/ms
+# Warmup Iteration  76: 180.097 ops/ms
+# Warmup Iteration  77: 180.898 ops/ms
+# Warmup Iteration  78: 183.775 ops/ms
+# Warmup Iteration  79: 186.951 ops/ms
+# Warmup Iteration  80: 183.481 ops/ms
+# Warmup Iteration  81: 180.510 ops/ms
+# Warmup Iteration  82: 182.799 ops/ms
+# Warmup Iteration  83: 183.769 ops/ms
+# Warmup Iteration  84: 188.243 ops/ms
+# Warmup Iteration  85: 181.320 ops/ms
+# Warmup Iteration  86: 180.458 ops/ms
+# Warmup Iteration  87: 184.544 ops/ms
+# Warmup Iteration  88: 186.776 ops/ms
+# Warmup Iteration  89: 186.152 ops/ms
+# Warmup Iteration  90: 180.720 ops/ms
+# Warmup Iteration  91: 180.038 ops/ms
+# Warmup Iteration  92: 182.992 ops/ms
+# Warmup Iteration  93: 187.356 ops/ms
+# Warmup Iteration  94: 183.055 ops/ms
+# Warmup Iteration  95: 181.511 ops/ms
+# Warmup Iteration  96: 183.521 ops/ms
+# Warmup Iteration  97: 187.245 ops/ms
+# Warmup Iteration  98: 188.729 ops/ms
+# Warmup Iteration  99: 182.364 ops/ms
+# Warmup Iteration 100: 182.656 ops/ms
+# Warmup Iteration 101: 185.483 ops/ms
+# Warmup Iteration 102: 188.138 ops/ms
+# Warmup Iteration 103: 185.285 ops/ms
+# Warmup Iteration 104: 181.866 ops/ms
+# Warmup Iteration 105: 183.747 ops/ms
+# Warmup Iteration 106: 185.291 ops/ms
+# Warmup Iteration 107: 189.290 ops/ms
+# Warmup Iteration 108: 181.572 ops/ms
+# Warmup Iteration 109: 182.055 ops/ms
+# Warmup Iteration 110: 185.337 ops/ms
+# Warmup Iteration 111: 187.191 ops/ms
+# Warmup Iteration 112: 186.012 ops/ms
+# Warmup Iteration 113: 182.517 ops/ms
+# Warmup Iteration 114: 183.195 ops/ms
+# Warmup Iteration 115: 184.961 ops/ms
+# Warmup Iteration 116: 188.644 ops/ms
+# Warmup Iteration 117: 182.880 ops/ms
+# Warmup Iteration 118: 181.803 ops/ms
+# Warmup Iteration 119: 183.917 ops/ms
+# Warmup Iteration 120: 186.147 ops/ms
+# Warmup Iteration 121: 187.097 ops/ms
+# Warmup Iteration 122: 182.190 ops/ms
+# Warmup Iteration 123: 182.144 ops/ms
+# Warmup Iteration 124: 184.505 ops/ms
+# Warmup Iteration 125: 188.557 ops/ms
+# Warmup Iteration 126: 183.424 ops/ms
+# Warmup Iteration 127: 181.871 ops/ms
+# Warmup Iteration 128: 183.042 ops/ms
+# Warmup Iteration 129: 185.724 ops/ms
+# Warmup Iteration 130: 188.920 ops/ms
+# Warmup Iteration 131: 182.668 ops/ms
+# Warmup Iteration 132: 181.711 ops/ms
+# Warmup Iteration 133: 184.858 ops/ms
+# Warmup Iteration 134: 188.723 ops/ms
+# Warmup Iteration 135: 185.720 ops/ms
+# Warmup Iteration 136: 182.639 ops/ms
+# Warmup Iteration 137: 183.575 ops/ms
+# Warmup Iteration 138: 186.038 ops/ms
+# Warmup Iteration 139: 190.512 ops/ms
+# Warmup Iteration 140: 183.551 ops/ms
+# Warmup Iteration 141: 182.713 ops/ms
+# Warmup Iteration 142: 185.848 ops/ms
+# Warmup Iteration 143: 188.927 ops/ms
+# Warmup Iteration 144: 187.166 ops/ms
+# Warmup Iteration 145: 182.705 ops/ms
+# Warmup Iteration 146: 183.170 ops/ms
+# Warmup Iteration 147: 185.415 ops/ms
+# Warmup Iteration 148: 189.850 ops/ms
+# Warmup Iteration 149: 183.797 ops/ms
+# Warmup Iteration 150: 182.947 ops/ms
+# Warmup Iteration 151: 185.182 ops/ms
+# Warmup Iteration 152: 187.925 ops/ms
+# Warmup Iteration 153: 187.730 ops/ms
+# Warmup Iteration 154: 182.009 ops/ms
+# Warmup Iteration 155: 183.858 ops/ms
+# Warmup Iteration 156: 186.530 ops/ms
+# Warmup Iteration 157: 190.173 ops/ms
+# Warmup Iteration 158: 184.918 ops/ms
+# Warmup Iteration 159: 182.440 ops/ms
+# Warmup Iteration 160: 186.059 ops/ms
+# Warmup Iteration 161: 187.231 ops/ms
+# Warmup Iteration 162: 189.183 ops/ms
+# Warmup Iteration 163: 183.187 ops/ms
+# Warmup Iteration 164: 183.049 ops/ms
+# Warmup Iteration 165: 185.776 ops/ms
+# Warmup Iteration 166: 189.116 ops/ms
+# Warmup Iteration 167: 185.432 ops/ms
+# Warmup Iteration 168: 182.143 ops/ms
+# Warmup Iteration 169: 184.512 ops/ms
+# Warmup Iteration 170: 187.721 ops/ms
+# Warmup Iteration 171: 189.510 ops/ms
+# Warmup Iteration 172: 182.614 ops/ms
+# Warmup Iteration 173: 183.062 ops/ms
+# Warmup Iteration 174: 186.119 ops/ms
+# Warmup Iteration 175: 188.776 ops/ms
+# Warmup Iteration 176: 187.058 ops/ms
+# Warmup Iteration 177: 182.534 ops/ms
+# Warmup Iteration 178: 183.845 ops/ms
+# Warmup Iteration 179: 186.269 ops/ms
+# Warmup Iteration 180: 189.825 ops/ms
+# Warmup Iteration 181: 183.182 ops/ms
+# Warmup Iteration 182: 182.909 ops/ms
+# Warmup Iteration 183: 185.973 ops/ms
+# Warmup Iteration 184: 187.975 ops/ms
+# Warmup Iteration 185: 186.870 ops/ms
+# Warmup Iteration 186: 183.161 ops/ms
+# Warmup Iteration 187: 183.526 ops/ms
+# Warmup Iteration 188: 185.764 ops/ms
+# Warmup Iteration 189: 188.884 ops/ms
+# Warmup Iteration 190: 183.604 ops/ms
+# Warmup Iteration 191: 182.542 ops/ms
+# Warmup Iteration 192: 185.023 ops/ms
+# Warmup Iteration 193: 186.944 ops/ms
+# Warmup Iteration 194: 187.707 ops/ms
+# Warmup Iteration 195: 182.586 ops/ms
+# Warmup Iteration 196: 183.258 ops/ms
+# Warmup Iteration 197: 185.044 ops/ms
+# Warmup Iteration 198: 189.582 ops/ms
+# Warmup Iteration 199: 184.132 ops/ms
+# Warmup Iteration 200: 182.117 ops/ms
+# Warmup Iteration 201: 184.143 ops/ms
+# Warmup Iteration 202: 186.658 ops/ms
+# Warmup Iteration 203: 188.296 ops/ms
+# Warmup Iteration 204: 182.324 ops/ms
+# Warmup Iteration 205: 181.984 ops/ms
+# Warmup Iteration 206: 184.917 ops/ms
+# Warmup Iteration 207: 188.935 ops/ms
+# Warmup Iteration 208: 185.474 ops/ms
+# Warmup Iteration 209: 182.586 ops/ms
+# Warmup Iteration 210: 183.902 ops/ms
+# Warmup Iteration 211: 185.768 ops/ms
+# Warmup Iteration 212: 189.950 ops/ms
+# Warmup Iteration 213: 182.966 ops/ms
+# Warmup Iteration 214: 182.574 ops/ms
+# Warmup Iteration 215: 185.423 ops/ms
+# Warmup Iteration 216: 188.651 ops/ms
+# Warmup Iteration 217: 186.799 ops/ms
+# Warmup Iteration 218: 182.477 ops/ms
+# Warmup Iteration 219: 182.824 ops/ms
+# Warmup Iteration 220: 185.739 ops/ms
+# Warmup Iteration 221: 189.916 ops/ms
+# Warmup Iteration 222: 183.393 ops/ms
+# Warmup Iteration 223: 182.436 ops/ms
+# Warmup Iteration 224: 184.796 ops/ms
+# Warmup Iteration 225: 187.834 ops/ms
+# Warmup Iteration 226: 187.396 ops/ms
+# Warmup Iteration 227: 181.985 ops/ms
+# Warmup Iteration 228: 183.758 ops/ms
+# Warmup Iteration 229: 186.575 ops/ms
+# Warmup Iteration 230: 189.938 ops/ms
+# Warmup Iteration 231: 184.704 ops/ms
+# Warmup Iteration 232: 182.330 ops/ms
+# Warmup Iteration 233: 186.132 ops/ms
+# Warmup Iteration 234: 188.086 ops/ms
+# Warmup Iteration 235: 189.451 ops/ms
+# Warmup Iteration 236: 182.723 ops/ms
+# Warmup Iteration 237: 182.249 ops/ms
+# Warmup Iteration 238: 185.655 ops/ms
+# Warmup Iteration 239: 188.614 ops/ms
+# Warmup Iteration 240: 185.240 ops/ms
+Iteration   1: 182.520 ops/ms
+                 gc.alloc.rate:      24.854 MB/sec
+                 gc.alloc.rate.norm: 144.007 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 184.904 ops/ms
+                 gc.alloc.rate:      25.175 MB/sec
+                 gc.alloc.rate.norm: 144.006 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 188.017 ops/ms
+                 gc.alloc.rate:      25.596 MB/sec
+                 gc.alloc.rate.norm: 144.006 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 189.660 ops/ms
+                 gc.alloc.rate:      25.816 MB/sec
+                 gc.alloc.rate.norm: 143.993 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 182.377 ops/ms
+                 gc.alloc.rate:      24.834 MB/sec
+                 gc.alloc.rate.norm: 144.007 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 182.546 ops/ms
+                 gc.alloc.rate:      24.856 MB/sec
+                 gc.alloc.rate.norm: 144.007 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 185.661 ops/ms
+                 gc.alloc.rate:      25.277 MB/sec
+                 gc.alloc.rate.norm: 144.006 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 188.041 ops/ms
+                 gc.alloc.rate:      25.600 MB/sec
+                 gc.alloc.rate.norm: 144.006 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   9: 186.250 ops/ms
+                 gc.alloc.rate:      25.355 MB/sec
+                 gc.alloc.rate.norm: 143.993 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration  10: 182.506 ops/ms
+                 gc.alloc.rate:      24.852 MB/sec
+                 gc.alloc.rate.norm: 144.007 B/op
+                 gc.count:           1.000 counts
+                 gc.time:            3.000 ms
+
+Iteration  11: 184.150 ops/ms
+                 gc.alloc.rate:      25.074 MB/sec
+                 gc.alloc.rate.norm: 144.006 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration  12: 186.328 ops/ms
+                 gc.alloc.rate:      23.357 MB/sec
+                 gc.alloc.rate.norm: 147.422 B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapGet":
+  185.247 ±(99.9%) 3.210 ops/ms [Average]
+  (min, avg, max) = (182.377, 185.247, 189.660), stdev = 2.506
+  CI (99.9%): [182.036, 188.457] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapGet:gc.alloc.rate":
+  25.054 ±(99.9%) 0.808 MB/sec [Average]
+  (min, avg, max) = (23.357, 25.054, 25.816), stdev = 0.631
+  CI (99.9%): [24.246, 25.862] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapGet:gc.alloc.rate.norm":
+  144.289 ±(99.9%) 1.264 B/op [Average]
+  (min, avg, max) = (143.993, 144.289, 147.422), stdev = 0.987
+  CI (99.9%): [143.025, 145.553] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapGet:gc.count":
+  1.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (≈ 0, 0.083, 1.000), stdev = 0.289
+  CI (99.9%): [1.000, 1.000] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapGet:gc.time":
+  3.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (≈ 0, 0.250, 3.000), stdev = 0.866
+  CI (99.9%): [3.000, 3.000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:23:18
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                           (backendType)  (keyCount)  (touchesPerKey)   Mode  Cnt    Score   Error   Units
+LongStateMicrobenchmarks.mapGet                           ROCKSDB     1048576               64  thrpt   12  185.247 ± 3.210  ops/ms
+LongStateMicrobenchmarks.mapGet:gc.alloc.rate             ROCKSDB     1048576               64  thrpt   12   25.054 ± 0.808  MB/sec
+LongStateMicrobenchmarks.mapGet:gc.alloc.rate.norm        ROCKSDB     1048576               64  thrpt   12  144.289 ± 1.264    B/op
+LongStateMicrobenchmarks.mapGet:gc.count                  ROCKSDB     1048576               64  thrpt   12    1.000          counts
+LongStateMicrobenchmarks.mapGet:gc.time                   ROCKSDB     1048576               64  thrpt   12    3.000              ms
+
+Benchmark result is saved to /root/briskstate-setup/paper-experiments-20261104/micro-rocksdb-long-map-read/mapGet-0-ROCKSDB.json

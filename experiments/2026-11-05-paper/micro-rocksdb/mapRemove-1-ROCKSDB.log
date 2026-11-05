@@ -1,0 +1,79 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Dorg.slf4j.simpleLogger.defaultLogLevel=error -Djava.library.path=/root/briskstate-setup/paper-experiments-20261104/reproduction -Djava.io.tmpdir=/root/briskstate-setup/paper-experiments-20261104/micro-rocksdb/tmp
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove
+# Parameters: (backendType = ROCKSDB, keyCount = 1048576, touchesPerKey = 64)
+
+# Run progress: 0.00% complete, ETA 00:00:24
+# Fork: 1 of 1
+# Warmup Iteration   1: 376.402 ops/ms
+# Warmup Iteration   2: 383.976 ops/ms
+# Warmup Iteration   3: 382.265 ops/ms
+Iteration   1: 379.048 ops/ms
+                 gc.alloc.rate:      27.412 MB/sec
+                 gc.alloc.rate.norm: 160.008 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 376.647 ops/ms
+                 gc.alloc.rate:      27.152 MB/sec
+                 gc.alloc.rate.norm: 160.008 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 375.952 ops/ms
+                 gc.alloc.rate:      27.144 MB/sec
+                 gc.alloc.rate.norm: 160.008 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 383.753 ops/ms
+                 gc.alloc.rate:      27.820 MB/sec
+                 gc.alloc.rate.norm: 160.008 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 380.388 ops/ms
+                 gc.alloc.rate:      26.038 MB/sec
+                 gc.alloc.rate.norm: 165.831 B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove":
+  379.158 ±(99.9%) 12.058 ops/ms [Average]
+  (min, avg, max) = (375.952, 379.158, 383.753), stdev = 3.131
+  CI (99.9%): [367.100, 391.215] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove:gc.alloc.rate":
+  27.113 ±(99.9%) 2.544 MB/sec [Average]
+  (min, avg, max) = (26.038, 27.113, 27.820), stdev = 0.661
+  CI (99.9%): [24.569, 29.657] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove:gc.alloc.rate.norm":
+  161.173 ±(99.9%) 10.028 B/op [Average]
+  (min, avg, max) = (160.008, 161.173, 165.831), stdev = 2.604
+  CI (99.9%): [151.145, 171.200] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapRemove:gc.count":
+  ≈ 0 counts
+
+
+# Run complete. Total time: 00:02:39
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                              (backendType)  (keyCount)  (touchesPerKey)   Mode  Cnt    Score    Error   Units
+LongStateMicrobenchmarks.mapRemove                           ROCKSDB     1048576               64  thrpt    5  379.158 ± 12.058  ops/ms
+LongStateMicrobenchmarks.mapRemove:gc.alloc.rate             ROCKSDB     1048576               64  thrpt    5   27.113 ±  2.544  MB/sec
+LongStateMicrobenchmarks.mapRemove:gc.alloc.rate.norm        ROCKSDB     1048576               64  thrpt    5  161.173 ± 10.028    B/op
+LongStateMicrobenchmarks.mapRemove:gc.count                  ROCKSDB     1048576               64  thrpt    5      ≈ 0           counts
+
+Benchmark result is saved to /root/briskstate-setup/paper-experiments-20261104/micro-rocksdb/mapRemove-1-ROCKSDB.json

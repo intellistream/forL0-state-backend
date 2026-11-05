@@ -1,0 +1,169 @@
+{
+  "nodes" : [ {
+    "id" : 1,
+    "type" : "Source: Data Source",
+    "pact" : "Data Source",
+    "contents" : "Source: Data Source",
+    "parallelism" : 8
+  }, {
+    "id" : 2,
+    "type" : "Voice Dispatcher",
+    "pact" : "Operator",
+    "contents" : "Voice Dispatcher",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 1,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 6,
+    "type" : "RCRF",
+    "pact" : "Operator",
+    "contents" : "RCRF",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    }, {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 8,
+    "type" : "ECRF",
+    "pact" : "Operator",
+    "contents" : "ECRF",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 10,
+    "type" : "ENCR",
+    "pact" : "Operator",
+    "contents" : "ENCR",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 12,
+    "type" : "CT24",
+    "pact" : "Operator",
+    "contents" : "CT24",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 14,
+    "type" : "ECR24",
+    "pact" : "Operator",
+    "contents" : "ECR24",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 16,
+    "type" : "Global ACD",
+    "pact" : "Operator",
+    "contents" : "Global ACD",
+    "parallelism" : 1,
+    "predecessors" : [ {
+      "id" : 2,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 19,
+    "type" : "FoFIR",
+    "pact" : "Operator",
+    "contents" : "FoFIR",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 6,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    }, {
+      "id" : 8,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 22,
+    "type" : "URL",
+    "pact" : "Operator",
+    "contents" : "URL",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 8,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    }, {
+      "id" : 10,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 26,
+    "type" : "ACD",
+    "pact" : "Operator",
+    "contents" : "ACD",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 12,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    }, {
+      "id" : 14,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    }, {
+      "id" : 16,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 30,
+    "type" : "Score",
+    "pact" : "Operator",
+    "contents" : "Score",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 19,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    }, {
+      "id" : 22,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    }, {
+      "id" : 26,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 31,
+    "type" : "Sink: Sink",
+    "pact" : "Data Sink",
+    "contents" : "Sink: Sink",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 30,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  } ]
+}

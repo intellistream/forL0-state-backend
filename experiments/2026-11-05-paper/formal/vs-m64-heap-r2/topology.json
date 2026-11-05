@@ -1,0 +1,134 @@
+{
+  "nodes": [
+    {
+      "name": "Data Source",
+      "parallelism": 8
+    },
+    {
+      "name": "Voice Dispatcher",
+      "parallelism": 8
+    },
+    {
+      "name": "RCRF",
+      "parallelism": 8
+    },
+    {
+      "name": "ECRF",
+      "parallelism": 8
+    },
+    {
+      "name": "ENCR",
+      "parallelism": 8
+    },
+    {
+      "name": "CT24",
+      "parallelism": 8
+    },
+    {
+      "name": "ECR24",
+      "parallelism": 8
+    },
+    {
+      "name": "Global ACD",
+      "parallelism": 1
+    },
+    {
+      "name": "FoFIR",
+      "parallelism": 8
+    },
+    {
+      "name": "URL",
+      "parallelism": 8
+    },
+    {
+      "name": "ACD",
+      "parallelism": 8
+    },
+    {
+      "name": "Score",
+      "parallelism": 8
+    },
+    {
+      "name": "Sink",
+      "parallelism": 8
+    }
+  ],
+  "edges": [
+    {
+      "from": "Data Source",
+      "to": "Voice Dispatcher"
+    },
+    {
+      "from": "Voice Dispatcher",
+      "to": "RCRF"
+    },
+    {
+      "from": "Voice Dispatcher",
+      "to": "RCRF"
+    },
+    {
+      "from": "Voice Dispatcher",
+      "to": "ECRF"
+    },
+    {
+      "from": "Voice Dispatcher",
+      "to": "ENCR"
+    },
+    {
+      "from": "Voice Dispatcher",
+      "to": "CT24"
+    },
+    {
+      "from": "Voice Dispatcher",
+      "to": "ECR24"
+    },
+    {
+      "from": "Voice Dispatcher",
+      "to": "Global ACD"
+    },
+    {
+      "from": "RCRF",
+      "to": "FoFIR"
+    },
+    {
+      "from": "ECRF",
+      "to": "FoFIR"
+    },
+    {
+      "from": "ECRF",
+      "to": "URL"
+    },
+    {
+      "from": "ENCR",
+      "to": "URL"
+    },
+    {
+      "from": "CT24",
+      "to": "ACD"
+    },
+    {
+      "from": "ECR24",
+      "to": "ACD"
+    },
+    {
+      "from": "Global ACD",
+      "to": "ACD"
+    },
+    {
+      "from": "FoFIR",
+      "to": "Score"
+    },
+    {
+      "from": "URL",
+      "to": "Score"
+    },
+    {
+      "from": "ACD",
+      "to": "Score"
+    },
+    {
+      "from": "Score",
+      "to": "Sink"
+    }
+  ]
+}

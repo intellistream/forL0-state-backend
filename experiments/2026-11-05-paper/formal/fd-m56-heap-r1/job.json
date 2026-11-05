@@ -1,0 +1,194 @@
+{
+  "jid": "76da09ce02f6f0662c2d90e5b2a6f466",
+  "name": "ICDE standard state API fd",
+  "isStoppable": false,
+  "state": "FINISHED",
+  "job-type": "STREAMING",
+  "start-time": 1793786810290,
+  "end-time": 1793787032260,
+  "duration": 221970,
+  "maxParallelism": -1,
+  "now": 1793787035190,
+  "timestamps": {
+    "FAILED": 0,
+    "RECONCILING": 0,
+    "CANCELLING": 0,
+    "FINISHED": 1793787032260,
+    "SUSPENDED": 0,
+    "FAILING": 0,
+    "CANCELED": 0,
+    "INITIALIZING": 1793786810290,
+    "RUNNING": 1793786810560,
+    "RESTARTING": 0,
+    "CREATED": 1793786810418
+  },
+  "vertices": [
+    {
+      "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+      "slotSharingGroupId": "ea668b8fb859effc5fe195cda8525154",
+      "name": "Source: Data Source",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793786810795,
+      "end-time": 1793787032226,
+      "duration": 221431,
+      "tasks": {
+        "SCHEDULED": 0,
+        "CREATED": 0,
+        "DEPLOYING": 0,
+        "RECONCILING": 0,
+        "FAILED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "INITIALIZING": 0,
+        "RUNNING": 0,
+        "CANCELED": 0
+      },
+      "metrics": {
+        "read-bytes": 0,
+        "read-bytes-complete": true,
+        "write-bytes": 3066256192,
+        "write-bytes-complete": true,
+        "read-records": 0,
+        "read-records-complete": true,
+        "write-records": 43803648,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 1475747,
+        "accumulated-idle-time": 0,
+        "accumulated-busy-time": "NaN"
+      }
+    },
+    {
+      "id": "5017a7db67e8f627efe9ab74a6f9d873",
+      "slotSharingGroupId": "ea668b8fb859effc5fe195cda8525154",
+      "name": "Predict",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793786810807,
+      "end-time": 1793787032257,
+      "duration": 221450,
+      "tasks": {
+        "SCHEDULED": 0,
+        "CREATED": 0,
+        "DEPLOYING": 0,
+        "RECONCILING": 0,
+        "FAILED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "INITIALIZING": 0,
+        "RUNNING": 0,
+        "CANCELED": 0
+      },
+      "metrics": {
+        "read-bytes": 3066257024,
+        "read-bytes-complete": true,
+        "write-bytes": 3066255464,
+        "write-bytes-complete": true,
+        "read-records": 43803648,
+        "read-records-complete": true,
+        "write-records": 43803648,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 28,
+        "accumulated-idle-time": 316164,
+        "accumulated-busy-time": 1449433.0
+      }
+    },
+    {
+      "id": "fdaaed869c7e767a4ba54f74c039d468",
+      "slotSharingGroupId": "ea668b8fb859effc5fe195cda8525154",
+      "name": "Sink: Sink",
+      "maxParallelism": 128,
+      "parallelism": 8,
+      "status": "FINISHED",
+      "start-time": 1793786810820,
+      "end-time": 1793787032257,
+      "duration": 221437,
+      "tasks": {
+        "SCHEDULED": 0,
+        "CREATED": 0,
+        "DEPLOYING": 0,
+        "RECONCILING": 0,
+        "FAILED": 0,
+        "FINISHED": 8,
+        "CANCELING": 0,
+        "INITIALIZING": 0,
+        "RUNNING": 0,
+        "CANCELED": 0
+      },
+      "metrics": {
+        "read-bytes": 3066255568,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 43803648,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true,
+        "accumulated-backpressured-time": 0,
+        "accumulated-idle-time": 1709419,
+        "accumulated-busy-time": 56462.0
+      }
+    }
+  ],
+  "status-counts": {
+    "SCHEDULED": 0,
+    "CREATED": 0,
+    "DEPLOYING": 0,
+    "RECONCILING": 0,
+    "FAILED": 0,
+    "FINISHED": 3,
+    "CANCELING": 0,
+    "INITIALIZING": 0,
+    "RUNNING": 0,
+    "CANCELED": 0
+  },
+  "plan": {
+    "jid": "76da09ce02f6f0662c2d90e5b2a6f466",
+    "name": "ICDE standard state API fd",
+    "type": "STREAMING",
+    "nodes": [
+      {
+        "id": "fdaaed869c7e767a4ba54f74c039d468",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Sink: Sink<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "5017a7db67e8f627efe9ab74a6f9d873",
+            "ship_strategy": "FORWARD",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "5017a7db67e8f627efe9ab74a6f9d873",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Predict<br/>",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "d7adcc0c3aae06a8b53e44350cff9b6a",
+        "parallelism": 8,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Source: Data Source<br/>",
+        "optimizer_properties": {}
+      }
+    ]
+  }
+}

@@ -1,0 +1,336 @@
+{
+  "paper": {
+    "title": "Revisiting the Design of Data Stream Processing Systems on Multi-Core Processors",
+    "doi": "10.1109/ICDE.2017.119",
+    "pdf": "https://www.comp.nus.edu.sg/~hebs/pub/shuhaoICDE17a.pdf",
+    "figure": 5,
+    "pdf_page": 6,
+    "repository_pdf_sha256": "94b842762abc4f10e706df5681434f441a6c7ab4e66acf7d417fc294aa70244d"
+  },
+  "source_repository": "https://github.com/ShuhaoZhangTony/ProfilingStudy",
+  "interpretation": "Task/node and stream-edge contract. Two RCRF inputs and ambiguous LR/VS edges resolved using original topology sources. Physical partitioning uses Long entity keys; this is a state-pressure adaptation, not an exact replay of the 2017 datasets/grouping configuration.",
+  "workloads": {
+    "wc": {
+      "edges": [
+        {
+          "from": "Data Source",
+          "to": "Split"
+        },
+        {
+          "from": "Split",
+          "to": "Count"
+        },
+        {
+          "from": "Count",
+          "to": "Sink"
+        }
+      ],
+      "nodes": [
+        "Count",
+        "Data Source",
+        "Sink",
+        "Split"
+      ],
+      "sink_multiplier": 1
+    },
+    "fd": {
+      "edges": [
+        {
+          "from": "Data Source",
+          "to": "Predict"
+        },
+        {
+          "from": "Predict",
+          "to": "Sink"
+        }
+      ],
+      "nodes": [
+        "Data Source",
+        "Predict",
+        "Sink"
+      ],
+      "sink_multiplier": 1
+    },
+    "sd": {
+      "edges": [
+        {
+          "from": "Data Source",
+          "to": "Moving Average"
+        },
+        {
+          "from": "Moving Average",
+          "to": "Spike Detection"
+        },
+        {
+          "from": "Spike Detection",
+          "to": "Sink"
+        }
+      ],
+      "nodes": [
+        "Data Source",
+        "Moving Average",
+        "Sink",
+        "Spike Detection"
+      ],
+      "sink_multiplier": 1
+    },
+    "tm": {
+      "edges": [
+        {
+          "from": "Data Source",
+          "to": "Map Match"
+        },
+        {
+          "from": "Map Match",
+          "to": "Speed Calculate"
+        },
+        {
+          "from": "Speed Calculate",
+          "to": "Sink"
+        }
+      ],
+      "nodes": [
+        "Data Source",
+        "Map Match",
+        "Sink",
+        "Speed Calculate"
+      ],
+      "sink_multiplier": 1
+    },
+    "lg": {
+      "edges": [
+        {
+          "from": "Data Source",
+          "to": "Geo Finder"
+        },
+        {
+          "from": "Geo Finder",
+          "to": "Geo Status"
+        },
+        {
+          "from": "Geo Status",
+          "to": "Geo Sink"
+        },
+        {
+          "from": "Data Source",
+          "to": "Status Counter"
+        },
+        {
+          "from": "Status Counter",
+          "to": "Status Sink"
+        },
+        {
+          "from": "Data Source",
+          "to": "Volume Counter"
+        },
+        {
+          "from": "Volume Counter",
+          "to": "Count Sink"
+        }
+      ],
+      "nodes": [
+        "Count Sink",
+        "Data Source",
+        "Geo Finder",
+        "Geo Sink",
+        "Geo Status",
+        "Status Counter",
+        "Status Sink",
+        "Volume Counter"
+      ],
+      "sink_multiplier": 3
+    },
+    "vs": {
+      "edges": [
+        {
+          "from": "Data Source",
+          "to": "Voice Dispatcher"
+        },
+        {
+          "from": "Voice Dispatcher",
+          "to": "RCRF"
+        },
+        {
+          "from": "Voice Dispatcher",
+          "to": "RCRF"
+        },
+        {
+          "from": "Voice Dispatcher",
+          "to": "ECRF"
+        },
+        {
+          "from": "Voice Dispatcher",
+          "to": "ENCR"
+        },
+        {
+          "from": "Voice Dispatcher",
+          "to": "CT24"
+        },
+        {
+          "from": "Voice Dispatcher",
+          "to": "ECR24"
+        },
+        {
+          "from": "Voice Dispatcher",
+          "to": "Global ACD"
+        },
+        {
+          "from": "RCRF",
+          "to": "FoFIR"
+        },
+        {
+          "from": "ECRF",
+          "to": "FoFIR"
+        },
+        {
+          "from": "ECRF",
+          "to": "URL"
+        },
+        {
+          "from": "ENCR",
+          "to": "URL"
+        },
+        {
+          "from": "CT24",
+          "to": "ACD"
+        },
+        {
+          "from": "ECR24",
+          "to": "ACD"
+        },
+        {
+          "from": "Global ACD",
+          "to": "ACD"
+        },
+        {
+          "from": "FoFIR",
+          "to": "Score"
+        },
+        {
+          "from": "URL",
+          "to": "Score"
+        },
+        {
+          "from": "ACD",
+          "to": "Score"
+        },
+        {
+          "from": "Score",
+          "to": "Sink"
+        }
+      ],
+      "nodes": [
+        "ACD",
+        "CT24",
+        "Data Source",
+        "ECR24",
+        "ECRF",
+        "ENCR",
+        "FoFIR",
+        "Global ACD",
+        "RCRF",
+        "Score",
+        "Sink",
+        "URL",
+        "Voice Dispatcher"
+      ],
+      "sink_multiplier": 8
+    },
+    "lr": {
+      "edges": [
+        {
+          "from": "Data Source",
+          "to": "Dispatcher"
+        },
+        {
+          "from": "Dispatcher",
+          "to": "Average Speed"
+        },
+        {
+          "from": "Dispatcher",
+          "to": "Accident Detection"
+        },
+        {
+          "from": "Dispatcher",
+          "to": "Count Vehicles"
+        },
+        {
+          "from": "Dispatcher",
+          "to": "Accident Notification"
+        },
+        {
+          "from": "Dispatcher",
+          "to": "Daily Expenses"
+        },
+        {
+          "from": "Dispatcher",
+          "to": "Toll Notification"
+        },
+        {
+          "from": "Dispatcher",
+          "to": "Account Balance"
+        },
+        {
+          "from": "Average Speed",
+          "to": "Last Average Speed"
+        },
+        {
+          "from": "Last Average Speed",
+          "to": "Toll Notification"
+        },
+        {
+          "from": "Accident Detection",
+          "to": "Accident Notification"
+        },
+        {
+          "from": "Accident Detection",
+          "to": "Toll Notification"
+        },
+        {
+          "from": "Count Vehicles",
+          "to": "Toll Notification"
+        },
+        {
+          "from": "Toll Notification",
+          "to": "Account Balance"
+        },
+        {
+          "from": "Accident Notification",
+          "to": "Sink"
+        },
+        {
+          "from": "Daily Expenses",
+          "to": "Sink"
+        },
+        {
+          "from": "Toll Notification",
+          "to": "Sink"
+        },
+        {
+          "from": "Account Balance",
+          "to": "Sink"
+        }
+      ],
+      "nodes": [
+        "Accident Detection",
+        "Accident Notification",
+        "Account Balance",
+        "Average Speed",
+        "Count Vehicles",
+        "Daily Expenses",
+        "Data Source",
+        "Dispatcher",
+        "Last Average Speed",
+        "Sink",
+        "Toll Notification"
+      ],
+      "sink_multiplier": 12
+    }
+  },
+  "source_commit": "770bfeeb4d4471092cf050d50052338d4ae38179",
+  "source_date": "2017-04-17",
+  "source_topologies": [
+    "experiments/flink/src/main/java/flink/applications/topology/VoIPSTREAMTopology.java",
+    "experiments/flink/src/main/java/flink/applications/topology/special_LRF/LinearRoadFullTopology.java"
+  ]
+}

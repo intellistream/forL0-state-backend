@@ -1,0 +1,42 @@
+{
+  "nodes" : [ {
+    "id" : 1,
+    "type" : "Source: Data Source",
+    "pact" : "Data Source",
+    "contents" : "Source: Data Source",
+    "parallelism" : 8
+  }, {
+    "id" : 3,
+    "type" : "Map Match",
+    "pact" : "Operator",
+    "contents" : "Map Match",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 1,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 5,
+    "type" : "Speed Calculate",
+    "pact" : "Operator",
+    "contents" : "Speed Calculate",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 3,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 6,
+    "type" : "Sink: Sink",
+    "pact" : "Data Sink",
+    "contents" : "Sink: Sink",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 5,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  } ]
+}

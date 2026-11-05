@@ -1,0 +1,135 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Dorg.slf4j.simpleLogger.defaultLogLevel=error -Djava.library.path=/root/briskstate-setup/paper-experiments-20261104/reproduction -Djava.io.tmpdir=/root/briskstate-setup/paper-experiments-20261104/micro-rocksdb-long-writes/tmp
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 24 iterations, 5 s each
+# Measurement: 12 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll
+# Parameters: (backendType = ROCKSDB, keyCount = 1048576, touchesPerKey = 64)
+
+# Run progress: 0.00% complete, ETA 00:03:00
+# Fork: 1 of 1
+# Warmup Iteration   1: 50.572 ops/ms
+# Warmup Iteration   2: 52.801 ops/ms
+# Warmup Iteration   3: 23.750 ops/ms
+# Warmup Iteration   4: 6.962 ops/ms
+# Warmup Iteration   5: 6.915 ops/ms
+# Warmup Iteration   6: 4.622 ops/ms
+# Warmup Iteration   7: 4.455 ops/ms
+# Warmup Iteration   8: 4.454 ops/ms
+# Warmup Iteration   9: 45.600 ops/ms
+# Warmup Iteration  10: 52.812 ops/ms
+# Warmup Iteration  11: 38.539 ops/ms
+# Warmup Iteration  12: 5.532 ops/ms
+# Warmup Iteration  13: 3.991 ops/ms
+# Warmup Iteration  14: 3.991 ops/ms
+# Warmup Iteration  15: 3.989 ops/ms
+# Warmup Iteration  16: 3.198 ops/ms
+# Warmup Iteration  17: 2.554 ops/ms
+# Warmup Iteration  18: 2.553 ops/ms
+# Warmup Iteration  19: 2.554 ops/ms
+# Warmup Iteration  20: 2.554 ops/ms
+# Warmup Iteration  21: 2.554 ops/ms
+# Warmup Iteration  22: 27.824 ops/ms
+# Warmup Iteration  23: 50.495 ops/ms
+# Warmup Iteration  24: 50.808 ops/ms
+Iteration   1: 7.758 ops/ms
+                 gc.alloc.rate:      10.114 MB/sec
+                 gc.alloc.rate.norm: 1368.147 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 2.289 ops/ms
+                 gc.alloc.rate:      2.986 MB/sec
+                 gc.alloc.rate.norm: 1368.480 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 1.914 ops/ms
+                 gc.alloc.rate:      2.497 MB/sec
+                 gc.alloc.rate.norm: 1368.577 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 1.465 ops/ms
+                 gc.alloc.rate:      1.911 MB/sec
+                 gc.alloc.rate.norm: 1368.721 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   5: 1.464 ops/ms
+                 gc.alloc.rate:      1.911 MB/sec
+                 gc.alloc.rate.norm: 1368.721 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   6: 1.464 ops/ms
+                 gc.alloc.rate:      1.911 MB/sec
+                 gc.alloc.rate.norm: 1368.697 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   7: 1.464 ops/ms
+                 gc.alloc.rate:      1.911 MB/sec
+                 gc.alloc.rate.norm: 1368.721 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   8: 1.464 ops/ms
+                 gc.alloc.rate:      1.911 MB/sec
+                 gc.alloc.rate.norm: 1368.721 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   9: 1.465 ops/ms
+                 gc.alloc.rate:      1.911 MB/sec
+                 gc.alloc.rate.norm: 1368.834 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration  10: 1.465 ops/ms
+                 gc.alloc.rate:      1.911 MB/sec
+                 gc.alloc.rate.norm: 1368.721 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration  11: 43.062 ops/ms
+                 gc.alloc.rate:      55.978 MB/sec
+                 gc.alloc.rate.norm: 1368.025 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration  12: 50.745 ops/ms
+                 gc.alloc.rate:      62.885 MB/sec
+                 gc.alloc.rate.norm: 1380.441 B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll":
+  9.668 ±(99.9%) 22.491 ops/ms [Average]
+  (min, avg, max) = (1.464, 9.668, 50.745), stdev = 17.560
+  CI (99.9%): [≈ 0, 32.160] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate":
+  12.320 ±(99.9%) 28.405 MB/sec [Average]
+  (min, avg, max) = (1.911, 12.320, 62.885), stdev = 22.176
+  CI (99.9%): [≈ 0, 40.724] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate.norm":
+  1369.567 ±(99.9%) 4.398 B/op [Average]
+  (min, avg, max) = (1368.025, 1369.567, 1380.441), stdev = 3.433
+  CI (99.9%): [1365.169, 1373.965] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.mapPutAll:gc.count":
+  ≈ 0 counts
+
+
+# Run complete. Total time: 00:05:17
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                              (backendType)  (keyCount)  (touchesPerKey)   Mode  Cnt     Score    Error   Units
+LongStateMicrobenchmarks.mapPutAll                           ROCKSDB     1048576               64  thrpt   12     9.668 ± 22.491  ops/ms
+LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate             ROCKSDB     1048576               64  thrpt   12    12.320 ± 28.405  MB/sec
+LongStateMicrobenchmarks.mapPutAll:gc.alloc.rate.norm        ROCKSDB     1048576               64  thrpt   12  1369.567 ±  4.398    B/op
+LongStateMicrobenchmarks.mapPutAll:gc.count                  ROCKSDB     1048576               64  thrpt   12       ≈ 0           counts
+
+Benchmark result is saved to /root/briskstate-setup/paper-experiments-20261104/micro-rocksdb-long-writes/mapPutAll-1-ROCKSDB.json

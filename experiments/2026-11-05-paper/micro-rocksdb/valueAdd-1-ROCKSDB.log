@@ -1,0 +1,95 @@
+# JMH version: 1.37
+# VM version: JDK 11.0.32, OpenJDK 64-Bit Server VM, 11.0.32+9
+# VM invoker: /usr/lib/jvm/java-11-openjdk-11.0.32.9-1.oe2403sp3.aarch64/bin/java
+# VM options: -Xms8g -Xmx8g -XX:ActiveProcessorCount=4 -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Dorg.slf4j.simpleLogger.defaultLogLevel=error -Djava.library.path=/root/briskstate-setup/paper-experiments-20261104/reproduction -Djava.io.tmpdir=/root/briskstate-setup/paper-experiments-20261104/micro-rocksdb/tmp
+# Blackhole mode: full + dont-inline hint (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 10 iterations, 5 s each
+# Measurement: 5 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd
+# Parameters: (backendType = ROCKSDB, keyCount = 1048576)
+
+# Run progress: 0.00% complete, ETA 00:01:15
+# Fork: 1 of 1
+# Warmup Iteration   1: 352.718 ops/ms
+# Warmup Iteration   2: 353.277 ops/ms
+# Warmup Iteration   3: 357.201 ops/ms
+# Warmup Iteration   4: 355.744 ops/ms
+# Warmup Iteration   5: 356.198 ops/ms
+# Warmup Iteration   6: 357.202 ops/ms
+# Warmup Iteration   7: 353.780 ops/ms
+# Warmup Iteration   8: 356.773 ops/ms
+# Warmup Iteration   9: 360.246 ops/ms
+# Warmup Iteration  10: 354.047 ops/ms
+Iteration   1: 357.931 ops/ms
+                 gc.alloc.rate:      23.052 MB/sec
+                 gc.alloc.rate.norm: 136.007 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   2: 353.857 ops/ms
+                 gc.alloc.rate:      22.816 MB/sec
+                 gc.alloc.rate.norm: 136.009 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   3: 357.954 ops/ms
+                 gc.alloc.rate:      23.074 MB/sec
+                 gc.alloc.rate.norm: 136.007 B/op
+                 gc.count:           ≈ 0 counts
+
+Iteration   4: 357.002 ops/ms
+                 gc.alloc.rate:      23.106 MB/sec
+                 gc.alloc.rate.norm: 136.007 B/op
+                 gc.count:           1.000 counts
+                 gc.time:            7.000 ms
+
+Iteration   5: 362.076 ops/ms
+                 gc.alloc.rate:      23.669 MB/sec
+                 gc.alloc.rate.norm: 139.461 B/op
+                 gc.count:           ≈ 0 counts
+
+
+
+Result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd":
+  357.764 ±(99.9%) 11.309 ops/ms [Average]
+  (min, avg, max) = (353.857, 357.764, 362.076), stdev = 2.937
+  CI (99.9%): [346.455, 369.074] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.alloc.rate":
+  23.144 ±(99.9%) 1.215 MB/sec [Average]
+  (min, avg, max) = (22.816, 23.144, 23.669), stdev = 0.315
+  CI (99.9%): [21.929, 24.358] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.alloc.rate.norm":
+  136.698 ±(99.9%) 5.948 B/op [Average]
+  (min, avg, max) = (136.007, 136.698, 139.461), stdev = 1.545
+  CI (99.9%): [130.750, 142.646] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.count":
+  1.000 ±(99.9%) 0.001 counts [Sum]
+  (min, avg, max) = (≈ 0, 0.200, 1.000), stdev = 0.447
+  CI (99.9%): [1.000, 1.000] (assumes normal distribution)
+
+Secondary result "org.apache.flink.state.benchmark.LongStateMicrobenchmarks.valueAdd:gc.time":
+  7.000 ±(99.9%) 0.001 ms [Sum]
+  (min, avg, max) = (≈ 0, 1.400, 7.000), stdev = 3.130
+  CI (99.9%): [7.000, 7.000] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:01:18
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                             (backendType)  (keyCount)   Mode  Cnt    Score    Error   Units
+LongStateMicrobenchmarks.valueAdd                           ROCKSDB     1048576  thrpt    5  357.764 ± 11.309  ops/ms
+LongStateMicrobenchmarks.valueAdd:gc.alloc.rate             ROCKSDB     1048576  thrpt    5   23.144 ±  1.215  MB/sec
+LongStateMicrobenchmarks.valueAdd:gc.alloc.rate.norm        ROCKSDB     1048576  thrpt    5  136.698 ±  5.948    B/op
+LongStateMicrobenchmarks.valueAdd:gc.count                  ROCKSDB     1048576  thrpt    5    1.000           counts
+LongStateMicrobenchmarks.valueAdd:gc.time                   ROCKSDB     1048576  thrpt    5    7.000               ms
+
+Benchmark result is saved to /root/briskstate-setup/paper-experiments-20261104/micro-rocksdb/valueAdd-1-ROCKSDB.json

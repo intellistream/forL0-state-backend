@@ -1,0 +1,86 @@
+{
+  "nodes" : [ {
+    "id" : 1,
+    "type" : "Source: Data Source",
+    "pact" : "Data Source",
+    "contents" : "Source: Data Source",
+    "parallelism" : 8
+  }, {
+    "id" : 3,
+    "type" : "Geo Finder",
+    "pact" : "Operator",
+    "contents" : "Geo Finder",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 1,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 5,
+    "type" : "Geo Status",
+    "pact" : "Operator",
+    "contents" : "Geo Status",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 3,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 8,
+    "type" : "Status Counter",
+    "pact" : "Operator",
+    "contents" : "Status Counter",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 1,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 11,
+    "type" : "Volume Counter",
+    "pact" : "Operator",
+    "contents" : "Volume Counter",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 1,
+      "ship_strategy" : "HASH",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 6,
+    "type" : "Sink: Geo Sink",
+    "pact" : "Data Sink",
+    "contents" : "Sink: Geo Sink",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 5,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 9,
+    "type" : "Sink: Status Sink",
+    "pact" : "Data Sink",
+    "contents" : "Sink: Status Sink",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 8,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  }, {
+    "id" : 12,
+    "type" : "Sink: Count Sink",
+    "pact" : "Data Sink",
+    "contents" : "Sink: Count Sink",
+    "parallelism" : 8,
+    "predecessors" : [ {
+      "id" : 11,
+      "ship_strategy" : "FORWARD",
+      "side" : "second"
+    } ]
+  } ]
+}

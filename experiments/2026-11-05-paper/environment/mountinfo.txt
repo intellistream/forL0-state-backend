@@ -1,0 +1,39 @@
+15256 14766 0:860 / / rw,relatime - overlay overlay rw,lowerdir=/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/16:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/15:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/14:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/13:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/12:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/11:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/10:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/09:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/08:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/07:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/06:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/05:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/04:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/03:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/02:/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/01,upperdir=/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/17/upper,workdir=/run/containerd/io.containerd.mount-manager.v1.bolt/t/645/17/work,xino=off
+15258 15256 0:950 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+15259 15256 0:951 / /dev rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+15260 15259 0:952 / /dev/pts rw,nosuid,noexec,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=666
+15261 15259 0:914 / /dev/mqueue rw,nosuid,nodev,noexec,relatime - mqueue mqueue rw
+15262 15256 0:930 / /sys ro,nosuid,nodev,noexec,relatime - sysfs sysfs ro
+15263 15262 0:31 / /sys/fs/cgroup ro,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw,nsdelegate,memory_recursiveprot
+15264 15256 8:160 / /root rw,relatime - ext4 /dev/longhorn/pvc-9f69f582-24be-427a-8733-bdbe2c17f79b rw
+15265 15256 253:0 /shared_models /models ro,noatime,nodiratime - xfs /dev/mapper/vg_data-lv_workspace rw,attr2,inode64,logbufs=8,logbsize=32k,noquota
+15266 15256 253:0 / /data ro,noatime,nodiratime master:73 - xfs /dev/mapper/vg_data-lv_workspace rw,attr2,inode64,logbufs=8,logbsize=32k,noquota
+15267 15266 0:50 / /data/shared_upload rw,noatime master:377 - nfs4 192.168.0.5:/data/shared_upload rw,vers=4.2,rsize=1048576,wsize=1048576,namlen=255,soft,proto=tcp,timeo=100,retrans=3,sec=sys,clientaddr=192.168.0.2,local_lock=none,addr=192.168.0.5
+15268 15256 8:2 /etc/ascend_install.info /etc/ascend_install.info ro,relatime - ext4 /dev/sda2 rw
+15269 15266 0:800 / /data/containerd ro,relatime - tmpfs tmpfs rw,size=1024k,inode64
+15270 15266 0:800 / /data/containerd-erofs ro,relatime - tmpfs tmpfs rw,size=1024k,inode64
+15271 15266 0:800 / /data/docker ro,relatime - tmpfs tmpfs rw,size=1024k,inode64
+15272 15266 0:800 / /data/dockers ro,relatime - tmpfs tmpfs rw,size=1024k,inode64
+15273 15266 0:800 / /data/longhorn ro,relatime - tmpfs tmpfs rw,size=1024k,inode64
+15274 15267 0:50 / /data/shared_upload rw,noatime master:377 - nfs4 192.168.0.5:/data/shared_upload rw,vers=4.2,rsize=1048576,wsize=1048576,namlen=255,soft,proto=tcp,timeo=100,retrans=3,sec=sys,clientaddr=192.168.0.2,local_lock=none,addr=192.168.0.5
+15275 15259 0:836 / /dev/shm rw,relatime - tmpfs tmpfs rw,size=50331648k,inode64
+15276 15256 8:2 /var/lib/kubelet/pods/30edab64-4b03-4802-a05b-26253e90d907/etc-hosts /etc/hosts rw,relatime - ext4 /dev/sda2 rw
+15277 15259 8:2 /var/lib/kubelet/pods/30edab64-4b03-4802-a05b-26253e90d907/containers/dev/79d0a205 /dev/termination-log rw,relatime - ext4 /dev/sda2 rw
+15278 15256 8:2 /var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/31259984524080fed104bb4eebe353850ff641b3f72240644972ae31865cb51f/hostname /etc/hostname rw,relatime - ext4 /dev/sda2 rw
+15279 15256 8:2 /var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/31259984524080fed104bb4eebe353850ff641b3f72240644972ae31865cb51f/resolv.conf /etc/resolv.conf rw,relatime - ext4 /dev/sda2 rw
+15280 15256 8:2 /usr/local/dcmi /usr/local/dcmi ro,relatime - ext4 /dev/sda2 rw
+15281 15256 8:2 /usr/local/Ascend/driver /usr/local/Ascend/driver ro,relatime - ext4 /dev/sda2 rw
+15282 15256 8:2 /usr/local/sbin/npu-smi /usr/local/sbin/npu-smi ro,relatime - ext4 /dev/sda2 rw
+15283 15256 0:837 / /run/secrets/kubernetes.io/serviceaccount ro,relatime - tmpfs tmpfs rw,size=201326592k,inode64
+14767 15258 0:950 /bus /proc/bus ro,nosuid,nodev,noexec,relatime - proc proc rw
+14768 15258 0:950 /fs /proc/fs ro,nosuid,nodev,noexec,relatime - proc proc rw
+14769 15258 0:950 /irq /proc/irq ro,nosuid,nodev,noexec,relatime - proc proc rw
+14770 15258 0:950 /sys /proc/sys ro,nosuid,nodev,noexec,relatime - proc proc rw
+14771 15258 0:950 /sysrq-trigger /proc/sysrq-trigger ro,nosuid,nodev,noexec,relatime - proc proc rw
+14772 15258 0:953 / /proc/acpi ro,relatime - tmpfs tmpfs ro,size=4k,nr_inodes=1,inode64
+14773 15258 0:951 /null /proc/kcore rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+14774 15258 0:951 /null /proc/keys rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+14775 15258 0:951 /null /proc/timer_list rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+14776 15258 0:953 / /proc/scsi ro,relatime - tmpfs tmpfs ro,size=4k,nr_inodes=1,inode64
+14777 15262 0:953 / /sys/firmware ro,relatime - tmpfs tmpfs ro,size=4k,nr_inodes=1,inode64
+14778 15262 0:953 / /sys/devices/virtual/powercap ro,relatime - tmpfs tmpfs ro,size=4k,nr_inodes=1,inode64
