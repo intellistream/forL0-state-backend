@@ -80,6 +80,13 @@ public class ForL0StateSemanticsTest {
 
     private static ForL0KeyedStateBackend<Long> buildBackend(boolean l0Enabled, long l0Size)
             throws Exception {
+        return buildBackend(l0Enabled, l0Size, Collections.emptyList());
+    }
+
+    private static ForL0KeyedStateBackend<Long> buildBackend(
+            boolean l0Enabled, long l0Size,
+            java.util.Collection<org.apache.flink.runtime.state.KeyedStateHandle> handles)
+            throws Exception {
         KeyGroupRange kg = new KeyGroupRange(0, 7);
         ForL0KeyedStateBackendBuilder<Long> b = new ForL0KeyedStateBackendBuilder<>(
                 null,
@@ -90,7 +97,7 @@ public class ForL0StateSemanticsTest {
                 new ExecutionConfig(),
                 TtlTimeProvider.DEFAULT,
                 LatencyTrackingStateConfig.disabled(),
-                Collections.emptyList(),
+                handles,
                 AbstractStateBackend.getCompressionDecorator(new ExecutionConfig()),
                 new HeapPriorityQueueSetFactory(kg, kg.getNumberOfKeyGroups(), 128),
                 true,
@@ -98,6 +105,120 @@ public class ForL0StateSemanticsTest {
                 l0Size,
                 new CloseableRegistry());
         return b.build();
+    }
+
+
+    @Test
+    void primitiveLongListSurvivesRealSnapshotAndRestore() throws Exception {
+        ListStateDescriptor<Long> descriptor =
+                new ListStateDescriptor<>("long_list_restore", LongSerializer.INSTANCE);
+        ForL0KeyedStateBackend<Long> original = buildBackend();
+        org.apache.flink.runtime.state.KeyedStateHandle handle;
+        try {
+            original.setCurrentKey(17L);
+            ListState<Long> list = original.getPartitionedState(
+                    VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, descriptor);
+            list.update(Arrays.asList(1_000_000_007L, 2_000_000_014L, Long.MIN_VALUE + 7));
+            java.util.concurrent.RunnableFuture<org.apache.flink.runtime.state.SnapshotResult<
+                    org.apache.flink.runtime.state.KeyedStateHandle>> future = original.snapshot(
+                    1L, 1L, new org.apache.flink.runtime.state.memory.MemCheckpointStreamFactory(1 << 20),
+                    org.apache.flink.runtime.checkpoint.CheckpointOptions.forCheckpointWithDefaultLocation());
+            future.run();
+            handle = future.get().getJobManagerOwnedSnapshot();
+        } finally {
+            original.dispose();
+        }
+        ForL0KeyedStateBackend<Long> restored = buildBackend(false, 0L, Collections.singletonList(handle));
+        try {
+            restored.setCurrentKey(17L);
+            ListState<Long> list = restored.getPartitionedState(
+                    VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, descriptor);
+            java.util.ArrayList<Long> values = new java.util.ArrayList<>();
+            for (Long value : list.get()) values.add(value);
+            assertEquals(Arrays.asList(1_000_000_007L, 2_000_000_014L, Long.MIN_VALUE + 7), values);
+            list.add(3_000_000_021L);
+            values.clear();
+            for (Long value : list.get()) values.add(value);
+            assertEquals(Arrays.asList(1_000_000_007L, 2_000_000_014L, Long.MIN_VALUE + 7, 3_000_000_021L), values);
+        } finally {
+            restored.dispose();
+            handle.discardState();
+        }
+    }
+
+    @Test
+    void nativeLongListReadRemainsValidAfterMutationAndDisposal() throws Exception {
+        ForL0KeyedStateBackend<Long> backend=buildBackend();
+        Iterable<Long> first;
+        Iterable<Long> second;
+        try {
+            backend.setCurrentKey(17L);
+            ListState<Long> state=backend.getPartitionedState(VoidNamespace.INSTANCE,
+                    VoidNamespaceSerializer.INSTANCE,new ListStateDescriptor<>("views",LongSerializer.INSTANCE));
+            state.update(Arrays.asList(Long.MIN_VALUE,1_000_000_007L,Long.MAX_VALUE));
+            first=state.get();for(int i=0;i<10;i++)first=state.get();
+            state.add(2_000_000_014L);
+            second=state.get();for(int i=0;i<10;i++)second=state.get();
+            state.update(Collections.singletonList(7L));
+            state.clear();
+        } finally { backend.dispose(); }
+        java.util.ArrayList<Long> actual=new java.util.ArrayList<>();
+        for(Long v:first)actual.add(v);
+        assertEquals(Arrays.asList(Long.MIN_VALUE,1_000_000_007L,Long.MAX_VALUE),actual);
+        actual.clear();
+        for(Long v:second)actual.add(v);
+        assertEquals(Arrays.asList(Long.MIN_VALUE,1_000_000_007L,Long.MAX_VALUE,2_000_000_014L),actual);
+    }
+
+    @Test
+    void primitivePagesTrackCountsAndPreserveInFlightCheckpoint() throws Exception {
+        ValueStateDescriptor<Long> vd=new ValueStateDescriptor<>("direct_v",LongSerializer.INSTANCE);
+        ListStateDescriptor<Long> ld=new ListStateDescriptor<>("direct_l",LongSerializer.INSTANCE);
+        MapStateDescriptor<Long,Long> md=new MapStateDescriptor<>("direct_m",LongSerializer.INSTANCE,LongSerializer.INSTANCE);
+        ForL0KeyedStateBackend<Long> b=buildBackend();
+        org.apache.flink.runtime.state.KeyedStateHandle handle;
+        try {
+            b.setCurrentKey(17L);
+            ValueState<Long> v=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,vd);
+            ListState<Long> l=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,ld);
+            MapState<Long,Long> m=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,md);
+            v.update(1L);v.update(2L);v.clear();v.update(2L);
+            l.update(Arrays.asList(10L,20L,30L));l.update(Arrays.asList(40L,50L));l.add(60L);
+            for(long k=0;k<64;k++)m.put(k,1_000_000_007L+k);
+            java.util.LinkedHashMap<Long,Long> bulk=new java.util.LinkedHashMap<>();
+            for(long k=0;k<16;k++)bulk.put(k,1_000_000_007L+k);
+            m.putAll(bulk);
+            m.remove(3L);assertNull(m.get(3L));assertEquals(3,b.numKeyValueStateEntries());
+            java.util.concurrent.RunnableFuture<org.apache.flink.runtime.state.SnapshotResult<
+                    org.apache.flink.runtime.state.KeyedStateHandle>> f=b.snapshot(2L,2L,
+                    new org.apache.flink.runtime.state.memory.MemCheckpointStreamFactory(1<<20),
+                    org.apache.flink.runtime.checkpoint.CheckpointOptions.forCheckpointWithDefaultLocation());
+            // syncPrepare has frozen the snapshot; these calls must take COW paths.
+            v.update(999L);l.update(Collections.singletonList(999L));m.put(4L,999L);m.remove(5L);
+            m.putAll(Collections.singletonMap(6L,999L));
+            f.run();handle=f.get().getJobManagerOwnedSnapshot();
+        } finally {b.dispose();}
+        b=buildBackend(false,0L,Collections.singletonList(handle));
+        try {
+            b.setCurrentKey(17L);
+            ValueState<Long> v=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,vd);
+            ListState<Long> l=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,ld);
+            MapState<Long,Long> m=b.getPartitionedState(VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,md);
+            assertEquals(2L,v.value());
+            java.util.ArrayList<Long> values=new java.util.ArrayList<>();for(Long x:l.get())values.add(x);
+            assertEquals(Arrays.asList(40L,50L,60L),values);
+            assertNull(m.get(3L));assertEquals(1_000_000_011L,m.get(4L));assertTrue(m.contains(5L));
+            assertEquals(1_000_000_013L,m.get(6L));
+            m.put(3L,1_000_000_010L);
+            java.util.LinkedHashMap<Long,Long> promote=new java.util.LinkedHashMap<>();
+            promote.put(4L,-7L);promote.put(1024L,Long.MIN_VALUE);promote.put(5L,-9L);
+            m.putAll(promote);
+            assertEquals(-7L,m.get(4L));assertEquals(Long.MIN_VALUE,m.get(1024L));assertEquals(-9L,m.get(5L));
+            java.util.ArrayList<Long> keys=new java.util.ArrayList<>();for(Long k:m.keys())keys.add(k);
+            assertEquals(65,keys.size());for(Long k:keys)m.remove(k);
+            assertTrue(m.isEmpty());assertEquals(2,b.numKeyValueStateEntries());
+            v.clear();l.clear();assertEquals(0,b.numKeyValueStateEntries());
+        } finally {b.dispose();handle.discardState();}
     }
 
     // -----------------------------------------------------------------------
@@ -565,4 +686,37 @@ public class ForL0StateSemanticsTest {
         Method toBinaryRow = serializer.getClass().getMethod("toBinaryRow", RowData.class);
         return (BinaryRowData) toBinaryRow.invoke(serializer, GenericRowData.of(left, right));
     }
+    @Test
+    void longMapBatchPreservesWrapIterationAndKeyIsolation() throws Exception {
+        ForL0KeyedStateBackend<Long> backend=buildBackend();
+        try {
+            backend.setCurrentKey(1L);
+            @SuppressWarnings("unchecked")
+            ForL0MapState<Long,VoidNamespace,Long,Long> state=
+                (ForL0MapState<Long,VoidNamespace,Long,Long>)backend.getPartitionedState(
+                    VoidNamespace.INSTANCE,VoidNamespaceSerializer.INSTANCE,
+                    new MapStateDescriptor<>("batch_map",LongSerializer.INSTANCE,LongSerializer.INSTANCE));
+            java.util.Map<Long,Long> oracle=new java.util.HashMap<>();
+            for(int round=0;round<20;round++) {
+                long start=round-10, expected=0;
+                for(int i=0;i<97;i++) {
+                    long key=Math.floorMod(start+i,64);
+                    long next=oracle.getOrDefault(key,0L)+1;
+                    oracle.put(key,next);expected+=next;
+                }
+                assertEquals(expected,state.addSequentialAndSumLong(start,97,64,1));
+            }
+            java.util.Map<Long,Long> actual=new java.util.HashMap<>();
+            for(java.util.Map.Entry<Long,Long> e:state.entries())actual.put(e.getKey(),e.getValue());
+            assertEquals(oracle,actual);
+            state.put(-999L,13L);assertEquals(Long.valueOf(13),state.get(-999L));
+            assertEquals(oracle.get(0L),state.get(0L));
+            backend.setCurrentKey(2L);assertNull(state.get(0L));
+            assertEquals(64,state.addSequentialAndSumLong(0,64,64,1));
+            state.put(0L,Long.MAX_VALUE);assertEquals(Long.MIN_VALUE,state.addSequentialAndSumLong(0,1,64,1));
+            state.clear();assertTrue(state.isEmpty());
+            backend.setCurrentKey(1L);assertEquals(Long.valueOf(13),state.get(-999L));
+        } finally { backend.dispose(); }
+    }
+
 }

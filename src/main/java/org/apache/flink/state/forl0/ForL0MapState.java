@@ -23,9 +23,9 @@ import java.util.NoSuchElementException;
 /**
  * ForL0 implementation of {@link InternalMapState}.
  *
- * <p>JNI thin shell — all state storage is in the C++ engine.
- * Each method forwards to a single per-entry {@link NativeEngine} JNI call.
- * The inner map is maintained as a native C++ unordered_map in the SwissTable slot.
+ * <p>State storage lives in the C++ engine. Dense Long maps may access a full
+ * primitive row directly, with a native mutation epoch guarding its lifetime.
+ * Other operations use JNI; arbitrary map keys retain hash storage.
  *
  * @param <K> The type of key
  * @param <N> The type of namespace
@@ -60,11 +60,31 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         LONG_MAP_VOID, LONG_MAP_TW, GENERIC
     }
     private final MapStrategy mapStrategy;
+    private final PrimitiveLongAccess primitiveAccess;
 
     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
     private final DataOutputSerializer ukOut = new DataOutputSerializer(64);
     private final DataOutputSerializer uvOut = new DataOutputSerializer(128);
     private final long[] primitiveBuf = new long[1];
+    private static final sun.misc.Unsafe MEMORY = org.apache.flink.core.memory.MemoryUtils.UNSAFE;
+    private final long[] denseView = new long[4];
+    private long denseKey, denseAddress, denseSpan, denseEpochAddress, denseEpoch;
+    private int denseKeyGroup;
+    private boolean denseChecked;
+    private int denseProbeCount;
+
+    private long denseSlot(long key, int keyGroup, long mapKey) {
+        if (!denseChecked || denseKey != key || denseKeyGroup != keyGroup
+                || (denseAddress == 0 && ++denseProbeCount >= 64)
+                || (denseAddress != 0 && MEMORY.getLongVolatile(null, denseEpochAddress) != denseEpoch)) {
+            if(primitiveAccess==null || !primitiveAccess.fullMapView(key,keyGroup,denseView))
+                NativeEngine.mapLongLongDenseView(stateHandle, key, keyGroup, denseView);
+            denseKey=key; denseKeyGroup=keyGroup; denseChecked=true; denseProbeCount=0;
+            denseAddress=denseView[0]; denseSpan=denseView[1];
+            denseEpochAddress=denseView[2]; denseEpoch=denseView[3];
+        }
+        return denseAddress != 0 && mapKey >= 0 && mapKey < denseSpan ? denseAddress + mapKey*8 : 0;
+    }
 
     ForL0MapState(
             long stateHandle,
@@ -110,6 +130,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         } else {
             this.mapStrategy = MapStrategy.GENERIC;
         }
+        this.primitiveAccess=mapStrategy==MapStrategy.LONG_LONG_VOID?new PrimitiveLongAccess(stateHandle):null;
     }
 
     /**
@@ -154,12 +175,31 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         if (isRowDataUV) {
             return (UV) rowDataUVAccessor.reconstructFromLong(value);
         }
-        return (UV) Long.valueOf(value);
+        return (UV) new Long(value); // Intentional: enables scalar replacement for primitive consumers on Java 11.
+    }
+
+    @Override
+    public UV get(UK userKey) {
+        if (mapStrategy == MapStrategy.LONG_LONG_VOID) {
+            long key = resolveKeyAsLong(keyContext.currentKey);
+            long mapKey = resolveUKAsLong(userKey);
+            long address=denseSlot(key,keyContext.currentKeyGroupIndex,mapKey);
+            if(address==0)address=primitiveAccess.mapValueSlot(key,keyContext.currentKeyGroupIndex,mapKey);
+            if (address!=0) return wrapLongAsUV(MEMORY.getLong(address));
+            long value = NativeEngine.mapGetLongLong(stateHandle, key,
+                    keyContext.currentKeyGroupIndex, mapKey);
+            if (value == Long.MIN_VALUE) {
+                if (!NativeEngine.mapGetLongLongSafe(stateHandle, key,
+                        keyContext.currentKeyGroupIndex, mapKey, primitiveBuf)) return null;
+                value = primitiveBuf[0];
+            }
+            return wrapLongAsUV(value);
+        }
+        return getOther(userKey);
     }
 
     @SuppressWarnings("unchecked")
-    @Override
-    public UV get(UK userKey) {
+    private UV getOther(UK userKey) {
         try {
             long k;
             switch (mapStrategy) {
@@ -203,6 +243,20 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
 
     @Override
     public void put(UK userKey, UV userValue) {
+        if (mapStrategy == MapStrategy.LONG_LONG_VOID) {
+            long key=resolveKeyAsLong(keyContext.currentKey);
+            long mapKey=resolveUKAsLong(userKey);
+            long value=resolveUVAsLong(userValue);
+            long address=denseSlot(key,keyContext.currentKeyGroupIndex,mapKey);
+            if (address!=0) MEMORY.putLong(address,value);
+            else if(!primitiveAccess.putMap(key,keyContext.currentKeyGroupIndex,mapKey,value))
+                NativeEngine.mapPutLongLong(stateHandle,key,keyContext.currentKeyGroupIndex,mapKey,value);
+            return;
+        }
+        putOther(userKey, userValue);
+    }
+
+    private void putOther(UK userKey, UV userValue) {
         try {
             long k;
             switch (mapStrategy) {
@@ -244,8 +298,25 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         if (newMap == null || newMap.isEmpty()) {
             return;
         }
+        if(mapStrategy==MapStrategy.LONG_LONG_VOID
+                && primitiveAccess.fullMapView(resolveKeyAsLong(keyContext.currentKey),
+                        keyContext.currentKeyGroupIndex,denseView) && denseView[0]!=0) {
+            putAllDense(newMap,denseView[0],denseView[1],denseView[2],denseView[3]);
+            return;
+        }
         for (Map.Entry<UK, UV> entry : newMap.entrySet()) {
             put(entry.getKey(), entry.getValue());
+        }
+    }
+
+    private void putAllDense(Map<UK,UV> values,long base,long span,long epochAddress,long epoch) {
+        for(Map.Entry<UK,UV> entry:values.entrySet()) {
+            long key=resolveUKAsLong(entry.getKey()),value=resolveUVAsLong(entry.getValue());
+            // An out-of-range insertion can promote the row and free its dense
+            // buffer. Recheck the epoch after obtaining each input entry.
+            if(key>=0 && key<span && MEMORY.getLongVolatile(null,epochAddress)==epoch)
+                MEMORY.putLong(base+key*8,value);
+            else put(entry.getKey(),entry.getValue());
         }
     }
 
@@ -310,6 +381,8 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
             long k;
             switch (mapStrategy) {
                 case LONG_LONG_VOID:
+                    if(primitiveAccess.removeMap(resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex,resolveUKAsLong(userKey)))return;
                     NativeEngine.mapRemoveLongLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
                     return;

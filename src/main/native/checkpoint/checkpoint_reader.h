@@ -93,6 +93,16 @@ inline ElementList read_flink_value<ElementList>(ReadBuffer& buf, const TypeLayo
     return result;
 }
 
+template <>
+inline LongElementList read_flink_value<LongElementList>(ReadBuffer& buf, const TypeLayout&) {
+    int32_t total_bytes = buf.read_int();
+    if (total_bytes < 4) return {};
+    int32_t count = buf.read_int();
+    LongElementList value; value.reserve(count);
+    for (int32_t i=0;i<count;++i) value.push_back(buf.read_long());
+    return value;
+}
+
 // InnerMap: read from [total_byte_length(4)][count(4)][uk1][uv1][uk2][uv2]...
 // Each UK/UV is captured as raw serialized bytes using user_key/user_value layouts.
 template <>

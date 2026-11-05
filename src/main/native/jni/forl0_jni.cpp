@@ -396,14 +396,18 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             }
         } else if (kind == StateHandle::StateKind::LIST) {
             // ListState: store std::vector<std::string> (ElementList) per key
-            if (keyTypeId == 2) {
+            if (keyTypeId == 2 && void_ns && valueTypeId == 2) {
+                table_id = engine->register_state<int64_t, LongElementList>(name, true);
+                stored_key_type = StateHandle::KeyType::INT64;
+            } else if (keyTypeId == 2) {
                 table_id = engine->register_state<int64_t, ElementList>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::INT64;
             } else {
                 table_id = engine->register_state<std::string, ElementList>(name, void_ns);
                 stored_key_type = StateHandle::KeyType::BYTES;
             }
-            stored_value_type = StateHandle::ValueType::LIST;
+            stored_value_type = keyTypeId == 2 && void_ns && valueTypeId == 2
+                ? StateHandle::ValueType::LONG_LIST : StateHandle::ValueType::LIST;
         } else if (kind == StateHandle::StateKind::MAP_) {
             // MapState: select InnerMap specialization based on UK/UV types.
             if (keyTypeId == 2) {
@@ -457,6 +461,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         handle->state_name = name;
         handle->engine = engine;
         handle->table_id = table_id;
+        handle->state_table = engine->get_raw_state_table(table_id);
         handle->key_type = stored_key_type;
         handle->value_type = stored_value_type;
         handle->kind = kind;
@@ -555,6 +560,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_stateEntries(
         }
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::BYTES) {
             auto* tbl = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
+            return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+        }
+        if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::LONG_LIST) {
+            auto* tbl = handle->engine->get_state_table<int64_t, LongElementList>(handle->table_id);
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::LIST) {
@@ -673,6 +682,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
                 emit_keys(handle->engine->get_state_table<int64_t, int64_t>(handle->table_id));
             } else if (vt == StateHandle::ValueType::FLOAT64) {
                 emit_keys(handle->engine->get_state_table<int64_t, double>(handle->table_id));
+            } else if (vt == StateHandle::ValueType::LONG_LIST) {
+                emit_keys(handle->engine->get_state_table<int64_t, LongElementList>(handle->table_id));
             } else if (vt == StateHandle::ValueType::LIST) {
                 emit_keys(handle->engine->get_state_table<int64_t, ElementList>(handle->table_id));
             } else if (vt == StateHandle::ValueType::MAP) {

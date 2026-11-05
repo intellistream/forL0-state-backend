@@ -81,6 +81,13 @@ inline void write_flink_value<ElementList>(WriteBuffer& buf, const ElementList& 
     buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
 }
 
+template <>
+inline void write_flink_value<LongElementList>(WriteBuffer& buf, const LongElementList& value, const TypeLayout&) {
+    buf.write_int(static_cast<int32_t>(4 + value.size() * sizeof(int64_t)));
+    buf.write_int(static_cast<int32_t>(value.size()));
+    for (int64_t v : value) buf.write_long(v);
+}
+
 // InnerMap: write as [total_byte_length(4)][count(4)][uk1][uv1][uk2][uv2]...
 // The outer 4-byte length prefix allows Java ForL0KeyValueStateIterator to
 // read the value with FMT_LEN_PREFIXED (readInt + readBytes).

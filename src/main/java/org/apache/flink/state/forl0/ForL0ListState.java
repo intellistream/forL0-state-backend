@@ -47,6 +47,45 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
 
     private enum ListStrategy { LONG_ELEM_LONG_VOID, LONG_VOID, LONG_TW, GENERIC }
     private final ListStrategy listStrategy;
+    private final PrimitiveLongAccess primitiveAccess;
+    private NativeLongListSnapshot[][] readViews;
+
+    private Iterable<Long> primitiveListView(long key,int group) {
+        long row=primitiveAccess.row(key,group);
+        // One-off reads use a cheap copied array; only repeated reads of the
+        // same version pay for a Cleaner-owned immutable native snapshot.
+        if(row==0 || !PrimitiveLongAccess.cacheListRead(row)) {
+            long[] values=row==0?NativeEngine.listGetLongElements(stateHandle,key,group)
+                    :PrimitiveLongAccess.copyList(row);
+            return values==null?null:new NativeLongListSnapshot(values);
+        }
+        int page=(int)(key>>>8),index=(int)key&255;
+        if(readViews==null)readViews=new NativeLongListSnapshot[1<<16][];
+        NativeLongListSnapshot[] entries=readViews[page];
+        if(entries==null)readViews[page]=entries=new NativeLongListSnapshot[256];
+        NativeLongListSnapshot view=entries[index];
+        if(view!=null && view.keyGroup==group && view.version==PrimitiveLongAccess.read(row+32))return view;
+        view=(NativeLongListSnapshot)NativeEngine.listGetLongView(stateHandle,key,group);
+        entries[index]=view;
+        return view;
+    }
+
+    private void invalidateReadView() {
+        if(readViews==null)return;
+        long key=resolveKeyAsLong(keyContext.currentKey);
+        if(key>=0 && key<(1L<<24)) {
+            NativeLongListSnapshot[] entries=readViews[(int)(key>>>8)];
+            if(entries!=null)entries[(int)key&255]=null;
+        }
+    }
+    private long[] primitiveValues = new long[0];
+
+    private long[] primitiveValues(List<V> values) {
+        if (primitiveValues.length != values.size()) primitiveValues = new long[values.size()];
+        int index=0;
+        for (V value:values) primitiveValues[index++]=(Long)value;
+        return primitiveValues;
+    }
 
     /** Reusable serialization buffers (single-threaded access). */
     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
@@ -87,6 +126,8 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
         } else {
             this.listStrategy = ListStrategy.GENERIC;
         }
+        this.primitiveAccess=listStrategy==ListStrategy.LONG_ELEM_LONG_VOID
+                ?new PrimitiveLongAccess(stateHandle):null;
     }
 
     @SuppressWarnings("unchecked")
@@ -95,12 +136,10 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
         try {
             switch (listStrategy) {
                 case LONG_ELEM_LONG_VOID: {
-                    long[] arr = NativeEngine.listGetLongElements(stateHandle,
+                    Iterable<Long> view = primitiveListView(
                             resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
-                    if (arr == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
-                    List<V> list = new ArrayList<>(arr.length);
-                    for (long v : arr) { list.add((V) Long.valueOf(v)); }
-                    return list;
+                    if (view == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+                    return (Iterable<V>)(Iterable<?>)view;
                 }
                 case LONG_VOID: {
                     byte[] data = NativeEngine.listGet(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex);
@@ -128,9 +167,12 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     @Override
     public void add(V value) {
         Preconditions.checkNotNull(value, "You cannot add null to a ListState.");
+        invalidateReadView();
         try {
             switch (listStrategy) {
                 case LONG_ELEM_LONG_VOID:
+                    if(primitiveAccess.append(resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex,(Long)value))return;
                     NativeEngine.listAddLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, (Long) value);
                     return;
@@ -156,6 +198,7 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     @Override
     public void update(List<V> values) {
         Preconditions.checkNotNull(values, "List of values to add cannot be null.");
+        invalidateReadView();
         if (values.isEmpty()) {
             clear();
             return;
@@ -163,8 +206,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
         try {
             switch (listStrategy) {
                 case LONG_ELEM_LONG_VOID: {
-                    long[] arr = new long[values.size()];
-                    for (int i = 0; i < arr.length; i++) { arr[i] = (Long) values.get(i); }
+                    long[] arr = primitiveValues(values);
+                    if(primitiveAccess.writeList(resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex,arr,false))return;
                     NativeEngine.listUpdateLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, arr);
                     return;
@@ -185,14 +229,16 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     @Override
     public void addAll(List<V> values) {
         Preconditions.checkNotNull(values, "List of values to add cannot be null.");
+        invalidateReadView();
         if (values.isEmpty()) {
             return;
         }
         try {
             switch (listStrategy) {
                 case LONG_ELEM_LONG_VOID: {
-                    long[] arr = new long[values.size()];
-                    for (int i = 0; i < arr.length; i++) { arr[i] = (Long) values.get(i); }
+                    long[] arr = primitiveValues(values);
+                    if(primitiveAccess.writeList(resolveKeyAsLong(keyContext.currentKey),
+                            keyContext.currentKeyGroupIndex,arr,true))return;
                     NativeEngine.listAddAllLongElements(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, arr);
                     return;
@@ -284,6 +330,7 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
 
     @Override
     public void updateInternal(List<V> valueToStore) {
+        invalidateReadView();
         try {
             switch (listStrategy) {
                 case LONG_ELEM_LONG_VOID: {
@@ -308,6 +355,7 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
 
     @Override
     public void clear() {
+        invalidateReadView();
         try {
             switch (listStrategy) {
                 case LONG_ELEM_LONG_VOID:

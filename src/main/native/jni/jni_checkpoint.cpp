@@ -82,6 +82,7 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
 
     // LIST state: value is ElementList (std::vector<std::string>)
     if (kind == StateHandle::StateKind::LIST) {
+        if (vt == StateHandle::ValueType::LONG_LIST) { WRITE_KG(int64_t, LongElementList); }
         if (kt == StateHandle::KeyType::INT64) {
             WRITE_KG(int64_t, ElementList);
         } else {
@@ -179,6 +180,7 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
 
     // LIST state: value is ElementList
     if (kind == StateHandle::StateKind::LIST) {
+        if (vt == StateHandle::ValueType::LONG_LIST) { READ_KG(int64_t, LongElementList); }
         if (kt == StateHandle::KeyType::INT64) {
             READ_KG(int64_t, ElementList);
         } else {

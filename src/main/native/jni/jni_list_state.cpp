@@ -1,6 +1,6 @@
 // jni_list_state.cpp — JNI entry points for ListState operations.
-// ListState stores ElementList (std::vector<std::string>) in SwissTable<K, ElementList>.
-// Each element in the vector is the raw serialized bytes from Java's TypeSerializer.
+// Raw Long lists use LongElementList; generic lists keep ElementList byte strings.
+// Long paths copy primitive arrays; generic paths retain TypeSerializer byte encodings.
 // Individual add() is a simple O(1) push_back; get() serializes the vector.
 
 #include <jni.h>
@@ -11,6 +11,52 @@
 using namespace forl0;
 
 extern "C" {
+
+struct ListViewReference {
+    JavaVM* vm;
+    jobject view;
+    ~ListViewReference() {
+        JNIEnv* env=nullptr;
+        if(vm->GetEnv(reinterpret_cast<void**>(&env),JNI_VERSION_1_6)==JNI_OK)
+            env->DeleteGlobalRef(view);
+    }
+};
+
+JNIEXPORT jobject JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_listGetLongView(
+        JNIEnv* env,jclass,jlong stateHandle,jlong key,jint keyGroup) {
+    JNI_ENTRY_RETURN(jobject,nullptr,{
+        auto* handle=from_handle<StateHandle>(stateHandle);
+        const auto* values=handle->get_state_table<int64_t,LongElementList>()->get(keyGroup,key);
+        if(!values || values->empty())return nullptr;
+        if(values->read_cache) return env->NewLocalRef(
+                static_cast<ListViewReference*>(values->read_cache.get())->view);
+        // Copy only once per version. The Java owner remains valid after mutation,
+        // state deletion and backend disposal, independently of the state table.
+        auto copy=std::make_unique<std::vector<int64_t>>(values->begin(),values->end());
+        jclass cls=env->FindClass("org/apache/flink/state/forl0/NativeLongListSnapshot");
+        if(!cls)return nullptr;
+        jmethodID ctor=env->GetMethodID(cls,"<init>","(JJJII)V");
+        if(!ctor)return nullptr;
+        jobject view=env->NewObject(cls,ctor,to_handle(copy.get()),to_handle(copy->data()),jlong(values->version),jint(copy->size()),keyGroup);
+        if(!view)return nullptr;
+        // Ownership was transferred to Java's Cleaner by the successful constructor.
+        copy.release();
+        JavaVM* vm=nullptr;env->GetJavaVM(&vm);
+        auto reference=std::make_shared<ListViewReference>();reference->vm=vm;
+        reference->view=env->NewGlobalRef(view);
+        if(!reference->view)return nullptr;
+        values->publish_view(std::move(reference));
+        return view;
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_releaseLongListView(
+        JNIEnv*,jclass,jlong token) {
+    delete from_handle<std::vector<int64_t>>(token);
+}
+
 
 // ============================================================================
 //  ListState: get — returns [count(4 bytes BE)][elem1_bytes][elem2_bytes]...
@@ -59,41 +105,16 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetGeneric(
 
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_listAddLong(
-        JNIEnv* env, jclass,
-        jlong stateHandle, jlong key, jint keyGroup, jlong element) {
+        JNIEnv* env, jclass, jlong stateHandle, jlong key, jint keyGroup, jlong element) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
-        int64_t k = static_cast<int64_t>(key);
-        // Serialize the long element as 8-byte big-endian
-        int64_t elem = static_cast<int64_t>(element);
-        uint8_t buf[8];
-        for (int i = 7; i >= 0; --i) { buf[i] = static_cast<uint8_t>(elem & 0xFF); elem >>= 8; }
-        std::string elem_str(reinterpret_cast<const char*>(buf), 8);
-
-        if (!table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-            v.push_back(std::move(elem_str));
-        })) {
-            ElementList new_vec;
-            new_vec.push_back(std::move(elem_str));
-            table->put(keyGroup, k, std::move(new_vec));
+        auto* table = handle->get_state_table<int64_t, LongElementList>();
+        auto append = [&](LongElementList& v) { v.push_back(static_cast<int64_t>(element)); };
+        if (!table->modify_in_place(keyGroup, static_cast<int64_t>(key), append)) {
+            LongElementList v; append(v);
+            table->put(keyGroup, static_cast<int64_t>(key), std::move(v));
         }
     })
-}
-
-// Helper: encode int64_t as 8-byte big-endian string
-static std::string long_to_be_string(int64_t v) {
-    uint8_t buf[8];
-    for (int i = 7; i >= 0; --i) { buf[i] = static_cast<uint8_t>(v & 0xFF); v >>= 8; }
-    return std::string(reinterpret_cast<const char*>(buf), 8);
-}
-
-// Helper: decode 8-byte big-endian string to int64_t
-static int64_t be_string_to_long(const std::string& s) {
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(s.data());
-    int64_t v = 0;
-    for (int i = 0; i < 8; ++i) { v = (v << 8) | p[i]; }
-    return v;
 }
 
 // ============================================================================
@@ -102,21 +123,16 @@ static int64_t be_string_to_long(const std::string& s) {
 
 JNIEXPORT jlongArray JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_listGetLongElements(
-        JNIEnv* env, jclass,
-        jlong stateHandle, jlong key, jint keyGroup) {
+        JNIEnv* env, jclass, jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_RETURN(jlongArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
-        ElementList* vec = table->get(keyGroup, static_cast<int64_t>(key));
-        if (!vec || vec->empty()) return nullptr;
-        jsize count = static_cast<jsize>(vec->size());
-        std::vector<jlong> longs(count);
-        for (jsize i = 0; i < count; ++i) {
-            longs[i] = be_string_to_long((*vec)[i]);
-        }
-        jlongArray arr = env->NewLongArray(count);
-        env->SetLongArrayRegion(arr, 0, count, longs.data());
-        return arr;
+        const auto* values = handle->get_state_table<int64_t, LongElementList>()->get(keyGroup, static_cast<int64_t>(key));
+        if (!values || values->empty()) return nullptr;
+        jsize count = static_cast<jsize>(values->size());
+        jlongArray result = env->NewLongArray(count);
+        if (result) env->SetLongArrayRegion(result, 0, count,
+                reinterpret_cast<const jlong*>(values->data()));
+        return result;
     })
 }
 
@@ -126,20 +142,19 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetLongElements(
 
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_listUpdateLongElements(
-        JNIEnv* env, jclass,
-        jlong stateHandle, jlong key, jint keyGroup, jlongArray elements) {
+        JNIEnv* env, jclass, jlong stateHandle, jlong key, jint keyGroup, jlongArray elements) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->get_state_table<int64_t, LongElementList>();
         jsize count = env->GetArrayLength(elements);
-        std::vector<jlong> longs(count);
-        env->GetLongArrayRegion(elements, 0, count, longs.data());
-        ElementList vec;
-        vec.reserve(count);
-        for (jsize i = 0; i < count; ++i) {
-            vec.push_back(long_to_be_string(longs[i]));
+        auto replace = [&](LongElementList& v) {
+            auto& values = v; values.resize(count);
+            env->GetLongArrayRegion(elements, 0, count, reinterpret_cast<jlong*>(values.data()));
+        };
+        if (!table->modify_in_place(keyGroup, static_cast<int64_t>(key), replace)) {
+            LongElementList v; replace(v);
+            table->put(keyGroup, static_cast<int64_t>(key), std::move(v));
         }
-        table->put(keyGroup, static_cast<int64_t>(key), std::move(vec));
     })
 }
 
@@ -149,29 +164,19 @@ Java_org_apache_flink_state_forl0_NativeEngine_listUpdateLongElements(
 
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_listAddAllLongElements(
-        JNIEnv* env, jclass,
-        jlong stateHandle, jlong key, jint keyGroup, jlongArray elements) {
+        JNIEnv* env, jclass, jlong stateHandle, jlong key, jint keyGroup, jlongArray elements) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
-        int64_t k = static_cast<int64_t>(key);
+        auto* table = handle->get_state_table<int64_t, LongElementList>();
         jsize count = env->GetArrayLength(elements);
-        std::vector<jlong> longs(count);
-        env->GetLongArrayRegion(elements, 0, count, longs.data());
-        ElementList new_elems;
-        new_elems.reserve(count);
-        for (jsize i = 0; i < count; ++i) {
-            new_elems.push_back(long_to_be_string(longs[i]));
-        }
-        ElementList* vec = table->get(keyGroup, k);
-        if (vec) {
-            table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-                v.insert(v.end(),
-                    std::make_move_iterator(new_elems.begin()),
-                    std::make_move_iterator(new_elems.end()));
-            });
-        } else {
-            table->put(keyGroup, k, std::move(new_elems));
+        auto append = [&](LongElementList& v) {
+            auto& values = v; size_t offset = values.size();
+            values.resize(offset + count);
+            env->GetLongArrayRegion(elements, 0, count, reinterpret_cast<jlong*>(values.data()+offset));
+        };
+        if (!table->modify_in_place(keyGroup, static_cast<int64_t>(key), append)) {
+            LongElementList v; append(v);
+            table->put(keyGroup, static_cast<int64_t>(key), std::move(v));
         }
     })
 }
@@ -343,6 +348,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_listClear(
         jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
+        if (handle->value_type == StateHandle::ValueType::LONG_LIST) {
+            handle->get_state_table<int64_t, LongElementList>()->remove(keyGroup, static_cast<int64_t>(key));
+            return;
+        }
         auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
         table->remove(keyGroup, static_cast<int64_t>(key));
     })

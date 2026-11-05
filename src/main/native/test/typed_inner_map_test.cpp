@@ -8,6 +8,7 @@
 #include "state_engine.h"
 #include "type_layout.h"
 #include <map>
+#include <limits>
 
 using namespace forl0;
 
@@ -246,4 +247,62 @@ TEST(TypedInnerMapTest, EmptyInnerMap) {
     auto* m = st.get(0, static_cast<int64_t>(1));
     ASSERT_NE(m, nullptr);
     ASSERT_TRUE(m->empty());
+}
+
+TEST(TypedInnerMapTest, DenseRangePreservesGeneralMapSemantics) {
+    InnerMapLongLong m;
+    ASSERT_FALSE(m.is_dense());
+    ASSERT_EQ(m.add_sequence(62, 8, 64, 1), 8);
+    ASSERT_TRUE(m.is_dense());
+    ASSERT_EQ(m.size(), 8u);
+    ASSERT_EQ(m.sum_sequence(-2, 8, 64), 8);
+    m.erase(0);
+    ASSERT_EQ(m.count(0), 0u);
+    ASSERT_EQ(m[0], 0);
+    m[0] = std::numeric_limits<int64_t>::min();
+    ASSERT_EQ(m.find(0)->second, std::numeric_limits<int64_t>::min());
+    auto copy = m;
+    m[-9] = 100;
+    ASSERT_FALSE(m.is_dense());
+    ASSERT_EQ(m[-9], 100);
+    ASSERT_EQ(m[62], 1);
+    ASSERT_EQ(copy.count(-9), 0u);
+    ASSERT_TRUE(copy.is_dense());
+    size_t seen=0; for(const auto& kv:copy) { (void)kv; ++seen; }
+    ASSERT_EQ(seen, copy.size());
+    copy.clear(); ASSERT_TRUE(copy.empty());
+    ASSERT_EQ(copy.add_sequence(0, 4, 64, 1), 4);
+}
+TEST(TypedInnerMapTest, DenseRangeMatchesHashOracleWithWrapAndOverflow) {
+    InnerMapLongLong m;
+    std::unordered_map<int64_t,int64_t> expected;
+    for(int round=0;round<200;++round) {
+        int64_t start=round-100;
+        int64_t delta=round%3-1;
+        int64_t sum=0;
+        for(int i=0;i<97;++i) {
+            int64_t k=(start+i)%64; if(k<0)k+=64;
+            expected[k]+=delta;sum+=expected[k];
+        }
+        ASSERT_EQ(m.add_sequence(start,97,64,delta),sum);
+        for(const auto& kv:expected)ASSERT_EQ(m.find(kv.first)->second,kv.second);
+    }
+    m[0]=std::numeric_limits<int64_t>::max();
+    ASSERT_EQ(m.add_sequence(0,1,64,1),std::numeric_limits<int64_t>::min());
+    m[1000000000L]=9;
+    ASSERT_FALSE(m.is_dense());
+    ASSERT_FALSE(m.enable_dense(64));
+    ASSERT_EQ(m[1000000000L],9);
+}
+TEST(TypedInnerMapTest, DenseRangeCopyOnWriteKeepsOldVector) {
+    StateTable<int64_t,InnerMapLongLong> st(0,1,true);
+    InnerMapLongLong m; m.add_sequence(0,64,64,1);st.put(0,1,std::move(m));
+    st.prepare_snapshot();
+    ASSERT_TRUE(st.modify_in_place(0,1,[](InnerMapLongLong& v){v.add_sequence(0,64,64,1);}));
+    int seen=0;
+    st.for_each_snapshot_in_key_group(0,[&](const int64_t&,const InnerMapLongLong& v){
+        ASSERT_EQ(v.sum_sequence(0,64,64),64);++seen;
+    });
+    ASSERT_EQ(seen,1);ASSERT_EQ(st.get(0,1)->sum_sequence(0,64,64),128);
+    st.release_snapshot();
 }

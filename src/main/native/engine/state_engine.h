@@ -12,6 +12,7 @@
 #include "hot_cache.h"
 
 #include "swiss_table.h"
+#include "long_key_table.h"
 #include "type_layout.h"
 #include "allocator.h"
 
@@ -37,7 +38,7 @@ class StateTableBase;
 template <typename K, typename V>
 class StateTable {
 public:
-    using Table = SwissTable<K, V>;
+    using Table = LongKeyTable<K, V>;
 
     StateTable(int start_key_group, int num_key_groups, bool void_namespace,
                Allocator* alloc = &DefaultAllocator::instance(),
@@ -54,10 +55,16 @@ public:
         // Always allocate flat tables — void-namespace API uses them directly,
         // and they serve as fallback for non-void-namespace states when Java
         // code calls void-namespace JNI functions (e.g., window operators).
+        if constexpr (std::is_same_v<K,int64_t> &&
+                (std::is_same_v<V,int64_t> || std::is_same_v<V,LongElementList> || std::is_same_v<V,InnerMapLongLong>)) {
+            if (void_namespace && max_table_capacity==0)
+                long_directory_=std::make_unique<LongKeyDirectory<V>>(alloc,start_key_group,num_key_groups);
+        }
         tables_.resize(num_key_groups);
         for (int i = 0; i < num_key_groups; ++i) {
             tables_[i] = std::make_unique<Table>(initial_table_capacity_, alloc_,
                                                  max_table_capacity_, max_load_factor_);
+            tables_[i]->attach(long_directory_.get(),i+start_key_group);
         }
         // COW state per key group
         cow_states_.resize(num_key_groups);
@@ -80,6 +87,19 @@ public:
     StateTable(const StateTable&) = delete;
     StateTable& operator=(const StateTable&) = delete;
 
+    // Invalidates direct views before native mutations and snapshot preparation.
+    // The table object and this epoch address remain stable across SwissTable rehash.
+    const std::atomic<uint64_t>* access_epoch_address() const { return &access_epoch_; }
+    uint64_t access_epoch() const { return access_epoch_.load(std::memory_order_acquire); }
+    void invalidate_access_views() {
+        // Long lists only return Java array copies; they never expose direct access views.
+        if constexpr (!std::is_same_v<V, LongElementList>)
+            access_epoch_.fetch_add(1, std::memory_order_release);
+    }
+
+    LongKeyDirectory<V>* long_directory() {return long_directory_.get();}
+    const std::atomic<uint64_t>* direct_blocked_address()const{return &direct_blocked_;}
+
     // ---- COW Snapshot support ----
 
     // OPT-5: Merged COW tracking — single map instead of overwritten + added_after.
@@ -98,6 +118,8 @@ public:
     };
 
     void prepare_snapshot() {
+        direct_blocked_.store(1,std::memory_order_release);
+        invalidate_access_views();
         for (int i = 0; i < num_key_groups_; ++i) {
             std::lock_guard<std::recursive_mutex> lock(*cow_mutexes_[i]);
             cow_states_[i].active = true;
@@ -119,6 +141,7 @@ public:
             str_ns_cow_[i].clear();
             tw_ns_cow_[i].clear();
         }
+        direct_blocked_.store(0,std::memory_order_release);
     }
 
     // Check if a snapshot is active for a given key group.
@@ -139,6 +162,7 @@ public:
     // Total: 1 copy per unique key per snapshot (in cow_before_write), vs 2 with copy-and-put.
     template <typename ModifyFn>
     bool modify_in_place(int key_group, const K& key, ModifyFn&& fn) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -155,6 +179,7 @@ public:
     // After fn(*val), if val->empty(), removes the key (with proper COW erase tracking).
     template <typename ModifyFn>
     void modify_or_remove_in_place(int key_group, const K& key, ModifyFn&& fn) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -174,6 +199,7 @@ public:
     // Namespace variant: COW-safe in-place modification.
     template <typename N, typename ModifyFn>
     bool modify_in_place(int key_group, const N& ns, const K& key, ModifyFn&& fn) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -191,6 +217,7 @@ public:
     // Namespace variant: COW-safe in-place modification that may result in key removal.
     template <typename N, typename ModifyFn>
     void modify_or_remove_in_place(int key_group, const N& ns, const K& key, ModifyFn&& fn) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -211,6 +238,7 @@ public:
     }
 
     V* put(int key_group, const K& key, const V& value) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -224,6 +252,7 @@ public:
     }
 
     V* put(int key_group, const K& key, V&& value) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -237,6 +266,7 @@ public:
     }
 
     bool remove(int key_group, const K& key) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -255,6 +285,7 @@ public:
 
     template <typename N>
     V* put(int key_group, const N& ns, const K& key, const V& value) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -270,6 +301,7 @@ public:
 
     template <typename N>
     V* put(int key_group, const N& ns, const K& key, V&& value) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -285,6 +317,7 @@ public:
 
     template <typename N>
     bool remove(int key_group, const N& ns, const K& key) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         auto& cs = cow_states_[idx];
         std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
@@ -535,6 +568,7 @@ public:
     }
 
     Table* get_table(int key_group) {
+        invalidate_access_views();
         int idx = key_group - start_key_group_;
         return tables_[idx].get();
     }
@@ -710,6 +744,9 @@ private:
         }
     }
 
+    std::atomic<uint64_t> access_epoch_{0};
+    std::atomic<uint64_t> direct_blocked_{0};
+    std::unique_ptr<LongKeyDirectory<V>> long_directory_;
     int start_key_group_;
     int num_key_groups_;
     bool void_namespace_;
@@ -747,6 +784,8 @@ private:
 class StateTableHandle {
 public:
     virtual ~StateTableHandle() = default;
+    // Stable for this handle's lifetime, including SwissTable rehash and snapshots.
+    virtual void* raw_table() = 0;
     virtual size_t total_size() const = 0;
     virtual bool is_void_namespace() const = 0;
     virtual void prepare_snapshot() = 0;
@@ -763,6 +802,7 @@ public:
     StateTable<K, V>* get() { return table_.get(); }
     const StateTable<K, V>* get() const { return table_.get(); }
 
+    void* raw_table() override { return table_.get(); }
     size_t total_size() const override { return table_->total_size(); }
     bool is_void_namespace() const override { return table_->is_void_namespace(); }
     void prepare_snapshot() override { table_->prepare_snapshot(); }
@@ -816,6 +856,13 @@ public:
         if (it == state_handles_.end()) return nullptr;
         auto* typed = static_cast<TypedStateTableHandle<K, V>*>(it->second.get());
         return typed->get();
+    }
+
+    // Resolve once when registering a JNI handle. StateTable objects are owned
+    // by unique_ptr and are not moved when the registry or table slots grow.
+    void* get_raw_state_table(int64_t handle_id) {
+        auto it = state_handles_.find(handle_id);
+        return it == state_handles_.end() ? nullptr : it->second->raw_table();
     }
 
     // Get state handle by name

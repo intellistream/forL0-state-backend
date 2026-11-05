@@ -379,6 +379,35 @@ TEST(CheckpointRoundTripTest, ListState) {
     source.release_snapshot();
 }
 
+TEST(CheckpointRoundTripTest, PackedLongListSnapshot) {
+    StateTable<int64_t, LongElementList> source(0, 1, true);
+    LongElementList list;
+    const std::vector<int64_t> expected{0, 1, -1, INT64_MIN, INT64_MAX, 1000000007};
+    list = expected;
+    source.put(0, 10, std::move(list));
+    source.prepare_snapshot();
+    source.modify_in_place(0, 10, [](LongElementList& v) {
+        v[0] = 99;
+        v.push_back(42);
+    });
+    TypeLayout kl = make_layout(TypeId::INT64);
+    TypeLayout vl = make_list_layout(TypeId::INT64);
+    WriteBuffer buf;
+    CheckpointStateWriter<int64_t, LongElementList> writer(kl, vl, true);
+    size_t count = writer.write_key_group(source, 0, buf);
+    StateTable<int64_t, LongElementList> restored(0, 1, true);
+    ReadBuffer input(buf.data(), buf.size());
+    CheckpointStateReader<int64_t, LongElementList> reader(kl, vl, true);
+    reader.read_entries(input, restored, 0, static_cast<int32_t>(count));
+    const auto* saved = restored.get(0, static_cast<int64_t>(10));
+    ASSERT_NE(saved, nullptr);
+    ASSERT_EQ(saved->size(), expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) ASSERT_EQ((*saved)[i], expected[i]);
+    ASSERT_EQ((*source.get(0, static_cast<int64_t>(10)))[0], 99);
+    ASSERT_EQ(source.get(0, static_cast<int64_t>(10))->size(), 7u);
+    source.release_snapshot();
+}
+
 // ============================================================================
 //  COW + Checkpoint: snapshot consistency
 // ============================================================================

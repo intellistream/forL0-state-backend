@@ -68,8 +68,27 @@ inline size_t alloc_size(size_t capacity) {
 //  SwissTable
 // ============================================================================
 
+// Swiss H1/H2 need entropy across the entire hash. std::hash of an integer is
+// the identity on libstdc++, which clusters small consecutive keys after H1's >>7.
+template <typename K>
+struct SwissDefaultHash {
+    size_t operator()(const K& key) const {
+        if constexpr (std::is_integral<K>::value && sizeof(K) <= sizeof(uint64_t)) {
+            uint64_t x = static_cast<uint64_t>(key);
+            x ^= x >> 30;
+            x *= UINT64_C(0xbf58476d1ce4e5b9);
+            x ^= x >> 27;
+            x *= UINT64_C(0x94d049bb133111eb);
+            x ^= x >> 31;
+            return static_cast<size_t>(x);
+        } else {
+            return std::hash<K>{}(key);
+        }
+    }
+};
+
 template <typename K, typename V,
-          typename Hash = std::hash<K>,
+          typename Hash = SwissDefaultHash<K>,
           typename KeyEqual = std::equal_to<K>>
 class SwissTable {
 public:

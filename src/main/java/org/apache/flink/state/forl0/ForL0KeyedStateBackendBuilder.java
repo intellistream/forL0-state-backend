@@ -771,6 +771,15 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 ? TypeAnalyzer.TYPE_VOID_NS
                 : TypeAnalyzer.getTypeId(nsSerializer);
 
+        // Restore must select the same primitive Long-list table as fresh registration.
+        if (stateType == 1 && keyTypeId == TypeAnalyzer.TYPE_INT64
+                && nsTypeId == TypeAnalyzer.TYPE_VOID_NS
+                && valueSerializer instanceof org.apache.flink.api.common.typeutils.base.ListSerializer
+                && ((org.apache.flink.api.common.typeutils.base.ListSerializer<?>) valueSerializer)
+                        .getElementSerializer() instanceof org.apache.flink.api.common.typeutils.base.LongSerializer) {
+            valueTypeId = TypeAnalyzer.TYPE_INT64;
+        }
+
         byte[] typeDescriptor =
                 TypeAnalyzer.generateStateDescriptor(keySerializer, nsSerializer, valueSerializer);
 

@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #endif
 #include "state_engine.h"
+#include "jni_utils.h"
 
 #include <map>
 #include <set>
@@ -322,4 +323,55 @@ TEST(StateTableCOWTest, StateEngineSnapshotCoordination) {
     ASSERT_EQ(snap2[1], "before");
 
     engine.release_snapshot();
+}
+
+TEST(StateTableCOWTest, CachedJniTableSurvivesRegistryGrowthRehashAndSnapshot) {
+    StateEngine engine(0, 1, 128);
+    auto id = engine.register_state<int64_t, int64_t>("count", true);
+    StateHandle handle;
+    handle.state_table = engine.get_raw_state_table(id);
+    auto* table = handle.get_state_table<int64_t, int64_t>();
+    ASSERT_EQ(table, (engine.get_state_table<int64_t, int64_t>(id)));
+    for (int i = 0; i < 256; ++i)
+        engine.register_state<int64_t, double>("other_" + std::to_string(i), true);
+    for (int64_t i = 0; i < 10000; ++i) table->put(0, i, i);
+    ASSERT_EQ(handle.state_table, engine.get_raw_state_table(id));
+    engine.prepare_snapshot();
+    ASSERT_TRUE(table->modify_in_place(0, 42, [](int64_t& v) { v += 7; }));
+    table->put(0, 10001, 99);
+    bool found = false, saw_added = false;
+    table->for_each_snapshot_in_key_group(0, [&](const int64_t& k, const int64_t& v) {
+        if (k == 42) { found = true; ASSERT_EQ(v, 42); }
+        if (k == 10001) saw_added = true;
+    });
+    ASSERT_TRUE(found);
+    ASSERT_FALSE(saw_added);
+    engine.release_snapshot();
+    ASSERT_EQ(*table->get(0, 42), 49);
+    ASSERT_EQ(*(handle.get_state_table<int64_t, int64_t>()->get(0, 10001)), 99);
+}
+
+TEST(StateTableCOWTest, PagedDirectoryGroupCollisionAndSparseFallback) {
+    CountingAllocator allocator(0);
+    {
+        StateTable<int64_t,int64_t> st(0,2,true,&allocator);
+        st.put(0,9000,90); // Initially outside the admitted dense frontier.
+        st.put(0,-1,7);
+        st.put(1,100,10);
+        for(int64_t k=0;k<10000;++k)if(k!=9000)st.put(0,k,k+1);
+        ASSERT_EQ(*st.get(0,9000),90);
+        ASSERT_EQ(*st.get(0,100),101);
+        ASSERT_EQ(*st.get(1,100),10);
+        st.put(0,9000,91);
+        ASSERT_EQ(st.total_size(),10002u);
+        st.prepare_snapshot();
+        st.remove(0,100);st.put(0,100,999);st.remove(0,9000);st.put(0,9000,999);
+        std::map<int64_t,int64_t> old;
+        st.for_each_snapshot_in_key_group(0,[&](int64_t k,int64_t v){old[k]=v;});
+        ASSERT_EQ(old.size(),10001u);
+        ASSERT_EQ(old[100],101);ASSERT_EQ(old[9000],91);ASSERT_EQ(old[-1],7);
+        ASSERT_EQ(*st.get(1,100),10);
+        st.release_snapshot();
+    }
+    ASSERT_EQ(allocator.used_bytes(),0u);
 }

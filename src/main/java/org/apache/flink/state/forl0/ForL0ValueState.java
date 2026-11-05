@@ -79,6 +79,7 @@ public class ForL0ValueState<K, N, V>
         GENERIC              // fallback (generic namespace / unsupported key type)
     }
     private final KeyNsStrategy keyNsStrategy;
+    private final PrimitiveLongAccess primitiveAccess;
 
     ForL0ValueState(
             long stateHandle,
@@ -131,10 +132,36 @@ public class ForL0ValueState<K, N, V>
         } else {
             this.keyNsStrategy = KeyNsStrategy.GENERIC;
         }
+        this.primitiveAccess=keyNsStrategy==KeyNsStrategy.LONG_VOID && !isRowDataValue
+                && valueSerializer instanceof org.apache.flink.api.common.typeutils.base.LongSerializer
+                ?new PrimitiveLongAccess(stateHandle):null;
     }
 
     @Override
     public V value() {
+        if (keyNsStrategy == KeyNsStrategy.LONG_VOID
+                && valueTypeId == TypeAnalyzer.TYPE_INT64 && !isRowDataValue) {
+            return primitiveLongValue();
+        }
+        return valueOther();
+    }
+
+    @SuppressWarnings("unchecked")
+    private V primitiveLongValue() {
+        long key = (Long) keyContext.currentKey;
+        int group = keyContext.currentKeyGroupIndex;
+        long direct=primitiveAccess==null?0:primitiveAccess.row(key,group);
+        if(direct!=0)return (V)new Long(PrimitiveLongAccess.read(direct));
+        long value = NativeEngine.valueGetLongLong(stateHandle, key, group);
+        if (value == 0L) {
+            if (!NativeEngine.valueGetLongLongSafe(stateHandle, key, group, primitiveBuf))
+                return getDefaultValue();
+            value = primitiveBuf[0];
+        }
+        return (V) new Long(value); // Intentional: enables scalar replacement for primitive consumers on Java 11.
+    }
+
+    private V valueOther() {
         K key = keyContext.currentKey;
         int keyGroup = keyContext.currentKeyGroupIndex;
 
@@ -419,6 +446,20 @@ public class ForL0ValueState<K, N, V>
 
     @Override
     public void update(V value) {
+        if(primitiveAccess!=null) {
+            long key=(Long)keyContext.currentKey;int group=keyContext.currentKeyGroupIndex;
+            if(value==null?primitiveAccess.clear(key,group):primitiveAccess.put(key,group,(Long)value))return;
+        }
+        if (value != null && keyNsStrategy == KeyNsStrategy.LONG_VOID
+                && valueTypeId == TypeAnalyzer.TYPE_INT64 && !isRowDataValue) {
+            NativeEngine.valuePutLongLong(stateHandle, (Long) keyContext.currentKey,
+                    keyContext.currentKeyGroupIndex, (Long) value);
+            return;
+        }
+        updateOther(value);
+    }
+
+    private void updateOther(V value) {
         if (value == null) {
             clear();
             return;
@@ -552,6 +593,8 @@ public class ForL0ValueState<K, N, V>
 
     @Override
     public void clear() {
+        if(primitiveAccess!=null && primitiveAccess.clear((Long)keyContext.currentKey,
+                keyContext.currentKeyGroupIndex))return;
         K key = keyContext.currentKey;
         int keyGroup = keyContext.currentKeyGroupIndex;
 

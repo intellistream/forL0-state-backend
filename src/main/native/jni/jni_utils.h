@@ -107,7 +107,7 @@ inline void throw_java_exception(JNIEnv* env, const char* msg) {
 // template instantiation without virtual dispatch.
 struct StateHandle {
     enum class KeyType : uint8_t { INT32, INT64, STRING, BYTES, FIXED_ROW };
-    enum class ValueType : uint8_t { INT32, INT64, FLOAT32, FLOAT64, BOOL, STRING, BYTES, LIST, MAP };
+    enum class ValueType : uint8_t { INT32, INT64, FLOAT32, FLOAT64, BOOL, STRING, BYTES, LIST, MAP, LONG_LIST };
     enum class StateKind : uint8_t { VALUE, LIST, MAP_, REDUCING, AGGREGATING };
     enum class NsType : uint8_t { VOID_NS, BYTES, TIME_WINDOW };
     // MapState InnerMap specialization kind
@@ -116,6 +116,11 @@ struct StateHandle {
     std::string state_name;
     StateEngine* engine;
     int64_t table_id;       // StateEngine table registration id
+    void* state_table = nullptr; // Non-owning; StateEngine outlives this handle.
+    template <typename K, typename V>
+    StateTable<K, V>* get_state_table() const {
+        return static_cast<StateTable<K, V>*>(state_table);
+    }
     KeyType key_type;
     ValueType value_type;
     StateKind kind;

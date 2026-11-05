@@ -4,6 +4,7 @@
 // serialized as a descriptor byte stream, and parsed here.
 
 #pragma once
+#include "long_element_list.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <memory>
 #include <stdexcept>
 #include <cstring>
+#include "long_inner_map.h"
 
 namespace forl0 {
 
@@ -314,12 +316,13 @@ template <> struct CppType<TypeId::TIME_WINDOW> { using type = TimeWindow; };
 
 // ListState stores elements as a vector of serialized element byte strings.
 using ElementList = std::vector<std::string>;
+// LongElementList is defined in long_element_list.h.
 
 // MapState stores a nested map of serialized user-key → serialized user-value.
 using InnerMap = std::unordered_map<std::string, std::string>;
 
 // Typed InnerMap variants — avoid string encoding for primitive UK/UV.
-using InnerMapLongLong   = std::unordered_map<int64_t, int64_t>;
+using InnerMapLongLong   = LongInnerMap;
 using InnerMapLongString = std::unordered_map<int64_t, std::string>;
 using InnerMapStringLong = std::unordered_map<std::string, int64_t>;
 

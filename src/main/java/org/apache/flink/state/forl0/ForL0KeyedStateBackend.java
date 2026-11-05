@@ -285,6 +285,16 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
         int keyTypeId = TypeAnalyzer.getTypeId(keySerializer);
         int valueTypeId = TypeAnalyzer.getTypeId(stateSerializer);
+        // For ListState, INT64 marks the raw-Long element specialization.
+        if (stateDesc.getType() == StateDescriptor.Type.LIST
+                && namespaceSerializer instanceof org.apache.flink.runtime.state.VoidNamespaceSerializer
+                && keyTypeId == TypeAnalyzer.TYPE_INT64
+                && stateSerializer instanceof org.apache.flink.api.common.typeutils.base.ListSerializer) {
+            org.apache.flink.api.common.typeutils.base.ListSerializer<?> list =
+                    (org.apache.flink.api.common.typeutils.base.ListSerializer<?>) stateSerializer;
+            if (list.getElementSerializer() instanceof org.apache.flink.api.common.typeutils.base.LongSerializer)
+                valueTypeId = TypeAnalyzer.TYPE_INT64;
+        }
         int nsTypeId = TypeAnalyzer.getTypeId(namespaceSerializer);
         byte[] typeDescriptor = TypeAnalyzer.generateStateDescriptor(
                 keySerializer, namespaceSerializer, stateSerializer);

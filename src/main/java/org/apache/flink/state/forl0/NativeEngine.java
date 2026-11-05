@@ -273,6 +273,11 @@ public final class NativeEngine {
     public static native void listAddGeneric(long stateHandle, byte[] key, int keyGroup, byte[] element);
 
     /** Get list elements as long[] (int64 key + long elements). Returns null if absent. */
+    public static native long[] primitiveLongDirectory(long handle);
+
+    public static native Iterable<Long> listGetLongView(long stateHandle, long key, int keyGroup);
+    public static native void releaseLongListView(long token);
+
     public static native long[] listGetLongElements(long stateHandle, long key, int keyGroup);
 
     /** Replace entire list with long[] (int64 key + long elements). */
@@ -351,6 +356,8 @@ public final class NativeEngine {
 
     // --- MapState Long UK/UV zero-serialization paths ---
     /** Get UV(long) by Long key + Long UK. Returns Long.MIN_VALUE if absent. */
+    static native void mapLongLongDenseView(long stateHandle, long key, int keyGroup, long[] out);
+
     public static native long mapGetLongLong(long stateHandle, long key, int keyGroup, long userKey);
     /** Check existence by Long key + Long UK. */
     public static native boolean mapContainsLongLong(long stateHandle, long key, int keyGroup, long userKey);
