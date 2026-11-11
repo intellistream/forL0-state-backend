@@ -1,8 +1,6 @@
 import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.io.*;
-import java.util.zip.GZIPOutputStream;
 import com.google.gson.*;
 import org.apache.flink.benchmark.benchset.BenchsetEvent;
 
@@ -33,10 +31,6 @@ public final class PaperSourceOracle {
   else if(workload.equals("vs"))coefficient=2*scoreSquares+8*total;
   else coefficient=2*squares+total;
   long expected=64L*1000000007L*coefficient;
-  Path histogram=control.getParent().resolve("source-key-histogram.bin.gz");
-  try(DataOutputStream stream=new DataOutputStream(new BufferedOutputStream(new GZIPOutputStream(Files.newOutputStream(histogram)),65536))) {
-   stream.writeInt(keys);for(long n:counts)stream.writeLong(n);
-  }
   Map<String,Object> result=new LinkedHashMap<>();result.put("source_records",total);result.put("source_signature",sourceSignature);
   result.put("sum_key_counts_squared",squares);result.put("score_key_counts_squared",scoreSquares);
   result.put("expected_feature_projection",expected);result.put("keys",keys);result.put("workload",workload);

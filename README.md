@@ -6,7 +6,7 @@
 bash ./run-l0-benchset
 ```
 
-此入口自带 ARM64 Java/Flink/Python及编译产物，无需联网安装，自动运行Heap、BriskState无L0以及三档L0。L0容量从驱动读取，按自动确定预算的25%/50%/75%配置，不申请满容量；每TM4核32GiB。结果自动保存为CSV、JSON、Markdown并打包。使用说明与验收记录见 [离线实验文档](experiments/l0-offline/README.md)。
+此入口自带 ARM64 Java/Flink/Python及编译产物，无需联网安装，自动运行Heap、BriskState无L0以及三档L0。L0容量从驱动读取，按自动确定预算的25%/50%/75%配置，不申请满容量；每TM4核32GiB。结果只保存为CSV、JSON、Markdown和文本日志。使用说明与验收记录见 [离线实验文档](experiments/l0-offline/README.md)。
 
 Repository ownership and entry-point layout are documented in
 [`docs/REPOSITORY_STRUCTURE.md`](docs/REPOSITORY_STRUCTURE.md).

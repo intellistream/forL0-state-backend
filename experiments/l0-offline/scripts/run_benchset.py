@@ -101,6 +101,7 @@ class Campaign:
     def __init__(self, args):
         self.a = args
         self.runtime = Path(args.runtime).resolve()
+        self.oracle = Path(__file__).resolve().parents[1] / 'reproduction/oracle'
         self.output = Path(args.results).resolve()
         self.output.mkdir(parents=True, exist_ok=False)
         self.work = self.runtime.parent / ('work-' + uuid.uuid4().hex[:12])
@@ -123,6 +124,7 @@ class Campaign:
         self.hashes = {name: sha(self.runtime / name) for name in
                        ['job/paper-steady-benchset.jar', 'native/libforl0_engine.so',
                         'flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar']}
+        self.hashes['oracle_class_sha256'] = sha(self.oracle / 'PaperSourceOracle.class')
         self.label = 'DRAM_VALIDATION_ONLY' if args.validate_dram else 'REAL_L0_HARDWARE'
         self.l0_sizes = {}
 
@@ -539,7 +541,7 @@ class Campaign:
             if signed(sum(x['source_signature'] for x in sinks)) != expected_signature:
                 raise RuntimeError('源和终端签名不一致。')
             cmd = [str(self.runtime / 'jdk/bin/java'), '-Xmx256m', '-XX:ActiveProcessorCount=4',
-                   '-cp', str(self.runtime / 'oracle') + ':' + str(self.runtime / 'job/paper-steady-benchset.jar'),
+                   '-cp', str(self.oracle) + ':' + str(self.runtime / 'job/paper-steady-benchset.jar'),
                    'PaperSourceOracle', str(folder / 'control'), str(self.a.keys), workload]
             oracle = json.loads(subprocess.check_output(cmd, env=self.env, text=True, timeout=300))
             projection = signed(sum(x['feature_projection'] for x in sinks))
@@ -645,8 +647,6 @@ class Campaign:
             self.stop()
             shutil.rmtree(self.work, ignore_errors=True)
             print('结果目录：', self.output, flush=True)
-            archive = shutil.make_archive(str(self.output), 'gztar', root_dir=self.output.parent, base_dir=self.output.name)
-            print('请回传此结果包：', archive, flush=True)
 
 
 def main():

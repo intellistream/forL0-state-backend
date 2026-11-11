@@ -15,6 +15,8 @@ Java后端增量类使用 `javac --release 11`，以同一Flink发行版和原R3
 
 `source/job/src/main/java/` 为主实验的稳态Job源码，`source/job/provenance.json` 为原始字节码追溯记录。Job target为Java8，实际运行于同一Java11；三个BriskState容量组、关闭组及Heap共用同一个Job。`oracle/` 为独立源前缀重放及最终feature投影核验程序。
 
+当前脚本使用本目录 `oracle/PaperSourceOracle.class`：保留原有重放与核验计算，仅取消二进制压缩直方图输出，结果为JSON纯文本。Job和后端二进制未因此改变。
+
 `../scripts/l0_probe.cpp` 是双进程容量读写探测器源码，构建时直接链接同一 `src/main/native/engine/hot_cache.cpp`，并使用同一头文件及ABI。两进程通过barrier同时持有申请区域，再共同释放，不用顺序申请假装验证共享容量。
 
 运行时来自已用于主实验/裸机实验的BiSheng JDK11.0.32+9、Flink1.20.3及私有glibc/jemalloc；Python3.10及其标准库和动态依赖随包提供。许可文件在 `../licenses/`、JDK `legal/` 和运行时 `LICENSES/` 中。此处是产物追溯说明；合作方只需运行根目录入口，不需要这些编译工具。
