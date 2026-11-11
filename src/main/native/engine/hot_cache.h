@@ -14,7 +14,9 @@
 //   - cache_tuner_init() returns a non-null tuner
 //   - probe l0_mem_alloc succeeds for at least one HotSet
 // If any step fails, the manager is NOT active and StateTable::cache_ is
-// left null — there is no heap fallback (see L0_HotKey_Cache_Design §3.2).
+// left null. The explicit FORL0_L0_MEMORY_MODE=dram experiment mode
+// uses a quota-limited DRAM allocator and is logged as dram_emulation.
+// Hardware mode never silently falls back to DRAM.
 //
 // Each individual HotCacheLL remains single-writer because Flink keyed-state
 // access is single-threaded per subtask. HotCacheManager bookkeeping is
@@ -32,6 +34,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <thread>
+#include <condition_variable>
+#include <cstdio>
 
 #if defined(FORL0_NEON)
 #include <arm_neon.h>
@@ -143,6 +148,9 @@ static inline uint64_t hotcache_match_h2(const uint8_t* tags, uint8_t h2) noexce
 
 // Pop the lowest matching slot index (0..7) from an 8-byte equality mask.
 static inline int hotcache_pop_match(uint64_t& mask) noexcept {
+    // Equality produces 0xff per matching byte. Keep one bit per way so a
+    // tag collision does not probe the same non-matching key eight times.
+    mask &= 0x0101010101010101ULL;
     int slot = __builtin_ctzll(mask) >> 3;
     mask &= mask - 1;
     return slot;
@@ -220,6 +228,10 @@ public:
     uint32_t num_sets() const noexcept { return num_sets_; }
     HotSet*  sets()     const noexcept { return sets_; }
 
+    // Each cache has one owner writer. Monitoring threads only load these
+    // atomics: load/store increments avoid contended-RMW instructions while
+    // retaining well-defined concurrent diagnostics. Reset/rebalance belongs
+    // to the owner thread or a quiescent test/diagnostic.
     // Diagnostics
     uint64_t hits()          const noexcept { return hits_.load(std::memory_order_relaxed); }
     uint64_t misses()        const noexcept { return misses_.load(std::memory_order_relaxed); }
@@ -251,9 +263,10 @@ public:
     bool get(int64_t key, int64_t* out) noexcept {
         // A cache that observed a long write-only phase may contain skipped
         // updates. The first later read must miss and re-learn from SwissTable.
-        if (write_bypassed_.exchange(false, std::memory_order_relaxed)) {
+        if (write_bypassed_.load(std::memory_order_relaxed)) {
+            write_bypassed_.store(false,std::memory_order_relaxed);
             writes_since_lookup_.store(0, std::memory_order_relaxed);
-            misses_.fetch_add(1, std::memory_order_relaxed);
+            misses_.store(misses_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
             return false;
         }
         writes_since_lookup_.store(0, std::memory_order_relaxed);
@@ -265,23 +278,24 @@ public:
             int i = hotcache_pop_match(m);
             if (s->keys[i] == key) {
                 *out = s->vals[i];
-                hits_.fetch_add(1, std::memory_order_relaxed);
+                hits_.store(hits_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
                 return true;
             }
         }
-        misses_.fetch_add(1, std::memory_order_relaxed);
+        misses_.store(misses_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
         return false;
     }
 
     void put(int64_t key, int64_t val) noexcept {
-        writes_.fetch_add(1, std::memory_order_relaxed);
+        writes_.store(writes_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
         if (write_bypassed_.load(std::memory_order_relaxed)) return;
-        uint64_t write_run = writes_since_lookup_.fetch_add(1, std::memory_order_relaxed) + 1;
+        uint64_t write_run = writes_since_lookup_.load(std::memory_order_relaxed) + 1;
+        writes_since_lookup_.store(write_run,std::memory_order_relaxed);
         if (write_only_bypass_threshold_ > 0
             && write_run >= write_only_bypass_threshold_) {
             clear();
             write_bypassed_.store(true, std::memory_order_relaxed);
-            bypass_events_.fetch_add(1, std::memory_order_relaxed);
+            bypass_events_.store(bypass_events_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
             return;
         }
         uint64_t h  = hotcache_mix64(static_cast<uint64_t>(key));
@@ -320,7 +334,7 @@ public:
             int i = hotcache_pop_match(m);
             if (s->keys[i] == key) {
                 s->tags[i] = HOTCACHE_EMPTY_TAG;
-                invalidations_.fetch_add(1, std::memory_order_relaxed);
+                invalidations_.store(invalidations_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
                 return;
             }
         }
@@ -399,11 +413,11 @@ public:
             int i = hotcache_pop_match(m);
             if (s->keys[i] == key) {
                 std::memcpy(out, s->vals[i], val_width_);
-                hits_.fetch_add(1, std::memory_order_relaxed);
+                hits_.store(hits_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
                 return true;
             }
         }
-        misses_.fetch_add(1, std::memory_order_relaxed);
+        misses_.store(misses_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
         return false;
     }
 
@@ -441,7 +455,7 @@ public:
             int i = hotcache_pop_match(m);
             if (s->keys[i] == key) {
                 s->tags[i] = HOTCACHE_EMPTY_TAG;
-                invalidations_.fetch_add(1, std::memory_order_relaxed);
+                invalidations_.store(invalidations_.load(std::memory_order_relaxed)+(1), std::memory_order_relaxed);
                 return;
             }
         }
@@ -480,6 +494,7 @@ struct L0LibBindings {
     // True if `lib_handle` requires a real `dlclose`. Test-injected bindings
     // typically set this false.
     bool owns_lib_handle = true;
+    const char* memory_mode = "hardware";
 };
 
 // Factory hook used by tests to inject fake L0 bindings. On success returns
@@ -498,6 +513,128 @@ bool default_l0_bindings_loader(L0LibBindings* out, std::string* reason);
 //  the request DOWN to a power of 2 and tries (a) the bump frontier, then
 //  (b) a sufficiently large released run.
 // ---------------------------------------------------------------------------
+
+
+// One owner per engine, shared by its named Map states. Exact state identity
+// prevents aliasing. Eviction invalidates the victim's retained Java views;
+// cache-content epochs remain independent of that pointer invalidation.
+struct HotRowOwner {
+    void* table=nullptr;
+    const std::atomic<uint64_t>* content_epoch=nullptr;
+    std::atomic<uint64_t>* view_epoch=nullptr;
+    bool (*restore)(HotRowOwner*,int64_t,int,void*,uint64_t,int64_t*)=nullptr;
+};
+struct alignas(64) HotRowSet {
+    int64_t keys[4],state_ids[4];
+    uint64_t epochs[4];
+    int64_t* backing[4];
+    int32_t groups[4];
+    uint16_t spans[4];
+    uint32_t valid=0,rr=0;
+    std::atomic<uint64_t>* view_epochs[4];
+    HotRowOwner* owners[4];
+    void* row_hints[4];
+    int64_t values[4][64];
+};
+static_assert(sizeof(HotRowSet)==2304 && offsetof(HotRowSet,values)==256,"Direct row ABI");
+static_assert(offsetof(HotRowSet,valid)==152 && offsetof(HotRowSet,view_epochs)==160,"Direct metadata ABI");
+static_assert(std::atomic<uint64_t>::is_always_lock_free,"Direct counters require lock-free 64-bit atomics");
+
+class HotRowCache {
+public:
+    HotRowCache(void* base,uint32_t sets):sets_(static_cast<HotRowSet*>(base)),count_(sets) {
+        const char* policy=std::getenv("FORL0_L0_ROW_POLICY");
+        resident_=policy&&std::strcmp(policy,"resident")==0;
+        for(uint32_t i=0;i<count_;++i){sets_[i].valid=0;sets_[i].rr=0;}
+    }
+    ~HotRowCache(){flush_all();}
+    void freeze(){frozen_.store(1,std::memory_order_release);flush_all();}
+    void unfreeze(){frozen_.store(0,std::memory_order_release);}
+    bool frozen()const{return frozen_.load(std::memory_order_acquire)!=0;}
+    uintptr_t frozen_address(){return reinterpret_cast<uintptr_t>(&frozen_);}
+    void flush_all()noexcept {
+        for(uint32_t n=0;n<count_;++n){auto& set=sets_[n];
+            for(unsigned i=0;i<4;++i)if(set.valid&(1u<<i))restore(set,i);
+            set.valid=0;
+        }
+    }
+    bool refresh_alias(int64_t* data,int64_t key,int group,uint64_t epoch,int64_t state_id,HotRowOwner* owner,void* row)noexcept {
+        uintptr_t address=reinterpret_cast<uintptr_t>(data),base=base_address();
+        if(address<base||address>=base+size_t(count_)*sizeof(HotRowSet))return false;
+        size_t delta=address-base,n=delta/sizeof(HotRowSet),offset=delta%sizeof(HotRowSet);
+        if(offset<256||(offset-256)%512!=0)return false;
+        unsigned slot=(offset-256)/512;if(slot>=4)return false;
+        auto& set=sets_[n];
+        if(!(set.valid&(1u<<slot))||set.keys[slot]!=key||set.groups[slot]!=group||set.state_ids[slot]!=state_id)return false;
+        set.epochs[slot]=epoch;set.owners[slot]=owner;set.row_hints[slot]=row;
+        add(hits_);add(hit_lines_,8);return true;
+    }
+    static void add(std::atomic<uint64_t>& counter,uint64_t n=1)noexcept {
+        counter.store(counter.load(std::memory_order_relaxed)+n,std::memory_order_relaxed);
+    }
+    uint32_t index(int64_t key,int64_t state_id)const noexcept {
+        uint64_t h=hotcache_mix64(static_cast<uint64_t>(key)^hotcache_mix64(static_cast<uint64_t>(state_id)));
+        return (uint64_t(static_cast<uint32_t>(h))*count_)>>32;
+    }
+    int64_t* get(int64_t key,int group,uint64_t epoch,int64_t** backing,size_t* span,int64_t state_id=0)noexcept {
+        add(lookups_);if(frozen())return nullptr;auto& set=sets_[index(key,state_id)];
+        for(unsigned i=0;i<4;++i)if((set.valid&(1u<<i))&&set.keys[i]==key&&set.state_ids[i]==state_id&&set.groups[i]==group&&set.epochs[i]==epoch) {
+            add(hits_);add(hit_lines_,8);*backing=set.backing[i];*span=64;return set.values[i];
+        }
+        return nullptr;
+    }
+    int64_t* insert(int64_t key,int group,uint64_t epoch,int64_t* data,size_t span,
+                    int64_t state_id=0,std::atomic<uint64_t>* view_epoch=nullptr,HotRowOwner* owner=nullptr,void* hint=nullptr)noexcept {
+        if(span!=64||frozen()){add(bypasses_);return data;}
+        // Resident mode fills once, then retains authoritative rows. Cold rows
+        // stay on their original primitive directory path without replacement.
+        if(resident_ && next_resident_>=uint64_t(count_)*4) {
+            admission_closed_.store(1,std::memory_order_release);
+            add(bypasses_);return data;
+        }
+        const uint64_t resident_slot=resident_?next_resident_++:0;
+        auto& set=sets_[resident_?resident_slot/4:index(key,state_id)];unsigned slot;
+        if(resident_)slot=resident_slot%4;
+        else
+        if((set.valid&15)!=15)slot=__builtin_ctz((~set.valid)&15);
+        else {slot=set.rr++&3;add(evictions_);restore(set,slot);
+            if(!set.owners[slot]&&set.view_epochs[slot])set.view_epochs[slot]->fetch_add(1,std::memory_order_release);}
+        set.keys[slot]=key;set.state_ids[slot]=state_id;set.groups[slot]=group;
+        set.epochs[slot]=epoch;set.backing[slot]=data;set.spans[slot]=64;set.view_epochs[slot]=view_epoch;set.owners[slot]=owner;set.row_hints[slot]=hint;
+        if(set.values[slot]!=data)std::memcpy(set.values[slot],data,512);set.valid|=1u<<slot;add(fill_bytes_,512);
+        if(resident_ && next_resident_==uint64_t(count_)*4)admission_closed_.store(1,std::memory_order_release);
+        return set.values[slot];
+    }
+    bool resident()const noexcept{return resident_;}
+    uintptr_t admission_closed_address()noexcept{return reinterpret_cast<uintptr_t>(&admission_closed_);}
+    uint32_t num_sets()const noexcept{return count_;}
+    uint64_t lookups()const noexcept{return lookups_.load(std::memory_order_relaxed);}
+    uint64_t hits()const noexcept{return hits_.load(std::memory_order_relaxed);}
+    uint64_t fill_bytes()const noexcept{return fill_bytes_.load(std::memory_order_relaxed);}
+    uint64_t evictions()const noexcept{return evictions_.load(std::memory_order_relaxed);}
+    uint64_t hit_lines()const noexcept{return hit_lines_.load(std::memory_order_relaxed);}
+    void record_bypass()noexcept{add(bypasses_);}
+    uint64_t bypasses()const noexcept{return bypasses_.load(std::memory_order_relaxed);}
+    uint64_t writeback_bytes()const noexcept{return writeback_bytes_.load(std::memory_order_relaxed);}
+    uintptr_t base_address()const noexcept{return reinterpret_cast<uintptr_t>(sets_);}
+    uintptr_t counter_address(unsigned i)noexcept {
+        std::atomic<uint64_t>* fields[]={&lookups_,&hits_,&fill_bytes_,&evictions_,&hit_lines_,&bypasses_};
+        return reinterpret_cast<uintptr_t>(fields[i]);
+    }
+private:
+    void restore(HotRowSet& set,unsigned i)noexcept {
+        if(auto* owner=set.owners[i])if(owner->restore(owner,set.keys[i],set.groups[i],set.row_hints[i],set.epochs[i],set.values[i]))add(writeback_bytes_,512);
+    }
+    HotRowSet* sets_;uint32_t count_;
+    bool resident_=false;
+    uint64_t next_resident_=0;
+    // Monotonic for this pool's lifetime: after snapshot flush, exhausted pools
+    // stay closed and reads correctly use restored DRAM homes.
+    std::atomic<uint64_t> admission_closed_{0};
+    std::atomic<uint64_t> frozen_{0},writeback_bytes_{0};
+    std::atomic<uint64_t> lookups_{0},hits_{0},fill_bytes_{0},evictions_{0},hit_lines_{0},bypasses_{0};
+};
+
 class HotCacheManager {
 public:
     HotCacheManager(size_t requested_capacity_bytes,
@@ -522,6 +659,7 @@ public:
     static void reset_process_shared_for_tests();
 
     bool   is_active()        const noexcept { return active_; }
+    const char* memory_mode() const noexcept { return memory_mode_; }
     size_t capacity_bytes()   const noexcept { return capacity_bytes_; }
     size_t requested_capacity_bytes() const noexcept { return requested_capacity_bytes_; }
     size_t used_bytes()       const noexcept;
@@ -531,6 +669,9 @@ public:
 
     std::unique_ptr<HotCacheLL> acquire_ll(uint32_t sets_requested);
     void release_ll(HotCacheLL* cache);
+    std::unique_ptr<HotRowCache> acquire_rows(size_t bytes);
+    void release_rows(HotRowCache* cache);
+    void write_telemetry();
 
     // Aggregate counters across all live caches owned by this manager.
     // Used by Flink MetricGroup via JNI (see getHotCacheManagerStats).
@@ -566,6 +707,7 @@ public:
     }
 
 private:
+    const char* memory_mode_ = "hardware";
     L0LibBindings bindings_{};
     void*         tuner_           = nullptr;
     void*         raw_base_        = nullptr;   // ptr returned by l0_mem_alloc (for free)
@@ -586,11 +728,21 @@ private:
         uint32_t    count;
     };
     std::vector<Owned> owned_;
+    struct OwnedRows {HotRowCache* cache;uint32_t start,count;};
+    std::vector<OwnedRows> rows_;
+    std::thread telemetry_thread_;
+    std::mutex telemetry_mutex_;
+    std::condition_variable telemetry_cv_;
+    bool telemetry_stop_=false;
+    FILE* telemetry_file_=nullptr;
+    void start_telemetry();
     std::vector<std::pair<uint32_t /*start*/, uint32_t /*count*/>> released_runs_;
 
     HotSet* base_sets() noexcept { return reinterpret_cast<HotSet*>(l0_base_); }
 
     uint32_t free_sets_unlocked() const noexcept;
+    std::pair<uint32_t,uint32_t> acquire_run_unlocked(uint32_t count);
+    void release_run_unlocked(uint32_t start,uint32_t count);
 
     void shutdown() noexcept;
 };

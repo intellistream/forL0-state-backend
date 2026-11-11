@@ -17,6 +17,7 @@
 #include "allocator.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
@@ -91,10 +92,15 @@ public:
     // The table object and this epoch address remain stable across SwissTable rehash.
     const std::atomic<uint64_t>* access_epoch_address() const { return &access_epoch_; }
     uint64_t access_epoch() const { return access_epoch_.load(std::memory_order_acquire); }
+    std::atomic<uint64_t>* mutable_access_epoch_address(){return &access_epoch_;}
+    const std::atomic<uint64_t>* cache_content_epoch_address()const{return &cache_content_epoch_;}
+    uint64_t cache_content_epoch()const{return cache_content_epoch_.load(std::memory_order_acquire);}
     void invalidate_access_views() {
         // Long lists only return Java array copies; they never expose direct access views.
         if constexpr (!std::is_same_v<V, LongElementList>)
             access_epoch_.fetch_add(1, std::memory_order_release);
+        if constexpr(std::is_same_v<V,InnerMapLongLong>)
+            cache_content_epoch_.fetch_add(1,std::memory_order_release);
     }
 
     LongKeyDirectory<V>* long_directory() {return long_directory_.get();}
@@ -745,6 +751,7 @@ private:
     }
 
     std::atomic<uint64_t> access_epoch_{0};
+    std::atomic<uint64_t> cache_content_epoch_{0};
     std::atomic<uint64_t> direct_blocked_{0};
     std::unique_ptr<LongKeyDirectory<V>> long_directory_;
     int start_key_group_;
@@ -882,6 +889,7 @@ public:
 
     // Snapshot version management (for COW)
     uint64_t prepare_snapshot() {
+        if(shared_hot_rows_)shared_hot_rows_->freeze();
         ++snapshot_version_;
         // Propagate COW preparation to all registered state tables
         for (auto& [id, handle] : state_handles_) {
@@ -895,6 +903,7 @@ public:
         for (auto& [id, handle] : state_handles_) {
             handle->release_snapshot();
         }
+        if(shared_hot_rows_)shared_hot_rows_->unfreeze();
     }
 
     uint64_t snapshot_version() const {
@@ -909,6 +918,14 @@ public:
     HotCacheManager* hot_cache_manager() const { return hot_cache_manager_.get(); }
     CountingAllocator* counting_allocator() const { return owned_allocator_.get(); }
     size_t hot_cache_state_bytes() const { return hot_cache_state_bytes_; }
+    HotRowCache* shared_hot_rows() {
+        if(shared_hot_rows_)return shared_hot_rows_;
+        if(!hot_cache_manager_)return nullptr;
+        size_t bytes=hot_cache_state_bytes_;
+        if(const char* configured=std::getenv("FORL0_L0_ROW_ENGINE_BYTES"))bytes=std::strtoull(configured,nullptr,10);
+        auto cache=hot_cache_manager_->acquire_rows(bytes);
+        shared_hot_rows_=cache.release();return shared_hot_rows_;
+    }
 
     const std::unordered_map<int64_t, std::unique_ptr<StateTableHandle>>& state_handles() const {
         return state_handles_;
@@ -958,6 +975,7 @@ private:
 
     uint64_t snapshot_version_;
     std::shared_ptr<HotCacheManager> hot_cache_manager_;
+    HotRowCache* shared_hot_rows_=nullptr;
 };
 
 }  // namespace forl0

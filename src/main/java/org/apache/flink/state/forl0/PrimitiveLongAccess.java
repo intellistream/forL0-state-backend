@@ -4,12 +4,12 @@ package org.apache.flink.state.forl0;
 final class PrimitiveLongAccess {
     private static final sun.misc.Unsafe M=org.apache.flink.core.memory.MemoryUtils.UNSAFE;
     private static final long ARRAY_BASE=M.arrayBaseOffset(long[].class);
-    private final long pages,blocked,counts,stride,valueOffset,epoch;
+    private final long pages,blocked,counts,stride,valueOffset,epoch,contentEpoch;
     private final int startGroup;
     PrimitiveLongAccess(long handle) {
         long[] info=NativeEngine.primitiveLongDirectory(handle);
         pages=info==null?0:info[0];blocked=info==null?0:info[1];counts=info==null?0:info[2];
-        epoch=info==null?0:info[6];
+        epoch=info==null?0:info[6];contentEpoch=info==null||info.length<8?0:info[7];
         startGroup=info==null?0:(int)info[3];stride=info==null?0:info[4];valueOffset=info==null?0:info[5];
     }
     private long page(long key) {
@@ -80,13 +80,17 @@ final class PrimitiveLongAccess {
         if((reads&1)!=0 || reads>=16)return true;
         M.putLong(row+24,reads+2);return false;
     }
-    private void mapChanged() {M.putOrderedLong(null,epoch,M.getLong(epoch)+1);}
+    private void mapChanged() {
+        M.putOrderedLong(null,epoch,M.getLong(epoch)+1);
+        if(contentEpoch!=0)M.putOrderedLong(null,contentEpoch,M.getLong(contentEpoch)+1);
+    }
     boolean fullMapView(long key,int group,long[] out) {
         if(pages==0)return false;
         long p=page(key);if(p==0)return false;
         int i=(int)key&255;int owner=M.getInt(p+i*4L);
         if(owner!=group && owner!=-2-group)return false;
         out[0]=0;out[1]=0;out[2]=epoch;out[3]=M.getLongVolatile(null,epoch);
+        if(out.length>4)out[4]=0;
         if(owner!=group || M.getLongVolatile(null,blocked)!=0)return true;
         long row=p+valueOffset+i*stride;
         long span=M.getLong(row+32),used=M.getLong(row+16);

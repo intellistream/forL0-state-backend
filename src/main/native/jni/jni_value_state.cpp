@@ -14,9 +14,11 @@ using namespace forl0;
 template<class V> static jlongArray primitive_directory(JNIEnv* env,StateTable<int64_t,V>* table) {
     auto* d=table->long_directory();if(!d)return nullptr;
     using Page=typename LongKeyDirectory<V>::Page;
+    jlong content_epoch=0;
+    if constexpr(std::is_same_v<V,InnerMapLongLong>)content_epoch=jlong(reinterpret_cast<uintptr_t>(table->cache_content_epoch_address()));
     const jlong info[]={jlong(d->pages_address()),jlong(reinterpret_cast<uintptr_t>(table->direct_blocked_address())),
-        jlong(d->counts_address()),table->start_key_group(),sizeof(V),offsetof(Page,values),jlong(reinterpret_cast<uintptr_t>(table->access_epoch_address()))};
-    jlongArray arr=env->NewLongArray(7);if(arr)env->SetLongArrayRegion(arr,0,7,info);return arr;
+        jlong(d->counts_address()),table->start_key_group(),sizeof(V),offsetof(Page,values),jlong(reinterpret_cast<uintptr_t>(table->access_epoch_address())),content_epoch};
+    jlongArray arr=env->NewLongArray(8);if(arr)env->SetLongArrayRegion(arr,0,8,info);return arr;
 }
 extern "C" {
 

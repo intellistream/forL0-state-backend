@@ -11,6 +11,9 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <stdexcept>
+#include <new>
+#include <chrono>
+#include <unistd.h>
 #include <unistd.h>
 
 namespace forl0 {
@@ -18,13 +21,59 @@ namespace forl0 {
 namespace {
 std::mutex g_process_manager_mutex;
 std::weak_ptr<HotCacheManager> g_process_manager;
+
+
+// Opt-in ordinary-memory mode: same cache code, layout, quota and replacement
+// policy; only the backing allocator changes. This is not simulated latency.
+struct DramTuner {
+    size_t capacity;
+    void* allocation = nullptr;
+};
+int dram_tuner_init(void** out,size_t capacity) {
+    auto* tuner=new (std::nothrow) DramTuner{capacity,nullptr};
+    if(!tuner)return -1;
+    *out=tuner;return 0;
+}
+void* dram_alloc(void* handle,size_t size) {
+    auto* tuner=static_cast<DramTuner*>(handle);
+    if(!tuner||tuner->allocation||size>tuner->capacity)return nullptr;
+    void* memory=nullptr;
+    if(posix_memalign(&memory,64,size)!=0)return nullptr;
+    tuner->allocation=memory;return memory;
+}
+int dram_free(void* handle,void* memory) {
+    auto* tuner=static_cast<DramTuner*>(handle);
+    if(!tuner||memory!=tuner->allocation)return -1;
+    std::free(memory);tuner->allocation=nullptr;return 0;
+}
+int dram_tuner_destroy(void* handle) {
+    auto* tuner=static_cast<DramTuner*>(handle);
+    if(!tuner)return 0;
+    std::free(tuner->allocation);delete tuner;return 0;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
 //  Default loader: real dlopen of libl0mempool.so
 // ---------------------------------------------------------------------------
 bool default_l0_bindings_loader(L0LibBindings* out, std::string* reason) {
-    static const char* candidates[] = {
+    const char* mode=std::getenv("FORL0_L0_MEMORY_MODE");
+    if(mode&&std::strcmp(mode,"dram")==0) {
+        out->cache_tuner_init=&dram_tuner_init;
+        out->cache_tuner_destroy=&dram_tuner_destroy;
+        out->l0_mem_alloc=&dram_alloc;out->l0_mem_free=&dram_free;
+        out->owns_lib_handle=false;out->memory_mode="dram_emulation";
+        return true;
+    }
+    if(mode&&mode[0]&&std::strcmp(mode,"hardware")!=0) {
+        if(reason)*reason="invalid FORL0_L0_MEMORY_MODE; expected hardware or dram";
+        return false;
+    }
+
+    const char* explicit_library=std::getenv("FORL0_L0_LIBRARY_PATH");
+    const char* candidates[] = {
+        explicit_library,
         "libl0mempool.so",
         "/usr/lib/libl0mempool.so",
         "/usr/lib64/libl0mempool.so",
@@ -35,6 +84,7 @@ bool default_l0_bindings_loader(L0LibBindings* out, std::string* reason) {
     void* handle = nullptr;
     const char* last_err = nullptr;
     for (const char* p : candidates) {
+        if(!p||!*p)continue;
         handle = dlopen(p, RTLD_NOW);
         if (handle) break;
         last_err = dlerror();
@@ -96,6 +146,7 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
         return;
     }
 
+    memory_mode_=bindings_.memory_mode;
     int rc = bindings_.cache_tuner_init(&tuner_, requested_capacity_bytes);
     if (rc != 0 || !tuner_) {
         failure_reason_ = "cache_tuner_init failed (rc != 0)";
@@ -164,7 +215,10 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
     }
 }
 
-HotCacheManager::~HotCacheManager() { shutdown(); }
+HotCacheManager::~HotCacheManager() {
+    {std::lock_guard<std::mutex> lock(telemetry_mutex_);telemetry_stop_=true;}
+    telemetry_cv_.notify_all();if(telemetry_thread_.joinable())telemetry_thread_.join();
+    if(telemetry_file_){std::fclose(telemetry_file_);telemetry_file_=nullptr;} shutdown(); }
 
 std::shared_ptr<HotCacheManager> HotCacheManager::acquire_process_shared(
         size_t requested_capacity_bytes,
@@ -187,6 +241,7 @@ std::shared_ptr<HotCacheManager> HotCacheManager::acquire_process_shared(
     auto created = std::shared_ptr<HotCacheManager>(
         new HotCacheManager(requested_capacity_bytes, loader, strict_allocation,
                             write_only_bypass_threshold));
+    created->start_telemetry();
     g_process_manager = created;
     if (reused) *reused = false;
     return created;
@@ -199,6 +254,8 @@ void HotCacheManager::reset_process_shared_for_tests() {
 
 void HotCacheManager::shutdown() noexcept {
     std::lock_guard<std::mutex> lock(manager_mutex_);
+    for(auto& o:rows_)delete o.cache;
+    rows_.clear();
     for (auto& o : owned_) delete o.cache;
     owned_.clear();
     released_runs_.clear();
@@ -237,95 +294,89 @@ size_t HotCacheManager::used_bytes() const noexcept {
     return (static_cast<size_t>(total_sets_) - free_sets_unlocked()) * sizeof(HotSet);
 }
 
-std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t sets_requested) {
-    std::lock_guard<std::mutex> lock(manager_mutex_);
-    if (!active_ || sets_requested == 0) return nullptr;
 
-    uint32_t bump_avail = total_sets_ - bump_next_;
-    uint32_t best_run   = bump_avail;
-    for (auto& r : released_runs_) {
-        if (r.second > best_run) best_run = r.second;
-    }
-    if (best_run == 0) return nullptr;
-
-    uint32_t want = std::min(sets_requested, best_run);
-    uint32_t n    = pow2_floor(want);
-    if (n == 0) return nullptr;
-
-    uint32_t start = 0;
-    if (bump_avail >= n) {
-        start = bump_next_;
-        bump_next_ += n;
-    } else {
-        // Pick the smallest released run that still fits (best-fit).
-        size_t pick = SIZE_MAX;
-        for (size_t i = 0; i < released_runs_.size(); ++i) {
-            if (released_runs_[i].second >= n) {
-                if (pick == SIZE_MAX || released_runs_[i].second < released_runs_[pick].second) {
-                    pick = i;
-                }
-            }
-        }
-        if (pick == SIZE_MAX) return nullptr;
-        start = released_runs_[pick].first;
-        uint32_t leftover = released_runs_[pick].second - n;
-        if (leftover > 0) {
-            released_runs_[pick] = {start + n, leftover};
-        } else {
-            released_runs_.erase(released_runs_.begin() + pick);
-        }
-    }
-
-    HotSet* run_start = base_sets() + start;
-    auto cache = std::unique_ptr<HotCacheLL>(
-        new HotCacheLL(run_start, n, write_only_bypass_threshold_));
-    owned_.push_back(Owned{cache.get(), start, n});
-    return cache;
+std::pair<uint32_t,uint32_t> HotCacheManager::acquire_run_unlocked(uint32_t n) {
+    if(!active_||n==0)return {0,0};
+    const uint32_t available=total_sets_-bump_next_;
+    if(available>=n){uint32_t start=bump_next_;bump_next_+=n;return {start,n};}
+    size_t pick=SIZE_MAX;
+    for(size_t i=0;i<released_runs_.size();++i)
+        if(released_runs_[i].second>=n&&(pick==SIZE_MAX||released_runs_[i].second<released_runs_[pick].second))pick=i;
+    if(pick==SIZE_MAX)return {0,0};
+    uint32_t start=released_runs_[pick].first,left=released_runs_[pick].second-n;
+    if(left)released_runs_[pick]={start+n,left};
+    else released_runs_.erase(released_runs_.begin()+pick);
+    return {start,n};
 }
-
+void HotCacheManager::release_run_unlocked(uint32_t start,uint32_t count) {
+    released_runs_.emplace_back(start,count);
+    std::sort(released_runs_.begin(),released_runs_.end());
+    std::vector<std::pair<uint32_t,uint32_t>> combined;
+    for(auto r:released_runs_){
+        if(!combined.empty()&&combined.back().first+combined.back().second==r.first)combined.back().second+=r.second;
+        else combined.push_back(r);
+    }
+    while(!combined.empty()&&combined.back().first+combined.back().second==bump_next_) {
+        bump_next_=combined.back().first;combined.pop_back();
+    }
+    released_runs_.swap(combined);
+}
+std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t requested) {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    uint32_t best=total_sets_-bump_next_;
+    for(auto r:released_runs_)best=std::max(best,r.second);
+    auto run=acquire_run_unlocked(pow2_floor(std::min(requested,best)));
+    if(!run.second)return nullptr;
+    auto cache=std::make_unique<HotCacheLL>(base_sets()+run.first,run.second,write_only_bypass_threshold_);
+    owned_.push_back({cache.get(),run.first,run.second});return cache;
+}
 void HotCacheManager::release_ll(HotCacheLL* cache) {
     std::lock_guard<std::mutex> lock(manager_mutex_);
-    if (!cache) return;
-    for (auto it = owned_.begin(); it != owned_.end(); ++it) {
-        if (it->cache == cache) {
-            uint32_t start = it->start;
-            uint32_t count = it->count;
-            owned_.erase(it);
-            // Try to merge with adjacent released runs and the bump tail.
-            // Adjacency to bump tail: if start + count == bump_next_, return to bump.
-            if (start + count == bump_next_) {
-                bump_next_ = start;
-                // Also pull back any released run that ends exactly at the new frontier.
-                bool merged;
-                do {
-                    merged = false;
-                    for (auto rit = released_runs_.begin(); rit != released_runs_.end(); ++rit) {
-                        if (rit->first + rit->second == bump_next_) {
-                            bump_next_ = rit->first;
-                            released_runs_.erase(rit);
-                            merged = true;
-                            break;
-                        }
-                    }
-                } while (merged);
-            } else {
-                released_runs_.emplace_back(start, count);
-                // Merge any adjacent runs.
-                std::sort(released_runs_.begin(), released_runs_.end());
-                std::vector<std::pair<uint32_t, uint32_t>> coalesced;
-                for (auto& r : released_runs_) {
-                    if (!coalesced.empty() && coalesced.back().first + coalesced.back().second == r.first) {
-                        coalesced.back().second += r.second;
-                    } else {
-                        coalesced.push_back(r);
-                    }
-                }
-                released_runs_.swap(coalesced);
-            }
-            delete cache;
-            return;
-        }
+    for(auto it=owned_.begin();it!=owned_.end();++it)if(it->cache==cache) {
+        release_run_unlocked(it->start,it->count);owned_.erase(it);delete cache;return;
     }
+}
+std::unique_ptr<HotRowCache> HotCacheManager::acquire_rows(size_t bytes) {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    uint32_t best=total_sets_-bump_next_;
+    for(auto r:released_runs_)best=std::max(best,r.second);
+    uint32_t sets=static_cast<uint32_t>(std::min(bytes,static_cast<size_t>(best)*sizeof(HotSet))/sizeof(HotRowSet));
+    uint32_t units=static_cast<uint32_t>((static_cast<size_t>(sets)*sizeof(HotRowSet)+sizeof(HotSet)-1)/sizeof(HotSet));
+    auto run=acquire_run_unlocked(units);if(!sets||!run.second)return nullptr;
+    auto cache=std::make_unique<HotRowCache>(base_sets()+run.first,sets);
+    rows_.push_back({cache.get(),run.first,run.second});return cache;
+}
+void HotCacheManager::release_rows(HotRowCache* cache) {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    for(auto it=rows_.begin();it!=rows_.end();++it)if(it->cache==cache) {
+        release_run_unlocked(it->start,it->count);rows_.erase(it);delete cache;return;
+    }
+}
+void HotCacheManager::start_telemetry() {
+    const char* dir=std::getenv("FORL0_L0_STATS_DIRECTORY");if(!dir||!*dir||!active_)return;
+    std::string path=std::string(dir)+"/l0-"+std::to_string(getpid())+".jsonl";
+    telemetry_file_=std::fopen(path.c_str(),"a");
+    if(!telemetry_file_)throw std::runtime_error("Cannot create L0 telemetry file: "+path);
+    telemetry_thread_=std::thread([this]{
+        std::unique_lock<std::mutex> lock(telemetry_mutex_);
+        while(!telemetry_stop_) {
+            lock.unlock();write_telemetry();lock.lock();
+            telemetry_cv_.wait_for(lock,std::chrono::seconds(1),[this]{return telemetry_stop_;});
+        }
+    });
+}
+void HotCacheManager::write_telemetry() {
+    if(!telemetry_file_)return;
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    uint64_t scalar_lookups=0,scalar_hits=0,writes=0,row_lookups=0,row_hits=0,fills=0,evictions=0,row_bytes=0,hit_lines=0,bypasses=0,writebacks=0;
+    for(auto& o:owned_){scalar_lookups+=o.cache->lookups();scalar_hits+=o.cache->hits();writes+=o.cache->writes();}
+    for(auto& o:rows_){row_lookups+=o.cache->lookups();row_hits+=o.cache->hits();fills+=o.cache->fill_bytes();evictions+=o.cache->evictions();row_bytes+=o.cache->num_sets()*sizeof(HotRowSet);hit_lines+=o.cache->hit_lines();bypasses+=o.cache->bypasses();writebacks+=o.cache->writeback_bytes();}
+    auto now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::fprintf(telemetry_file_,"{\"time_ms\":%lld,\"pid\":%d,\"mode\":\"%s\",\"capacity_bytes\":%zu,\"used_bytes\":%zu,\"scalar_lookups\":%llu,\"scalar_hits\":%llu,\"scalar_writes\":%llu,\"row_lookups\":%llu,\"row_hits\":%llu,\"row_fill_bytes\":%llu,\"row_evictions\":%llu,\"row_writeback_bytes\":%llu,\"row_bypasses\":%llu,\"row_hit_lines\":%llu,\"row_cache_bytes\":%llu,\"scalar_caches\":%zu,\"row_caches\":%zu}\n",
+        static_cast<long long>(now),getpid(),memory_mode_,capacity_bytes_,(static_cast<size_t>(total_sets_)-free_sets_unlocked())*sizeof(HotSet),
+        (unsigned long long)scalar_lookups,(unsigned long long)scalar_hits,(unsigned long long)writes,
+        (unsigned long long)row_lookups,(unsigned long long)row_hits,(unsigned long long)fills,(unsigned long long)evictions,(unsigned long long)writebacks,(unsigned long long)bypasses,(unsigned long long)hit_lines,(unsigned long long)row_bytes,owned_.size(),rows_.size());
+    std::fflush(telemetry_file_);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +386,7 @@ uint64_t HotCacheManager::total_lookups() const noexcept {
     std::lock_guard<std::mutex> lock(manager_mutex_);
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->lookups();
+    for(const auto& o:rows_)sum+=o.cache->lookups();
     return sum;
 }
 
@@ -342,6 +394,7 @@ uint64_t HotCacheManager::total_hits() const noexcept {
     std::lock_guard<std::mutex> lock(manager_mutex_);
     uint64_t sum = 0;
     for (const auto& o : owned_) sum += o.cache->hits();
+    for(const auto& o:rows_)sum+=o.cache->hits();
     return sum;
 }
 
@@ -368,7 +421,7 @@ uint64_t HotCacheManager::total_bypass_events() const noexcept {
 
 uint32_t HotCacheManager::cache_count() const noexcept {
     std::lock_guard<std::mutex> lock(manager_mutex_);
-    return static_cast<uint32_t>(owned_.size());
+    return static_cast<uint32_t>(owned_.size()+rows_.size());
 }
 
 // ---------------------------------------------------------------------------

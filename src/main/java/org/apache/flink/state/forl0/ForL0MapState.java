@@ -61,6 +61,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     }
     private final MapStrategy mapStrategy;
     private final PrimitiveLongAccess primitiveAccess;
+    private PrimitiveRowCacheAccess rowCache;
 
     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
     private final DataOutputSerializer ukOut = new DataOutputSerializer(64);
@@ -77,7 +78,12 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         if (!denseChecked || denseKey != key || denseKeyGroup != keyGroup
                 || (denseAddress == 0 && ++denseProbeCount >= 64)
                 || (denseAddress != 0 && MEMORY.getLongVolatile(null, denseEpochAddress) != denseEpoch)) {
-            if(primitiveAccess==null || !primitiveAccess.fullMapView(key,keyGroup,denseView))
+            if(rowCache!=null) {
+                if(!rowCache.resolve(primitiveAccess,key,keyGroup,denseView))NativeEngine.mapLongLongCachedView(stateHandle,key,keyGroup,denseView);
+                // Once residency is sealed, directory headers already point to
+                // L0 or DRAM. The same off-path resolver handles both directly.
+                if(rowCache.admissionClosed())rowCache=null;
+            } else if(primitiveAccess==null || !primitiveAccess.fullMapView(key,keyGroup,denseView))
                 NativeEngine.mapLongLongDenseView(stateHandle, key, keyGroup, denseView);
             denseKey=key; denseKeyGroup=keyGroup; denseChecked=true; denseProbeCount=0;
             denseAddress=denseView[0]; denseSpan=denseView[1];
@@ -131,6 +137,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
             this.mapStrategy = MapStrategy.GENERIC;
         }
         this.primitiveAccess=mapStrategy==MapStrategy.LONG_LONG_VOID?new PrimitiveLongAccess(stateHandle):null;
+        this.rowCache=mapStrategy==MapStrategy.LONG_LONG_VOID?PrimitiveRowCacheAccess.create(stateHandle):null;
     }
 
     /**

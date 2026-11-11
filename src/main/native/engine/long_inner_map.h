@@ -59,7 +59,7 @@ class LongInnerMap {
             for(size_t i=0;i<m->used;++i)h.emplace(m->keys[i],m->values[i]);
         } else {
             const auto& d=*dense();h.reserve(d.used);
-            for(size_t i=0;i<d.values.size();++i)if(d.has(i))h.emplace(int64_t(i),d.values[i]);
+            for(size_t i=0;i<d.values.size();++i)if(d.has(i))h.emplace(int64_t(i),direct_.values[i]);
         }
         storage_=std::move(h);refresh_direct_header();
     }
@@ -89,7 +89,7 @@ public:
             owner_=o.owner_; index_=o.index_; hash_it_=o.hash_it_; arrow_.reset(); return *this;
         }
         Entry operator*() const {
-            if (auto* d = owner_->dense()) return {static_cast<int64_t>(index_), d->values[index_]};
+            if (auto* d = owner_->dense()) return {static_cast<int64_t>(index_), owner_->direct_.values[index_]};
             if(auto* m=owner_->small())return {m->keys[index_],m->values[index_]};
             return {hash_it_->first, hash_it_->second};
         }
@@ -110,10 +110,27 @@ public:
     using iterator = Iter<false>;
     using const_iterator = Iter<true>;
     LongInnerMap(){refresh_direct_header();}
-    LongInnerMap(const LongInnerMap& o):storage_(o.storage_){refresh_direct_header();}
-    LongInnerMap(LongInnerMap&& o)noexcept:storage_(std::move(o.storage_)){refresh_direct_header();o.refresh_direct_header();}
-    LongInnerMap& operator=(const LongInnerMap& o){storage_=o.storage_;refresh_direct_header();return *this;}
-    LongInnerMap& operator=(LongInnerMap&& o)noexcept{storage_=std::move(o.storage_);refresh_direct_header();o.refresh_direct_header();return *this;}
+    LongInnerMap(const LongInnerMap& o):storage_(o.storage_){
+        if(auto* d=dense();d&&!d->values.empty())std::memcpy(d->values.data(),o.direct_.values,d->values.size()*8);
+        refresh_direct_header();
+    }
+    LongInnerMap(LongInnerMap&& o)noexcept:storage_(std::move(o.storage_)){
+        auto* data=o.dense()?o.direct_.values:nullptr;refresh_direct_header();
+        if(data&&dense())direct_.values=data;
+        o.refresh_direct_header();
+    }
+    LongInnerMap& operator=(const LongInnerMap& o){
+        if(this==&o)return *this;
+        storage_=o.storage_;
+        if(auto* d=dense();d&&!d->values.empty())std::memcpy(d->values.data(),o.direct_.values,d->values.size()*8);
+        refresh_direct_header();return *this;
+    }
+    LongInnerMap& operator=(LongInnerMap&& o)noexcept{
+        if(this==&o)return *this;
+        auto* data=o.dense()?o.direct_.values:nullptr;
+        storage_=std::move(o.storage_);refresh_direct_header();if(data&&dense())direct_.values=data;
+        o.refresh_direct_header();return *this;
+    }
     LongInnerMap(std::initializer_list<std::pair<int64_t,int64_t>> items) {
         for (const auto& kv : items) emplace(kv.first,kv.second);
         refresh_direct_header();
@@ -125,7 +142,15 @@ public:
         auto* d=dense();
         if (!d || d->used!=d->values.size()) return nullptr;
         span=d->values.size();
-        return d->values.data();
+        return direct_.values;
+    }
+    void attach_cache_data(int64_t* data) {
+        auto* d=dense();if(!d||d->values.size()!=64||d->used!=64)throw std::logic_error("Only full64 dense rows may attach to L0");
+        direct_.values=data;
+    }
+    bool detach_cache_data(int64_t* data) {
+        auto* d=dense();if(!d||direct_.values!=data||direct_.values==d->values.data())return false;
+        std::memcpy(d->values.data(),data,d->values.size()*8);direct_.values=d->values.data();return true;
     }
     void reserve(size_t n) { if(small() && n>4)promote_hash();if (!dense() && !small()) hash().reserve(n); }
     void clear() {
@@ -161,7 +186,7 @@ public:
     }
     const int64_t* find_value(int64_t key) const {
         if (const auto* d=dense()) {
-            if (key>=0 && uint64_t(key)<d->values.size() && d->has(key)) return &d->values[key];
+            if (key>=0 && uint64_t(key)<d->values.size() && d->has(key)) return &direct_.values[key];
             return nullptr;
         }
         if(auto* m=small()) {
@@ -174,7 +199,7 @@ public:
     void put_value(int64_t key,int64_t value) {
         if (auto* d=dense(); d && key>=0 && uint64_t(key)<d->values.size()) {
             if (!d->has(key)) {d->mark(key);++d->used;}
-            d->values[key]=value;
+            direct_.values[key]=value;
             return;
         }
         (*this)[key]=value;
@@ -191,7 +216,7 @@ public:
         if (auto* d=dense()) {
             if (key>=0 && uint64_t(key)<d->values.size()) {
                 bool added=!d->has(key);
-                if (added) { d->values[key]=value; d->mark(key); ++d->used; }
+                if (added) { direct_.values[key]=value; d->mark(key); ++d->used; }
                 return {iterator(this,size_t(key)),added};
             }
             promote_hash();
@@ -240,9 +265,9 @@ public:
         int64_t sum=0;
         for(int i=0;i<n;i++) {
             if(auto* d=dense(); d && key>=0 && uint64_t(key)<d->values.size()) {
-                if(!d->has(key)) {d->values[key]=0;d->mark(key);++d->used;}
-                d->values[key]=wrapping_add(d->values[key],delta);
-                sum=wrapping_add(sum,d->values[key]);
+                if(!d->has(key)) {direct_.values[key]=0;d->mark(key);++d->used;}
+                direct_.values[key]=wrapping_add(direct_.values[key],delta);
+                sum=wrapping_add(sum,direct_.values[key]);
             } else {
                 auto& value=(*this)[key];value=wrapping_add(value,delta);
                 sum=wrapping_add(sum,value);

@@ -48,8 +48,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
             // Hardware-gating telemetry per design §3.2.
             if (mgr->is_active()) {
                 fprintf(stderr,
-                        "[ForL0-HotCache] %s active=1 key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
-                        reused ? "engine_reuse" : "engine_start",
+                        "[ForL0-HotCache] %s memory_mode=%s active=1 key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
+                        reused ? "engine_reuse" : "engine_start", mgr->memory_mode(),
                         static_cast<int>(startKeyGroup),
                         static_cast<int>(startKeyGroup + numKeyGroups),
                         mgr->requested_capacity_bytes(), mgr->capacity_bytes(),
@@ -113,9 +113,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
             // a restarted subtask cannot strand capacity until job teardown.
             for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
                 StateHandle* state = entry.second;
-                if (!state || !state->hot_cache_ll) continue;
-                mgr->release_ll(state->hot_cache_ll);
-                state->hot_cache_ll = nullptr;
+                if(!state)continue;
+                if(state->hot_rows){mgr->release_rows(state->hot_rows);state->hot_rows=nullptr;}
+                if(state->hot_cache_ll){mgr->release_ll(state->hot_cache_ll);state->hot_cache_ll=nullptr;}
             }
         }
         if (auto* allocator = engine->counting_allocator()) {
@@ -501,7 +501,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             const bool cacheable_key =
                 stored_key_type == StateHandle::KeyType::INT64
                 || stored_key_type == StateHandle::KeyType::INT32;
-            if (mgr->is_active()
+            const char* scalar_mode=std::getenv("FORL0_L0_SCALAR_CACHE");
+            const bool scalar_enabled=!scalar_mode||std::strcmp(scalar_mode,"off")!=0;
+            if (mgr->is_active() && scalar_enabled
                 && handle->kind == StateHandle::StateKind::VALUE
                 && handle->ns_type == StateHandle::NsType::VOID_NS
                 && cacheable_key
@@ -527,6 +529,27 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             }
         }
 
+
+        if(auto* mgr=engine->hot_cache_manager()) {
+            if(handle->kind==StateHandle::StateKind::MAP_ && handle->ns_type==StateHandle::NsType::VOID_NS
+               && handle->key_type==StateHandle::KeyType::INT64
+               && handle->map_inner_kind==StateHandle::MapInnerKind::LONG_LONG) {
+                auto* rows=engine->shared_hot_rows();
+                if(rows){handle->hot_rows=rows;
+                    auto* table=handle->get_state_table<int64_t,InnerMapLongLong>();
+                    handle->row_owner.table=table;
+                    handle->row_owner.content_epoch=table->cache_content_epoch_address();
+                    handle->row_owner.view_epoch=table->mutable_access_epoch_address();
+                    handle->row_owner.restore=[](HotRowOwner* owner,int64_t key,int group,void* hint,uint64_t epoch,int64_t* data)->bool {
+                        auto* table=static_cast<StateTable<int64_t,InnerMapLongLong>*>(owner->table);
+                        auto* row=owner->content_epoch->load(std::memory_order_acquire)==epoch
+                            ?static_cast<InnerMapLongLong*>(hint):table->get(group,key);
+                        if(!row||!row->detach_cache_data(data))return false;
+                        owner->view_epoch->fetch_add(1,std::memory_order_release);return true;
+                    };
+                    std::fprintf(stderr,"[ForL0-HotCache] row_attach name=%s sets=%u bytes=%zu\n",name.c_str(),handle->hot_rows->num_sets(),handle->hot_rows->num_sets()*sizeof(HotRowSet));}
+            }
+        }
         return to_handle(handle);
     })
 }

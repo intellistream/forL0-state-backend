@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
+set -euo pipefail
+ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+exec bash "$ROOT/experiments/l0-offline/run.sh" "$@"

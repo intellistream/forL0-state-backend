@@ -321,27 +321,57 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapClearGeneric(
 //  Uses InnerMapLongLong (unordered_map<int64_t, int64_t>) directly.
 // ============================================================================
 
-// A full dense row has no absent slots. Java may access its primitive storage
-// until the table epoch changes; every native mutation invalidates that view.
+
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_mapLongLongDenseView(
-        JNIEnv* env, jclass, jlong stateHandle, jlong key, jint keyGroup, jlongArray out) {
+        JNIEnv* env,jclass,jlong stateHandle,jlong key,jint group,jlongArray out) {
     JNI_ENTRY_VOID({
-        auto* handle=from_handle<StateHandle>(stateHandle);
-        auto* table=handle->get_state_table<int64_t,InnerMapLongLong>();
-        jlong view[4]={0,0,
-            static_cast<jlong>(reinterpret_cast<uintptr_t>(table->access_epoch_address())),
-            static_cast<jlong>(table->access_epoch())};
-        if (!table->is_snapshot_active(keyGroup)) {
-            auto* row=table->get(keyGroup,static_cast<int64_t>(key));
-            size_t span=0;
-            auto* data=row?row->full_dense_data(span):nullptr;
-            if (data) {view[0]=static_cast<jlong>(reinterpret_cast<uintptr_t>(data));view[1]=static_cast<jlong>(span);}
+        auto* handle=from_handle<StateHandle>(stateHandle);auto* table=handle->get_state_table<int64_t,InnerMapLongLong>();
+        jlong view[4]={0,0,jlong(reinterpret_cast<uintptr_t>(table->access_epoch_address())),jlong(table->access_epoch())};
+        if(!table->is_snapshot_active(group)) {
+            auto* row=table->get(group,static_cast<int64_t>(key));size_t span=0;auto* data=row?row->full_dense_data(span):nullptr;
+            if(data){view[0]=jlong(reinterpret_cast<uintptr_t>(data));view[1]=span;}
         }
         env->SetLongArrayRegion(out,0,4,view);
     })
 }
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_mapLongLongCachedView(
+        JNIEnv* env,jclass,jlong stateHandle,jlong key,jint group,jlongArray out) {
+    JNI_ENTRY_VOID({
+        auto* h=from_handle<StateHandle>(stateHandle);auto* table=h->get_state_table<int64_t,InnerMapLongLong>();auto* cache=h->hot_rows;
+        jlong view[4]={0,0,jlong(reinterpret_cast<uintptr_t>(table->access_epoch_address())),0};
+        if(!table->is_snapshot_active(group)) {
+            auto* row=table->get(group,static_cast<int64_t>(key));size_t span=0;auto* data=row?row->full_dense_data(span):nullptr;
+            if(data&&span==64&&cache&&!cache->frozen()) {
+                auto epoch=table->cache_content_epoch();
+                if(!cache->refresh_alias(data,key,group,epoch,h->table_id,&h->row_owner,row)) {
+                    auto* cached=cache->insert(key,group,epoch,data,span,h->table_id,table->mutable_access_epoch_address(),&h->row_owner,row);
+                    row->attach_cache_data(cached);table->mutable_access_epoch_address()->fetch_add(1,std::memory_order_release);data=cached;
+                }
+            } else if(cache)cache->record_bypass();
+            if(data){view[0]=jlong(reinterpret_cast<uintptr_t>(data));view[1]=span;}
+        } else if(cache)cache->record_bypass();
+        view[3]=table->access_epoch();env->SetLongArrayRegion(out,0,4,view);
+    })
+}
 
+JNIEXPORT jlongArray JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_mapRowCacheLayout(JNIEnv* env,jclass,jlong stateHandle) {
+    JNI_ENTRY_RETURN(jlongArray,nullptr,{
+        auto* handle=from_handle<StateHandle>(stateHandle);auto* cache=handle->hot_rows;
+        if(!cache)return nullptr;
+        auto* table=handle->get_state_table<int64_t,InnerMapLongLong>();
+        const jlong info[]={jlong(cache->base_address()),cache->num_sets(),
+            jlong(cache->counter_address(0)),jlong(cache->counter_address(1)),jlong(cache->counter_address(2)),
+            jlong(cache->counter_address(3)),jlong(cache->counter_address(4)),jlong(cache->counter_address(5)),
+            jlong(reinterpret_cast<uintptr_t>(table->access_epoch_address())),
+            jlong(reinterpret_cast<uintptr_t>(table->direct_blocked_address())),handle->table_id,
+            jlong(reinterpret_cast<uintptr_t>(table->cache_content_epoch_address())),jlong(cache->frozen_address()),
+            jlong(cache->admission_closed_address()),jlong(cache->resident())};
+        auto result=env->NewLongArray(15);if(result)env->SetLongArrayRegion(result,0,15,info);return result;
+    })
+}
 JNIEXPORT jlong JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_mapGetLongLong(
         JNIEnv* env, jclass,

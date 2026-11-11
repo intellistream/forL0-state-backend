@@ -357,6 +357,8 @@ public final class NativeEngine {
     // --- MapState Long UK/UV zero-serialization paths ---
     /** Get UV(long) by Long key + Long UK. Returns Long.MIN_VALUE if absent. */
     static native void mapLongLongDenseView(long stateHandle, long key, int keyGroup, long[] out);
+    static native long[] mapRowCacheLayout(long stateHandle);
+    static native void mapLongLongCachedView(long stateHandle,long key,int keyGroup,long[] out);
 
     public static native long mapGetLongLong(long stateHandle, long key, int keyGroup, long userKey);
     /** Check existence by Long key + Long UK. */

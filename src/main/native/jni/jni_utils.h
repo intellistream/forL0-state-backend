@@ -134,6 +134,8 @@ struct StateHandle {
     //       int64 key + int64 value with VoidNamespace or TimeWindow ns).
     // The HotCacheLL is owned by the StateEngine via HotCacheManager.
     HotCacheLL* hot_cache_ll = nullptr;
+    HotRowCache* hot_rows = nullptr;
+    HotRowOwner row_owner{};
 
     // Type descriptors (for checkpoint format — used by C++ checkpoint codec).
     // key_layout holds the parsed key type layout (needed for FIXED_ROW arity).
