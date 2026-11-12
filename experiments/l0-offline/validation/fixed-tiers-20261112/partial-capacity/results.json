@@ -1,0 +1,98 @@
+{
+  "mode": "DRAM_VALIDATION_ONLY",
+  "runs": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_16",
+      "repeat": 1,
+      "status": "skipped",
+      "mode": "DRAM_VALIDATION_ONLY",
+      "l0_requested_total_bytes": 16777216,
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 210, in preflight_l0\n    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'\nRuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。\n",
+      "reason": "L0 preflight failed; no benchmark launched for this tier"
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1,
+      "status": "passed",
+      "mode": "DRAM_VALIDATION_ONLY",
+      "l0_requested_total_bytes": 2097152,
+      "throughput_input_records_s": 823594.4,
+      "measured_sink_records": 4117972,
+      "input_equivalent_records": 4117972.0,
+      "sink_multiplier": 1,
+      "measurement_seconds": 5,
+      "measurement_start_ms": 1794448564671,
+      "measurement_end_ms": 1794448569671,
+      "per_second_sink_records": [
+        761900,
+        868897,
+        803369,
+        809837,
+        873969
+      ],
+      "warmup_seconds": 2,
+      "coverage_seconds": 15.1755236890167,
+      "source_records": 7323648,
+      "sink_records": 7323648,
+      "oracle_matches": true,
+      "keys": 4096,
+      "feature_width": 64,
+      "touches": 128,
+      "checkpoint_count": 0,
+      "tm_pss_mean_bytes": 11956185088,
+      "tm_rss_peak_bytes": 14950780928,
+      "artifacts": {
+        "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+        "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+        "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+        "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+      },
+      "l0_enabled": true,
+      "job_id": "271bc92d074e6253d1cc86f566fc443f"
+    }
+  ],
+  "failures": 1,
+  "l0_preflight": {
+    "brisk_l0_2": {
+      "mode": "DRAM_VALIDATION_ONLY",
+      "arm": "brisk_l0_2",
+      "requested_total_bytes": 2097152,
+      "requested_per_tm_bytes": 1048576,
+      "status": "passed",
+      "roles": {
+        "tm1": {
+          "active": true,
+          "memory_mode": "dram_emulation",
+          "requested_bytes": 1048576,
+          "capacity_bytes": 1048512,
+          "touched_bytes": 1048320,
+          "checksum": 2041455
+        },
+        "tm2": {
+          "active": true,
+          "memory_mode": "dram_emulation",
+          "requested_bytes": 1048576,
+          "capacity_bytes": 1048512,
+          "touched_bytes": 1048320,
+          "checksum": 2041455
+        }
+      }
+    },
+    "brisk_l0_16": {
+      "mode": "DRAM_VALIDATION_ONLY",
+      "arm": "brisk_l0_16",
+      "requested_total_bytes": 16777216,
+      "requested_per_tm_bytes": 8388608,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 210, in preflight_l0\n    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'\nRuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。\n"
+    }
+  },
+  "artifacts": {
+    "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+    "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+    "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+    "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+  }
+}

@@ -8,23 +8,26 @@ bash ./run-l0-benchset
 
 无需安装 Java、Flink、Python、Maven、CMake、Docker，也不会访问网络。运行包使用普通 Git 分片保存；不从 Release 或 LFS 下载运行时。适用环境为 Linux ARM64 / Ubuntu 22.04，与验收裸机一致。系统需已有可用的 L0 内核驱动、用户态 `libl0mempool.so`，以及访问设备的权限；脚本不会修改 BIOS、内核或驱动参数。
 
-脚本依次完成硬件识别、容量读取及验证、105次正式运行和结果汇总。结果只输出CSV、JSON、Markdown和文本日志，不生成结果压缩包或二进制直方图。终端会打印结果目录，默认位于本目录的 `results/时间戳/`。每次运行新建目录，不覆盖历史数据。
+脚本依次完成硬件识别、四档独立验证、正式运行和结果汇总。默认计划为7项workload × 6组 × 3次，共126个条件；预检失败档位会记录并跳过。结果只输出CSV、JSON、Markdown和文本日志，不生成结果压缩包或二进制直方图。终端会打印结果目录，默认位于本目录的 `results/时间戳/`。每次运行新建目录，不覆盖历史数据。
 
-## 五组配置
+## 六组配置
 
 | 组别 | 状态后端 | L0 |
 |---|---|---|
 | `heap` | Heap / HashMapStateBackend | 关闭 |
 | `brisk_off` | BriskState / ForL0StateBackend | 关闭 |
-| `brisk_l0_25` | 同一 BriskState 二进制 | 自动确定预算的25% |
-| `brisk_l0_50` | 同一 BriskState 二进制 | 自动确定预算的50% |
-| `brisk_l0_75` | 同一 BriskState 二进制 | 自动确定预算的75% |
+| `brisk_l0_2` | 同一 BriskState 二进制 | 共享2 MiB，每TM 1 MiB |
+| `brisk_l0_4` | 同一 BriskState 二进制 | 共享4 MiB，每TM 2 MiB |
+| `brisk_l0_8` | 同一 BriskState 二进制 | 共享8 MiB，每TM 4 MiB |
+| `brisk_l0_16` | 同一 BriskState 二进制 | 共享16 MiB，每TM 8 MiB |
 
-容量均为**两个TM共享总量**，每TM一半。**不分配或探测100%容量，也不假定一定有70MiB。**
+容量均为**同一NUMA节点上两个TM共享总量**，每TM一半。固定档位不根据探测结果扩大，不搜索硬件最大可分配容量。
 
-容量来源优先为厂商文档中的驱动参数 `/sys/module/hisi_l0_mem_pool/parameters/max_numa_capacity`（每NUMA节点上限，文档单位MB，按MiB读取）。两个TM位于同一NUMA节点，不把整机各NUMA节点容量相加。该参数是驱动配置上限，不能冒充芯片物理容量。另支持驱动直接暴露的共享 `capacity_bytes` / `total_capacity_bytes` 字段。无法读取可信容量时会保存诊断并退出，不通过申请满容量来猜测。
+档位参考 `main` 的 `benchmark/scripts/sweep_l0_size.py`：旧脚本列出0、2、4、8、12、16、20、24 MiB。这里选用2、4、8、16 MiB，保留小容量起点并覆盖较宽范围。旧脚本列出的配置不是各档已在真实硬件上成功运行的证明。
 
-脚本最多以该上限的75%同时建立两个TM大小的SDK内存池，并逐缓存行读写全部申请区域。若当前可用空间不足，会缩小实验预算，再按25/50/75%确定三档。三档会在开始主实验前逐一验证；之后全套实验使用固定容量。请求字节数、驱动容量原文、预算缩小过程、实际池容量均保存，汇总表直接标注实际MiB，避免把预算百分比误写成物理容量百分比。
+预检按2→4→8→16 MiB依次执行：两个独立进程同时持有各自一半的SDK内存池，逐缓存行读写，再释放。每档独立捕获错误；大档分配失败不影响已通过的小档。不会缩小某一档却仍用原容量标签。驱动的 `max_numa_capacity` / `capacity_bytes` 信息能读则保存，读不到也继续逐档验证，不再把容量元数据作为启动条件。
+
+设备或SDK缺失时，四个L0档位标为预检失败，Heap和BriskState无L0仍运行。预检失败档的每个计划条件保存为 `skipped`，注明原因；运行中的个别失败标为 `failed`，继续其他条件。所有成功结果、失败原因和各列有效样本数都会进入同一份报告。真实硬件是否至少支持一个L0档位仍取决于设备可用容量与SDK；脚本不能保证硬件本身一定可用。
 
 SDK自动搜索方式沿用 `main` 分支的 `docker/lib/l0_detector.sh`：`/dev/l0` 或 `/dev/hisi_l0`；`LD_LIBRARY_PATH`、ldconfig、常见库目录以及 `/opt`、`/usr/local`、HOME 下的有界搜索。native使用检测到的SDK绝对路径。不会用普通内存伪装硬件启用，也不会在启用失败后继续记为开启L0。
 
@@ -43,12 +46,12 @@ SDK自动搜索方式沿用 `main` 分支的 `docker/lib/l0_detector.sh`：`/dev
 | 状态访问 | feature width=64，touches=128，window=16；标准MapState.get/put；Long增量1,000,000,007 |
 | 拓扑 | WC、FD、SD、TM、LG、VS、LR；保持主实验任务/边及输出倍数 |
 | 时序 | 全key覆盖初始化及排空 → 60s预热 → 120s计数 → 排空、正确性核对 |
-| 重复 | 每workload每组3次，独立JVM；打乱workload顺序并轮换五组顺序 |
+| 重复 | 每workload每组3次，独立JVM；打乱workload顺序并轮换六组顺序 |
 | CP / 重启 | checkpoint关闭；失败不自动重启 |
 | 吞吐 | 终端Sink窗口计数 ÷ 拓扑输出倍数 ÷ 120s，单位input-equivalent records/s |
 | 正确性 | 记录数/签名、独立源前缀重放和feature投影、拓扑契约、CP=0 |
 
-五组使用**同一个后端无感知Job JAR**。Job与原主实验相同，SHA-256为 `7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15`；仅Flink状态后端及L0配置不同。初始化耗时单独报告。32GiB为Flink的process预算，沿用主实验口径，不冒充OS对整个进程的硬RSS限制。
+六组使用**同一个后端无感知Job JAR**。Job与原主实验相同，SHA-256为 `7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15`；仅Flink状态后端及L0配置不同。初始化耗时单独报告。32GiB为Flink的process预算，沿用主实验口径，不冒充OS对整个进程的硬RSS限制。
 
 宿主机需至少同一NUMA节点内12个可用CPU、约76GiB可用内存，以及解包与运行所需磁盘空间。CPU不要求与原机器编号相同，脚本自动选择并保存实际编号。采用私有动态加载器和依赖库，不替换系统glibc。
 
@@ -68,14 +71,14 @@ SDK自动搜索方式沿用 `main` 分支的 `docker/lib/l0_detector.sh`：`/dev
 
 | 文件 | 内容 |
 |---|---|
-| `RESULTS.md` | 七项workload、五组吞吐均值，以及三档L0相对无L0的比值 |
+| `RESULTS.md` | 七项workload、六组吞吐均值、有效样本数、四档L0相对无L0的比值及失败原因 |
 | `results.csv` / `results.json` | 每轮原始吞吐、初始化时间、实际容量、PSS/RSS和核验状态 |
 | `plan.json` / `status.json` | 实际运行顺序和整体完成状态 |
 | `environment/` | CPU、系统、JDK、配置协议、二进制哈希 |
 | `l0-preflight/` | SDK/驱动检测、容量依据、双进程读写证明及失败记录 |
 | `raw/每条件/` | 最终Flink配置、命令、计时窗口、逐秒记录数、日志、GC日志、进程采样、独立oracle、L0启用证明 |
 
-个别条件失败时保留现场并继续其他条件，最终以非零状态退出，不把缺失项写成0吞吐。启动前的硬件问题会产生 `fatal-error.json`。每个条件的五组有相同状态规模和访问算法；更快的组在相同时间内处理更长的输入前缀，最终oracle按实际前缀核验。
+个别条件失败时保留现场并继续其他条件，最终以非零状态退出，但正常生成报告，不把缺失项写成0吞吐。部分成功时 `status.json` 为 `partial_results`，全部成功为 `complete`。L0硬件问题只影响L0组；CPU、内存等全局运行条件不满足时才产生 `fatal-error.json` 并终止。每个条件的六组有相同状态规模和访问算法；更快的组在相同时间内处理更长的输入前缀，最终oracle按实际前缀核验。
 
 PSS/RSS字段为**两个TM进程的合计**，不含JM。PSS在计时窗口内取样本均值，RSS报告窗口采样峰值；原始逐进程采样另行保留。
 
@@ -84,14 +87,17 @@ PSS/RSS字段为**两个TM进程的合计**，不含JM。PSS在计时窗口内�
 默认命令已经完成正式全套测试。以下仅供验收或定位问题，无需合作方预先设置：
 
 ```bash
-# 先在真L0机器上短测七项，仍验证三档及Heap/无L0
+# 先在真L0机器上短测七项，仍验证四档及Heap/无L0
 bash ./run-l0-benchset --smoke
 
 # 只运行一次完整矩阵；其余仍为正式状态规模与60s/120s窗口
 bash ./run-l0-benchset --repeats 1
 
 # 在无L0机器上验收离线流程；所有结果明确标为DRAM_VALIDATION_ONLY
-bash ./run-l0-benchset --validate-dram --validation-capacity-mib 12 --smoke
+bash ./run-l0-benchset --validate-dram --smoke
+
+# 验收部分成功报告：模拟可用容量4MiB，2/4MiB通过，8/16MiB跳过
+bash ./run-l0-benchset --validate-dram --validation-capacity-mib 4 --smoke --workloads wc
 ```
 
 普通内存验收不代表真实L0硬件实验，不能用其结果宣称L0加速。

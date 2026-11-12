@@ -13,7 +13,7 @@ ctest --test-dir build --output-on-failure
 
 Java后端增量类使用 `javac --release 11`，以同一Flink发行版和原R30后端为classpath，更新 `NativeEngine`、`PrimitiveLongAccess`、`PrimitiveRowCacheAccess`、`ForL0MapState`，并将新native嵌入JAR。其他类沿用冻结R30。原生测试及真实状态验证日志在 `../validation/`。
 
-`source/job/src/main/java/` 为主实验的稳态Job源码，`source/job/provenance.json` 为原始字节码追溯记录。Job target为Java8，实际运行于同一Java11；三个BriskState容量组、关闭组及Heap共用同一个Job。`oracle/` 为独立源前缀重放及最终feature投影核验程序。
+`source/job/src/main/java/` 为主实验的稳态Job源码，`source/job/provenance.json` 为原始字节码追溯记录。Job target为Java8，实际运行于同一Java11；四个BriskState容量组、关闭组及Heap共用同一个Job。`oracle/` 为独立源前缀重放及最终feature投影核验程序。
 
 当前脚本使用本目录 `oracle/PaperSourceOracle.class`：保留原有重放与核验计算，仅取消二进制压缩直方图输出，结果为JSON纯文本。Job和后端二进制未因此改变。
 

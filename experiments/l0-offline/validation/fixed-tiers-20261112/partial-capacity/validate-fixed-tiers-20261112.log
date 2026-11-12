@@ -1,0 +1,28 @@
+VALIDATION_NETWORK_NAMESPACE
+net:[4026551317]
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP>
+VALIDATION_NO_HOST_RUNTIMES
+/usr/bin/python3
+[offline] 校验离线依赖分片（不联网）
+runtime.tar.gz.part000: OK
+runtime.tar.gz.part001: OK
+runtime.tar.gz.part002: OK
+runtime.tar.gz.part003: OK
+runtime.tar.gz.part004: OK
+runtime.tar.gz.part005: OK
+runtime.tar.gz.part006: OK
+runtime.tar.gz.part007: OK
+[offline] Java/Flink/Python/作业/后端校验通过
+PREFLIGHT brisk_l0_2 2 MiB shared
+PREFLIGHT PASS brisk_l0_2
+PREFLIGHT brisk_l0_16 16 MiB shared
+PREFLIGHT FAIL brisk_l0_16 Traceback (most recent call last):
+  File "/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py", line 210, in preflight_l0
+    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'
+RuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。
+ 其余档位及基线继续。
+START WC brisk_l0_16 1
+SKIP WC brisk_l0_16 1 容量/SDK预检失败，详见报告。
+START WC brisk_l0_2 1
+PASS WC brisk_l0_2 1 823594.4 input/s
+结果目录： /home/jinyun/briskstate-l0-offline-20261111/validation-fixed-tiers-20261112

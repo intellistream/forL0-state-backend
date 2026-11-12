@@ -1,0 +1,7 @@
+workload,arm,repeat,status,mode,l0_requested_total_bytes,throughput_input_records_s,coverage_seconds,measurement_seconds,measured_sink_records,input_equivalent_records,tm_pss_mean_bytes,tm_rss_peak_bytes,oracle_matches,reason,error
+wc,brisk_l0_16,1,skipped,DRAM_VALIDATION_ONLY,16777216,,,,,,,,,L0 preflight failed; no benchmark launched for this tier,"Traceback (most recent call last):
+  File ""/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py"", line 210, in preflight_l0
+    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'
+RuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。
+"
+wc,brisk_l0_2,1,passed,DRAM_VALIDATION_ONLY,2097152,823594.4,15.1755236890167,5,4117972,4117972.0,11956185088,14950780928,True,,

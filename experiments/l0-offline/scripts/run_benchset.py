@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline three-arm benchmark. Python standard library; loopback networking only."""
+"""Offline benchmark with four fixed L0 tiers; loopback networking only."""
 import argparse
 from collections import Counter
 import csv
@@ -24,7 +24,8 @@ import uuid
 WORKLOADS = ['wc', 'fd', 'sd', 'tm', 'lg', 'vs', 'lr']
 ROLES = dict(wc=1, fd=1, sd=2, tm=2, lg=4, vs=9, lr=8)
 MULTIPLIERS = dict(wc=1, fd=1, sd=1, tm=1, lg=3, vs=8, lr=12)
-ARMS = ['heap', 'brisk_off', 'brisk_l0_25', 'brisk_l0_50', 'brisk_l0_75']
+L0_SIZES = {'brisk_l0_' + str(mib): mib * 1024 ** 2 for mib in [2, 4, 8, 16]}
+ARMS = ['heap', 'brisk_off', *L0_SIZES]
 HZ = os.sysconf('SC_CLK_TCK')
 
 
@@ -126,7 +127,8 @@ class Campaign:
                         'flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar']}
         self.hashes['oracle_class_sha256'] = sha(self.oracle / 'PaperSourceOracle.class')
         self.label = 'DRAM_VALIDATION_ONLY' if args.validate_dram else 'REAL_L0_HARDWARE'
-        self.l0_sizes = {}
+        self.l0_sizes = L0_SIZES.copy()
+        self.preflight = {}
 
     def api(self, path):
         # Explicitly ignore proxy variables. Only this private loopback JM is used.
@@ -155,8 +157,9 @@ class Campaign:
                                   parallelism=8, tm_cpu_cores=4, tm_memory_gib=32, jm_memory_gib=8,
                                   warmup_seconds=self.a.warmup, measure_seconds=self.a.measure,
                                   repeats=self.a.repeats, distribution='uniform', checkpoint=False,
-                                  l0_capacity='auto-probe, three levels at 25/50/75 percent',
-                                  capacity_source='driver metadata; no full-capacity allocation', l0_row_policy='resident'))
+                                  l0_shared_sizes_mib=[2, 4, 8, 16],
+                                  capacity_source='fixed tiers from historical sweep; driver metadata informational only',
+                                  l0_row_policy='resident'))
         dump(out / 'environment.json', info)
         mem = {x.split(':')[0]: int(x.split()[1]) * 1024 for x in Path('/proc/meminfo').read_text().splitlines()
                if x.startswith(('MemTotal:', 'MemAvailable:'))}
@@ -168,65 +171,56 @@ class Campaign:
     def preflight_l0(self):
         folder = self.output / 'l0-preflight'
         folder.mkdir()
-        if not self.a.validate_dram:
-            script = Path(__file__).resolve().parent / 'l0_detector.sh'
-            command = ['bash', '-c', 'source "$1"; forl0_detect_l0_environment; '
-                       'forl0_print_l0_detection; test -n "$FORL0_L0_DEVICE_PATH" && '
-                       'test -n "$FORL0_L0_LIBRARY_PATH"; printf "\\nLIBRARY=%s\\n" "$FORL0_L0_LIBRARY_PATH"',
-                       'l0-detect', str(script)]
-            r = subprocess.run(command, capture_output=True, text=True, env=self.env)
-            (folder / 'detection.log').write_text(r.stdout + r.stderr)
-            if r.returncode or not re.search(r'^LIBRARY=.+', r.stdout, re.M):
-                raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')
-            library = re.search(r'^LIBRARY=(.+)', r.stdout, re.M).group(1)
-            self.env['FORL0_L0_LIBRARY_PATH'] = library
-            self.env['BRISKSTATE_L0_LIBRARY_DIRS'] = str(Path(library).parent)
-            dump(folder / 'sdk.json', dict(library=library, sha256=sha(library)))
-        # Capacity must come from the driver, not by allocating the entire
-        # hardware pool. Keep at least 25% of the reported per-domain quota free.
+        selected = [arm for arm in self.l0_sizes if arm in self.a.arms]
+        if not selected:
+            return
         capacity = self.read_l0_capacity(folder)
-        unit = 64 * 1024  # per-TM rounding; 128KiB shared resolution
-        budget = capacity['total_bytes']
-        sizes = {'brisk_l0_' + str(percent):
-                 (budget * percent // 100 // 2 // unit) * unit * 2
-                 for percent in [25, 50, 75]}
-        if len(set(sizes.values())) != 3 or min(sizes.values()) // 2 // 37 < 2304:
-            raise RuntimeError('L0容量不足以配置七项workload所需的三档驻留池。')
-        # Verify the largest permitted size first. Never probe 100%. If the
-        # installed pool has less free memory than its configured quota, lower
-        # the shared experiment budget and preserve the 25/50/75 proportions.
-        attempts = []
-        largest_proof = None
-        while True:
-            trial = folder / ('verify75-' + str(sizes['brisk_l0_75']))
-            try:
-                proof = self.probe_pair(trial, sizes['brisk_l0_75'] // 2)
-                largest_proof = proof
-                attempts.append(dict(total_bytes=sizes['brisk_l0_75'], passed=True, roles=proof))
-                break
-            except Exception:
-                attempts.append(dict(total_bytes=sizes['brisk_l0_75'], passed=False, error=traceback.format_exc()))
-                dump(trial / 'failure.json', attempts[-1])
-                budget = (budget // 2 // (2 * unit)) * (2 * unit)
-                sizes = {'brisk_l0_' + str(percent):
-                         (budget * percent // 100 // 2 // unit) * unit * 2
-                         for percent in [25, 50, 75]}
-                if len(set(sizes.values())) != 3 or min(sizes.values()) // 2 // 37 < 2304:
-                    raise RuntimeError('三档L0完整读写验证失败；见l0-preflight容量探测日志。')
-            finally:
-                dump(folder / 'capacity-attempts.json', attempts)
-        self.l0_sizes = sizes
-        for arm, total in sizes.items():
-            proof = largest_proof if arm == 'brisk_l0_75' else self.probe_pair(folder / arm, total // 2)
-            dump(folder / (arm + '-proof.json'), proof)
         dump(folder / 'capacity.json', dict(mode=self.label, reported_capacity=capacity,
-             experiment_budget_total_bytes=budget, maximum_allocated_fraction_of_reported_capacity=.75,
-             never_allocates_full_capacity=True, sizes_total_bytes=self.l0_sizes))
-        print('L0容量识别/验证通过，共享三档MiB：', {a: b / 1024 ** 2 for a, b in self.l0_sizes.items()}, flush=True)
+             policy='fixed tiers; each tier independently verified; no maximum-capacity search',
+             sizes_total_bytes=self.l0_sizes))
+        detection_error = None
+        try:
+            if not self.a.validate_dram:
+                script = Path(__file__).resolve().parent / 'l0_detector.sh'
+                command = ['bash', '-c', 'source "$1"; forl0_detect_l0_environment; '
+                           'forl0_print_l0_detection; test -n "$FORL0_L0_DEVICE_PATH" && '
+                           'test -n "$FORL0_L0_LIBRARY_PATH"; printf "\\nLIBRARY=%s\\n" "$FORL0_L0_LIBRARY_PATH"',
+                           'l0-detect', str(script)]
+                r = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=120)
+                (folder / 'detection.log').write_text(r.stdout + r.stderr)
+                if r.returncode or not re.search(r'^LIBRARY=.+', r.stdout, re.M):
+                    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')
+                library = re.search(r'^LIBRARY=(.+)', r.stdout, re.M).group(1)
+                self.env['FORL0_L0_LIBRARY_PATH'] = library
+                self.env['BRISKSTATE_L0_LIBRARY_DIRS'] = str(Path(library).parent)
+                dump(folder / 'sdk.json', dict(library=library, sha256=sha(library)))
+        except Exception:
+            detection_error = traceback.format_exc()
+            dump(folder / 'detection-failure.json', dict(error=detection_error))
+        for arm in selected:
+            total = self.l0_sizes[arm]
+            trial = folder / arm
+            record = dict(mode=self.label, arm=arm, requested_total_bytes=total,
+                          requested_per_tm_bytes=total // 2, status='failed')
+            print('PREFLIGHT', arm, '%g MiB shared' % (total / 1024 ** 2), flush=True)
+            try:
+                if detection_error:
+                    raise RuntimeError(detection_error)
+                if self.a.validate_dram and total > self.a.validation_capacity_mib * 1024 ** 2:
+                    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'
+                                       % self.a.validation_capacity_mib)
+                proof = self.probe_pair(trial, total // 2)
+                record.update(status='passed', roles=proof)
+                print('PREFLIGHT PASS', arm, flush=True)
+            except Exception:
+                record['error'] = traceback.format_exc()
+                dump(trial / 'failure.json', record)
+                print('PREFLIGHT FAIL', arm, record['error'], '其余档位及基线继续。', flush=True)
+            self.preflight[arm] = record
+            dump(folder / 'tiers.json', self.preflight)
 
     def read_l0_capacity(self, folder):
         if self.a.validate_dram:
-            # Only a validation fixture. It is never treated as hardware data.
             return dict(total_bytes=int(self.a.validation_capacity_mib * 1024 ** 2),
                         source='explicit DRAM validation fixture', kind='not_hardware')
         evidence = {}
@@ -236,7 +230,11 @@ class Campaign:
                       Path('/sys/module/hisi_l0/parameters/max_numa_capacity')]
         for p in candidates:
             if p.is_file():
-                text = p.read_text().strip()
+                try:
+                    text = p.read_text().strip()
+                except OSError as error:
+                    evidence[str(p)] = str(error)
+                    continue
                 evidence[str(p)] = text
                 if re.fullmatch(r'[0-9]+', text) and int(text) > 0:
                     dump(folder / 'driver-capacity-evidence.json', evidence)
@@ -247,7 +245,11 @@ class Campaign:
                       Path('/sys/kernel/l0_pool/capacity_bytes')]
         for p in candidates:
             if p.is_file():
-                text = p.read_text().strip()
+                try:
+                    text = p.read_text().strip()
+                except OSError as error:
+                    evidence[str(p)] = str(error)
+                    continue
                 evidence[str(p)] = text
                 if re.fullmatch(r'[0-9]+', text) and int(text) > 0:
                     dump(folder / 'driver-capacity-evidence.json', evidence)
@@ -255,9 +257,12 @@ class Campaign:
         for base in ['/sys/kernel/l0_pool', '/sys/module/hisi_l0_mem_pool/parameters', '/sys/module/hisi_l0/parameters']:
             p = Path(base)
             if p.is_dir():
-                evidence[base + '/entries'] = [x.name for x in p.iterdir()]
+                try:
+                    evidence[base + '/entries'] = [x.name for x in p.iterdir()]
+                except OSError as error:
+                    evidence[base + '/entries'] = str(error)
         dump(folder / 'driver-capacity-evidence.json', evidence)
-        raise RuntimeError('驱动未暴露可识别的容量信息。不能通过申请满容量来推断；已保存驱动目录及SDK信息供定位。')
+        return dict(total_bytes=None, source=None, kind='metadata unavailable; fixed tiers still verified')
 
     def probe_pair(self, folder, quota):
         folder.mkdir(parents=True, exist_ok=True)
@@ -448,7 +453,17 @@ class Campaign:
         folder.mkdir(parents=True)
         (folder / 'control').mkdir()
         print('START', workload.upper(), arm, repeat, flush=True)
-        row = dict(workload=workload, arm=arm, repeat=repeat, status='failed', mode=self.label)
+        row = dict(workload=workload, arm=arm, repeat=repeat, status='failed', mode=self.label,
+                   l0_requested_total_bytes=self.l0_sizes.get(arm, 0))
+        if arm in self.preflight and self.preflight[arm]['status'] != 'passed':
+            row.update(status='skipped', error=self.preflight[arm]['error'],
+                       reason='L0 preflight failed; no benchmark launched for this tier')
+            dump(folder / 'failure.json', row)
+            self.failures.append(row)
+            self.rows.append(row)
+            self.write_results()
+            print('SKIP', workload.upper(), arm, repeat, '容量/SDK预检失败，详见报告。', flush=True)
+            return
         try:
             self.configure(workload, arm, folder)
             self.start()
@@ -582,37 +597,60 @@ class Campaign:
 
     def write_results(self):
         dump(self.output / 'results.json', dict(mode=self.label, runs=self.rows, failures=len(self.failures),
-                                               artifacts=self.hashes))
+                                               l0_preflight=self.preflight, artifacts=self.hashes))
         columns = ['workload', 'arm', 'repeat', 'status', 'mode', 'l0_requested_total_bytes', 'throughput_input_records_s',
                    'coverage_seconds', 'measurement_seconds', 'measured_sink_records',
-                   'input_equivalent_records', 'tm_pss_mean_bytes', 'tm_rss_peak_bytes', 'oracle_matches']
+                   'input_equivalent_records', 'tm_pss_mean_bytes', 'tm_rss_peak_bytes', 'oracle_matches',
+                   'reason', 'error']
         with (self.output / 'results.csv').open('w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
             writer.writeheader()
             writer.writerows(self.rows)
-        sizes = [self.l0_sizes.get('brisk_l0_' + str(p), 0) / 1024 ** 2 for p in [25, 50, 75]]
-        lines = ['# Benchmark set：Heap / BriskState 无L0 / 三档L0', '', '**模式：%s**' % self.label, '',
+        selected = self.a.arms
+        labels = {'heap': 'Heap', 'brisk_off': 'BriskState 无L0',
+                  **{arm: 'L0 %g MiB' % (total / 1024 ** 2) for arm, total in self.l0_sizes.items()}}
+        counts = Counter(row['status'] for row in self.rows)
+        lines = ['# Benchmark set：Heap / BriskState 无L0 / 四档L0', '', '**模式：%s**' % self.label, '',
                  '配置：JM4核8GiB；两个TM各4核32GiB；p8；均匀分布；feature width64/touches128；CP关闭。', '',
                  '吞吐单位为 input-equivalent records/s，按终端Sink窗口计数除以拓扑输出倍数；初始化不计入吞吐。', '',
-                 '三档共享L0容量为 %s MiB；每TM分配一半，按启动时双进程完整读写探测确定。' % ', '.join('%g' % x for x in sizes), '',
-                 '| Workload | Heap | BriskState 无L0 | L0 %g MiB | L0 %g MiB | L0 %g MiB |' % tuple(sizes),
-                 '|---|---:|---:|---:|---:|---:|']
+                 '固定共享容量为2、4、8、16 MiB，每TM分配一半。预检逐档独立进行，失败档跳过，成功档及基线继续。', '',
+                 '已处理%d组：成功%d，运行失败%d，预检失败而跳过%d。均值仅使用成功运行；未完成项不记为0。'
+                 % (len(self.rows), counts['passed'], counts['failed'], counts['skipped']), '',
+                 '| L0档位 | 共享MiB | 每TM MiB | 预检 |', '|---|---:|---:|---|']
+        for arm in selected:
+            if arm in self.l0_sizes:
+                total = self.l0_sizes[arm] / 1024 ** 2
+                lines.append('| %s | %g | %g | %s |' %
+                             (arm, total, total / 2, self.preflight.get(arm, {}).get('status', 'not run')))
+        lines += ['', '| Workload | ' + ' | '.join(labels[arm] for arm in selected) + ' |',
+                  '|---|' + '---:|' * len(selected)]
         for workload in self.a.workloads:
             values = {}
-            for arm in ARMS:
+            for arm in selected:
                 rows = [r for r in self.rows if r['workload'] == workload and r['arm'] == arm and r['status'] == 'passed']
-                values[arm] = statistics.mean(r['throughput_input_records_s'] for r in rows) if rows else None
-            format_value = lambda x: '—' if x is None else f'{x:,.2f}'
-            lines.append('| %s | %s |' % (workload.upper(), ' | '.join(format_value(values[a]) for a in ARMS)))
-        lines += ['', '| Workload | L0 25% / 无L0 | L0 50% / 无L0 | L0 75% / 无L0 |', '|---|---:|---:|---:|']
+                values[arm] = ('%s (n=%d)' %
+                               (format(statistics.mean(r['throughput_input_records_s'] for r in rows), ',.2f'), len(rows))) if rows else '—'
+            lines.append('| %s | %s |' % (workload.upper(), ' | '.join(values[arm] for arm in selected)))
+        ratio_arms = [arm for arm in selected if arm in self.l0_sizes]
+        if ratio_arms and 'brisk_off' in selected:
+            lines += ['', '| Workload | ' + ' | '.join(labels[arm] + ' / 无L0' for arm in ratio_arms) + ' |',
+                      '|---|' + '---:|' * len(ratio_arms)]
         for workload in self.a.workloads:
+            if not ratio_arms or 'brisk_off' not in selected:
+                break
             values = {a: [r['throughput_input_records_s'] for r in self.rows
                           if r['workload'] == workload and r['arm'] == a and r['status'] == 'passed'] for a in ARMS}
             ratios = []
-            for arm in ARMS[2:]:
+            for arm in ratio_arms:
                 ratio = statistics.mean(values[arm]) / statistics.mean(values['brisk_off']) if values[arm] and values['brisk_off'] else None
                 ratios.append('—' if ratio is None else '%.4f× (%+.2f%%)' % (ratio, (ratio - 1) * 100))
             lines.append('| %s | %s |' % (workload.upper(), ' | '.join(ratios)))
+        if self.failures:
+            lines += ['', '## 失败及跳过记录', '', '| Workload | 组别 | 重复 | 状态 | 原因 |', '|---|---|---:|---|---|']
+            for row in self.failures:
+                error = row['error'].strip().splitlines()[-1].replace('|', '\\|')
+                lines.append('| %s | %s | %d | %s | %s |' %
+                             (row['workload'].upper(), row['arm'], row['repeat'], row['status'], error))
         lines += ['', '所有成功和失败运行均保留；不根据加速比筛除数据。原始逐轮数据见 results.csv/results.json，日志和配置见 raw/。', '',
                   'CPU限制为整个进程及其Java/GC/JIT/native线程的affinity；32GiB为Flink process预算，非OS硬RSS上限。', '']
         if self.a.validate_dram:
@@ -623,6 +661,7 @@ class Campaign:
         try:
             self.environment()
             self.preflight_l0()
+            self.write_results()
             plan = []
             for repeat in range(1, self.a.repeats + 1):
                 workloads = self.a.workloads.copy()
@@ -635,8 +674,11 @@ class Campaign:
             for i, condition in enumerate(plan):
                 dump(self.output / 'status.json', dict(state='running', completed=i, total=len(plan), current=condition))
                 self.run_one(**condition)
-            dump(self.output / 'status.json', dict(state='failed' if self.failures else 'complete',
-                                                  completed=len(plan), total=len(plan), failures=len(self.failures)))
+            counts = Counter(row['status'] for row in self.rows)
+            state = ('partial_results' if counts['passed'] else 'failed') if self.failures else 'complete'
+            dump(self.output / 'status.json', dict(state=state, completed=len(plan), total=len(plan),
+                                                  passed=counts['passed'], failed=counts['failed'],
+                                                  skipped=counts['skipped'], failures=len(self.failures)))
             return 1 if self.failures else 0
         except BaseException:
             dump(self.output / 'fatal-error.json', dict(error=traceback.format_exc(), mode=self.label))
@@ -654,13 +696,13 @@ def main():
     parser.add_argument('--runtime', required=True)
     parser.add_argument('--results', required=True)
     parser.add_argument('--workloads', default=','.join(WORKLOADS))
-    parser.add_argument('--arms', default=','.join(ARMS), help='逗号分隔的组别；默认运行全部五组')
+    parser.add_argument('--arms', default=','.join(ARMS), help='逗号分隔的组别；默认运行全部六组')
     parser.add_argument('--keys', type=int, default=524288)
     parser.add_argument('--warmup', type=int, default=60)
     parser.add_argument('--measure', type=int, default=120)
     parser.add_argument('--repeats', type=int, default=3)
-    parser.add_argument('--validation-capacity-mib', type=float, default=70,
-                        help='仅普通内存验收使用的共享容量，正式模式读取驱动元数据')
+    parser.add_argument('--validation-capacity-mib', type=float, default=16,
+                        help='仅DRAM验收的模拟可用共享容量，超过此值的固定档位记录为预检失败')
     parser.add_argument('--validate-dram', action='store_true', help='普通内存验收；不能产出真实L0实验数据')
     parser.add_argument('--smoke', action='store_true', help='4096keys、2s预热、5s计时、每条件一次')
     args = parser.parse_args()
