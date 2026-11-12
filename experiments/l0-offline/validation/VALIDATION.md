@@ -51,3 +51,18 @@
 重复启动检查首次碰上前一短测已结束，误提交了默认矩阵；立即通过--stop停止在首个VS条件初始化阶段，没有运行完整矩阵。中止JSON保留，不能作为性能数据。之后用无效参数请求完成受控的重复启动验证。
 
 `background-20261112/`仅保存上述三个JSON数据文件。显示中的中止计数随后补充到进度文案；仅改变显示和summary字段，没有再次启动作业。
+
+## 可操作错误诊断（2026-11-12）
+
+补充错误编号、原因/不确定性、处理步骤、应由谁处理和最近问题；预检失败将设备/SDK检测与两个探测进程日志末尾纳入同一JSON，运行失败补充提交日志及可取得的Flink异常。资源错误显示实际可用值，SDK检测分别核对设备和库并保留检测返回码。
+
+本轮未启动Flink作业，仅检查错误路径：
+
+| 验证 | 结果 |
+|---|---|
+| 通过根入口提交keys=3 | INVALID_ARGUMENT；--status显示修改参数/默认入口两条建议；JSON含guidance |
+| 裸机实际缺少L0设备及SDK，仅选择L0 2MiB | L0_ENVIRONMENT_MISSING；区分管理员处理的驱动/设备及SDK路径问题；JSON含检测原始输出和last_issue |
+| 独立临时空目录触发离线文件缺失，不改变真实payload | OFFLINE_FILES_INVALID；显示缺失文件真实路径和复制完整分支的建议；启动错误JSON可正常解析 |
+| 用现有native源码中的四类原始错误文本核对分类 | dlopen→SDK_LOAD_FAILED；dlsym→SDK_ABI_MISMATCH；cache_tuner_init→L0_SDK_INIT_FAILED；l0_mem_alloc→L0_ALLOCATION_FAILED |
+
+`error-diagnostics-20261112/`保存三份实际错误JSON。后两种SDK调用失败明确不把根因直接认定为容量不足。此分类是排查线索，不承诺能从厂商简略错误中推导出唯一根因，也不承诺合作方可以自行修复驱动或代码问题。

@@ -94,6 +94,23 @@ PSS/RSS为两个TM的合计，不含JM。PSS为窗口采样均值，RSS为窗口
 
 入口返回0只表示后台任务已经提交，最终成败以JSON的status为准。依赖损坏、CPU/内存不足等全局问题会写入失败状态；L0单档问题只影响对应条件。若结果目录不可写或磁盘已满，需按启动/诊断提示处理。
 
+## 出错后如何处理
+
+--status会持续显示最近一次问题、影响范围、错误编号、原始提示、处理建议和应由谁处理；进入下一个条件后不会把上一个问题隐藏。结果JSON的error、l0_preflight或失败run含guidance：error_code、cause、next_steps、responsible_party。预检失败附设备/SDK检测及双进程日志；作业失败附提交日志、JM/TM日志末尾及可取得的Flink异常。启动环境失败也把错误末尾和处理建议写入同一JSON。
+
+| 情况 | 合作方如何处理 |
+|---|---|
+| INVALID_ARGUMENT | 按提示改参数，或直接使用默认入口 |
+| L0_DEVICE_MISSING / L0_ENVIRONMENT_MISSING | 管理员检查驱动、设备节点及账号权限；若同时缺SDK，提示会一并说明 |
+| L0_SDK_MISSING | 确认SDK已安装；可用export L0_MEMPOOL_LIB_HOST_PATH=/实际路径/libl0mempool.so指定 |
+| ACCESS_DENIED | 管理员检查提示路径的访问权限，不会自动修改权限或驱动 |
+| SDK_LOAD_FAILED / SDK_ABI_MISMATCH | 按原始错误核对依赖、库路径、架构及符号；接口不兼容需SDK提供方或开发者协助 |
+| L0_ALLOCATION_FAILED / L0_SDK_INIT_FAILED | 单档自动跳过；若最小档也失败，管理员检查同NUMA域占用、容量、权限和驱动；不把所有失败都认定为容量不足 |
+| HOST_MEMORY_LOW / CPU_ALLOCATION_INSUFFICIENT / DISK_SPACE_LOW | 显示实际资源或路径，释放其他占用或请管理员分配足够资源；保持正式实验配置 |
+| VALIDATION_FAILED / UNCLASSIFIED_FAILURE | 返回本次JSON给开发者定位 |
+
+常见参数、路径和资源问题可按提示处理；驱动、SDK内部错误及后端正确性问题不能保证由合作方自行修复。无法可靠判断时明确说明不确定，并保留原始证据。修复后重新执行会建立新JSON，原失败记录保留；如仅需补测某组，可使用--arms筛选。
+
 ## 可选参数
 
 ```bash

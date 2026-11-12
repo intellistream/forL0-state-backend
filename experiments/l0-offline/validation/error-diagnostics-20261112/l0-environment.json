@@ -1,0 +1,226 @@
+{
+  "schema_version": 2,
+  "status": "failed",
+  "mode": "REAL_L0_HARDWARE",
+  "started_ms": 1794453548549,
+  "finished_ms": 1794453548923,
+  "progress": {
+    "stage": "测试已结束，成功数据和失败原因均已保存",
+    "completed": 1,
+    "total": 1,
+    "current": null,
+    "updated_ms": 1794453548923,
+    "remaining_seconds": null
+  },
+  "counts": {
+    "planned": 1,
+    "completed": 1,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 1,
+    "interrupted": 0
+  },
+  "environment": {
+    "mode": "REAL_L0_HARDWARE",
+    "uname": [
+      "Linux",
+      "host-192-168-0-3",
+      "5.15.0-25-generic",
+      "#25-Ubuntu SMP Wed Mar 30 15:57:31 UTC 2022",
+      "aarch64"
+    ],
+    "cpu_groups": {
+      "jm": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "tm1": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "tm2": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    "controller_cpus": [
+      12,
+      13,
+      14,
+      15
+    ],
+    "collector_sha256": "d27d2294619c684547bbfa60135d77db718f11bf44255f1f37f99caff5667107",
+    "detector_sha256": "8be0bde40fa7451edeaeb18a340356665f025aeece970c93246a55b13072a498",
+    "command": [
+      "/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py",
+      "--runtime",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+      "--work-dir",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runs/20261112-111906-3152659",
+      "--results",
+      "/home/jinyun/briskstate-l0-offline-20261111/validation-diagnostic-l0-20261112.json",
+      "--smoke",
+      "--workloads",
+      "wc",
+      "--arms",
+      "brisk_l0_2"
+    ],
+    "artifacts": {
+      "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+      "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+      "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+      "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+    },
+    "runtime": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+    "protocol": {
+      "keys": 4096,
+      "feature_width": 64,
+      "touches": 128,
+      "window": 16,
+      "parallelism": 8,
+      "tm_cpu_cores": 4,
+      "tm_memory_gib": 32,
+      "jm_memory_gib": 8,
+      "warmup_seconds": 2,
+      "measure_seconds": 5,
+      "repeats": 1,
+      "distribution": "uniform",
+      "checkpoint": false,
+      "l0_shared_sizes_mib": [
+        2,
+        4,
+        8,
+        16,
+        24,
+        32
+      ],
+      "capacity_source": "fixed tiers from historical sweep; driver metadata informational only",
+      "l0_row_policy": "resident"
+    },
+    "system": {
+      "os_release": "PRETTY_NAME=\"Ubuntu 22.04 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nVERSION=\"22.04 (Jammy Jellyfish)\"\nVERSION_CODENAME=jammy\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=jammy\n",
+      "cpuinfo_first_processor": "processor\t: 0\nBogoMIPS\t: 200.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma dcpop asimddp asimdfhm ssbs\nCPU implementer\t: 0x48\nCPU architecture: 8\nCPU variant\t: 0x1\nCPU part\t: 0xd01\nCPU revision\t: 0",
+      "meminfo": "MemTotal:       2109313348 kB\nMemFree:        631341172 kB\nMemAvailable:   1964152204 kB\nBuffers:        13201752 kB\nCached:         1354208752 kB\nSwapCached:            0 kB\nActive:         991080504 kB\nInactive:       421252404 kB\nActive(anon):   64137008 kB\nInactive(anon): 44980032 kB\nActive(file):   926943496 kB\nInactive(file): 376272372 kB\nUnevictable:       54364 kB\nMlocked:           54364 kB\nSwapTotal:             0 kB\nSwapFree:              0 kB\nDirty:              6196 kB\nWriteback:             4 kB\nAnonPages:      44919936 kB\nMapped:          2896952 kB\nShmem:          64182208 kB\nKReclaimable:   40354264 kB\nSlab:           48541828 kB\nSReclaimable:   40354264 kB\nSUnreclaim:      8187564 kB\nKernelStack:      190784 kB\nPageTables:       281820 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    1054656672 kB\nCommitted_AS:   212862188 kB\nVmallocTotal:   133143592960 kB\nVmallocUsed:     4510412 kB\nVmallocChunk:          0 kB\nPercpu:          2330112 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:   8511488 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:         0 kB\nFilePmdMapped:         0 kB\nCmaTotal:          32768 kB\nCmaFree:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\n",
+      "numa_cpu_lists": {
+        "node4": "96-119",
+        "node2": "48-71",
+        "node0": "0-23",
+        "node7": "168-191",
+        "node5": "120-143",
+        "node3": "72-95",
+        "node1": "24-47",
+        "node6": "144-167"
+      }
+    }
+  },
+  "artifacts": {
+    "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+    "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+    "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+    "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+  },
+  "plan": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    }
+  ],
+  "l0_sdk": null,
+  "l0_capacity": {
+    "mode": "REAL_L0_HARDWARE",
+    "reported_capacity": {
+      "total_bytes": null,
+      "source": null,
+      "kind": "metadata unavailable; fixed tiers still verified"
+    },
+    "policy": "fixed tiers; each tier independently verified; no maximum-capacity search",
+    "sizes_total_bytes": {
+      "brisk_l0_2": 2097152,
+      "brisk_l0_4": 4194304,
+      "brisk_l0_8": 8388608,
+      "brisk_l0_16": 16777216,
+      "brisk_l0_24": 25165824,
+      "brisk_l0_32": 33554432
+    }
+  },
+  "l0_preflight": {
+    "brisk_l0_2": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_2",
+      "requested_total_bytes": 2097152,
+      "requested_per_tm_bytes": 1048576,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 368, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 343, in preflight_l0\n    raise RuntimeError('L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。')\nRuntimeError: L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。\n\n",
+      "message": "RuntimeError: L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。",
+      "evidence": {
+        "/tmp/briskstate-l0-0-9eda3a240390ee85/runs/20261112-111906-3152659/evidence/l0-preflight/detection.log": "  device:      MISSING (/dev/hisi_l0 or /dev/l0; override: L0_DEVICE_HOST_PATH)\n  libl0:       MISSING (override: L0_MEMPOOL_LIB_HOST_PATH; search: ldconfig, LD_LIBRARY_PATH, multiarch, /opt, /usr/local, HOME)\n  libnuma:     OK (/usr/lib/aarch64-linux-gnu/libnuma.so.1.0.0; ldconfig cache)\n\nDEVICE=\nLIBRARY=\n"
+      },
+      "guidance": {
+        "error_code": "L0_ENVIRONMENT_MISSING",
+        "cause": "L0设备节点和用户态SDK均未检测到。",
+        "responsible_party": "管理员",
+        "next_steps": [
+          "确认驱动已加载且 /dev/l0 或 /dev/hisi_l0 存在，并给运行账号访问权限。",
+          "安装/定位libl0mempool.so；非标准路径可设置 L0_MEMPOOL_LIB_HOST_PATH，再重跑。"
+        ]
+      }
+    }
+  },
+  "summary": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 1,
+      "interrupted_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    }
+  ],
+  "runs": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1,
+      "status": "skipped",
+      "mode": "REAL_L0_HARDWARE",
+      "l0_requested_total_bytes": 2097152,
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 368, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 343, in preflight_l0\n    raise RuntimeError('L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。')\nRuntimeError: L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。\n\n",
+      "message": "RuntimeError: L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。",
+      "guidance": {
+        "error_code": "L0_ENVIRONMENT_MISSING",
+        "cause": "L0设备节点和用户态SDK均未检测到。",
+        "responsible_party": "管理员",
+        "next_steps": [
+          "确认驱动已加载且 /dev/l0 或 /dev/hisi_l0 存在，并给运行账号访问权限。",
+          "安装/定位libl0mempool.so；非标准路径可设置 L0_MEMPOOL_LIB_HOST_PATH，再重跑。"
+        ]
+      },
+      "evidence_ref": "l0_preflight.brisk_l0_2",
+      "reason": "L0 preflight failed; no benchmark launched for this tier"
+    }
+  ],
+  "error": null,
+  "last_issue": {
+    "scope": "WC / BriskState L0共享2 MiB；跳过",
+    "message": "RuntimeError: L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。",
+    "guidance": {
+      "error_code": "L0_ENVIRONMENT_MISSING",
+      "cause": "L0设备节点和用户态SDK均未检测到。",
+      "responsible_party": "管理员",
+      "next_steps": [
+        "确认驱动已加载且 /dev/l0 或 /dev/hisi_l0 存在，并给运行账号访问权限。",
+        "安装/定位libl0mempool.so；非标准路径可设置 L0_MEMPOOL_LIB_HOST_PATH，再重跑。"
+      ]
+    }
+  }
+}

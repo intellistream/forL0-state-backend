@@ -56,6 +56,89 @@ def arm_name(arm):
     return 'BriskState L0共享%g MiB' % (L0_SIZES[arm] / 1024 ** 2)
 
 
+def log_tails(paths):
+    result = {}
+    for path in paths:
+        try:
+            if path.is_file():
+                with path.open('rb') as stream:
+                    stream.seek(max(0, path.stat().st_size - 8192))
+                    result[str(path)] = stream.read().decode(errors='replace')
+        except OSError as error:
+            result[str(path)] = '日志读取失败：' + str(error)
+    return result
+
+
+def error_guidance(message, evidence=None):
+    text = (message + '\n' + json.dumps(evidence or {}, ensure_ascii=False)).lower()
+    if '用户停止' in text:
+        code, cause, owner = 'USER_STOPPED', '用户主动停止测试。', '运行人员'
+        steps = ['已完成的数据已保留，无需修复。', '需要继续时重新启动，新实验不会覆盖旧JSON。']
+    elif any(token in text for token in ['permission denied', 'operation not permitted', '权限不足']):
+        code, cause, owner = 'ACCESS_DENIED', '原始错误或相关日志出现权限拒绝，需要核对对应路径。', '管理员'
+        steps = ['按原始错误中的路径检查权限；L0设备可用 ls -l /dev/l0 /dev/hisi_l0 和 id 检查。',
+                 '让管理员给运行账号授予所需设备/目录权限，再用同一账号重新执行。']
+    elif 'l0设备未找到' in text and 'l0 sdk未找到' in text:
+        code, cause, owner = 'L0_ENVIRONMENT_MISSING', 'L0设备节点和用户态SDK均未检测到。', '管理员'
+        steps = ['确认驱动已加载且 /dev/l0 或 /dev/hisi_l0 存在，并给运行账号访问权限。',
+                 '安装/定位libl0mempool.so；非标准路径可设置 L0_MEMPOOL_LIB_HOST_PATH，再重跑。']
+    elif 'l0设备未找到' in text:
+        code, cause, owner = 'L0_DEVICE_MISSING', '未找到L0设备节点。', '管理员'
+        steps = ['确认L0驱动已加载，并检查 /dev/l0 或 /dev/hisi_l0 是否存在。',
+                 '若设备使用其他路径，可设置 L0_DEVICE_HOST_PATH 后重跑。']
+    elif 'l0 sdk未找到' in text:
+        code, cause, owner = 'L0_SDK_MISSING', '未找到可读的libl0mempool.so。', '运行人员或管理员'
+        steps = ['确认用户态L0 SDK已安装，找到 libl0mempool.so 的真实路径。',
+                 '可执行 export L0_MEMPOOL_LIB_HOST_PATH=/实际路径/libl0mempool.so，再重新启动。']
+    elif 'dlsym' in text or 'undefined symbol' in text or 'wrong elf class' in text:
+        code, cause, owner = 'SDK_ABI_MISMATCH', '动态库架构或导出接口不匹配。', 'SDK提供方或开发者'
+        steps = ['检查原始错误中的库名/符号名及JSON中的SDK路径和哈希。',
+                 '由SDK提供方核对ARM64库和驱动接口版本，并提供本次JSON中的原始错误。']
+    elif 'dlopen' in text or 'cannot open shared object' in text:
+        code, cause, owner = 'SDK_LOAD_FAILED', '动态库或其依赖未能加载。', '运行人员或SDK提供方'
+        steps = ['查看原始错误缺少哪个.so或版本；核对SDK真实路径及它的依赖。',
+                 '路径错误可通过 L0_MEMPOOL_LIB_HOST_PATH 指定；缺少厂商依赖需由SDK提供方补齐。']
+    elif 'cache_tuner_init' in text:
+        code, cause, owner = 'L0_SDK_INIT_FAILED', 'SDK初始化失败，现有返回信息不足以断定具体根因。', '管理员或SDK提供方'
+        steps = ['检查设备权限、SDK/驱动版本及同一NUMA域其他L0使用者。',
+                 '本档自动跳过；若最小档也失败，将JSON中的原始SDK错误交给管理员或SDK提供方。']
+    elif any(token in text for token in ['l0_mem_alloc', 'strict l0 allocation', 'l0 allocation failed', '模拟可用容量']):
+        code, cause, owner = 'L0_ALLOCATION_FAILED', '本档申请未满足要求；不能只凭分配失败认定是容量不足。', '运行人员或管理员'
+        steps = ['本档已跳过，小档和基线继续，无需为此中止整套测试。',
+                 '若最小档也失败，让管理员检查可用L0容量、同NUMA域占用、权限与驱动状态；模拟容量错误仅用于DRAM验收。']
+    elif '可用内存' in text:
+        code, cause, owner = 'HOST_MEMORY_LOW', '可用内存未达到实验要求。', '运行人员或管理员'
+        steps = ['用 free -h 查看当前内存，释放其他任务占用或换用空闲机器。',
+                 '可用内存达到76GiB后重跑，保持每TM32GiB的实验配置。']
+    elif 'numa' in text and 'cpu' in text and '至少12' in text:
+        code, cause, owner = 'CPU_ALLOCATION_INSUFFICIENT', '同一NUMA节点内允许使用的CPU不足12个。', '管理员'
+        steps = ['检查 taskset -pc $$ 及 lscpu 的NUMA分布。',
+                 '由管理员为当前账号/任务分配同一NUMA节点内至少12个CPU，再重跑。']
+    elif any(token in text for token in ['no space left', '空闲磁盘']):
+        code, cause, owner = 'DISK_SPACE_LOW', '磁盘空间不足。', '运行人员或管理员'
+        steps = ['用 df -h 检查结果路径与运行缓存所在文件系统。', '释放空间或选择有足够空间的运行位置，再重新启动。']
+    elif any(token in text for token in ['outofmemory', 'cannot allocate memory', 'java heap space']):
+        code, cause, owner = 'PROCESS_MEMORY_FAILURE', '进程内存分配失败。', '管理员或开发者'
+        steps = ['检查系统/账号内存限制和其他任务占用，保留日志中的Java/native错误。',
+                 '若空闲资源足够仍失败，返回本次JSON，由开发者排查。']
+    elif '参数错误' in text:
+        code, cause, owner = 'INVALID_ARGUMENT', message, '运行人员'
+        steps = ['按具体提示修改命令参数；可运行 ./run-l0-benchset --help 查看用法。',
+                 '直接无参数执行入口即可使用正式默认配置。']
+    elif any(token in text for token in ['签名不一致', '未通过独立oracle', '记录数不一致', '拓扑', '结构化统计验证', '未建立状态行驻留池']):
+        code, cause, owner = 'VALIDATION_FAILED', '正确性或实验配置核验未通过。', '开发者'
+        steps = ['本轮不会作为有效性能数据；保留JSON中的实际配置和原始错误。',
+                 '将本次JSON交回开发者排查。']
+    elif any(token in text for token in ['timeout', 'timed out', '超时']):
+        code, cause, owner = 'TIMEOUT', '当前阶段超过等待上限。', '运行人员或开发者'
+        steps = ['查看原始错误中的阶段及JM/TM/SDK日志末尾，检查机器是否被其他任务占满。',
+                 '资源恢复后可重跑对应条件；反复发生时返回本次JSON。']
+    else:
+        code, cause, owner = 'UNCLASSIFIED_FAILURE', '已保留原始错误，尚不能可靠判断根因。', '管理员或开发者'
+        steps = ['先查看本条错误的evidence和traceback。', '将结果JSON交回排查；不要求合作方修改后端代码。']
+    return dict(error_code=code, cause=cause, responsible_party=owner, next_steps=steps)
+
+
 def cpulist(text):
     result = set()
     for chunk in text.strip().split(','):
@@ -68,11 +151,14 @@ def cpulist(text):
 
 def cpu_groups():
     allowed = os.sched_getaffinity(0)
+    node_counts = {}
     for node in sorted(Path('/sys/devices/system/node').glob('node*/cpulist')):
         candidates = sorted(cpulist(node.read_text()) & allowed)
+        node_counts[node.parent.name] = len(candidates)
         if len(candidates) >= 12:
             return dict(zip(['jm', 'tm1', 'tm2'], [candidates[i:i + 4] for i in (0, 4, 8)]))
-    raise RuntimeError('需要同一NUMA节点内至少12个允许使用的CPU：JM4核、两个TM各4核，共享同一L0硬件域。')
+    raise RuntimeError('需要同一NUMA节点内至少12个允许使用的CPU；当前允许%d个CPU，各NUMA可用数为%s。'
+                       % (len(allowed), node_counts))
 
 
 def free_port():
@@ -147,6 +233,7 @@ class Campaign:
         self.progress = {}
         self.last_heartbeat = 0
         self.error = None
+        self.last_issue = None
 
     def phase(self, stage, remaining=None):
         self.progress = dict(stage=stage, completed=len(self.rows), total=len(self.plan),
@@ -163,6 +250,13 @@ class Campaign:
             lines.append('当前阶段剩余：约%d秒。' % max(0, int(remaining)))
         if self.error:
             lines.append('原因：' + self.error['message'])
+        if self.last_issue:
+            lines.extend(['最近问题：' + self.last_issue['scope'],
+                          '错误编号：' + self.last_issue['guidance']['error_code'],
+                          '原因：' + self.last_issue['guidance']['cause'],
+                          '原始提示：' + self.last_issue['message']])
+            lines.extend('处理建议：' + step for step in self.last_issue['guidance']['next_steps'])
+            lines.append('处理人员：' + self.last_issue['guidance']['responsible_party'])
         lines.append('更新时间：' + time.strftime('%Y-%m-%d %H:%M:%S %z'))
         temp = self.run_dir / 'status.txt.tmp'
         temp.write_text('\n'.join(lines) + '\n')
@@ -191,8 +285,10 @@ class Campaign:
         for p in Path('/sys/devices/system/node').glob('node*/cpulist'):
             (out / (p.parent.name + '-cpulist.txt')).write_text(p.read_text())
         r = subprocess.run([str(self.runtime / 'jdk/bin/java'), '-version'],
-                           env=self.env, capture_output=True, text=True, check=True)
+                           env=self.env, capture_output=True, text=True)
         (out / 'java-version.txt').write_text(r.stdout + r.stderr)
+        if r.returncode:
+            raise RuntimeError('Java启动失败（退出码%d）：%s' % (r.returncode, (r.stdout + r.stderr).strip()))
         shutil.copy2(Path(__file__).resolve(), out / 'collector.py')
         shutil.copy2(Path(__file__).resolve().parent / 'l0_detector.sh', out / 'l0_detector.sh')
         info = dict(mode=self.label, uname=list(os.uname()), cpu_groups=self.cpus, controller_cpus=self.controller_cpus,
@@ -215,9 +311,11 @@ class Campaign:
         mem = {x.split(':')[0]: int(x.split()[1]) * 1024 for x in Path('/proc/meminfo').read_text().splitlines()
                if x.startswith(('MemTotal:', 'MemAvailable:'))}
         if mem['MemAvailable'] < 76 * 1024 ** 3:
-            raise RuntimeError('至少需要约76GiB可用内存（JM8GiB＋两个TM各32GiB＋系统余量）。')
-        if shutil.disk_usage(self.work).free < 2 * 1024 ** 3:
-            raise RuntimeError('运行目录至少需要2GiB空闲磁盘。')
+            raise RuntimeError('至少需要约76GiB可用内存，当前可用%.2fGiB（JM8GiB＋两个TM各32GiB＋系统余量）。'
+                               % (mem['MemAvailable'] / 1024 ** 3))
+        disk_free = shutil.disk_usage(self.work).free
+        if disk_free < 2 * 1024 ** 3:
+            raise RuntimeError('运行目录%s至少需要2GiB空闲磁盘，当前%.2fGiB。' % (self.work, disk_free / 1024 ** 3))
 
     def preflight_l0(self):
         folder = self.output / 'l0-preflight'
@@ -233,18 +331,29 @@ class Campaign:
         try:
             if not self.a.validate_dram:
                 script = Path(__file__).resolve().parent / 'l0_detector.sh'
-                command = ['bash', '-c', 'source "$1"; forl0_detect_l0_environment; '
-                           'forl0_print_l0_detection; test -n "$FORL0_L0_DEVICE_PATH" && '
-                           'test -n "$FORL0_L0_LIBRARY_PATH"; printf "\\nLIBRARY=%s\\n" "$FORL0_L0_LIBRARY_PATH"',
+                command = ['bash', '-c', 'source "$1"; forl0_detect_l0_environment; detected=$?; '
+                           'forl0_print_l0_detection; printf "\\nDEVICE=%s\\nLIBRARY=%s\\n" '
+                           '"$FORL0_L0_DEVICE_PATH" "$FORL0_L0_LIBRARY_PATH"; exit "$detected"',
                            'l0-detect', str(script)]
                 r = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=120)
                 (folder / 'detection.log').write_text(r.stdout + r.stderr)
-                if r.returncode or not re.search(r'^LIBRARY=.+', r.stdout, re.M):
-                    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')
-                library = re.search(r'^LIBRARY=(.+)', r.stdout, re.M).group(1)
+                device_match = re.search(r'^DEVICE=(.+)', r.stdout, re.M)
+                library_match = re.search(r'^LIBRARY=(.+)', r.stdout, re.M)
+                if not device_match and not library_match:
+                    raise RuntimeError('L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。')
+                if not device_match:
+                    raise RuntimeError('L0设备未找到：未发现 /dev/l0 或 /dev/hisi_l0；请管理员检查驱动。')
+                if not library_match:
+                    raise RuntimeError('L0 SDK未找到：没有检测到可读的 libl0mempool.so。')
+                if r.returncode:
+                    raise RuntimeError('L0检测脚本执行失败，退出码%d。' % r.returncode)
+                device = device_match.group(1)
+                library = library_match.group(1)
                 self.env['FORL0_L0_LIBRARY_PATH'] = library
                 self.env['BRISKSTATE_L0_LIBRARY_DIRS'] = str(Path(library).parent)
-                dump(folder / 'sdk.json', dict(library=library, sha256=sha(library)))
+                dump(folder / 'sdk.json', dict(library=library, sha256=sha(library), device=device))
+                if not os.access(device, os.R_OK | os.W_OK):
+                    raise PermissionError('L0设备权限不足：当前uid=%d，需要读写%s。' % (os.getuid(), device))
         except Exception:
             detection_error = traceback.format_exc()
             dump(folder / 'detection-failure.json', dict(error=detection_error))
@@ -266,9 +375,14 @@ class Campaign:
             except Exception:
                 record['error'] = traceback.format_exc()
                 record['message'] = str(sys.exc_info()[1]).strip().splitlines()[-1]
+                record['evidence'] = log_tails([folder / 'detection.log', trial / 'tm1.log', trial / 'tm2.log'])
+                record['guidance'] = error_guidance(record['message'], record['evidence'])
+                self.last_issue = dict(scope=arm_name(arm) + '；该档跳过，其他条件继续',
+                                       message=record['message'], guidance=record['guidance'])
                 dump(trial / 'failure.json', record)
                 print('容量验证未通过：%s。原因：%s。其他档位和基线继续。' %
                       (arm_name(arm), record['message']), flush=True)
+                self.phase('该档未通过，继续检查其他容量')
             self.preflight[arm] = record
             dump(folder / 'tiers.json', self.preflight)
 
@@ -511,13 +625,17 @@ class Campaign:
         if arm in self.preflight and self.preflight[arm]['status'] != 'passed':
             row.update(status='skipped', error=self.preflight[arm]['error'],
                        message=self.preflight[arm]['message'],
+                       guidance=self.preflight[arm]['guidance'], evidence_ref='l0_preflight.' + arm,
                        reason='L0 preflight failed; no benchmark launched for this tier')
+            self.last_issue = dict(scope=workload.upper() + ' / ' + arm_name(arm) + '；跳过',
+                                   message=row['message'], guidance=row['guidance'])
             dump(folder / 'failure.json', row)
             self.failures.append(row)
             self.rows.append(row)
             self.write_results()
             print('已跳过：%s / %s。原因：%s。' % (workload.upper(), arm_name(arm), row['message']), flush=True)
             return
+        jid = None
         try:
             self.configure(workload, arm, folder)
             self.phase('正在启动JM和两个TM')
@@ -664,16 +782,18 @@ class Campaign:
         except Exception:
             row['error'] = traceback.format_exc()
             row['message'] = str(sys.exc_info()[1])
-            row['diagnostics'] = {}
+            row['diagnostics'] = dict(submission=log_tails([folder / 'submission.log']))
             for role in ['jm', 'tm1', 'tm2']:
                 log_dir = self.work / role / 'log'
-                row['diagnostics'][role] = {}
-                if log_dir.is_dir():
-                    for log in log_dir.iterdir():
-                        if log.is_file():
-                            with log.open('rb') as stream:
-                                stream.seek(max(0, log.stat().st_size - 8192))
-                                row['diagnostics'][role][log.name] = stream.read().decode(errors='replace')
+                row['diagnostics'][role] = log_tails(log_dir.iterdir()) if log_dir.is_dir() else {}
+            if jid:
+                try:
+                    row['diagnostics']['job_exceptions'] = self.api('/jobs/' + jid + '/exceptions')
+                except Exception as diagnostic_error:
+                    row['diagnostics']['job_exceptions'] = dict(unavailable=str(diagnostic_error))
+            row['guidance'] = error_guidance(row['message'], row['diagnostics'])
+            self.last_issue = dict(scope=workload.upper() + ' / ' + arm_name(arm) + '；本轮失败，其他条件继续',
+                                   message=row['message'], guidance=row['guidance'])
             dump(folder / 'failure.json', row)
             self.failures.append(row)
             print('本轮失败：%s / %s。原因：%s。其他条件继续。' %
@@ -711,7 +831,7 @@ class Campaign:
              environment=self.environment_info, artifacts=self.hashes, plan=self.plan,
              l0_sdk=json.loads(sdk.read_text()) if sdk.exists() else None,
              l0_capacity=json.loads(capacity.read_text()) if capacity.exists() else None,
-             l0_preflight=self.preflight, summary=summary, runs=self.rows, error=self.error))
+             l0_preflight=self.preflight, summary=summary, runs=self.rows, error=self.error, last_issue=self.last_issue))
 
     def run(self):
         try:
@@ -744,6 +864,8 @@ class Campaign:
             self.finished_ms = int(time.time() * 1000)
             self.error = dict(message='用户停止测试' if isinstance(error, KeyboardInterrupt) else str(error),
                               traceback=traceback.format_exc())
+            self.error['guidance'] = error_guidance(self.error['message'])
+            self.last_issue = dict(scope='整套测试已停止', message=self.error['message'], guidance=self.error['guidance'])
             self.phase('测试已停止，保留已完成数据' if self.state == 'stopped' else '测试无法继续，错误已保存')
             self.write_results()
             return 130 if self.state == 'stopped' else 1
@@ -797,11 +919,14 @@ def main():
         if campaign is not None:
             raise
         message = str(error) or type(error).__name__
+        guidance = error_guidance(message)
         run_dir = Path(os.environ['BRISKSTATE_RUN_DIR'])
         dump(Path(os.environ['BRISKSTATE_RESULT_FILE']),
              dict(schema_version=2, status='failed', error=dict(stage='setup', message=message,
-                  traceback=traceback.format_exc()), runs=[]))
-        (run_dir / 'status.txt').write_text('状态：启动失败。\n原因：' + message + '\n')
+                  traceback=traceback.format_exc(), guidance=guidance), runs=[]))
+        (run_dir / 'status.txt').write_text('状态：启动失败。\n错误编号：' + guidance['error_code'] + '\n原因：' + message + '\n处理人员：' +
+                                         guidance['responsible_party'] + '\n' +
+                                         '\n'.join('处理建议：' + step for step in guidance['next_steps']) + '\n')
         print('无法开始测试：' + message, flush=True)
         return 1
 

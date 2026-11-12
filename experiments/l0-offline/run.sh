@@ -21,8 +21,12 @@ USAGE
     exit 0
 fi
 if [[ "$(uname -s)" != Linux || "$(uname -m)" != aarch64 ]]; then
-    echo '无法启动：需要Linux ARM64机器。' >&2
+    printf '无法启动：需要Linux ARM64，当前为%s/%s。请在指定L0机器上运行。\n' "$(uname -s)" "$(uname -m)" >&2
     exit 2
+fi
+if [[ ! -r "$PACKAGE/payload/archive.sha256" ]]; then
+    printf '无法启动：离线文件不完整，缺少%s/payload/archive.sha256。请重新复制完整分支。\n' "$PACKAGE" >&2
+    exit 3
 fi
 ARCHIVE_SHA=$(cat "$PACKAGE/payload/archive.sha256")
 CACHE_ROOT="${TMPDIR:-/tmp}/briskstate-l0-$(id -u)-${ARCHIVE_SHA:0:16}"
