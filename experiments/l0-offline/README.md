@@ -45,7 +45,9 @@
 
 需要Linux ARM64 / Ubuntu22.04，与验收裸机一致；需要同一NUMA节点内至少12个可用CPU、约76GiB可用内存、可写的仓库结果目录和数GiB运行空间。硬件测试还需已安装并有权限使用L0驱动和libl0mempool.so；脚本不会修改驱动、BIOS或内核。
 
-Java、Flink、Python及其依赖和编译产物使用仓库内普通Git分片提供，无需Release/LFS下载，不访问外网。SDK查找沿用main的l0_detector.sh：设备/dev/l0或/dev/hisi_l0；库从LD_LIBRARY_PATH、ldconfig、常见目录及/opt、/usr/local、HOME有界搜索。只使用loopback上的Flink通信。
+Java、Flink、Python及其依赖和编译产物使用仓库内普通Git分片提供，无需Release/LFS下载，不访问外网。先使用main的l0_detector.sh进行常见路径检测，再自动排查驱动、设备权限和SDK。找不到可加载SDK时扩大搜索至仓库、当前目录、/home、/root、/opt、/usr/local、/data、/mnt等本地目录，不受root的HOME范围限制；递归深度8，搜索限时45秒，跳过常见网络文件系统。候选SDK检查ELF架构、真实动态加载和四个必需接口，自动使用通过检查的库；依赖缺失时保留原始加载错误。只使用loopback上的Flink通信。
+
+自动检查会记录运行uid/HOME、搜索目录、候选库、/dev设备权限、sysfs、L0内核模块及驱动参数，写入同一个结果JSON的l0_diagnostics。未发现仅代表当前环境与搜索范围未匹配，不能据此认定整台机器没有安装。若发现非标准设备名，明确提示当前native后端支持/dev/l0、/dev/hisi_l0，需要核对接口；不会创建假节点、修改权限或自动加载驱动。
 
 | 项目 | 参数 |
 |---|---|
@@ -84,6 +86,7 @@ JSON启动时即建立，每完成一个条件原子更新一次；程序结束�
 | counts / plan | 成功、失败、跳过数量和实验计划 |
 | environment / artifacts | 环境、实验参数、CPU分配、二进制哈希 |
 | l0_sdk / l0_capacity / l0_preflight | SDK、容量依据、各档读写预检及失败原因 |
+| l0_diagnostics | 自动搜索范围、设备与驱动证据、SDK候选库及实际加载结果 |
 | runs | 每轮吞吐、计时、状态规模、逐秒计数、内存、正确性、实际配置和L0证明 |
 | summary | 各条件有效重复数、平均吞吐、相对无L0加速比 |
 | error | 无法继续或手动停止的原因 |
@@ -102,6 +105,8 @@ PSS/RSS为两个TM的合计，不含JM。PSS为窗口采样均值，RSS为窗口
 |---|---|
 | INVALID_ARGUMENT | 按提示改参数，或直接使用默认入口 |
 | L0_DEVICE_MISSING / L0_ENVIRONMENT_MISSING | 管理员检查驱动、设备节点及账号权限；若同时缺SDK，提示会一并说明 |
+| L0_DEVICE_NOT_EXPOSED | 检测到了L0模块或sysfs记录；管理员检查设备节点生成及容器设备透传 |
+| L0_DEVICE_PATH_UNSUPPORTED | 发现其他L0候选设备名；返回JSON由开发者与驱动提供方核对接口 |
 | L0_SDK_MISSING | 确认SDK已安装；可用export L0_MEMPOOL_LIB_HOST_PATH=/实际路径/libl0mempool.so指定 |
 | ACCESS_DENIED | 管理员检查提示路径的访问权限，不会自动修改权限或驱动 |
 | SDK_LOAD_FAILED / SDK_ABI_MISMATCH | 按原始错误核对依赖、库路径、架构及符号；接口不兼容需SDK提供方或开发者协助 |
@@ -114,6 +119,9 @@ PSS/RSS为两个TM的合计，不含JM。PSS为窗口采样均值，RSS为窗口
 ## 可选参数
 
 ```bash
+# 只排查环境，自动后台执行并生成一个JSON；不启动Flink或申请L0容量
+./run-l0-benchset --diagnose
+
 # 短测WC，仍为后台运行；4096keys、预热2s、测量5s、每组一次
 ./run-l0-benchset --smoke --workloads wc
 

@@ -1,0 +1,167 @@
+{
+  "schema_version": 2,
+  "status": "failed",
+  "mode": "L0_DIAGNOSTICS_ONLY",
+  "l0_diagnostics": {
+    "schema_version": 1,
+    "uid": 0,
+    "gid": 0,
+    "home": "/root",
+    "sudo_user": "jinyun",
+    "cwd": "/home/jinyun/briskstate-l0-offline-20261111",
+    "repository": "/home/jinyun",
+    "hostname": "host-192-168-0-3",
+    "kernel": "5.15.0-25-generic",
+    "architecture": "aarch64",
+    "overrides": {
+      "L0_DEVICE_HOST_PATH": null,
+      "L0_MEMPOOL_LIB_HOST_PATH": null,
+      "LD_LIBRARY_PATH": null,
+      "FORL0_L0_SEARCH_ROOTS": null
+    },
+    "issues": [
+      {
+        "error_code": "L0_DEVICE_MISSING",
+        "cause": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。"
+      },
+      {
+        "error_code": "L0_SDK_MISSING",
+        "cause": "自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。"
+      }
+    ],
+    "main_detector": {
+      "argv": [
+        "bash",
+        "-c",
+        "source \"$1\"; forl0_detect_l0_environment; detected=$?; forl0_print_l0_detection; printf \"\\nDEVICE=%s\\nLIBRARY=%s\\n\" \"$FORL0_L0_DEVICE_PATH\" \"$FORL0_L0_LIBRARY_PATH\"; exit \"$detected\"",
+        "l0-detect",
+        "/home/jinyun/briskstate-l0-offline-20261111/package/scripts/l0_detector.sh"
+      ],
+      "exit_code": 1,
+      "stdout": "  device:      MISSING (/dev/hisi_l0 or /dev/l0; override: L0_DEVICE_HOST_PATH)\n  libl0:       MISSING (override: L0_MEMPOOL_LIB_HOST_PATH; search: ldconfig, LD_LIBRARY_PATH, multiarch, /opt, /usr/local, HOME)\n  libnuma:     OK (/usr/lib/aarch64-linux-gnu/libnuma.so.1.0.0; ldconfig cache)\n\nDEVICE=\nLIBRARY=\n",
+      "stderr": "",
+      "timed_out": false
+    },
+    "driver_modules": [],
+    "sysfs_devices": [],
+    "devices": [
+      {
+        "path": "/dev/hisi_l0",
+        "exists": false,
+        "error": "[Errno 2] No such file or directory: '/dev/hisi_l0'"
+      },
+      {
+        "path": "/dev/l0",
+        "exists": false,
+        "error": "[Errno 2] No such file or directory: '/dev/l0'"
+      }
+    ],
+    "driver_parameters": {},
+    "execution_context": {
+      "/proc/self/cgroup": "0::/user.slice/user-9001.slice/session-258086.scope",
+      "/proc/1/comm": "systemd"
+    },
+    "container_markers": {
+      "/.dockerenv": false,
+      "/run/.containerenv": false
+    },
+    "library_discovery_errors": {},
+    "search": {
+      "roots": [
+        "/home/jinyun",
+        "/home/jinyun/briskstate-l0-offline-20261111",
+        "/opt",
+        "/usr/local",
+        "/home",
+        "/root",
+        "/data",
+        "/mnt",
+        "/media",
+        "/srv",
+        "/tmp",
+        "/var/tmp",
+        "/usr/lib",
+        "/usr/lib64"
+      ],
+      "max_depth": 8,
+      "timeout_seconds": 45,
+      "performed": true,
+      "scope": "local filesystems; no downloads",
+      "command_result": {
+        "argv": [
+          "find",
+          "-H",
+          "/home/jinyun",
+          "/home/jinyun/briskstate-l0-offline-20261111",
+          "/opt",
+          "/usr/local",
+          "/home",
+          "/root",
+          "/data",
+          "/mnt",
+          "/media",
+          "/srv",
+          "/tmp",
+          "/var/tmp",
+          "/usr/lib",
+          "/usr/lib64",
+          "-xdev",
+          "-maxdepth",
+          "8",
+          "(",
+          "-fstype",
+          "nfs",
+          "-o",
+          "-fstype",
+          "nfs4",
+          "-o",
+          "-fstype",
+          "cifs",
+          "-o",
+          "-fstype",
+          "autofs",
+          "-o",
+          "-fstype",
+          "sshfs",
+          "-o",
+          "-fstype",
+          "fuse.sshfs",
+          ")",
+          "-prune",
+          "-o",
+          "-type",
+          "f",
+          "(",
+          "-name",
+          "libl0mempool.so",
+          "-o",
+          "-name",
+          "libl0mempool.so.*",
+          ")",
+          "-print"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "find: ‘/tmp/runc-process1833284735’: No such file or directory\n",
+        "timed_out": false
+      }
+    },
+    "sdk_candidates": [],
+    "selected_device": null,
+    "selected_library": null,
+    "status": "blocked",
+    "message": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+    "guidance": {
+      "error_code": "L0_DEVICE_MISSING",
+      "cause": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+      "responsible_party": "管理员",
+      "next_steps": [
+        "确认运行在有L0的目标机器上，再按厂商说明检查驱动是否加载；检查范围和原始输出已保存在JSON。",
+        "JSON已列出搜索目录与错误；若SDK在其他位置，用L0_MEMPOOL_LIB_HOST_PATH指定实际库文件。"
+      ]
+    },
+    "elapsed_seconds": 2.966,
+    "discovered_library_paths": []
+  },
+  "runs": []
+}

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import random
 import re
+import runpy
 import shutil
 import signal
 import socket
@@ -26,6 +27,7 @@ MULTIPLIERS = dict(wc=1, fd=1, sd=1, tm=1, lg=3, vs=8, lr=12)
 L0_SIZES = {'brisk_l0_' + str(mib): mib * 1024 ** 2 for mib in [2, 4, 8, 16, 24, 32]}
 ARMS = ['heap', 'brisk_off', *L0_SIZES]
 HZ = os.sysconf('SC_CLK_TCK')
+inspect_l0 = runpy.run_path(str(Path(__file__).resolve().with_name('l0_diagnostics.py')))['inspect_l0']
 
 
 def dump(path, value):
@@ -224,6 +226,7 @@ class Campaign:
         self.label = 'DRAM_VALIDATION_ONLY' if args.validate_dram else 'REAL_L0_HARDWARE'
         self.l0_sizes = L0_SIZES.copy()
         self.preflight = {}
+        self.l0_diagnostics = None
         self.plan = []
         self.state = 'preparing'
         self.started_ms = int(time.time() * 1000)
@@ -291,8 +294,10 @@ class Campaign:
             raise RuntimeError('Java启动失败（退出码%d）：%s' % (r.returncode, (r.stdout + r.stderr).strip()))
         shutil.copy2(Path(__file__).resolve(), out / 'collector.py')
         shutil.copy2(Path(__file__).resolve().parent / 'l0_detector.sh', out / 'l0_detector.sh')
+        shutil.copy2(Path(__file__).resolve().parent / 'l0_diagnostics.py', out / 'l0_diagnostics.py')
         info = dict(mode=self.label, uname=list(os.uname()), cpu_groups=self.cpus, controller_cpus=self.controller_cpus,
                     collector_sha256=sha(out / 'collector.py'), detector_sha256=sha(out / 'l0_detector.sh'),
+                    l0_diagnostics_sha256=sha(out / 'l0_diagnostics.py'),
                     command=sys.argv, artifacts=self.hashes, runtime=str(self.runtime),
                     protocol=dict(keys=self.a.keys, feature_width=64, touches=128, window=16,
                                   parallelism=8, tm_cpu_cores=4, tm_memory_gib=32, jm_memory_gib=8,
@@ -330,25 +335,15 @@ class Campaign:
         detection_error = None
         try:
             if not self.a.validate_dram:
-                script = Path(__file__).resolve().parent / 'l0_detector.sh'
-                command = ['bash', '-c', 'source "$1"; forl0_detect_l0_environment; detected=$?; '
-                           'forl0_print_l0_detection; printf "\\nDEVICE=%s\\nLIBRARY=%s\\n" '
-                           '"$FORL0_L0_DEVICE_PATH" "$FORL0_L0_LIBRARY_PATH"; exit "$detected"',
-                           'l0-detect', str(script)]
-                r = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=120)
-                (folder / 'detection.log').write_text(r.stdout + r.stderr)
-                device_match = re.search(r'^DEVICE=(.+)', r.stdout, re.M)
-                library_match = re.search(r'^LIBRARY=(.+)', r.stdout, re.M)
-                if not device_match and not library_match:
-                    raise RuntimeError('L0设备未找到，L0 SDK未找到：需检查驱动设备节点及libl0mempool.so。')
-                if not device_match:
-                    raise RuntimeError('L0设备未找到：未发现 /dev/l0 或 /dev/hisi_l0；请管理员检查驱动。')
-                if not library_match:
-                    raise RuntimeError('L0 SDK未找到：没有检测到可读的 libl0mempool.so。')
-                if r.returncode:
-                    raise RuntimeError('L0检测脚本执行失败，退出码%d。' % r.returncode)
-                device = device_match.group(1)
-                library = library_match.group(1)
+                self.l0_diagnostics = inspect_l0(self.runtime, self.env, self.phase)
+                dump(folder / 'diagnostics.json', self.l0_diagnostics)
+                detected = self.l0_diagnostics['main_detector']
+                (folder / 'detection.log').write_text(detected['stdout'] + detected['stderr'])
+                self.write_results()
+                if self.l0_diagnostics['status'] != 'ready_for_allocation':
+                    raise RuntimeError(self.l0_diagnostics['message'])
+                device = self.l0_diagnostics['selected_device']
+                library = self.l0_diagnostics['selected_library']
                 self.env['FORL0_L0_LIBRARY_PATH'] = library
                 self.env['BRISKSTATE_L0_LIBRARY_DIRS'] = str(Path(library).parent)
                 dump(folder / 'sdk.json', dict(library=library, sha256=sha(library), device=device))
@@ -376,7 +371,8 @@ class Campaign:
                 record['error'] = traceback.format_exc()
                 record['message'] = str(sys.exc_info()[1]).strip().splitlines()[-1]
                 record['evidence'] = log_tails([folder / 'detection.log', trial / 'tm1.log', trial / 'tm2.log'])
-                record['guidance'] = error_guidance(record['message'], record['evidence'])
+                record['guidance'] = (self.l0_diagnostics.get('guidance')
+                                      if detection_error and self.l0_diagnostics else None) or error_guidance(record['message'], record['evidence'])
                 self.last_issue = dict(scope=arm_name(arm) + '；该档跳过，其他条件继续',
                                        message=record['message'], guidance=record['guidance'])
                 dump(trial / 'failure.json', record)
@@ -831,6 +827,7 @@ class Campaign:
              environment=self.environment_info, artifacts=self.hashes, plan=self.plan,
              l0_sdk=json.loads(sdk.read_text()) if sdk.exists() else None,
              l0_capacity=json.loads(capacity.read_text()) if capacity.exists() else None,
+             l0_diagnostics=self.l0_diagnostics,
              l0_preflight=self.preflight, summary=summary, runs=self.rows, error=self.error, last_issue=self.last_issue))
 
     def run(self):
@@ -896,6 +893,7 @@ def main():
         parser.add_argument('--validation-capacity-mib', type=float, default=32,
                             help='仅DRAM验收的模拟可用共享容量')
         parser.add_argument('--validate-dram', action='store_true')
+        parser.add_argument('--diagnose', action='store_true', help='只自动诊断L0设备和SDK，保存JSON；不启动Flink或申请L0容量')
         parser.add_argument('--smoke', action='store_true')
         args = parser.parse_args()
         args.workloads = args.workloads.split(',')
@@ -913,6 +911,25 @@ def main():
         lock = (Path(args.runtime).parent / 'campaign.lock').open('w')
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        if args.diagnose:
+            run_dir = Path(args.work_dir)
+            def diagnostic_progress(stage):
+                (run_dir / 'status.txt').write_text('状态：' + stage + '。\n')
+                print(stage, flush=True)
+            diagnostic = inspect_l0(Path(args.runtime), dict(os.environ), diagnostic_progress)
+            ready = diagnostic['status'] == 'ready_for_allocation'
+            dump(Path(args.results), dict(schema_version=2, status='complete' if ready else 'failed',
+                 mode='L0_DIAGNOSTICS_ONLY', l0_diagnostics=diagnostic, runs=[]))
+            lines = ['状态：L0自动诊断完成；未启动Flink，未申请L0容量。']
+            if ready:
+                lines.append('设备与SDK加载检查通过；实际分配能力仍由正式测试逐档验证。')
+                lines.append('SDK：' + diagnostic['selected_library'])
+            else:
+                lines.extend(['错误编号：' + diagnostic['guidance']['error_code'], '原因：' + diagnostic['message']])
+                lines.extend('处理建议：' + step for step in diagnostic['guidance']['next_steps'])
+            (run_dir / 'status.txt').write_text('\n'.join(lines) + '\n')
+            print('\n'.join(lines), flush=True)
+            return 0 if ready else 1
         campaign = Campaign(args)
         return campaign.run()
     except BaseException as error:

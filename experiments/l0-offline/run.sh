@@ -9,6 +9,7 @@ if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
 
   --status                   查看当前进度或上次执行结果
   --stop                     停止正在执行的测试，保留已完成数据
+  --diagnose                 只自动检查L0设备、驱动和SDK，不启动Flink
   --smoke --workloads wc      仅短测WC，验证机器是否可运行
   --repeats N                每个条件运行次数（默认1次）
   --workloads wc,fd          只运行指定workload
@@ -87,6 +88,10 @@ nohup setsid bash "$PACKAGE/scripts/worker.sh" "$RUN_DIR" "$RESULT_FILE" "$PACKA
     "${FORWARD[@]}" </dev/null >"$RUN_DIR/console.log" 2>&1 8>&- &
 printf '%s\n' "$!" > "$RUN_DIR/pid"
 printf '测试已在后台启动（进程号：%s），可以退出SSH。\n' "$!"
-printf 'L0容量：共享2、4、8、16、24、32 MiB；各档失败独立处理。\n'
+if [[ " ${FORWARD[*]} " == *' --diagnose '* ]]; then
+    printf '本次仅检查L0设备、驱动和SDK；不启动Flink，不申请L0容量。\n'
+else
+    printf '先自动检查设备、驱动与SDK，再测试共享2、4、8、16、24、32 MiB；各档失败独立处理。\n'
+fi
 printf '查看进度：./run-l0-benchset --status\n停止测试：./run-l0-benchset --stop\n'
 printf '结果文件：%s\n' "$RESULT_FILE"

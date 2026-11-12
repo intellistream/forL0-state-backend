@@ -1,0 +1,378 @@
+{
+  "schema_version": 2,
+  "status": "failed",
+  "mode": "REAL_L0_HARDWARE",
+  "started_ms": 1794474843977,
+  "finished_ms": 1794474845819,
+  "progress": {
+    "stage": "测试已结束，成功数据和失败原因均已保存",
+    "completed": 1,
+    "total": 1,
+    "current": null,
+    "updated_ms": 1794474845819,
+    "remaining_seconds": null
+  },
+  "counts": {
+    "planned": 1,
+    "completed": 1,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 1,
+    "interrupted": 0
+  },
+  "environment": {
+    "mode": "REAL_L0_HARDWARE",
+    "uname": [
+      "Linux",
+      "host-192-168-0-3",
+      "5.15.0-25-generic",
+      "#25-Ubuntu SMP Wed Mar 30 15:57:31 UTC 2022",
+      "aarch64"
+    ],
+    "cpu_groups": {
+      "jm": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "tm1": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "tm2": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    "controller_cpus": [
+      12,
+      13,
+      14,
+      15
+    ],
+    "collector_sha256": "ff659456d44dfe81d4c288b4571e8d899ea093253e2204f46925212f574bf14d",
+    "detector_sha256": "8be0bde40fa7451edeaeb18a340356665f025aeece970c93246a55b13072a498",
+    "l0_diagnostics_sha256": "64ef62e76e7f500dedabbe8c7afcc6355d55d0d822bf60fe3a37116200478f3b",
+    "command": [
+      "/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py",
+      "--runtime",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+      "--work-dir",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runs/20261112-171401-710049",
+      "--results",
+      "/tmp/briskstate-auto-l0-preflight-20261112.json",
+      "--workloads",
+      "wc",
+      "--arms",
+      "brisk_l0_2"
+    ],
+    "artifacts": {
+      "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+      "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+      "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+      "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+    },
+    "runtime": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+    "protocol": {
+      "keys": 524288,
+      "feature_width": 64,
+      "touches": 128,
+      "window": 16,
+      "parallelism": 8,
+      "tm_cpu_cores": 4,
+      "tm_memory_gib": 32,
+      "jm_memory_gib": 8,
+      "warmup_seconds": 60,
+      "measure_seconds": 60,
+      "repeats": 1,
+      "distribution": "uniform",
+      "checkpoint": false,
+      "l0_shared_sizes_mib": [
+        2,
+        4,
+        8,
+        16,
+        24,
+        32
+      ],
+      "capacity_source": "fixed tiers from historical sweep; driver metadata informational only",
+      "l0_row_policy": "resident"
+    },
+    "system": {
+      "os_release": "PRETTY_NAME=\"Ubuntu 22.04 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nVERSION=\"22.04 (Jammy Jellyfish)\"\nVERSION_CODENAME=jammy\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=jammy\n",
+      "cpuinfo_first_processor": "processor\t: 0\nBogoMIPS\t: 200.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma dcpop asimddp asimdfhm ssbs\nCPU implementer\t: 0x48\nCPU architecture: 8\nCPU variant\t: 0x1\nCPU part\t: 0xd01\nCPU revision\t: 0",
+      "meminfo": "MemTotal:       2109313348 kB\nMemFree:        678172268 kB\nMemAvailable:   2041747264 kB\nBuffers:        11623148 kB\nCached:         1324889500 kB\nSwapCached:            0 kB\nActive:         933463856 kB\nInactive:       435848092 kB\nActive(anon):     136568 kB\nInactive(anon): 32853196 kB\nActive(file):   933327288 kB\nInactive(file): 402994896 kB\nUnevictable:       54636 kB\nMlocked:           54636 kB\nSwapTotal:             0 kB\nSwapFree:              0 kB\nDirty:              7248 kB\nWriteback:             0 kB\nAnonPages:      32864248 kB\nMapped:          3975676 kB\nShmem:            178256 kB\nKReclaimable:   37651464 kB\nSlab:           45672756 kB\nSReclaimable:   37651464 kB\nSUnreclaim:      8021292 kB\nKernelStack:      176784 kB\nPageTables:       249944 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    1054656672 kB\nCommitted_AS:   84417540 kB\nVmallocTotal:   133143592960 kB\nVmallocUsed:     4471880 kB\nVmallocChunk:          0 kB\nPercpu:          2429952 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:    614400 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:         0 kB\nFilePmdMapped:         0 kB\nCmaTotal:          32768 kB\nCmaFree:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\n",
+      "numa_cpu_lists": {
+        "node4": "96-119",
+        "node2": "48-71",
+        "node0": "0-23",
+        "node7": "168-191",
+        "node5": "120-143",
+        "node3": "72-95",
+        "node1": "24-47",
+        "node6": "144-167"
+      }
+    }
+  },
+  "artifacts": {
+    "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+    "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+    "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+    "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+  },
+  "plan": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    }
+  ],
+  "l0_sdk": null,
+  "l0_capacity": {
+    "mode": "REAL_L0_HARDWARE",
+    "reported_capacity": {
+      "total_bytes": null,
+      "source": null,
+      "kind": "metadata unavailable; fixed tiers still verified"
+    },
+    "policy": "fixed tiers; each tier independently verified; no maximum-capacity search",
+    "sizes_total_bytes": {
+      "brisk_l0_2": 2097152,
+      "brisk_l0_4": 4194304,
+      "brisk_l0_8": 8388608,
+      "brisk_l0_16": 16777216,
+      "brisk_l0_24": 25165824,
+      "brisk_l0_32": 33554432
+    }
+  },
+  "l0_diagnostics": {
+    "schema_version": 1,
+    "uid": 0,
+    "gid": 0,
+    "home": "/root",
+    "sudo_user": "jinyun",
+    "cwd": "/home/jinyun/briskstate-l0-offline-20261111",
+    "repository": "/home/jinyun",
+    "kernel": "5.15.0-25-generic",
+    "architecture": "aarch64",
+    "overrides": {
+      "L0_DEVICE_HOST_PATH": null,
+      "L0_MEMPOOL_LIB_HOST_PATH": null,
+      "LD_LIBRARY_PATH": null,
+      "FORL0_L0_SEARCH_ROOTS": null
+    },
+    "issues": [
+      {
+        "error_code": "L0_DEVICE_MISSING",
+        "cause": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。"
+      },
+      {
+        "error_code": "L0_SDK_MISSING",
+        "cause": "自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。"
+      }
+    ],
+    "main_detector": {
+      "argv": [
+        "bash",
+        "-c",
+        "source \"$1\"; forl0_detect_l0_environment; detected=$?; forl0_print_l0_detection; printf \"\\nDEVICE=%s\\nLIBRARY=%s\\n\" \"$FORL0_L0_DEVICE_PATH\" \"$FORL0_L0_LIBRARY_PATH\"; exit \"$detected\"",
+        "l0-detect",
+        "/home/jinyun/briskstate-l0-offline-20261111/package/scripts/l0_detector.sh"
+      ],
+      "exit_code": 1,
+      "stdout": "  device:      MISSING (/dev/hisi_l0 or /dev/l0; override: L0_DEVICE_HOST_PATH)\n  libl0:       MISSING (override: L0_MEMPOOL_LIB_HOST_PATH; search: ldconfig, LD_LIBRARY_PATH, multiarch, /opt, /usr/local, HOME)\n  libnuma:     OK (/usr/lib/aarch64-linux-gnu/libnuma.so.1.0.0; ldconfig cache)\n\nDEVICE=\nLIBRARY=\n",
+      "stderr": "",
+      "timed_out": false
+    },
+    "driver_modules": [],
+    "sysfs_devices": [],
+    "devices": [
+      {
+        "path": "/dev/hisi_l0",
+        "exists": false,
+        "error": "[Errno 2] No such file or directory: '/dev/hisi_l0'"
+      },
+      {
+        "path": "/dev/l0",
+        "exists": false,
+        "error": "[Errno 2] No such file or directory: '/dev/l0'"
+      }
+    ],
+    "driver_parameters": {},
+    "execution_context": {
+      "/proc/self/cgroup": "0::/user.slice/user-9001.slice/session-258073.scope",
+      "/proc/1/comm": "systemd"
+    },
+    "library_discovery_errors": {},
+    "search": {
+      "roots": [
+        "/home/jinyun",
+        "/home/jinyun/briskstate-l0-offline-20261111",
+        "/opt",
+        "/usr/local",
+        "/home",
+        "/root",
+        "/data",
+        "/mnt",
+        "/media",
+        "/srv",
+        "/usr/lib",
+        "/usr/lib64"
+      ],
+      "max_depth": 8,
+      "timeout_seconds": 45,
+      "performed": true,
+      "scope": "local filesystems; no downloads",
+      "command_result": {
+        "argv": [
+          "find",
+          "-H",
+          "/home/jinyun",
+          "/home/jinyun/briskstate-l0-offline-20261111",
+          "/opt",
+          "/usr/local",
+          "/home",
+          "/root",
+          "/data",
+          "/mnt",
+          "/media",
+          "/srv",
+          "/usr/lib",
+          "/usr/lib64",
+          "-xdev",
+          "-maxdepth",
+          "8",
+          "(",
+          "-fstype",
+          "nfs",
+          "-o",
+          "-fstype",
+          "nfs4",
+          "-o",
+          "-fstype",
+          "cifs",
+          "-o",
+          "-fstype",
+          "autofs",
+          "-o",
+          "-fstype",
+          "sshfs",
+          "-o",
+          "-fstype",
+          "fuse.sshfs",
+          ")",
+          "-prune",
+          "-o",
+          "-type",
+          "f",
+          "(",
+          "-name",
+          "libl0mempool.so",
+          "-o",
+          "-name",
+          "libl0mempool.so.*",
+          ")",
+          "-print"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "timed_out": false
+      }
+    },
+    "sdk_candidates": [],
+    "selected_device": null,
+    "selected_library": null,
+    "status": "blocked",
+    "message": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+    "guidance": {
+      "error_code": "L0_DEVICE_MISSING",
+      "cause": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+      "responsible_party": "管理员",
+      "next_steps": [
+        "确认运行在有L0的目标机器上，再按厂商说明检查驱动是否加载；检查范围和原始输出已保存在JSON。",
+        "JSON已列出搜索目录与错误；若SDK在其他位置，用L0_MEMPOOL_LIB_HOST_PATH指定实际库文件。"
+      ]
+    },
+    "elapsed_seconds": 1.751,
+    "discovered_library_paths": []
+  },
+  "l0_preflight": {
+    "brisk_l0_2": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_2",
+      "requested_total_bytes": 2097152,
+      "requested_per_tm_bytes": 1048576,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 363, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 344, in preflight_l0\n    raise RuntimeError(self.l0_diagnostics['message'])\nRuntimeError: 在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。\n\n",
+      "message": "RuntimeError: 在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+      "evidence": {
+        "/tmp/briskstate-l0-0-9eda3a240390ee85/runs/20261112-171401-710049/evidence/l0-preflight/detection.log": "  device:      MISSING (/dev/hisi_l0 or /dev/l0; override: L0_DEVICE_HOST_PATH)\n  libl0:       MISSING (override: L0_MEMPOOL_LIB_HOST_PATH; search: ldconfig, LD_LIBRARY_PATH, multiarch, /opt, /usr/local, HOME)\n  libnuma:     OK (/usr/lib/aarch64-linux-gnu/libnuma.so.1.0.0; ldconfig cache)\n\nDEVICE=\nLIBRARY=\n"
+      },
+      "guidance": {
+        "error_code": "L0_DEVICE_MISSING",
+        "cause": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+        "responsible_party": "管理员",
+        "next_steps": [
+          "确认运行在有L0的目标机器上，再按厂商说明检查驱动是否加载；检查范围和原始输出已保存在JSON。",
+          "JSON已列出搜索目录与错误；若SDK在其他位置，用L0_MEMPOOL_LIB_HOST_PATH指定实际库文件。"
+        ]
+      }
+    }
+  },
+  "summary": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 1,
+      "interrupted_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    }
+  ],
+  "runs": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1,
+      "status": "skipped",
+      "mode": "REAL_L0_HARDWARE",
+      "l0_requested_total_bytes": 2097152,
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 363, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 344, in preflight_l0\n    raise RuntimeError(self.l0_diagnostics['message'])\nRuntimeError: 在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。\n\n",
+      "message": "RuntimeError: 在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+      "guidance": {
+        "error_code": "L0_DEVICE_MISSING",
+        "cause": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+        "responsible_party": "管理员",
+        "next_steps": [
+          "确认运行在有L0的目标机器上，再按厂商说明检查驱动是否加载；检查范围和原始输出已保存在JSON。",
+          "JSON已列出搜索目录与错误；若SDK在其他位置，用L0_MEMPOOL_LIB_HOST_PATH指定实际库文件。"
+        ]
+      },
+      "evidence_ref": "l0_preflight.brisk_l0_2",
+      "reason": "L0 preflight failed; no benchmark launched for this tier"
+    }
+  ],
+  "error": null,
+  "last_issue": {
+    "scope": "WC / BriskState L0共享2 MiB；跳过",
+    "message": "RuntimeError: 在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+    "guidance": {
+      "error_code": "L0_DEVICE_MISSING",
+      "cause": "在当前/dev及sysfs检查范围未发现L0设备，未发现名称包含l0的已加载模块。 同时：自动搜索范围内未找到可读的libl0mempool.so；不等于整台机器未安装SDK。",
+      "responsible_party": "管理员",
+      "next_steps": [
+        "确认运行在有L0的目标机器上，再按厂商说明检查驱动是否加载；检查范围和原始输出已保存在JSON。",
+        "JSON已列出搜索目录与错误；若SDK在其他位置，用L0_MEMPOOL_LIB_HOST_PATH指定实际库文件。"
+      ]
+    }
+  }
+}
