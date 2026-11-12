@@ -57,11 +57,11 @@ Java、Flink、Python及其依赖和编译产物使用仓库内普通Git分片�
 | workload | WC、FD、SD、TM、LG、VS、LR |
 | 状态与访问 | 均匀524288实体key，feature width64、touches128、window16 |
 | 并行度 / CP | p8，Global ACD保持1；checkpoint关闭 |
-| 单轮 | 全key初始化及排空 → 预热60s → 测量120s → 排空、正确性核验 |
-| 重复 | 每条件3次；打乱workload、轮换后端顺序 |
+| 单轮 | 全key初始化及排空 → 预热60s → 测量60s → 排空、正确性核验 |
+| 次数 | 每条件1次；打乱workload、轮换后端顺序 |
 | 吞吐 | Sink窗口记录数 ÷ 拓扑输出倍数 ÷ 测量秒数，单位输入记录/秒 |
 
-默认计划7×8×3=168个条件。全部运行时仅预热与计数共8小时24分钟，另有初始化和启动等耗时。预检失败的条件记录为skipped，不消耗对应的完整测量窗口。
+默认计划7×8×1=56个条件。全部运行时仅预热与计数共1小时52分钟，另有初始化和启动等耗时。预检失败的条件记录为skipped，不消耗对应的完整测量窗口。
 
 八组使用同一个后端无感知Job，标准MapState.get/put。Job SHA-256为7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15。32GiB是Flink process预算，CPU通过进程affinity绑定；不把它解释为OS硬RSS限制。
 
@@ -117,8 +117,8 @@ PSS/RSS为两个TM的合计，不含JM。PSS为窗口采样均值，RSS为窗口
 # 短测WC，仍为后台运行；4096keys、预热2s、测量5s、每组一次
 ./run-l0-benchset --smoke --workloads wc
 
-# 正式规模，每条件一次
-./run-l0-benchset --repeats 1
+# 正式规模，默认每条件一次、预热60s、测量60s
+./run-l0-benchset
 
 # 仅运行指定条件
 ./run-l0-benchset --workloads wc,fd --arms heap,brisk_off,brisk_l0_2

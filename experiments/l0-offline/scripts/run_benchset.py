@@ -891,8 +891,8 @@ def main():
         parser.add_argument('--arms', default=','.join(ARMS), help='默认运行Heap、无L0及六档L0，共八组')
         parser.add_argument('--keys', type=int, default=524288)
         parser.add_argument('--warmup', type=int, default=60)
-        parser.add_argument('--measure', type=int, default=120)
-        parser.add_argument('--repeats', type=int, default=3)
+        parser.add_argument('--measure', type=int, default=60)
+        parser.add_argument('--repeats', type=int, default=1)
         parser.add_argument('--validation-capacity-mib', type=float, default=32,
                             help='仅DRAM验收的模拟可用共享容量')
         parser.add_argument('--validate-dram', action='store_true')

@@ -10,13 +10,13 @@ if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
   --status                   查看当前进度或上次执行结果
   --stop                     停止正在执行的测试，保留已完成数据
   --smoke --workloads wc      仅短测WC，验证机器是否可运行
-  --repeats 1                每个条件只运行一次（默认三次）
+  --repeats N                每个条件运行次数（默认1次）
   --workloads wc,fd          只运行指定workload
   --arms heap,brisk_off      只运行指定组别
   --results /path/run.json   指定结果JSON路径，须为尚不存在的文件
 
 默认：七项workload；Heap、BriskState无L0、共享2/4/8/16/24/32MiB六档L0。
-每TM4核32GiB；并行度8；初始化后预热60秒、测量120秒；checkpoint关闭。
+每TM4核32GiB；并行度8；每条件1次，初始化后预热60秒、测量60秒；checkpoint关闭。
 USAGE
     exit 0
 fi
