@@ -1,0 +1,569 @@
+{
+  "schema_version": 2,
+  "status": "partial_results",
+  "mode": "DRAM_VALIDATION_ONLY",
+  "started_ms": 1794451401265,
+  "finished_ms": 1794451440723,
+  "progress": {
+    "stage": "测试已结束，成功数据和失败原因均已保存",
+    "completed": 3,
+    "total": 3,
+    "current": null,
+    "updated_ms": 1794451440723,
+    "remaining_seconds": null
+  },
+  "counts": {
+    "planned": 3,
+    "completed": 3,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 2,
+    "interrupted": 0
+  },
+  "environment": {
+    "mode": "DRAM_VALIDATION_ONLY",
+    "uname": [
+      "Linux",
+      "host-192-168-0-3",
+      "5.15.0-25-generic",
+      "#25-Ubuntu SMP Wed Mar 30 15:57:31 UTC 2022",
+      "aarch64"
+    ],
+    "cpu_groups": {
+      "jm": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "tm1": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "tm2": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    "controller_cpus": [
+      12,
+      13,
+      14,
+      15
+    ],
+    "collector_sha256": "873ec0bceef8e4798fd80ad365210b33f73863cb57ae298362e1c010067499ac",
+    "detector_sha256": "8be0bde40fa7451edeaeb18a340356665f025aeece970c93246a55b13072a498",
+    "command": [
+      "/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py",
+      "--runtime",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+      "--work-dir",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runs/20261112-104319-2131393",
+      "--results",
+      "/home/jinyun/briskstate-l0-offline-20261111/validation-background-20261112.json",
+      "--validate-dram",
+      "--smoke",
+      "--workloads",
+      "wc",
+      "--arms",
+      "brisk_l0_2,brisk_l0_24,brisk_l0_32",
+      "--validation-capacity-mib",
+      "4"
+    ],
+    "artifacts": {
+      "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+      "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+      "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+      "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+    },
+    "runtime": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+    "protocol": {
+      "keys": 4096,
+      "feature_width": 64,
+      "touches": 128,
+      "window": 16,
+      "parallelism": 8,
+      "tm_cpu_cores": 4,
+      "tm_memory_gib": 32,
+      "jm_memory_gib": 8,
+      "warmup_seconds": 2,
+      "measure_seconds": 5,
+      "repeats": 1,
+      "distribution": "uniform",
+      "checkpoint": false,
+      "l0_shared_sizes_mib": [
+        2,
+        4,
+        8,
+        16,
+        24,
+        32
+      ],
+      "capacity_source": "fixed tiers from historical sweep; driver metadata informational only",
+      "l0_row_policy": "resident"
+    },
+    "system": {
+      "os_release": "PRETTY_NAME=\"Ubuntu 22.04 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nVERSION=\"22.04 (Jammy Jellyfish)\"\nVERSION_CODENAME=jammy\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=jammy\n",
+      "cpuinfo_first_processor": "processor\t: 0\nBogoMIPS\t: 200.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma dcpop asimddp asimdfhm ssbs\nCPU implementer\t: 0x48\nCPU architecture: 8\nCPU variant\t: 0x1\nCPU part\t: 0xd01\nCPU revision\t: 0",
+      "meminfo": "MemTotal:       2109313348 kB\nMemFree:        698696020 kB\nMemAvailable:   1973395860 kB\nBuffers:        13183060 kB\nCached:         1296125708 kB\nSwapCached:            0 kB\nActive:         968219124 kB\nInactive:       377941980 kB\nActive(anon):   64136824 kB\nInactive(anon): 36909988 kB\nActive(file):   904082300 kB\nInactive(file): 341031992 kB\nUnevictable:       54364 kB\nMlocked:           54364 kB\nSwapTotal:             0 kB\nSwapFree:              0 kB\nDirty:              7788 kB\nWriteback:             8 kB\nAnonPages:      36894108 kB\nMapped:          2965188 kB\nShmem:          64182176 kB\nKReclaimable:   40344648 kB\nSlab:           48532628 kB\nSReclaimable:   40344648 kB\nSUnreclaim:      8187980 kB\nKernelStack:      181936 kB\nPageTables:       260184 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    1054656672 kB\nCommitted_AS:   179638792 kB\nVmallocTotal:   133143592960 kB\nVmallocUsed:     4501100 kB\nVmallocChunk:          0 kB\nPercpu:          2309376 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:   1208320 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:         0 kB\nFilePmdMapped:         0 kB\nCmaTotal:          32768 kB\nCmaFree:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\n",
+      "numa_cpu_lists": {
+        "node4": "96-119",
+        "node2": "48-71",
+        "node0": "0-23",
+        "node7": "168-191",
+        "node5": "120-143",
+        "node3": "72-95",
+        "node1": "24-47",
+        "node6": "144-167"
+      }
+    }
+  },
+  "artifacts": {
+    "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+    "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+    "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+    "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+  },
+  "plan": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    }
+  ],
+  "l0_sdk": null,
+  "l0_capacity": {
+    "mode": "DRAM_VALIDATION_ONLY",
+    "reported_capacity": {
+      "total_bytes": 4194304,
+      "source": "explicit DRAM validation fixture",
+      "kind": "not_hardware"
+    },
+    "policy": "fixed tiers; each tier independently verified; no maximum-capacity search",
+    "sizes_total_bytes": {
+      "brisk_l0_2": 2097152,
+      "brisk_l0_4": 4194304,
+      "brisk_l0_8": 8388608,
+      "brisk_l0_16": 16777216,
+      "brisk_l0_24": 25165824,
+      "brisk_l0_32": 33554432
+    }
+  },
+  "l0_preflight": {
+    "brisk_l0_2": {
+      "mode": "DRAM_VALIDATION_ONLY",
+      "arm": "brisk_l0_2",
+      "requested_total_bytes": 2097152,
+      "requested_per_tm_bytes": 1048576,
+      "status": "passed",
+      "roles": {
+        "tm1": {
+          "active": true,
+          "memory_mode": "dram_emulation",
+          "requested_bytes": 1048576,
+          "capacity_bytes": 1048512,
+          "touched_bytes": 1048320,
+          "checksum": 2041455
+        },
+        "tm2": {
+          "active": true,
+          "memory_mode": "dram_emulation",
+          "requested_bytes": 1048576,
+          "capacity_bytes": 1048512,
+          "touched_bytes": 1048320,
+          "checksum": 2041455
+        }
+      }
+    },
+    "brisk_l0_24": {
+      "mode": "DRAM_VALIDATION_ONLY",
+      "arm": "brisk_l0_24",
+      "requested_total_bytes": 25165824,
+      "requested_per_tm_bytes": 12582912,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 261, in preflight_l0\n    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'\nRuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。\n",
+      "message": "仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。"
+    },
+    "brisk_l0_32": {
+      "mode": "DRAM_VALIDATION_ONLY",
+      "arm": "brisk_l0_32",
+      "requested_total_bytes": 33554432,
+      "requested_per_tm_bytes": 16777216,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 261, in preflight_l0\n    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'\nRuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。\n",
+      "message": "仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。"
+    }
+  },
+  "summary": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 1,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": 712657.0,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 1,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 1,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    }
+  ],
+  "runs": [
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_24",
+      "repeat": 1,
+      "status": "skipped",
+      "mode": "DRAM_VALIDATION_ONLY",
+      "l0_requested_total_bytes": 25165824,
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 261, in preflight_l0\n    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'\nRuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。\n",
+      "message": "仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。",
+      "reason": "L0 preflight failed; no benchmark launched for this tier"
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_32",
+      "repeat": 1,
+      "status": "skipped",
+      "mode": "DRAM_VALIDATION_ONLY",
+      "l0_requested_total_bytes": 33554432,
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 261, in preflight_l0\n    raise RuntimeError('仅DRAM验收：固定档位超过显式设置的模拟可用容量 %g MiB。'\nRuntimeError: 仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。\n",
+      "message": "仅DRAM验收：固定档位超过显式设置的模拟可用容量 4 MiB。",
+      "reason": "L0 preflight failed; no benchmark launched for this tier"
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1,
+      "status": "passed",
+      "mode": "DRAM_VALIDATION_ONLY",
+      "l0_requested_total_bytes": 2097152,
+      "throughput_input_records_s": 712657.0,
+      "measured_sink_records": 3563285,
+      "input_equivalent_records": 3563285.0,
+      "sink_multiplier": 1,
+      "measurement_seconds": 5,
+      "measurement_start_ms": 1794451431826,
+      "measurement_end_ms": 1794451436826,
+      "per_second_sink_records": [
+        491052,
+        750657,
+        789532,
+        807873,
+        724171
+      ],
+      "warmup_seconds": 2,
+      "coverage_seconds": 15.89106384292245,
+      "source_records": 5835776,
+      "sink_records": 5835776,
+      "oracle_matches": true,
+      "keys": 4096,
+      "feature_width": 64,
+      "touches": 128,
+      "checkpoint_count": 0,
+      "tm_pss_mean_bytes": 11544096768,
+      "tm_rss_peak_bytes": 13115621376,
+      "artifacts": {
+        "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+        "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+        "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+        "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+      },
+      "l0_enabled": true,
+      "job_id": "404ca0dcb531636922834333d8655e5e",
+      "l0_proof": {
+        "mode": "DRAM_VALIDATION_ONLY",
+        "arm": "brisk_l0_2",
+        "roles": {
+          "tm1": {
+            "native_mappings": [
+              "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/native/libforl0_engine.so"
+            ],
+            "startup_lines": [
+              "[ForL0-HotCache] engine_start memory_mode=dram_emulation active=1 key_groups=16:32 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1",
+              "[ForL0-HotCache] engine_reuse memory_mode=dram_emulation active=1 key_groups=96:112 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1",
+              "[ForL0-HotCache] engine_reuse memory_mode=dram_emulation active=1 key_groups=48:64 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1",
+              "[ForL0-HotCache] engine_reuse memory_mode=dram_emulation active=1 key_groups=32:48 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1"
+            ],
+            "manager_telemetry": {
+              "time_ms": 1794451426287,
+              "pid": 2132590,
+              "mode": "dram_emulation",
+              "capacity_bytes": 1048512,
+              "used_bytes": 1041408,
+              "scalar_lookups": 0,
+              "scalar_hits": 0,
+              "scalar_writes": 0,
+              "row_lookups": 6285,
+              "row_hits": 0,
+              "row_fill_bytes": 133632,
+              "row_evictions": 0,
+              "row_writeback_bytes": 0,
+              "row_bypasses": 4190,
+              "row_hit_lines": 0,
+              "row_cache_bytes": 1041408,
+              "scalar_caches": 0,
+              "row_caches": 4
+            },
+            "jvm_command": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/compat/ld-linux-aarch64.so.1 --library-path /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/compat --preload /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/compat/libjemalloc.so.2 /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/jdk/bin/java.real -Xmx23756537856 -Xms23756537856 -XX:MaxDirectMemorySize=9261023232 -XX:MaxMetaspaceSize=268435456 -XX:+IgnoreUnrecognizedVMOptions -XX:ActiveProcessorCount=4 -XX:+UseG1GC -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/native -Xlog:gc*,safepoint:file=/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/log/gc-%p.log:time,uptime,level,tags -Dlog.file=/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/log/flink-offline-tm1-taskexecutor-0-host-192-168-0-3.log -Dlog4j.configuration=file:/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/conf/log4j-console.properties -Dlog4j.configurationFile=file:/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/conf/log4j-console.properties -Dlogback.configurationFile=file:/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/conf/logback-console.xml -classpath /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-cep-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-connector-files-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-csv-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-json-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-scala_2.12-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-statebackend-rocksdb-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-table-api-java-uber-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-table-planner-loader-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-table-runtime-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/frocksdbjni-6.20.3-ververica-2.0.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-1.2-api-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-api-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-core-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-slf4j-impl-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-dist-1.20.3.jar:::: org.apache.flink.runtime.taskexecutor.TaskManagerRunner --configDir /tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/conf -D taskmanager.memory.network.min=536870912b -D taskmanager.cpu.cores=4.0 -D taskmanager.memory.task.off-heap.size=8589934592b -D taskmanager.memory.jvm-metaspace.size=268435456b -D external-resources=none -D taskmanager.memory.jvm-overhead.min=1073741824b -D taskmanager.memory.framework.off-heap.size=134217728b -D taskmanager.memory.network.max=536870912b -D taskmanager.memory.framework.heap.size=134217728b -D taskmanager.memory.managed.size=0b -D taskmanager.memory.task.heap.size=23622320128b -D taskmanager.numberOfTaskSlots=4 -D taskmanager.memory.jvm-overhead.max=1073741824b ",
+            "cpu_affinity": [
+              4,
+              5,
+              6,
+              7
+            ],
+            "snapshot": {
+              "pid": 2132590,
+              "cpu_seconds": 12.62,
+              "memory": {
+                "rss_bytes": 1792172032,
+                "pss_bytes": 1773540352,
+                "private_dirty_bytes": 1764085760
+              },
+              "thread_masks": {
+                "4-7": 108
+              }
+            }
+          },
+          "tm2": {
+            "native_mappings": [
+              "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/native/libforl0_engine.so"
+            ],
+            "startup_lines": [
+              "[ForL0-HotCache] engine_start memory_mode=dram_emulation active=1 key_groups=112:128 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1",
+              "[ForL0-HotCache] engine_reuse memory_mode=dram_emulation active=1 key_groups=64:80 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1",
+              "[ForL0-HotCache] engine_reuse memory_mode=dram_emulation active=1 key_groups=80:96 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1",
+              "[ForL0-HotCache] engine_reuse memory_mode=dram_emulation active=1 key_groups=0:16 requested_bytes=1048576 actual_bytes=1048512 total_sets=5461 strict=1"
+            ],
+            "manager_telemetry": {
+              "time_ms": 1794451426276,
+              "pid": 2132594,
+              "mode": "dram_emulation",
+              "capacity_bytes": 1048512,
+              "used_bytes": 1041408,
+              "scalar_lookups": 0,
+              "scalar_hits": 0,
+              "scalar_writes": 0,
+              "row_lookups": 6003,
+              "row_hits": 0,
+              "row_fill_bytes": 126976,
+              "row_evictions": 0,
+              "row_writeback_bytes": 0,
+              "row_bypasses": 4002,
+              "row_hit_lines": 0,
+              "row_cache_bytes": 1041408,
+              "scalar_caches": 0,
+              "row_caches": 4
+            },
+            "jvm_command": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/compat/ld-linux-aarch64.so.1 --library-path /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/compat --preload /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/compat/libjemalloc.so.2 /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/jdk/bin/java.real -Xmx23756537856 -Xms23756537856 -XX:MaxDirectMemorySize=9261023232 -XX:MaxMetaspaceSize=268435456 -XX:+IgnoreUnrecognizedVMOptions -XX:ActiveProcessorCount=4 -XX:+UseG1GC -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/native -Xlog:gc*,safepoint:file=/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/log/gc-%p.log:time,uptime,level,tags -Dlog.file=/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/log/flink-offline-tm2-taskexecutor-0-host-192-168-0-3.log -Dlog4j.configuration=file:/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/conf/log4j-console.properties -Dlog4j.configurationFile=file:/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/conf/log4j-console.properties -Dlogback.configurationFile=file:/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/conf/logback-console.xml -classpath /tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-cep-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-connector-files-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-csv-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-json-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-scala_2.12-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-statebackend-rocksdb-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-table-api-java-uber-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-table-planner-loader-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-table-runtime-1.20.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/frocksdbjni-6.20.3-ververica-2.0.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-1.2-api-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-api-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-core-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/log4j-slf4j-impl-2.24.3.jar:/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/flink/lib/flink-dist-1.20.3.jar:::: org.apache.flink.runtime.taskexecutor.TaskManagerRunner --configDir /tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/conf -D taskmanager.memory.network.min=536870912b -D taskmanager.cpu.cores=4.0 -D taskmanager.memory.task.off-heap.size=8589934592b -D taskmanager.memory.jvm-metaspace.size=268435456b -D external-resources=none -D taskmanager.memory.jvm-overhead.min=1073741824b -D taskmanager.memory.framework.off-heap.size=134217728b -D taskmanager.memory.network.max=536870912b -D taskmanager.memory.framework.heap.size=134217728b -D taskmanager.memory.managed.size=0b -D taskmanager.memory.task.heap.size=23622320128b -D taskmanager.numberOfTaskSlots=4 -D taskmanager.memory.jvm-overhead.max=1073741824b ",
+            "cpu_affinity": [
+              8,
+              9,
+              10,
+              11
+            ],
+            "snapshot": {
+              "pid": 2132594,
+              "cpu_seconds": 12.55,
+              "memory": {
+                "rss_bytes": 1772589056,
+                "pss_bytes": 1753952256,
+                "private_dirty_bytes": 1744482304
+              },
+              "thread_masks": {
+                "8-11": 112
+              }
+            }
+          }
+        }
+      },
+      "oracle": {
+        "source_records": 5835776,
+        "source_signature": -2300613988144876423,
+        "sum_key_counts_squared": 8320438566,
+        "score_key_counts_squared": 532425474944,
+        "expected_feature_projection": -4521522705426610944,
+        "keys": 4096,
+        "workload": "wc",
+        "actual_feature_projection": -4521522705426610944
+      },
+      "topology": {
+        "nodes": [
+          {
+            "name": "Data Source",
+            "parallelism": 8
+          },
+          {
+            "name": "Split",
+            "parallelism": 8
+          },
+          {
+            "name": "Count",
+            "parallelism": 8
+          },
+          {
+            "name": "Sink",
+            "parallelism": 8
+          }
+        ],
+        "edges": [
+          {
+            "from": "Data Source",
+            "to": "Split"
+          },
+          {
+            "from": "Split",
+            "to": "Count"
+          },
+          {
+            "from": "Count",
+            "to": "Sink"
+          }
+        ]
+      },
+      "flink_configurations": {
+        "jm": {
+          "env.java.home": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/jdk",
+          "env.java.opts.all": "-XX:ActiveProcessorCount=4 -XX:+UseG1GC -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/native -Xlog:gc*,safepoint:file=/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/jm/log/gc-%p.log:time,uptime,level,tags",
+          "jobmanager.rpc.address": "127.0.0.1",
+          "jobmanager.bind-host": "127.0.0.1",
+          "jobmanager.rpc.port": 42533,
+          "jobmanager.memory.process.size": "8g",
+          "taskmanager.host": "127.0.0.1",
+          "taskmanager.bind-host": "127.0.0.1",
+          "taskmanager.rpc.port": 0,
+          "taskmanager.data.port": 0,
+          "taskmanager.resource-id": "offline-jm",
+          "taskmanager.cpu.cores": 4.0,
+          "taskmanager.numberOfTaskSlots": 4,
+          "taskmanager.memory.process.size": "32g",
+          "taskmanager.memory.task.off-heap.size": "8g",
+          "taskmanager.memory.managed.size": "0m",
+          "taskmanager.memory.network.min": "512m",
+          "taskmanager.memory.network.max": "512m",
+          "parallelism.default": 8,
+          "rest.address": "127.0.0.1",
+          "rest.bind-address": "127.0.0.1",
+          "rest.port": 34327,
+          "rest.bind-port": "34327",
+          "state.backend.type": "hashmap",
+          "state.backend.forl0.l0-cache.enabled": true,
+          "state.backend.forl0.l0-cache.total-size": "2097152b",
+          "state.backend.forl0.l0-cache.expected-engines": 2,
+          "state.backend.forl0.l0-cache.strict-allocation": true,
+          "state.backend.forl0.l0-cache.state-size": "1mb",
+          "state.backend.forl0.native-memory.max-size": "1g",
+          "restart-strategy.type": "none",
+          "state.checkpoint-storage": "filesystem",
+          "state.checkpoints.dir": "file:///tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/checkpoints",
+          "io.tmp.dirs": "/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/jm/tmp"
+        },
+        "tm1": {
+          "env.java.home": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/jdk",
+          "env.java.opts.all": "-XX:ActiveProcessorCount=4 -XX:+UseG1GC -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/native -Xlog:gc*,safepoint:file=/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/log/gc-%p.log:time,uptime,level,tags",
+          "jobmanager.rpc.address": "127.0.0.1",
+          "jobmanager.bind-host": "127.0.0.1",
+          "jobmanager.rpc.port": 42533,
+          "jobmanager.memory.process.size": "8g",
+          "taskmanager.host": "127.0.0.1",
+          "taskmanager.bind-host": "127.0.0.1",
+          "taskmanager.rpc.port": 0,
+          "taskmanager.data.port": 0,
+          "taskmanager.resource-id": "offline-tm1",
+          "taskmanager.cpu.cores": 4.0,
+          "taskmanager.numberOfTaskSlots": 4,
+          "taskmanager.memory.process.size": "32g",
+          "taskmanager.memory.task.off-heap.size": "8g",
+          "taskmanager.memory.managed.size": "0m",
+          "taskmanager.memory.network.min": "512m",
+          "taskmanager.memory.network.max": "512m",
+          "parallelism.default": 8,
+          "rest.address": "127.0.0.1",
+          "rest.bind-address": "127.0.0.1",
+          "rest.port": 34327,
+          "rest.bind-port": "34327",
+          "state.backend.type": "hashmap",
+          "state.backend.forl0.l0-cache.enabled": true,
+          "state.backend.forl0.l0-cache.total-size": "2097152b",
+          "state.backend.forl0.l0-cache.expected-engines": 2,
+          "state.backend.forl0.l0-cache.strict-allocation": true,
+          "state.backend.forl0.l0-cache.state-size": "1mb",
+          "state.backend.forl0.native-memory.max-size": "1g",
+          "restart-strategy.type": "none",
+          "state.checkpoint-storage": "filesystem",
+          "state.checkpoints.dir": "file:///tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/checkpoints",
+          "io.tmp.dirs": "/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm1/tmp"
+        },
+        "tm2": {
+          "env.java.home": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/jdk",
+          "env.java.opts.all": "-XX:ActiveProcessorCount=4 -XX:+UseG1GC -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:+PreserveFramePointer -Djava.library.path=/tmp/briskstate-l0-0-9eda3a240390ee85/runtime/native -Xlog:gc*,safepoint:file=/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/log/gc-%p.log:time,uptime,level,tags",
+          "jobmanager.rpc.address": "127.0.0.1",
+          "jobmanager.bind-host": "127.0.0.1",
+          "jobmanager.rpc.port": 42533,
+          "jobmanager.memory.process.size": "8g",
+          "taskmanager.host": "127.0.0.1",
+          "taskmanager.bind-host": "127.0.0.1",
+          "taskmanager.rpc.port": 0,
+          "taskmanager.data.port": 0,
+          "taskmanager.resource-id": "offline-tm2",
+          "taskmanager.cpu.cores": 4.0,
+          "taskmanager.numberOfTaskSlots": 4,
+          "taskmanager.memory.process.size": "32g",
+          "taskmanager.memory.task.off-heap.size": "8g",
+          "taskmanager.memory.managed.size": "0m",
+          "taskmanager.memory.network.min": "512m",
+          "taskmanager.memory.network.max": "512m",
+          "parallelism.default": 8,
+          "rest.address": "127.0.0.1",
+          "rest.bind-address": "127.0.0.1",
+          "rest.port": 34327,
+          "rest.bind-port": "34327",
+          "state.backend.type": "hashmap",
+          "state.backend.forl0.l0-cache.enabled": true,
+          "state.backend.forl0.l0-cache.total-size": "2097152b",
+          "state.backend.forl0.l0-cache.expected-engines": 2,
+          "state.backend.forl0.l0-cache.strict-allocation": true,
+          "state.backend.forl0.l0-cache.state-size": "1mb",
+          "state.backend.forl0.native-memory.max-size": "1g",
+          "restart-strategy.type": "none",
+          "state.checkpoint-storage": "filesystem",
+          "state.checkpoints.dir": "file:///tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/checkpoints",
+          "io.tmp.dirs": "/tmp/briskstate-l0-0-9eda3a240390ee85/work-14125fe1c73d/tm2/tmp"
+        }
+      }
+    }
+  ],
+  "error": null
+}

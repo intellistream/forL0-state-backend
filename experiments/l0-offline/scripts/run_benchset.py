@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Offline benchmark with four fixed L0 tiers; loopback networking only."""
+"""Offline benchmark with six fixed L0 tiers; loopback networking only."""
 import argparse
 from collections import Counter
-import csv
 import fcntl
 import hashlib
 import json
@@ -24,7 +23,7 @@ import uuid
 WORKLOADS = ['wc', 'fd', 'sd', 'tm', 'lg', 'vs', 'lr']
 ROLES = dict(wc=1, fd=1, sd=2, tm=2, lg=4, vs=9, lr=8)
 MULTIPLIERS = dict(wc=1, fd=1, sd=1, tm=1, lg=3, vs=8, lr=12)
-L0_SIZES = {'brisk_l0_' + str(mib): mib * 1024 ** 2 for mib in [2, 4, 8, 16]}
+L0_SIZES = {'brisk_l0_' + str(mib): mib * 1024 ** 2 for mib in [2, 4, 8, 16, 24, 32]}
 ARMS = ['heap', 'brisk_off', *L0_SIZES]
 HZ = os.sysconf('SC_CLK_TCK')
 
@@ -47,6 +46,14 @@ def sha(path):
 
 def signed(value):
     return (int(value) + (1 << 63)) % (1 << 64) - (1 << 63)
+
+
+def arm_name(arm):
+    if arm == 'heap':
+        return 'Heap'
+    if arm == 'brisk_off':
+        return 'BriskState 无L0'
+    return 'BriskState L0共享%g MiB' % (L0_SIZES[arm] / 1024 ** 2)
 
 
 def cpulist(text):
@@ -103,7 +110,9 @@ class Campaign:
         self.a = args
         self.runtime = Path(args.runtime).resolve()
         self.oracle = Path(__file__).resolve().parents[1] / 'reproduction/oracle'
-        self.output = Path(args.results).resolve()
+        self.result_file = Path(args.results).resolve()
+        self.run_dir = Path(args.work_dir).resolve()
+        self.output = self.run_dir / 'evidence'
         self.output.mkdir(parents=True, exist_ok=False)
         self.work = self.runtime.parent / ('work-' + uuid.uuid4().hex[:12])
         self.work.mkdir()
@@ -129,6 +138,42 @@ class Campaign:
         self.label = 'DRAM_VALIDATION_ONLY' if args.validate_dram else 'REAL_L0_HARDWARE'
         self.l0_sizes = L0_SIZES.copy()
         self.preflight = {}
+        self.plan = []
+        self.state = 'preparing'
+        self.started_ms = int(time.time() * 1000)
+        self.finished_ms = None
+        self.environment_info = {}
+        self.current = None
+        self.progress = {}
+        self.last_heartbeat = 0
+        self.error = None
+
+    def phase(self, stage, remaining=None):
+        self.progress = dict(stage=stage, completed=len(self.rows), total=len(self.plan),
+                             current=self.current, updated_ms=int(time.time() * 1000),
+                             remaining_seconds=None if remaining is None else max(0, int(remaining)))
+        counts = Counter(row['status'] for row in self.rows)
+        lines = ['状态：' + stage,
+                 '进度：已处理%d / %d；成功%d，失败%d，跳过%d，中止%d。' %
+                 (len(self.rows), len(self.plan), counts['passed'], counts['failed'], counts['skipped'], counts['interrupted'])]
+        if self.current:
+            lines.append('当前：%s / %s / 第%d次。' %
+                         (self.current['workload'].upper(), arm_name(self.current['arm']), self.current['repeat']))
+        if remaining is not None:
+            lines.append('当前阶段剩余：约%d秒。' % max(0, int(remaining)))
+        if self.error:
+            lines.append('原因：' + self.error['message'])
+        lines.append('更新时间：' + time.strftime('%Y-%m-%d %H:%M:%S %z'))
+        temp = self.run_dir / 'status.txt.tmp'
+        temp.write_text('\n'.join(lines) + '\n')
+        temp.replace(self.run_dir / 'status.txt')
+        dump(self.run_dir / 'progress.json', self.progress)
+        self.last_heartbeat = time.monotonic()
+        print('；'.join(lines[:3]), flush=True)
+
+    def heartbeat(self, stage, remaining=None):
+        if time.monotonic() - self.last_heartbeat >= 5:
+            self.phase(stage, remaining)
 
     def api(self, path):
         # Explicitly ignore proxy variables. Only this private loopback JM is used.
@@ -157,10 +202,16 @@ class Campaign:
                                   parallelism=8, tm_cpu_cores=4, tm_memory_gib=32, jm_memory_gib=8,
                                   warmup_seconds=self.a.warmup, measure_seconds=self.a.measure,
                                   repeats=self.a.repeats, distribution='uniform', checkpoint=False,
-                                  l0_shared_sizes_mib=[2, 4, 8, 16],
+                                  l0_shared_sizes_mib=[2, 4, 8, 16, 24, 32],
                                   capacity_source='fixed tiers from historical sweep; driver metadata informational only',
                                   l0_row_policy='resident'))
         dump(out / 'environment.json', info)
+        info['system'] = dict(os_release=Path('/etc/os-release').read_text(),
+                              cpuinfo_first_processor=Path('/proc/cpuinfo').read_text().split('\n\n')[0],
+                              meminfo=Path('/proc/meminfo').read_text(),
+                              numa_cpu_lists={path.parent.name: path.read_text().strip()
+                                              for path in Path('/sys/devices/system/node').glob('node*/cpulist')})
+        self.environment_info = info
         mem = {x.split(':')[0]: int(x.split()[1]) * 1024 for x in Path('/proc/meminfo').read_text().splitlines()
                if x.startswith(('MemTotal:', 'MemAvailable:'))}
         if mem['MemAvailable'] < 76 * 1024 ** 3:
@@ -202,7 +253,7 @@ class Campaign:
             trial = folder / arm
             record = dict(mode=self.label, arm=arm, requested_total_bytes=total,
                           requested_per_tm_bytes=total // 2, status='failed')
-            print('PREFLIGHT', arm, '%g MiB shared' % (total / 1024 ** 2), flush=True)
+            self.phase('验证L0共享%g MiB：两个TM各分配%g MiB' % (total / 1024 ** 2, total / 2 / 1024 ** 2))
             try:
                 if detection_error:
                     raise RuntimeError(detection_error)
@@ -211,11 +262,13 @@ class Campaign:
                                        % self.a.validation_capacity_mib)
                 proof = self.probe_pair(trial, total // 2)
                 record.update(status='passed', roles=proof)
-                print('PREFLIGHT PASS', arm, flush=True)
+                print('容量验证通过：' + arm_name(arm), flush=True)
             except Exception:
                 record['error'] = traceback.format_exc()
+                record['message'] = str(sys.exc_info()[1]).strip().splitlines()[-1]
                 dump(trial / 'failure.json', record)
-                print('PREFLIGHT FAIL', arm, record['error'], '其余档位及基线继续。', flush=True)
+                print('容量验证未通过：%s。原因：%s。其他档位和基线继续。' %
+                      (arm_name(arm), record['message']), flush=True)
             self.preflight[arm] = record
             dump(folder / 'tiers.json', self.preflight)
 
@@ -452,20 +505,22 @@ class Campaign:
         folder = self.output / 'raw' / ('%s-%s-r%d' % (workload, arm, repeat))
         folder.mkdir(parents=True)
         (folder / 'control').mkdir()
-        print('START', workload.upper(), arm, repeat, flush=True)
+        self.phase('开始本轮测试')
         row = dict(workload=workload, arm=arm, repeat=repeat, status='failed', mode=self.label,
                    l0_requested_total_bytes=self.l0_sizes.get(arm, 0))
         if arm in self.preflight and self.preflight[arm]['status'] != 'passed':
             row.update(status='skipped', error=self.preflight[arm]['error'],
+                       message=self.preflight[arm]['message'],
                        reason='L0 preflight failed; no benchmark launched for this tier')
             dump(folder / 'failure.json', row)
             self.failures.append(row)
             self.rows.append(row)
             self.write_results()
-            print('SKIP', workload.upper(), arm, repeat, '容量/SDK预检失败，详见报告。', flush=True)
+            print('已跳过：%s / %s。原因：%s。' % (workload.upper(), arm_name(arm), row['message']), flush=True)
             return
         try:
             self.configure(workload, arm, folder)
+            self.phase('正在启动JM和两个TM')
             self.start()
             backend = 'hashmap' if arm == 'heap' else 'org.apache.flink.state.forl0.ForL0StateBackendFactory'
             cmd = [str(self.runtime / 'flink/bin/flink'), 'run', '-d', '-m', '127.0.0.1:%d' % self.port,
@@ -480,12 +535,14 @@ class Campaign:
                    '--outputDirectory', str(folder), '--controlDirectory', str(folder / 'control')]
             dump(folder / 'command.json', cmd)
             begin = time.monotonic()
+            self.phase('正在提交作业')
             r = subprocess.run(cmd, env=self.role_env('jm'), capture_output=True, text=True, timeout=180)
             (folder / 'submission.log').write_text(r.stdout + r.stderr)
             match = re.search(r'Job has been submitted with JobID ([0-9a-f]{32})', r.stdout)
             if r.returncode or not match:
                 raise RuntimeError('作业提交失败；见submission.log。')
             jid = match.group(1)
+            self.phase('初始化状态：覆盖全部实体key')
             samples = []
             with (folder / 'process-samples.jsonl').open('w') as sample_file:
                 def sample():
@@ -502,6 +559,7 @@ class Campaign:
                     if ready and received == self.a.keys * MULTIPLIERS[workload]:
                         break
                     sample()
+                    self.heartbeat('初始化状态：覆盖全部实体key')
                     time.sleep(1)
                 else:
                     raise TimeoutError('全key覆盖初始化超时。')
@@ -510,28 +568,35 @@ class Campaign:
                 self.l0_proof(arm, folder)
                 (folder / 'control/release').write_text('release\n')
                 deadline = time.monotonic() + self.a.warmup
+                self.phase('预热', self.a.warmup)
                 while time.monotonic() < deadline:
                     self.check_job(jid)
                     sample()
+                    self.heartbeat('预热', deadline - time.monotonic())
                     time.sleep(min(1, max(0, deadline - time.monotonic())))
                 start = int(time.time() * 1000) + 3000
                 end = start + self.a.measure * 1000
                 dump(folder / 'control/window.json', [start, end])
                 dump(folder / 'measurement-window.json', dict(start_ms=start, end_ms=end))
+                self.phase('测量吞吐', self.a.measure)
                 while time.time() * 1000 < end:
                     self.check_job(jid)
                     sample()
+                    self.heartbeat('测量吞吐', end / 1000 - time.time())
                     time.sleep(min(1, max(0, end / 1000 - time.time())))
                 (folder / 'control/stop').write_text('stop\n')
+                self.phase('测量结束，正在排空输入')
                 deadline = time.monotonic() + 600
                 while time.monotonic() < deadline:
                     job = self.check_job(jid, ('RUNNING', 'FINISHED'))
                     if job['state'] == 'FINISHED':
                         break
                     sample()
+                    self.heartbeat('测量结束，正在排空输入')
                     time.sleep(1)
                 else:
                     raise TimeoutError('测量后排空超时。')
+            self.phase('正在核验记录数和最终状态')
             for name, suffix in [('job', ''), ('checkpoints', '/checkpoints'),
                                  ('exceptions', '/exceptions'), ('execution-config', '/config')]:
                 dump(folder / (name + '.json'), self.api('/jobs/' + jid + suffix))
@@ -582,146 +647,163 @@ class Campaign:
                        keys=self.a.keys, feature_width=64, touches=128, checkpoint_count=0,
                        tm_pss_mean_bytes=statistics.mean(pss) if pss else None,
                        tm_rss_peak_bytes=max(rss) if rss else None, artifacts=self.hashes,
-                       l0_enabled=arm in self.l0_sizes, l0_requested_total_bytes=self.l0_sizes.get(arm, 0), job_id=jid)
+                       l0_enabled=arm in self.l0_sizes, l0_requested_total_bytes=self.l0_sizes.get(arm, 0), job_id=jid,
+                       l0_proof=json.loads((folder / 'l0-proof.json').read_text()), oracle=oracle,
+                       topology=actual,
+                       flink_configurations={role: {line.split(': ', 1)[0]: json.loads(line.split(': ', 1)[1])
+                                                   for line in (folder / (role + '-config.yaml')).read_text().splitlines()}
+                                             for role in ['jm', 'tm1', 'tm2']})
             dump(folder / 'measurement.json', row)
-            print('PASS', workload.upper(), arm, repeat, round(row['throughput_input_records_s'], 2), 'input/s', flush=True)
+            print('本轮成功：%s / %s / 第%d次；吞吐 %.2f 条输入/秒。' %
+                  (workload.upper(), arm_name(arm), repeat, row['throughput_input_records_s']), flush=True)
+        except KeyboardInterrupt:
+            row.update(status='interrupted', message='用户停止本轮测试')
+            self.rows.append(row)
+            self.failures.append(row)
+            raise
         except Exception:
             row['error'] = traceback.format_exc()
+            row['message'] = str(sys.exc_info()[1])
+            row['diagnostics'] = {}
+            for role in ['jm', 'tm1', 'tm2']:
+                log_dir = self.work / role / 'log'
+                row['diagnostics'][role] = {}
+                if log_dir.is_dir():
+                    for log in log_dir.iterdir():
+                        if log.is_file():
+                            with log.open('rb') as stream:
+                                stream.seek(max(0, log.stat().st_size - 8192))
+                                row['diagnostics'][role][log.name] = stream.read().decode(errors='replace')
             dump(folder / 'failure.json', row)
             self.failures.append(row)
-            print('FAIL', workload.upper(), arm, repeat, row['error'], flush=True)
+            print('本轮失败：%s / %s。原因：%s。其他条件继续。' %
+                  (workload.upper(), arm_name(arm), row['message']), flush=True)
         finally:
             self.stop(folder)
         self.rows.append(row)
         self.write_results()
 
     def write_results(self):
-        dump(self.output / 'results.json', dict(mode=self.label, runs=self.rows, failures=len(self.failures),
-                                               l0_preflight=self.preflight, artifacts=self.hashes))
-        columns = ['workload', 'arm', 'repeat', 'status', 'mode', 'l0_requested_total_bytes', 'throughput_input_records_s',
-                   'coverage_seconds', 'measurement_seconds', 'measured_sink_records',
-                   'input_equivalent_records', 'tm_pss_mean_bytes', 'tm_rss_peak_bytes', 'oracle_matches',
-                   'reason', 'error']
-        with (self.output / 'results.csv').open('w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
-            writer.writeheader()
-            writer.writerows(self.rows)
-        selected = self.a.arms
-        labels = {'heap': 'Heap', 'brisk_off': 'BriskState 无L0',
-                  **{arm: 'L0 %g MiB' % (total / 1024 ** 2) for arm, total in self.l0_sizes.items()}}
+        summary = []
+        for workload in self.a.workloads:
+            baseline = [row['throughput_input_records_s'] for row in self.rows
+                        if row['workload'] == workload and row['arm'] == 'brisk_off' and row['status'] == 'passed']
+            for arm in self.a.arms:
+                rows = [row for row in self.rows if row['workload'] == workload and row['arm'] == arm]
+                passed = [row for row in rows if row['status'] == 'passed']
+                throughput = statistics.mean(row['throughput_input_records_s'] for row in passed) if passed else None
+                summary.append(dict(workload=workload, arm=arm,
+                                    l0_requested_total_bytes=self.l0_sizes.get(arm, 0),
+                                    valid_repeats=len(passed),
+                                    failed_repeats=sum(row['status'] == 'failed' for row in rows),
+                                    skipped_repeats=sum(row['status'] == 'skipped' for row in rows),
+                                    interrupted_repeats=sum(row['status'] == 'interrupted' for row in rows),
+                                    throughput_input_records_s_mean=throughput,
+                                    speedup_vs_brisk_off=(throughput / statistics.mean(baseline))
+                                    if throughput is not None and baseline and statistics.mean(baseline) > 0 else None))
         counts = Counter(row['status'] for row in self.rows)
-        lines = ['# Benchmark set：Heap / BriskState 无L0 / 四档L0', '', '**模式：%s**' % self.label, '',
-                 '配置：JM4核8GiB；两个TM各4核32GiB；p8；均匀分布；feature width64/touches128；CP关闭。', '',
-                 '吞吐单位为 input-equivalent records/s，按终端Sink窗口计数除以拓扑输出倍数；初始化不计入吞吐。', '',
-                 '固定共享容量为2、4、8、16 MiB，每TM分配一半。预检逐档独立进行，失败档跳过，成功档及基线继续。', '',
-                 '已处理%d组：成功%d，运行失败%d，预检失败而跳过%d。均值仅使用成功运行；未完成项不记为0。'
-                 % (len(self.rows), counts['passed'], counts['failed'], counts['skipped']), '',
-                 '| L0档位 | 共享MiB | 每TM MiB | 预检 |', '|---|---:|---:|---|']
-        for arm in selected:
-            if arm in self.l0_sizes:
-                total = self.l0_sizes[arm] / 1024 ** 2
-                lines.append('| %s | %g | %g | %s |' %
-                             (arm, total, total / 2, self.preflight.get(arm, {}).get('status', 'not run')))
-        lines += ['', '| Workload | ' + ' | '.join(labels[arm] for arm in selected) + ' |',
-                  '|---|' + '---:|' * len(selected)]
-        for workload in self.a.workloads:
-            values = {}
-            for arm in selected:
-                rows = [r for r in self.rows if r['workload'] == workload and r['arm'] == arm and r['status'] == 'passed']
-                values[arm] = ('%s (n=%d)' %
-                               (format(statistics.mean(r['throughput_input_records_s'] for r in rows), ',.2f'), len(rows))) if rows else '—'
-            lines.append('| %s | %s |' % (workload.upper(), ' | '.join(values[arm] for arm in selected)))
-        ratio_arms = [arm for arm in selected if arm in self.l0_sizes]
-        if ratio_arms and 'brisk_off' in selected:
-            lines += ['', '| Workload | ' + ' | '.join(labels[arm] + ' / 无L0' for arm in ratio_arms) + ' |',
-                      '|---|' + '---:|' * len(ratio_arms)]
-        for workload in self.a.workloads:
-            if not ratio_arms or 'brisk_off' not in selected:
-                break
-            values = {a: [r['throughput_input_records_s'] for r in self.rows
-                          if r['workload'] == workload and r['arm'] == a and r['status'] == 'passed'] for a in ARMS}
-            ratios = []
-            for arm in ratio_arms:
-                ratio = statistics.mean(values[arm]) / statistics.mean(values['brisk_off']) if values[arm] and values['brisk_off'] else None
-                ratios.append('—' if ratio is None else '%.4f× (%+.2f%%)' % (ratio, (ratio - 1) * 100))
-            lines.append('| %s | %s |' % (workload.upper(), ' | '.join(ratios)))
-        if self.failures:
-            lines += ['', '## 失败及跳过记录', '', '| Workload | 组别 | 重复 | 状态 | 原因 |', '|---|---|---:|---|---|']
-            for row in self.failures:
-                error = row['error'].strip().splitlines()[-1].replace('|', '\\|')
-                lines.append('| %s | %s | %d | %s | %s |' %
-                             (row['workload'].upper(), row['arm'], row['repeat'], row['status'], error))
-        lines += ['', '所有成功和失败运行均保留；不根据加速比筛除数据。原始逐轮数据见 results.csv/results.json，日志和配置见 raw/。', '',
-                  'CPU限制为整个进程及其Java/GC/JIT/native线程的affinity；32GiB为Flink process预算，非OS硬RSS上限。', '']
-        if self.a.validate_dram:
-            lines += ['**此结果仅为普通内存下的离线流程验收，开启列实际使用DRAM驻留池，不能作为真实L0加速结果。**', '']
-        (self.output / 'RESULTS.md').write_text('\n'.join(lines))
+        sdk = self.output / 'l0-preflight/sdk.json'
+        capacity = self.output / 'l0-preflight/capacity.json'
+        dump(self.result_file, dict(schema_version=2, status=self.state, mode=self.label,
+             started_ms=self.started_ms, finished_ms=self.finished_ms, progress=self.progress,
+             counts=dict(planned=len(self.plan), completed=len(self.rows), passed=counts['passed'],
+                         failed=counts['failed'], skipped=counts['skipped'], interrupted=counts['interrupted']),
+             environment=self.environment_info, artifacts=self.hashes, plan=self.plan,
+             l0_sdk=json.loads(sdk.read_text()) if sdk.exists() else None,
+             l0_capacity=json.loads(capacity.read_text()) if capacity.exists() else None,
+             l0_preflight=self.preflight, summary=summary, runs=self.rows, error=self.error))
 
     def run(self):
         try:
-            self.environment()
-            self.preflight_l0()
-            self.write_results()
-            plan = []
             for repeat in range(1, self.a.repeats + 1):
                 workloads = self.a.workloads.copy()
                 random.Random(20261111 + repeat).shuffle(workloads)
-                for i, w in enumerate(workloads):
+                for index, workload in enumerate(workloads):
                     selected = self.a.arms
-                    arms = selected[(repeat + i) % len(selected):] + selected[:(repeat + i) % len(selected)]
-                    plan.extend(dict(workload=w, arm=arm, repeat=repeat) for arm in arms)
-            dump(self.output / 'plan.json', plan)
-            for i, condition in enumerate(plan):
-                dump(self.output / 'status.json', dict(state='running', completed=i, total=len(plan), current=condition))
-                self.run_one(**condition)
-            counts = Counter(row['status'] for row in self.rows)
-            state = ('partial_results' if counts['passed'] else 'failed') if self.failures else 'complete'
-            dump(self.output / 'status.json', dict(state=state, completed=len(plan), total=len(plan),
-                                                  passed=counts['passed'], failed=counts['failed'],
-                                                  skipped=counts['skipped'], failures=len(self.failures)))
-            return 1 if self.failures else 0
-        except BaseException:
-            dump(self.output / 'fatal-error.json', dict(error=traceback.format_exc(), mode=self.label))
-            dump(self.output / 'status.json', dict(state='fatal_error', completed=len(self.rows), failures=len(self.failures)))
+                    offset = (repeat + index) % len(selected)
+                    arms = selected[offset:] + selected[:offset]
+                    self.plan.extend(dict(workload=workload, arm=arm, repeat=repeat) for arm in arms)
+            self.state = 'running'
+            self.phase('检查实验环境和运行资源')
             self.write_results()
-            raise
+            self.environment()
+            self.preflight_l0()
+            self.write_results()
+            for condition in self.plan:
+                self.current = condition
+                self.run_one(**condition)
+            self.current = None
+            counts = Counter(row['status'] for row in self.rows)
+            self.state = ('partial_results' if counts['passed'] else 'failed') if self.failures else 'complete'
+            self.finished_ms = int(time.time() * 1000)
+            self.phase('测试全部成功，结果已保存' if not self.failures else '测试已结束，成功数据和失败原因均已保存')
+            self.write_results()
+            return 1 if self.failures else 0
+        except BaseException as error:
+            self.state = 'stopped' if isinstance(error, KeyboardInterrupt) else 'failed'
+            self.finished_ms = int(time.time() * 1000)
+            self.error = dict(message='用户停止测试' if isinstance(error, KeyboardInterrupt) else str(error),
+                              traceback=traceback.format_exc())
+            self.phase('测试已停止，保留已完成数据' if self.state == 'stopped' else '测试无法继续，错误已保存')
+            self.write_results()
+            return 130 if self.state == 'stopped' else 1
         finally:
             self.stop()
             shutil.rmtree(self.work, ignore_errors=True)
-            print('结果目录：', self.output, flush=True)
+            print('结果JSON：', self.result_file, flush=True)
+
+
+class Arguments(argparse.ArgumentParser):
+    def error(self, message):
+        raise ValueError('参数错误：' + message)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--runtime', required=True)
-    parser.add_argument('--results', required=True)
-    parser.add_argument('--workloads', default=','.join(WORKLOADS))
-    parser.add_argument('--arms', default=','.join(ARMS), help='逗号分隔的组别；默认运行全部六组')
-    parser.add_argument('--keys', type=int, default=524288)
-    parser.add_argument('--warmup', type=int, default=60)
-    parser.add_argument('--measure', type=int, default=120)
-    parser.add_argument('--repeats', type=int, default=3)
-    parser.add_argument('--validation-capacity-mib', type=float, default=16,
-                        help='仅DRAM验收的模拟可用共享容量，超过此值的固定档位记录为预检失败')
-    parser.add_argument('--validate-dram', action='store_true', help='普通内存验收；不能产出真实L0实验数据')
-    parser.add_argument('--smoke', action='store_true', help='4096keys、2s预热、5s计时、每条件一次')
-    args = parser.parse_args()
-    args.workloads = args.workloads.split(',')
-    args.arms = args.arms.split(',')
-    if not args.workloads or any(w not in WORKLOADS for w in args.workloads):
-        parser.error('未知workload。')
-    if not args.arms or any(a not in ARMS for a in args.arms):
-        parser.error('未知组别。')
-    if args.smoke:
-        args.keys, args.warmup, args.measure, args.repeats = 4096, 2, 5, 1
-    if args.keys <= 0 or args.keys % 8 or args.measure <= 0 or args.warmup < 0 or args.repeats <= 0:
-        parser.error('keys必须是8的正倍数，measure/repeats必须为正。')
-    if not 2 <= args.validation_capacity_mib <= 256:
-        parser.error('普通内存验收容量须在2–256MiB之间。')
-    lock = (Path(args.runtime).parent / 'campaign.lock').open('w')
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
-    return Campaign(args).run()
+    campaign = None
+    try:
+        parser = Arguments(description=__doc__)
+        parser.add_argument('--runtime', required=True)
+        parser.add_argument('--work-dir', required=True)
+        parser.add_argument('--results', required=True)
+        parser.add_argument('--workloads', default=','.join(WORKLOADS))
+        parser.add_argument('--arms', default=','.join(ARMS), help='默认运行Heap、无L0及六档L0，共八组')
+        parser.add_argument('--keys', type=int, default=524288)
+        parser.add_argument('--warmup', type=int, default=60)
+        parser.add_argument('--measure', type=int, default=120)
+        parser.add_argument('--repeats', type=int, default=3)
+        parser.add_argument('--validation-capacity-mib', type=float, default=32,
+                            help='仅DRAM验收的模拟可用共享容量')
+        parser.add_argument('--validate-dram', action='store_true')
+        parser.add_argument('--smoke', action='store_true')
+        args = parser.parse_args()
+        args.workloads = args.workloads.split(',')
+        args.arms = args.arms.split(',')
+        if not args.workloads or any(workload not in WORKLOADS for workload in args.workloads):
+            parser.error('未知workload。')
+        if not args.arms or any(arm not in ARMS for arm in args.arms):
+            parser.error('未知组别。')
+        if args.smoke:
+            args.keys, args.warmup, args.measure, args.repeats = 4096, 2, 5, 1
+        if args.keys <= 0 or args.keys % 8 or args.measure <= 0 or args.warmup < 0 or args.repeats <= 0:
+            parser.error('keys必须是8的正倍数，measure/repeats必须为正。')
+        if not 2 <= args.validation_capacity_mib <= 256:
+            parser.error('普通内存验收容量须在2–256MiB之间。')
+        lock = (Path(args.runtime).parent / 'campaign.lock').open('w')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        campaign = Campaign(args)
+        return campaign.run()
+    except BaseException as error:
+        if campaign is not None:
+            raise
+        message = str(error) or type(error).__name__
+        run_dir = Path(os.environ['BRISKSTATE_RUN_DIR'])
+        dump(Path(os.environ['BRISKSTATE_RESULT_FILE']),
+             dict(schema_version=2, status='failed', error=dict(stage='setup', message=message,
+                  traceback=traceback.format_exc()), runs=[]))
+        (run_dir / 'status.txt').write_text('状态：启动失败。\n原因：' + message + '\n')
+        print('无法开始测试：' + message, flush=True)
+        return 1
 
 
 if __name__ == '__main__':

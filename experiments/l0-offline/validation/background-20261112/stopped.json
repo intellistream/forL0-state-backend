@@ -1,0 +1,1620 @@
+{
+  "schema_version": 2,
+  "status": "stopped",
+  "mode": "REAL_L0_HARDWARE",
+  "started_ms": 1794451444653,
+  "finished_ms": 1794451468897,
+  "progress": {
+    "stage": "测试已停止，保留已完成数据",
+    "completed": 1,
+    "total": 168,
+    "current": {
+      "workload": "vs",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    "updated_ms": 1794451468897,
+    "remaining_seconds": null
+  },
+  "counts": {
+    "planned": 168,
+    "completed": 1,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "interrupted": 1
+  },
+  "environment": {
+    "mode": "REAL_L0_HARDWARE",
+    "uname": [
+      "Linux",
+      "host-192-168-0-3",
+      "5.15.0-25-generic",
+      "#25-Ubuntu SMP Wed Mar 30 15:57:31 UTC 2022",
+      "aarch64"
+    ],
+    "cpu_groups": {
+      "jm": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "tm1": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "tm2": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    "controller_cpus": [
+      12,
+      13,
+      14,
+      15
+    ],
+    "collector_sha256": "873ec0bceef8e4798fd80ad365210b33f73863cb57ae298362e1c010067499ac",
+    "detector_sha256": "8be0bde40fa7451edeaeb18a340356665f025aeece970c93246a55b13072a498",
+    "command": [
+      "/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py",
+      "--runtime",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+      "--work-dir",
+      "/tmp/briskstate-l0-0-9eda3a240390ee85/runs/20261112-104402-2155161",
+      "--results",
+      "/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/results/20261112-104402-2155161.json"
+    ],
+    "artifacts": {
+      "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+      "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+      "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+      "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+    },
+    "runtime": "/tmp/briskstate-l0-0-9eda3a240390ee85/runtime",
+    "protocol": {
+      "keys": 524288,
+      "feature_width": 64,
+      "touches": 128,
+      "window": 16,
+      "parallelism": 8,
+      "tm_cpu_cores": 4,
+      "tm_memory_gib": 32,
+      "jm_memory_gib": 8,
+      "warmup_seconds": 60,
+      "measure_seconds": 120,
+      "repeats": 3,
+      "distribution": "uniform",
+      "checkpoint": false,
+      "l0_shared_sizes_mib": [
+        2,
+        4,
+        8,
+        16,
+        24,
+        32
+      ],
+      "capacity_source": "fixed tiers from historical sweep; driver metadata informational only",
+      "l0_row_policy": "resident"
+    },
+    "system": {
+      "os_release": "PRETTY_NAME=\"Ubuntu 22.04 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nVERSION=\"22.04 (Jammy Jellyfish)\"\nVERSION_CODENAME=jammy\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=jammy\n",
+      "cpuinfo_first_processor": "processor\t: 0\nBogoMIPS\t: 200.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma dcpop asimddp asimdfhm ssbs\nCPU implementer\t: 0x48\nCPU architecture: 8\nCPU variant\t: 0x1\nCPU part\t: 0xd01\nCPU revision\t: 0",
+      "meminfo": "MemTotal:       2109313348 kB\nMemFree:        720121408 kB\nMemAvailable:   1994851860 kB\nBuffers:        13183572 kB\nCached:         1296154968 kB\nSwapCached:            0 kB\nActive:         968224324 kB\nInactive:       357025408 kB\nActive(anon):   64136564 kB\nInactive(anon): 15968520 kB\nActive(file):   904087760 kB\nInactive(file): 341056888 kB\nUnevictable:       54364 kB\nMlocked:           54364 kB\nSwapTotal:             0 kB\nSwapFree:              0 kB\nDirty:              6936 kB\nWriteback:             0 kB\nAnonPages:      15911368 kB\nMapped:          2488104 kB\nShmem:          64181824 kB\nKReclaimable:   40344904 kB\nSlab:           48475688 kB\nSReclaimable:   40344904 kB\nSUnreclaim:      8130784 kB\nKernelStack:      180848 kB\nPageTables:       171740 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    1054656672 kB\nCommitted_AS:   180259748 kB\nVmallocTotal:   133143592960 kB\nVmallocUsed:     4374912 kB\nVmallocChunk:          0 kB\nPercpu:          2309376 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:   4694016 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:         0 kB\nFilePmdMapped:         0 kB\nCmaTotal:          32768 kB\nCmaFree:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\n",
+      "numa_cpu_lists": {
+        "node4": "96-119",
+        "node2": "48-71",
+        "node0": "0-23",
+        "node7": "168-191",
+        "node5": "120-143",
+        "node3": "72-95",
+        "node1": "24-47",
+        "node6": "144-167"
+      }
+    }
+  },
+  "artifacts": {
+    "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
+    "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+    "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35",
+    "oracle_class_sha256": "7357007220041e8d8f8061dc83b4b5fee534d66912a3e3bab5d9e68f06d76405"
+  },
+  "plan": [
+    {
+      "workload": "vs",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_4",
+      "repeat": 1
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_8",
+      "repeat": 1
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_16",
+      "repeat": 1
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "vs",
+      "arm": "heap",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_4",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_8",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_16",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "heap",
+      "repeat": 1
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_4",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_8",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_16",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "heap",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_8",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_16",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "heap",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_4",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_16",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "heap",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_4",
+      "repeat": 1
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_8",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "heap",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_4",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_8",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_16",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_32",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "heap",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_off",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_2",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_4",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_8",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_16",
+      "repeat": 1
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_24",
+      "repeat": 1
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_2",
+      "repeat": 2
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_4",
+      "repeat": 2
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_8",
+      "repeat": 2
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_16",
+      "repeat": 2
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_24",
+      "repeat": 2
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_32",
+      "repeat": 2
+    },
+    {
+      "workload": "lg",
+      "arm": "heap",
+      "repeat": 2
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_off",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_4",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_8",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_16",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_24",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_32",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "heap",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_off",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_2",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_8",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_16",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_24",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_32",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "heap",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_off",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_2",
+      "repeat": 2
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_4",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_16",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_24",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_32",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "heap",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_off",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_2",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_4",
+      "repeat": 2
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_8",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_24",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_32",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "heap",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_off",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_2",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_4",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_8",
+      "repeat": 2
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_16",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_32",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "heap",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_off",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_4",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_8",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_16",
+      "repeat": 2
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_24",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "heap",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_off",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_2",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_4",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_8",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_16",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_24",
+      "repeat": 2
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_32",
+      "repeat": 2
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_4",
+      "repeat": 3
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_8",
+      "repeat": 3
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_16",
+      "repeat": 3
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_24",
+      "repeat": 3
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_32",
+      "repeat": 3
+    },
+    {
+      "workload": "vs",
+      "arm": "heap",
+      "repeat": 3
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_off",
+      "repeat": 3
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_2",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_8",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_16",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_24",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_32",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "heap",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_off",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_2",
+      "repeat": 3
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_4",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_16",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_24",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_32",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "heap",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_off",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_2",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_4",
+      "repeat": 3
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_8",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_24",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_32",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "heap",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_off",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_2",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_4",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_8",
+      "repeat": 3
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_16",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_32",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "heap",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_off",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_2",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_4",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_8",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_16",
+      "repeat": 3
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_24",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "heap",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_off",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_2",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_4",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_8",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_16",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_24",
+      "repeat": 3
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_32",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_off",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_4",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_8",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_16",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_24",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_32",
+      "repeat": 3
+    },
+    {
+      "workload": "wc",
+      "arm": "heap",
+      "repeat": 3
+    }
+  ],
+  "l0_sdk": null,
+  "l0_capacity": {
+    "mode": "REAL_L0_HARDWARE",
+    "reported_capacity": {
+      "total_bytes": null,
+      "source": null,
+      "kind": "metadata unavailable; fixed tiers still verified"
+    },
+    "policy": "fixed tiers; each tier independently verified; no maximum-capacity search",
+    "sizes_total_bytes": {
+      "brisk_l0_2": 2097152,
+      "brisk_l0_4": 4194304,
+      "brisk_l0_8": 8388608,
+      "brisk_l0_16": 16777216,
+      "brisk_l0_24": 25165824,
+      "brisk_l0_32": 33554432
+    }
+  },
+  "l0_preflight": {
+    "brisk_l0_2": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_2",
+      "requested_total_bytes": 2097152,
+      "requested_per_tm_bytes": 1048576,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 259, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 243, in preflight_l0\n    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')\nRuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。\n\n",
+      "message": "RuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。"
+    },
+    "brisk_l0_4": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_4",
+      "requested_total_bytes": 4194304,
+      "requested_per_tm_bytes": 2097152,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 259, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 243, in preflight_l0\n    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')\nRuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。\n\n",
+      "message": "RuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。"
+    },
+    "brisk_l0_8": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_8",
+      "requested_total_bytes": 8388608,
+      "requested_per_tm_bytes": 4194304,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 259, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 243, in preflight_l0\n    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')\nRuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。\n\n",
+      "message": "RuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。"
+    },
+    "brisk_l0_16": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_16",
+      "requested_total_bytes": 16777216,
+      "requested_per_tm_bytes": 8388608,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 259, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 243, in preflight_l0\n    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')\nRuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。\n\n",
+      "message": "RuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。"
+    },
+    "brisk_l0_24": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_24",
+      "requested_total_bytes": 25165824,
+      "requested_per_tm_bytes": 12582912,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 259, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 243, in preflight_l0\n    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')\nRuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。\n\n",
+      "message": "RuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。"
+    },
+    "brisk_l0_32": {
+      "mode": "REAL_L0_HARDWARE",
+      "arm": "brisk_l0_32",
+      "requested_total_bytes": 33554432,
+      "requested_per_tm_bytes": 16777216,
+      "status": "failed",
+      "error": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 259, in preflight_l0\n    raise RuntimeError(detection_error)\nRuntimeError: Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 243, in preflight_l0\n    raise RuntimeError('找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。')\nRuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。\n\n",
+      "message": "RuntimeError: 找不到已安装的L0设备/SDK；见 l0-preflight/detection.log。"
+    }
+  },
+  "summary": [
+    {
+      "workload": "wc",
+      "arm": "heap",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_off",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_4",
+      "l0_requested_total_bytes": 4194304,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_8",
+      "l0_requested_total_bytes": 8388608,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_16",
+      "l0_requested_total_bytes": 16777216,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "wc",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "heap",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_off",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_4",
+      "l0_requested_total_bytes": 4194304,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_8",
+      "l0_requested_total_bytes": 8388608,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_16",
+      "l0_requested_total_bytes": 16777216,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "fd",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "heap",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_off",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_4",
+      "l0_requested_total_bytes": 4194304,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_8",
+      "l0_requested_total_bytes": 8388608,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_16",
+      "l0_requested_total_bytes": 16777216,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "sd",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "heap",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_off",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_4",
+      "l0_requested_total_bytes": 4194304,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_8",
+      "l0_requested_total_bytes": 8388608,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_16",
+      "l0_requested_total_bytes": 16777216,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "tm",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "heap",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_off",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_4",
+      "l0_requested_total_bytes": 4194304,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_8",
+      "l0_requested_total_bytes": 8388608,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_16",
+      "l0_requested_total_bytes": 16777216,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lg",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "heap",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_off",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_4",
+      "l0_requested_total_bytes": 4194304,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_8",
+      "l0_requested_total_bytes": 8388608,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_16",
+      "l0_requested_total_bytes": 16777216,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "vs",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "heap",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_off",
+      "l0_requested_total_bytes": 0,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_2",
+      "l0_requested_total_bytes": 2097152,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_4",
+      "l0_requested_total_bytes": 4194304,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_8",
+      "l0_requested_total_bytes": 8388608,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_16",
+      "l0_requested_total_bytes": 16777216,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_24",
+      "l0_requested_total_bytes": 25165824,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    },
+    {
+      "workload": "lr",
+      "arm": "brisk_l0_32",
+      "l0_requested_total_bytes": 33554432,
+      "valid_repeats": 0,
+      "failed_repeats": 0,
+      "skipped_repeats": 0,
+      "throughput_input_records_s_mean": null,
+      "speedup_vs_brisk_off": null
+    }
+  ],
+  "runs": [
+    {
+      "workload": "vs",
+      "arm": "brisk_off",
+      "repeat": 1,
+      "status": "interrupted",
+      "mode": "REAL_L0_HARDWARE",
+      "l0_requested_total_bytes": 0,
+      "message": "用户停止本轮测试"
+    }
+  ],
+  "error": {
+    "message": "用户停止测试",
+    "traceback": "Traceback (most recent call last):\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 733, in run\n    self.run_one(**condition)\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 563, in run_one\n    time.sleep(1)\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 792, in <lambda>\n    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))\n  File \"/home/jinyun/briskstate-l0-offline-20261111/experiments/l0-offline/scripts/run_benchset.py\", line 792, in <genexpr>\n    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))\nKeyboardInterrupt\n"
+  }
+}

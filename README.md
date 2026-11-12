@@ -3,10 +3,10 @@
 ## L0硬件离线 benchmark set
 
 ```bash
-bash ./run-l0-benchset
+./run-l0-benchset
 ```
 
-此入口自带 ARM64 Java/Flink/Python及编译产物，无需联网安装，自动运行Heap、BriskState无L0以及共享2/4/8/16MiB四档L0；每TM4核32GiB。各档独立验证，大档失败仍继续小档和基线，输出包含成功数据及失败原因的报告。结果只保存为CSV、JSON、Markdown和文本日志。使用说明与验收记录见 [离线实验文档](experiments/l0-offline/README.md)。
+此入口自动后台运行，可退出SSH，无需手动nohup或配置环境。自带ARM64 Java/Flink/Python及编译产物，全程离线；运行Heap、BriskState无L0及共享2/4/8/16/24/32MiB六档L0，每TM4核32GiB。各档失败独立处理，最终只需返回一个结果JSON。使用 `./run-l0-benchset --status` 查看进度，`--stop` 停止并保留数据。使用说明见 [离线实验文档](experiments/l0-offline/README.md)。
 
 Repository ownership and entry-point layout are documented in
 [`docs/REPOSITORY_STRUCTURE.md`](docs/REPOSITORY_STRUCTURE.md).

@@ -1,103 +1,123 @@
-# L0 硬件离线 benchmark set
+# L0硬件离线测试
 
-在仓库根目录运行：
+合作方取得 briskstate_workspace 分支的完整仓库后，在仓库根目录执行：
 
 ```bash
-bash ./run-l0-benchset
+./run-l0-benchset
 ```
 
-无需安装 Java、Flink、Python、Maven、CMake、Docker，也不会访问网络。运行包使用普通 Git 分片保存；不从 Release 或 LFS 下载运行时。适用环境为 Linux ARM64 / Ubuntu 22.04，与验收裸机一致。系统需已有可用的 L0 内核驱动、用户态 `libl0mempool.so`，以及访问设备的权限；脚本不会修改 BIOS、内核或驱动参数。
+脚本自动在后台运行，启动后立即返回，可以退出SSH；无需手动使用nohup、重定向或安装运行环境。启动信息给出本次结果JSON的完整路径。每次测试只在结果目录生成一个JSON文件，不再生成CSV、Markdown报告、压缩包或独立原始数据目录。
 
-脚本依次完成硬件识别、四档独立验证、正式运行和结果汇总。默认计划为7项workload × 6组 × 3次，共126个条件；预检失败档位会记录并跳过。结果只输出CSV、JSON、Markdown和文本日志，不生成结果压缩包或二进制直方图。终端会打印结果目录，默认位于本目录的 `results/时间戳/`。每次运行新建目录，不覆盖历史数据。
+查看当前阶段、已完成数量和上一轮结果：
 
-## 六组配置
+```bash
+./run-l0-benchset --status
+```
 
-| 组别 | 状态后端 | L0 |
-|---|---|---|
-| `heap` | Heap / HashMapStateBackend | 关闭 |
-| `brisk_off` | BriskState / ForL0StateBackend | 关闭 |
-| `brisk_l0_2` | 同一 BriskState 二进制 | 共享2 MiB，每TM 1 MiB |
-| `brisk_l0_4` | 同一 BriskState 二进制 | 共享4 MiB，每TM 2 MiB |
-| `brisk_l0_8` | 同一 BriskState 二进制 | 共享8 MiB，每TM 4 MiB |
-| `brisk_l0_16` | 同一 BriskState 二进制 | 共享16 MiB，每TM 8 MiB |
+需要停止时：
 
-容量均为**同一NUMA节点上两个TM共享总量**，每TM一半。固定档位不根据探测结果扩大，不搜索硬件最大可分配容量。
+```bash
+./run-l0-benchset --stop
+```
 
-档位参考 `main` 的 `benchmark/scripts/sweep_l0_size.py`：旧脚本列出0、2、4、8、12、16、20、24 MiB。这里选用2、4、8、16 MiB，保留小容量起点并覆盖较宽范围。旧脚本列出的配置不是各档已在真实硬件上成功运行的证明。
+停止后关闭本次JM/TM，保留已完成数据。已有后台任务时再次执行入口只显示其进度，不会重复启动。机器重启后不会自动恢复实验；没有断点续跑功能。
 
-预检按2→4→8→16 MiB依次执行：两个独立进程同时持有各自一半的SDK内存池，逐缓存行读写，再释放。每档独立捕获错误；大档分配失败不影响已通过的小档。不会缩小某一档却仍用原容量标签。驱动的 `max_numa_capacity` / `capacity_bytes` 信息能读则保存，读不到也继续逐档验证，不再把容量元数据作为启动条件。
+## 八组配置
 
-设备或SDK缺失时，四个L0档位标为预检失败，Heap和BriskState无L0仍运行。预检失败档的每个计划条件保存为 `skipped`，注明原因；运行中的个别失败标为 `failed`，继续其他条件。所有成功结果、失败原因和各列有效样本数都会进入同一份报告。真实硬件是否至少支持一个L0档位仍取决于设备可用容量与SDK；脚本不能保证硬件本身一定可用。
+| 组别参数 | 后端 | 两TM共享L0容量 | 每TM容量 |
+|---|---|---:|---:|
+| heap | Heap | 关闭 | — |
+| brisk_off | BriskState | 关闭 | — |
+| brisk_l0_2 | BriskState | 2 MiB | 1 MiB |
+| brisk_l0_4 | BriskState | 4 MiB | 2 MiB |
+| brisk_l0_8 | BriskState | 8 MiB | 4 MiB |
+| brisk_l0_16 | BriskState | 16 MiB | 8 MiB |
+| brisk_l0_24 | BriskState | 24 MiB | 12 MiB |
+| brisk_l0_32 | BriskState | 32 MiB | 16 MiB |
 
-SDK自动搜索方式沿用 `main` 分支的 `docker/lib/l0_detector.sh`：`/dev/l0` 或 `/dev/hisi_l0`；`LD_LIBRARY_PATH`、ldconfig、常见库目录以及 `/opt`、`/usr/local`、HOME 下的有界搜索。native使用检测到的SDK绝对路径。不会用普通内存伪装硬件启用，也不会在启用失败后继续记为开启L0。
+六档逐档独立验证，不搜索硬件最大容量，也不把失败档缩小后冒充原容量。大档失败不影响小档、Heap和无L0组。驱动容量信息只作参考，缺失不会阻止固定档位验证。
 
-## 与主 benchmark set 相同的实验协议
+设备/SDK缺失时，L0组记录跳过原因，基线继续。预检同时建立两个进程的SDK内存池，逐缓存行读写后释放；实际作业还会核对真实TM的L0模式、容量和驻留池，不能把普通内存回退记为硬件启用。
+
+旧main脚本列出的容量为0/2/4/8/12/16/20/24 MiB；当前按实验要求扩为2/4/8/16/24/32 MiB。这些数值是测试请求量，不是对实际可用硬件容量的保证。
+
+## 机器要求和实验协议
+
+需要Linux ARM64 / Ubuntu22.04，与验收裸机一致；需要同一NUMA节点内至少12个可用CPU、约76GiB可用内存、可写的仓库结果目录和数GiB运行空间。硬件测试还需已安装并有权限使用L0驱动和libl0mempool.so；脚本不会修改驱动、BIOS或内核。
+
+Java、Flink、Python及其依赖和编译产物使用仓库内普通Git分片提供，无需Release/LFS下载，不访问外网。SDK查找沿用main的l0_detector.sh：设备/dev/l0或/dev/hisi_l0；库从LD_LIBRARY_PATH、ldconfig、常见目录及/opt、/usr/local、HOME有界搜索。只使用loopback上的Flink通信。
 
 | 项目 | 参数 |
 |---|---|
-| Flink / Java | Flink 1.20.3 / BiSheng OpenJDK 11.0.32+9 |
-| 集群 | 1 JM，2 TM；同一NUMA节点内选取12个可用CPU |
-| JM | 4核，8GiB process memory |
-| 每TM | 4核，32GiB process memory，4 slots |
-| CPU约束 | JM、TM1、TM2分别绑定不同的4核；进程内Java、GC、JIT、C++线程全部继承并被检查 |
-| 内存配置 | Heap task off-heap=0；BriskState=8GiB；managed=0；network=512MiB |
-| 并行度 | 8；原拓扑Global ACD保持1 |
-| 状态规模 | 524,288个Long实体key；均匀分布 |
-| 状态访问 | feature width=64，touches=128，window=16；标准MapState.get/put；Long增量1,000,000,007 |
-| 拓扑 | WC、FD、SD、TM、LG、VS、LR；保持主实验任务/边及输出倍数 |
-| 时序 | 全key覆盖初始化及排空 → 60s预热 → 120s计数 → 排空、正确性核对 |
-| 重复 | 每workload每组3次，独立JVM；打乱workload顺序并轮换六组顺序 |
-| CP / 重启 | checkpoint关闭；失败不自动重启 |
-| 吞吐 | 终端Sink窗口计数 ÷ 拓扑输出倍数 ÷ 120s，单位input-equivalent records/s |
-| 正确性 | 记录数/签名、独立源前缀重放和feature投影、拓扑契约、CP=0 |
+| 运行方式 | 直接启动1个JM JVM和2个TM JVM，不使用Docker；每个条件重新启动 |
+| Flink / Java | Flink1.20.3 / BiSheng OpenJDK11.0.32+9 |
+| CPU | JM、TM1、TM2分别绑定不同的4核，包含GC/JIT/native线程 |
+| 内存 | JM8GiB；每TM32GiB process memory，4 slots |
+| Heap / BriskState | task off-heap分别为0 / 8GiB；managed0；network512MiB |
+| workload | WC、FD、SD、TM、LG、VS、LR |
+| 状态与访问 | 均匀524288实体key，feature width64、touches128、window16 |
+| 并行度 / CP | p8，Global ACD保持1；checkpoint关闭 |
+| 单轮 | 全key初始化及排空 → 预热60s → 测量120s → 排空、正确性核验 |
+| 重复 | 每条件3次；打乱workload、轮换后端顺序 |
+| 吞吐 | Sink窗口记录数 ÷ 拓扑输出倍数 ÷ 测量秒数，单位输入记录/秒 |
 
-六组使用**同一个后端无感知Job JAR**。Job与原主实验相同，SHA-256为 `7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15`；仅Flink状态后端及L0配置不同。初始化耗时单独报告。32GiB为Flink的process预算，沿用主实验口径，不冒充OS对整个进程的硬RSS限制。
+默认计划7×8×3=168个条件。全部运行时仅预热与计数共8小时24分钟，另有初始化和启动等耗时。预检失败的条件记录为skipped，不消耗对应的完整测量窗口。
 
-宿主机需至少同一NUMA节点内12个可用CPU、约76GiB可用内存，以及解包与运行所需磁盘空间。CPU不要求与原机器编号相同，脚本自动选择并保存实际编号。采用私有动态加载器和依赖库，不替换系统glibc。
+八组使用同一个后端无感知Job，标准MapState.get/put。Job SHA-256为7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15。32GiB是Flink process预算，CPU通过进程affinity绑定；不把它解释为OS硬RSS限制。
 
-## L0 驻留策略
+## 进度与结果
 
-此离线版本在已有共享L0Cache内增加可选的 `resident` 行驻留策略。它适用于VoidNamespace下的Long/Long MapState，优先收纳完整的64元素dense行；普通MapState API、其他宽度、稀疏/通用状态继续使用原有路径。
+启动后显示后台进程号、六档容量、进度/停止命令和JSON路径。--status用中文显示当前workload、后端、重复编号、初始化/预热/测量/核验阶段及已完成数量。预热和测量阶段显示本阶段剩余秒数，约每5秒更新；不估算整套实验的剩余时间。
 
-驻留池填满后停止准入，不在均匀大状态流中反复换入换出。MapState的原生目录头直接指向驻留行，后续标准get/put访问该地址。准入关闭后，Java解析恢复为与关闭L0相同的目录路径，目录地址指向L0或DDR；未驻留状态没有逐记录JNI换入、复制或替换开销。clear、结构变化、类型提升和快照继续受原有epoch/快照协议约束；快照会将驻留值写回DDR。checkpoint关闭是本实验设置，不是“忽略快照正确性”。
+默认结果路径：
 
-原有替换策略保留；离线实验通过 `FORL0_L0_ROW_POLICY=resident` 显式选择驻留策略。它属于共享L0Cache机制，仍由每TM的同一个SDK池及总配额管理。统计日志主要记录准入阶段，准入关闭后的计数**不能解释为稳态状态访问命中率或硬件命中率**。
-
-此驻留策略只填一轮；已关闭准入的池在快照写回后不重新填充。因此本次收益测试限定为checkpoint关闭的benchmark set，不能推广为checkpoint场景的性能结论。
-
-该策略减少了旧行缓存的未命中开销，并保留L0直接访问机会。真实L0的净吞吐收益仍必须由目标硬件上的本实验确认；原始结果全部保存，脚本不会为了得到正加速而更改Job、重跑挑选或过滤慢样本。
-
-## 返回结果
-
-| 文件 | 内容 |
-|---|---|
-| `RESULTS.md` | 七项workload、六组吞吐均值、有效样本数、四档L0相对无L0的比值及失败原因 |
-| `results.csv` / `results.json` | 每轮原始吞吐、初始化时间、实际容量、PSS/RSS和核验状态 |
-| `plan.json` / `status.json` | 实际运行顺序和整体完成状态 |
-| `environment/` | CPU、系统、JDK、配置协议、二进制哈希 |
-| `l0-preflight/` | SDK/驱动检测、容量依据、双进程读写证明及失败记录 |
-| `raw/每条件/` | 最终Flink配置、命令、计时窗口、逐秒记录数、日志、GC日志、进程采样、独立oracle、L0启用证明 |
-
-个别条件失败时保留现场并继续其他条件，最终以非零状态退出，但正常生成报告，不把缺失项写成0吞吐。部分成功时 `status.json` 为 `partial_results`，全部成功为 `complete`。L0硬件问题只影响L0组；CPU、内存等全局运行条件不满足时才产生 `fatal-error.json` 并终止。每个条件的六组有相同状态规模和访问算法；更快的组在相同时间内处理更长的输入前缀，最终oracle按实际前缀核验。
-
-PSS/RSS字段为**两个TM进程的合计**，不含JM。PSS在计时窗口内取样本均值，RSS报告窗口采样峰值；原始逐进程采样另行保留。
-
-## 可选操作
-
-默认命令已经完成正式全套测试。以下仅供验收或定位问题，无需合作方预先设置：
-
-```bash
-# 先在真L0机器上短测七项，仍验证四档及Heap/无L0
-bash ./run-l0-benchset --smoke
-
-# 只运行一次完整矩阵；其余仍为正式状态规模与60s/120s窗口
-bash ./run-l0-benchset --repeats 1
-
-# 在无L0机器上验收离线流程；所有结果明确标为DRAM_VALIDATION_ONLY
-bash ./run-l0-benchset --validate-dram --smoke
-
-# 验收部分成功报告：模拟可用容量4MiB，2/4MiB通过，8/16MiB跳过
-bash ./run-l0-benchset --validate-dram --validation-capacity-mib 4 --smoke --workloads wc
+```text
+experiments/l0-offline/results/时间戳-进程号.json
 ```
 
-普通内存验收不代表真实L0硬件实验，不能用其结果宣称L0加速。
+JSON启动时即建立，每完成一个条件原子更新一次；程序结束自动写入最终状态。结果只包含结构化数据，不含报告文字或图表：
+
+| 字段 | 数据 |
+|---|---|
+| schema_version / status / mode | 格式版本、整体状态、硬件实验或DRAM验收 |
+| started_ms / finished_ms | 开始与结束时间，Unix毫秒 |
+| counts / plan | 成功、失败、跳过数量和实验计划 |
+| environment / artifacts | 环境、实验参数、CPU分配、二进制哈希 |
+| l0_sdk / l0_capacity / l0_preflight | SDK、容量依据、各档读写预检及失败原因 |
+| runs | 每轮吞吐、计时、状态规模、逐秒计数、内存、正确性、实际配置和L0证明 |
+| summary | 各条件有效重复数、平均吞吐、相对无L0加速比 |
+| error | 无法继续或手动停止的原因 |
+
+status为complete表示全部成功；partial_results表示部分成功，失败和跳过项仍完整保留；failed表示无法完成；stopped表示用户停止。缺失吞吐为null，不写成0。只有通过核验的轮次进入均值，valid_repeats明确实际样本数。
+
+PSS/RSS为两个TM的合计，不含JM。PSS为窗口采样均值，RSS为窗口采样峰值。失败轮次包含错误信息、堆栈和相关日志末尾，合作方只需返回这一份JSON。完整诊断日志和中间文件保存在内部运行缓存，不进入结果目录；--status显示其位置。
+
+入口返回0只表示后台任务已经提交，最终成败以JSON的status为准。依赖损坏、CPU/内存不足等全局问题会写入失败状态；L0单档问题只影响对应条件。若结果目录不可写或磁盘已满，需按启动/诊断提示处理。
+
+## 可选参数
+
+```bash
+# 短测WC，仍为后台运行；4096keys、预热2s、测量5s、每组一次
+./run-l0-benchset --smoke --workloads wc
+
+# 正式规模，每条件一次
+./run-l0-benchset --repeats 1
+
+# 仅运行指定条件
+./run-l0-benchset --workloads wc,fd --arms heap,brisk_off,brisk_l0_2
+
+# 指定一个尚不存在的JSON结果文件
+./run-l0-benchset --results /path/my-l0-results.json
+
+# 无L0机器验收，明确标为DRAM_VALIDATION_ONLY
+./run-l0-benchset --validate-dram --smoke --workloads wc
+
+# 模拟容量不足，用于验证失败隔离；不是真实硬件容量或性能
+./run-l0-benchset --validate-dram --validation-capacity-mib 4 --smoke --workloads wc
+```
+
+## L0驻留策略与适用范围
+
+同一共享L0Cache中的resident策略收纳VoidNamespace下的Long/Long MapState完整64元素dense行。池满后停止准入，目录头直接指向L0或DDR，避免均匀大状态流的反复换入换出；其他状态继续原路径。六档使用相同后端二进制，只改变容量。
+
+该策略只填一轮；快照会写回DDR，封闭的池不会重新填充，性能结论限定为本次CP关闭场景。准入关闭后的统计不能解释为稳态或硬件命中率。真实L0净吞吐收益仍须目标硬件确认，脚本不根据加速比筛选原始数据。
