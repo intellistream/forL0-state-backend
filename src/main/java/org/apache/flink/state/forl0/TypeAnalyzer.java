@@ -22,6 +22,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.binary.BinaryRowData;
 
 /**
  * Analyzes Flink TypeSerializer instances and generates TypeLayout descriptor byte streams
@@ -69,21 +74,29 @@ public final class TypeAnalyzer {
     private static final Class<?> ROW_DATA_SERIALIZER_CLASS;
     /** Cached 'types' field in RowDataSerializer (LogicalType[]). */
     private static final Field ROW_DATA_TYPES_FIELD;
+    private static final MethodHandle ROW_DATA_TO_BINARY;
     /** Cached TimeWindowSerializer class reference (loaded via reflection). */
     private static final Class<?> TIME_WINDOW_SERIALIZER_CLASS;
+    private static final Class<?> SQL_TIME_WINDOW_SERIALIZER_CLASS;
+    private static final MethodHandle SQL_WINDOW_START, SQL_WINDOW_END, SQL_WINDOW_CONSTRUCTOR;
 
     static {
         Class<?> cls = null;
         Field f = null;
+        MethodHandle converter = null;
         try {
             cls = Class.forName("org.apache.flink.table.runtime.typeutils.RowDataSerializer");
             f = cls.getDeclaredField("types");
             f.setAccessible(true);
-        } catch (ClassNotFoundException | NoSuchFieldException e) {
+            converter = MethodHandles.publicLookup().findVirtual(cls, "toBinaryRow",
+                    MethodType.methodType(BinaryRowData.class, RowData.class))
+                    .asType(MethodType.methodType(BinaryRowData.class, TypeSerializer.class, RowData.class));
+        } catch (ReflectiveOperationException e) {
             // flink-table-runtime not on classpath — RowData optimization unavailable
         }
         ROW_DATA_SERIALIZER_CLASS = cls;
         ROW_DATA_TYPES_FIELD = f;
+        ROW_DATA_TO_BINARY = converter;
 
         Class<?> twCls = null;
         try {
@@ -92,9 +105,36 @@ public final class TypeAnalyzer {
             // flink-streaming not on classpath
         }
         TIME_WINDOW_SERIALIZER_CLASS = twCls;
+        Class<?> sqlSerializer = null;
+        MethodHandle start = null, end = null, constructor = null;
+        try {
+            Class<?> window = Class.forName("org.apache.flink.table.runtime.operators.window.TimeWindow");
+            sqlSerializer = Class.forName(window.getName() + "$Serializer");
+            start = MethodHandles.publicLookup().findVirtual(window, "getStart", MethodType.methodType(long.class))
+                    .asType(MethodType.methodType(long.class, Object.class));
+            end = MethodHandles.publicLookup().findVirtual(window, "getEnd", MethodType.methodType(long.class))
+                    .asType(MethodType.methodType(long.class, Object.class));
+            constructor = MethodHandles.publicLookup().findConstructor(window, MethodType.methodType(void.class, long.class, long.class))
+                    .asType(MethodType.methodType(Object.class, long.class, long.class));
+        } catch (ReflectiveOperationException ignored) {
+            // SQL window support remains optional for DataStream deployments.
+        }
+        SQL_TIME_WINDOW_SERIALIZER_CLASS = sqlSerializer;
+        SQL_WINDOW_START = start;
+        SQL_WINDOW_END = end;
+        SQL_WINDOW_CONSTRUCTOR = constructor;
     }
 
     private TypeAnalyzer() {}
+
+    /** Cache the optional table-runtime conversion handle on the registration path. */
+    static BinaryRowData toBinaryRow(TypeSerializer<?> serializer, RowData value) {
+        if (value instanceof BinaryRowData) return (BinaryRowData) value;
+        try {
+            return (BinaryRowData) ROW_DATA_TO_BINARY.invokeExact(serializer, value);
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable e) { throw new IllegalStateException("Cannot convert RowData to binary", e); }
+    }
 
     /**
      * Determine the TypeId for a given TypeSerializer.
@@ -255,6 +295,12 @@ public final class TypeAnalyzer {
     private static void writeDescriptor(DataOutputStream out, TypeSerializer<?> serializer)
             throws IOException {
         int typeId = getTypeId(serializer);
+        // SQL windows keep generic namespace dispatch for checkpoint compatibility,
+        // but nested map/list readers must know their fixed 16-byte encoding.
+        if (isSqlTimeWindowSerializer(serializer)) {
+            out.writeByte(TYPE_TIME_WINDOW);
+            return;
+        }
 
         if (typeId == TYPE_LIST) {
             out.writeByte(TYPE_LIST);
@@ -296,6 +342,38 @@ public final class TypeAnalyzer {
                 && TIME_WINDOW_SERIALIZER_CLASS.isInstance(serializer);
     }
 
+    static boolean isSqlTimeWindowSerializer(TypeSerializer<?> serializer) {
+        return SQL_TIME_WINDOW_SERIALIZER_CLASS != null && SQL_TIME_WINDOW_SERIALIZER_CLASS.isInstance(serializer);
+    }
+
+    static boolean isAnyTimeWindowSerializer(TypeSerializer<?> serializer) {
+        return isTimeWindowSerializer(serializer) || isSqlTimeWindowSerializer(serializer);
+    }
+
+    static long windowStart(Object window) {
+        if (window instanceof org.apache.flink.streaming.api.windowing.windows.TimeWindow)
+            return ((org.apache.flink.streaming.api.windowing.windows.TimeWindow) window).getStart();
+        try { return (long) SQL_WINDOW_START.invokeExact(window); }
+        catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable e) { throw new IllegalStateException("Cannot access SQL window", e); }
+    }
+
+    static long windowEnd(Object window) {
+        if (window instanceof org.apache.flink.streaming.api.windowing.windows.TimeWindow)
+            return ((org.apache.flink.streaming.api.windowing.windows.TimeWindow) window).getEnd();
+        try { return (long) SQL_WINDOW_END.invokeExact(window); }
+        catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable e) { throw new IllegalStateException("Cannot access SQL window", e); }
+    }
+
+    static Object timeWindow(TypeSerializer<?> serializer, long start, long end) {
+        if (isTimeWindowSerializer(serializer))
+            return new org.apache.flink.streaming.api.windowing.windows.TimeWindow(start, end);
+        try { return (Object) SQL_WINDOW_CONSTRUCTOR.invokeExact(start, end); }
+        catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable e) { throw new IllegalStateException("Cannot construct SQL window", e); }
+    }
+
     /**
      * Generate combined descriptor for a state (key + namespace + value).
      */
@@ -309,10 +387,32 @@ public final class TypeAnalyzer {
             writeDescriptor(out, keySerializer);
             writeDescriptor(out, namespaceSerializer);
             writeDescriptor(out, valueSerializer);
+            // Optional physical-row hints; old native parsers ignore the tail.
+            out.writeByte(0xC7);
+            out.writeByte((isRowDataSerializer(keySerializer) ? 1 : 0)
+                    | (isRowDataSerializer(valueSerializer) ? 2 : 0));
+            // Logical types select native tables; these optional hints describe
+            // bytes produced by Java serializers inside native containers.
+            out.writeByte(0xC8);
+            writeSerializedLayout(out, valueSerializer);
             out.flush();
             return baos.toByteArray();
         } catch (IOException e) {
             throw new RuntimeException("[ForL0] Failed to generate state type descriptor", e);
+        }
+    }
+
+    private static void writeSerializedLayout(DataOutputStream out, TypeSerializer<?> serializer)
+            throws IOException {
+        boolean list = serializer instanceof ListSerializer;
+        boolean map = serializer instanceof MapSerializer;
+        out.writeByte((isRowDataSerializer(serializer) ? 1 : 0) | (list || map ? 2 : 0));
+        out.writeInt(serializer == null ? -1 : serializer.getLength());
+        if (list) {
+            writeSerializedLayout(out, ((ListSerializer<?>) serializer).getElementSerializer());
+        } else if (map) {
+            writeSerializedLayout(out, ((MapSerializer<?, ?>) serializer).getKeySerializer());
+            writeSerializedLayout(out, ((MapSerializer<?, ?>) serializer).getValueSerializer());
         }
     }
 }

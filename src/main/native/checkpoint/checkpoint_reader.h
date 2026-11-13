@@ -252,6 +252,44 @@ public:
         }
     }
 
+    void read_entries_long(ReadBuffer& buf, StateTable<K, V>& table, int key_group, int32_t count, bool row_key) {
+        if constexpr (std::is_same_v<K, int64_t>) {
+            for (int32_t i = 0; i < count; ++i) {
+                int32_t key_size = buf.read_int();
+                if (key_size != (row_key ? 28 : 16)) throw std::runtime_error("invalid Long-namespace key length");
+                int64_t ns = buf.read_long();
+                K key;
+                uint64_t header = 0;
+                if (row_key) {
+                    if (buf.read_int() != 16) throw std::runtime_error("invalid numeric RowData key width");
+                    for (int j = 0; j < 8; ++j) header |= uint64_t(buf.read_byte()) << (8 * j);
+                    uint64_t bits = 0;
+                    for (int j = 0; j < 8; ++j) bits |= uint64_t(buf.read_byte()) << (8 * j);
+                    key = static_cast<int64_t>(bits);
+                } else key = buf.read_long();
+                V value;
+                if constexpr (std::is_same_v<V, std::string>) value = buf.read_bytes_flink();
+                else {
+                    int32_t length = buf.read_int();
+                    if constexpr (std::is_same_v<V, int64_t>) {
+                        bool narrow = value_layout_.type_id == TypeId::INT32;
+                        if (length != (narrow ? 4 : 8)) throw std::runtime_error("invalid numeric value length");
+                        value = narrow ? int64_t(buf.read_int()) : buf.read_long();
+                    } else if constexpr (std::is_same_v<V, double>) {
+                        if (length != 8) throw std::runtime_error("invalid double value length");
+                        value = buf.read_double();
+                    } else throw std::runtime_error("unsupported Long-namespace value encoding");
+                }
+                if (header == 0) table.template put<int64_t>(key_group, ns, key, std::move(value));
+                else {
+                    std::string identity(16, '\0');
+                    std::memcpy(identity.data(), &ns, 8); std::memcpy(identity.data() + 8, &header, 8);
+                    table.template put<std::string>(key_group, identity, key, std::move(value));
+                }
+            }
+        } else throw std::runtime_error("Long namespace requires numeric key");
+    }
+
     // Read ListState entries: value is std::vector<T>
     template <typename T>
     void read_list_entries(ReadBuffer& buf,

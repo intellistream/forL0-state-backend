@@ -229,11 +229,22 @@ public:
     uint64_t bypass_events() const noexcept { return bypass_events_.load(std::memory_order_relaxed); }
     bool write_bypassed()    const noexcept { return write_bypassed_.load(std::memory_order_relaxed); }
 
+    // A serialized cache reuses this manager-owned L0 slice and its telemetry.
+    // Its bytes must never be interpreted as scalar HotSet tags by rebalancing.
+    void set_serialized_payload() noexcept { serialized_payload_ = true; }
+    void record_serialized_lookup(bool hit) noexcept {
+        (hit ? hits_ : misses_).fetch_add(1, std::memory_order_relaxed);
+    }
+    void record_serialized_write() noexcept { writes_.fetch_add(1, std::memory_order_relaxed); }
+    void record_serialized_invalidation() noexcept { invalidations_.fetch_add(1, std::memory_order_relaxed); }
+    void record_serialized_bypass() noexcept { bypass_events_.fetch_add(1, std::memory_order_relaxed); }
+
     // Called by the owning StateEngine thread only. Keeping rebalance scoped
     // to one cache avoids clearing another parallel subtask's cache after the
     // manager becomes process-shared.
     bool rebalance_if_needed(uint64_t interval_ops,
                              double miss_rate_threshold) noexcept {
+        if (serialized_payload_) return false;
         uint64_t current_hits = hits();
         uint64_t current_misses = misses();
         uint64_t delta = consume_rebalance_delta();
@@ -348,6 +359,7 @@ public:
     }
 
 private:
+    bool serialized_payload_ = false;
     HotSet*  sets_;
     uint32_t set_mask_;     // num_sets_ - 1 (num_sets_ is power of 2)
     uint32_t num_sets_;

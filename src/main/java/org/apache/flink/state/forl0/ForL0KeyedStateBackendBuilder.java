@@ -653,6 +653,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         int valueTypeId = TypeAnalyzer.getTypeId(metaInfo.getStateSerializer());
         boolean isValue = metaInfo.getStateType() == StateDescriptor.Type.VALUE;
         boolean voidNs = metaInfo.getNamespaceSerializer() instanceof VoidNamespaceSerializer;
+        boolean typedTimeWindow = TypeAnalyzer.getTypeId(metaInfo.getNamespaceSerializer()) == TypeAnalyzer.TYPE_TIME_WINDOW
+                && keyTypeId == TypeAnalyzer.TYPE_INT64;
 
         // Key format: 8=fixed8, 4=fixed4, 0=len-prefixed
         // Value format: 8=fixed8, 0=len-prefixed
@@ -686,6 +688,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             }
         }
 
+        if (!voidNs && !typedTimeWindow) { keyFmt = 0; valFmt = 0; }
+
         // Build binary data: [count(4)][entries: ns+key+value]
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
@@ -706,15 +710,18 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             byte[] rawNsBytes = Arrays.copyOfRange(compositeKey, keyEndAbsPos, compositeKey.length);
 
             // Write namespace
-            if (voidNs) {
+            if (voidNs || typedTimeWindow) {
                 dos.write(rawNsBytes);
             } else {
-                dos.writeInt(rawNsBytes.length);
+                dos.writeInt(rawNsBytes.length + rawKeyBytes.length);
                 dos.write(rawNsBytes);
+                dos.write(rawKeyBytes);
             }
 
             // Write key in stored format
-            if (keyFmt > 0) {
+            if (!voidNs && !typedTimeWindow) {
+                // The complete namespace/key field was written above.
+            } else if (keyFmt > 0) {
                 dos.write(rawKeyBytes);
             } else {
                 dos.writeInt(rawKeyBytes.length);

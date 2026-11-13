@@ -70,6 +70,9 @@ set(FORL0_SOURCES
     jni/jni_list_state.cpp
     jni/jni_map_state.cpp
     jni/jni_tw_state.cpp
+    jni/jni_long_ns_state.cpp
+    jni/jni_window_fast_state.cpp
+    jni/jni_row_map_state.cpp
     jni/jni_checkpoint.cpp
 )
 
@@ -88,6 +91,16 @@ target_include_directories(forl0_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint
     ${CMAKE_CURRENT_SOURCE_DIR}/jni
 )
+
+option(FORL0_BUILD_TEST_L0_LIBRARY "Build separate JNI library with a test-only L0 allocator" OFF)
+if(FORL0_BUILD_TEST_L0_LIBRARY)
+    add_library(forl0_engine_test_l0 SHARED ${FORL0_SOURCES} test/test_l0_loader.cpp)
+    target_compile_definitions(forl0_engine_test_l0 PRIVATE FORL0_TEST_L0=1)
+    target_link_libraries(forl0_engine_test_l0 PRIVATE ${CMAKE_DL_LIBS})
+    target_include_directories(forl0_engine_test_l0 PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine ${CMAKE_CURRENT_SOURCE_DIR}/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint ${CMAKE_CURRENT_SOURCE_DIR}/jni)
+endif()
 
 # --------------------------------------------------------------------------
 # Output naming
@@ -122,6 +135,7 @@ if(FORL0_BUILD_TESTS)
         test/time_window_namespace_test.cpp
         test/typed_inner_map_test.cpp
         test/hot_cache_test.cpp
+        test/serialized_hot_cache_test.cpp
         test/hot_cache_manager_test.cpp
         test/hot_cache_phase_b_test.cpp
         test/test_main.cpp

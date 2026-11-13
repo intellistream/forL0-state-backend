@@ -243,8 +243,23 @@ public class ForL0AsyncSnapshotITCase {
         }
         Assertions.assertNotNull(ckRestorePath, "未在超时内拿到 chk-N (N>=2) 的外部化 checkpoint");
 
-        client.cancel().get(10, TimeUnit.SECONDS);
+        cancelAndAwaitTermination(client);
         return ckRestorePath;
+    }
+
+    private static void cancelAndAwaitTermination(org.apache.flink.core.execution.JobClient client) throws Exception {
+        client.cancel().get(10, TimeUnit.SECONDS);
+        // Cancellation acknowledges the request before tasks have stopped.
+        // Await termination before changing the static write/probe phase;
+        // otherwise an old task can satisfy the next job's probe latch.
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        org.apache.flink.api.common.JobStatus status;
+        do {
+            status = client.getJobStatus().get(10, TimeUnit.SECONDS);
+            if (status.isGloballyTerminalState()) break;
+            Thread.sleep(10);
+        } while (System.nanoTime() < deadline);
+        Assertions.assertEquals(org.apache.flink.api.common.JobStatus.CANCELED, status);
     }
 
     private static Map<Long, Long> restoreAndProbe(int parallelism,
@@ -271,7 +286,7 @@ public class ForL0AsyncSnapshotITCase {
 
         org.apache.flink.core.execution.JobClient client = env.executeAsync("async-probe");
         boolean ok = PROBE_DONE_LATCH.await(30, TimeUnit.SECONDS);
-        try { client.cancel().get(10, TimeUnit.SECONDS); } catch (Throwable ignore) {}
+        cancelAndAwaitTermination(client);
         Assertions.assertTrue(ok, "探测超时，count=" + PROBE_COUNT.get());
         return PROBED_VALUE;
     }
@@ -365,7 +380,7 @@ public class ForL0AsyncSnapshotITCase {
             if (ckPath2 == null) Thread.sleep(50L);
         }
         Assertions.assertNotNull(ckPath2, "第二轮 ckpt 超时");
-        client.cancel().get(10, TimeUnit.SECONDS);
+        cancelAndAwaitTermination(client);
 
         Map<Long, Long> afterSecond = restoreAndProbe(1, ckPath2, ckBaseUri);
         long maxAfterSecond = 0L;

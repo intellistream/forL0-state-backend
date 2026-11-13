@@ -68,8 +68,27 @@ inline size_t alloc_size(size_t capacity) {
 //  SwissTable
 // ============================================================================
 
+// H1 and H2 need entropy across the entire hash. std::hash on integers is
+// commonly identity: shifting it for H1 clusters nearby keys, while high-bit
+// keys can all land in the same bucket with the same fingerprint.
+template <typename K>
+struct SwissKeyHash {
+    size_t operator()(const K& key) const {
+        size_t hash = std::hash<K>{}(key);
+        if constexpr (std::is_integral_v<K>) {
+            uint64_t mixed = static_cast<uint64_t>(hash);
+            mixed ^= mixed >> 30;
+            mixed *= UINT64_C(0xbf58476d1ce4e5b9);
+            mixed ^= mixed >> 27;
+            mixed *= UINT64_C(0x94d049bb133111eb);
+            return static_cast<size_t>(mixed ^ (mixed >> 31));
+        }
+        return hash;
+    }
+};
+
 template <typename K, typename V,
-          typename Hash = std::hash<K>,
+          typename Hash = SwissKeyHash<K>,
           typename KeyEqual = std::equal_to<K>>
 class SwissTable {
 public:

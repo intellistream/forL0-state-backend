@@ -14,6 +14,27 @@
 
 using namespace forl0;
 
+struct CountIntegralComparisons {
+    static inline size_t calls = 0;
+    bool operator()(int64_t left, int64_t right) const { ++calls; return left == right; }
+};
+
+TEST(SwissTableTest, IntegralHighBitsDoNotCollapseIntoOneProbeChain) {
+    constexpr int64_t count = 4096;
+    SwissTable<int64_t, int64_t, SwissKeyHash<int64_t>, CountIntegralComparisons> table(count * 2);
+    for (int64_t i = 1; i <= count; ++i) table.insert_or_assign(i << 32, i);
+    CountIntegralComparisons::calls = 0;
+    for (int64_t i = 1; i <= count; ++i) {
+        auto* value = table.find(i << 32);
+        ASSERT_NE(value, nullptr);
+        ASSERT_EQ(*value, i);
+        ASSERT_EQ(table.find((i + count) << 32), nullptr);
+    }
+    // Identity hashing needs millions of comparisons for this valid key shape.
+    // Bound comparisons rather than time so the regression is machine-independent.
+    ASSERT_LT(CountIntegralComparisons::calls, size_t(count * 8));
+}
+
 // ============================================================================
 //  Basic Operations
 // ============================================================================

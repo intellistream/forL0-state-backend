@@ -89,6 +89,12 @@ struct TypeLayout {
 
     // For FIXED_ROW: number of fields (arity)
     uint16_t fixed_row_arity = 0;
+
+    // Physical encoding of values serialized by Java inside ListState/MapState.
+    // Kept separate from type_id, which selects native table specializations.
+    bool serialized_row = false;
+    bool serialized_container = false;
+    int32_t serialized_fixed_size = -1;
 };
 
 // ============================================================================

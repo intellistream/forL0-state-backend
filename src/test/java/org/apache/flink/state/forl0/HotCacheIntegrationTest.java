@@ -188,6 +188,8 @@ public class HotCacheIntegrationTest {
     // -----------------------------------------------------------------------
     @Test
     void managerGateClosesOnPlatformsWithoutL0() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse(Boolean.getBoolean("forl0.test.l0"),
+                "Production hardware gate is verified with the production JNI library");
         ForL0KeyedStateBackend<Long> backend = buildLongBackend(true, 4L * 1024 * 1024);
         try {
             long engineHandle = backend.getEngineHandle();

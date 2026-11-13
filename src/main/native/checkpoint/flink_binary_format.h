@@ -336,7 +336,32 @@ public:
 
     // Skip a typed value in the buffer (advance position past it).
     void skip_typed_value(const TypeLayout& layout) {
+        if (layout.serialized_row) {
+            int32_t size = read_int();
+            if (size < 0) throw std::runtime_error("Negative serialized row size");
+            skip(static_cast<size_t>(size));
+            return;
+        }
+        if (layout.serialized_fixed_size >= 0) {
+            skip(static_cast<size_t>(layout.serialized_fixed_size));
+            return;
+        }
+        if (layout.serialized_container) {
+            int32_t count = read_int();
+            if (count < 0)
+                throw std::runtime_error("Invalid serialized container count");
+            if (layout.type_id == TypeId::LIST && layout.children.size() == 1) {
+                for (int32_t i = 0; i < count; ++i) skip_typed_value(*layout.children[0]);
+            } else if (layout.type_id == TypeId::MAP && layout.children.size() == 2) {
+                for (int32_t i = 0; i < count; ++i) {
+                    skip_typed_value(*layout.children[0]);
+                    if (!read_byte()) skip_typed_value(*layout.children[1]);
+                }
+            } else throw std::runtime_error("Invalid serialized container layout");
+            return;
+        }
         switch (layout.type_id) {
+            case TypeId::TIME_WINDOW: skip(16); break;
             case TypeId::INT32:
             case TypeId::FLOAT32:
                 skip(4); break;

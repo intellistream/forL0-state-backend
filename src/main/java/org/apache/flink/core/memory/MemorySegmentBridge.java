@@ -16,6 +16,11 @@ import java.nio.ByteBuffer;
  */
 public class MemorySegmentBridge {
 
+    /** Read a word from a live native state handle's synchronous result area. */
+    public static long readNativeLong(long address) {
+        return MemoryUtils.UNSAFE.getLong(address);
+    }
+
     /**
      * Create an off-heap MemorySegment wrapping the given native memory address.
      *

@@ -77,6 +77,9 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
         if (handle->ns_type == StateHandle::NsType::TIME_WINDOW) {           \
             return writer.write_key_group_tw(*tbl, key_group, buf);          \
         }                                                                     \
+        if (handle->ns_type == StateHandle::NsType::LONG_NS) {                 \
+            return writer.write_key_group_long(*tbl, key_group, buf, handle->row_data_key);           \
+        }                                                                      \
         return writer.write_key_group(*tbl, key_group, buf);                  \
     } while (0)
 
@@ -171,6 +174,8 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
         CheckpointStateReader<KT, VT> rd(kl, vl, vns);                        \
         if (handle->ns_type == StateHandle::NsType::TIME_WINDOW) {            \
             rd.read_entries_tw(reader, *tbl, key_group, entry_count);          \
+        } else if (handle->ns_type == StateHandle::NsType::LONG_NS) {          \
+            rd.read_entries_long(reader, *tbl, key_group, entry_count, handle->row_data_key);         \
         } else {                                                               \
             rd.read_entries(reader, *tbl, key_group, entry_count);             \
         }                                                                      \
@@ -286,9 +291,14 @@ Java_org_apache_flink_state_forl0_NativeEngine_writeKeyGroupData(
         JNIEnv* env, jclass, jlong engineHandle, jint keyGroupId) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* engine = from_handle<StateEngine>(engineHandle);
-        WriteBuffer buf;
+        // Consecutive key groups usually have similar sizes. Reserve from the
+        // previous result to avoid repeatedly growing/copying a large payload.
+        // Retain only a size hint, never an extra checkpoint byte buffer.
+        static thread_local size_t previous_capacity = 65536;
+        WriteBuffer buf(previous_capacity);
 
         auto registered = engine->registered_state_handles<StateHandle>();
+
         for (auto& [state_id, sh] : registered) {
             // Write stateId
             buf.write_short(static_cast<int16_t>(state_id));
@@ -312,6 +322,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_writeKeyGroupData(
         buf.write_short(-1);
 
         if (buf.size() <= 2) return nullptr;  // only marker, no data
+        previous_capacity = std::max(size_t(65536), std::min(size_t(256) * 1024 * 1024,
+                                                          buf.size() + buf.size() / 8));
         jbyteArray result = env->NewByteArray(static_cast<jsize>(buf.size()));
         env->SetByteArrayRegion(result, 0, static_cast<jsize>(buf.size()),
                 reinterpret_cast<const jbyte*>(buf.data()));
@@ -337,6 +349,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_readKeyGroupData(
 
         ReadBuffer reader(buf.data(), buf.size());
         auto registered = engine->registered_state_handles<StateHandle>();
+        // Restore may be invoked on an already registered engine. Cache payloads
+        // are disposable and must not survive authoritative checkpoint writes.
+        for (auto& entry : registered) {
+            auto* state = entry.second;
+            if (state->serialized_cache) state->serialized_cache->clear();
+            else if (state->hot_cache_ll) state->hot_cache_ll->clear();
+        }
 
         while (reader.remaining() > 0) {
             int16_t stateId = reader.read_short();
@@ -407,6 +426,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_readStateKeyGroupEntries(
         if (!data) return;
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* engine = handle->engine;
+        if (handle->serialized_cache) handle->serialized_cache->clear();
+        else if (handle->hot_cache_ll) handle->hot_cache_ll->clear();
 
         jsize dataLen = env->GetArrayLength(data);
         std::vector<uint8_t> buf(dataLen);

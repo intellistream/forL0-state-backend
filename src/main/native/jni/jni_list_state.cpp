@@ -5,6 +5,7 @@
 
 #include <jni.h>
 #include "jni_utils.h"
+#include "list_cache_access.h"
 #include "state_engine.h"
 #include "flink_binary_format.h"
 
@@ -23,14 +24,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGet(
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
-        ElementList* vec = table->get(keyGroup, static_cast<int64_t>(key));
-        if (!vec || vec->empty()) return nullptr;
-        WriteBuffer buf;
-        buf.write_int(static_cast<int32_t>(vec->size()));
-        for (const auto& elem : *vec) {
-            buf.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
-        }
-        return buffer_to_jbytearray(env, buf.data(), buf.size());
+        return cached_list_get(env, handle, table, keyGroup, static_cast<int64_t>(key));
     })
 }
 
@@ -42,14 +36,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetGeneric(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
         std::string k = jbytearray_to_string(env, key);
-        ElementList* vec = table->get(keyGroup, k);
-        if (!vec || vec->empty()) return nullptr;
-        WriteBuffer buf;
-        buf.write_int(static_cast<int32_t>(vec->size()));
-        for (const auto& elem : *vec) {
-            buf.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
-        }
-        return buffer_to_jbytearray(env, buf.data(), buf.size());
+        return cached_list_get(env, handle, table, keyGroup, k);
     })
 }
 
@@ -71,13 +58,33 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddLong(
         for (int i = 7; i >= 0; --i) { buf[i] = static_cast<uint8_t>(elem & 0xFF); elem >>= 8; }
         std::string elem_str(reinterpret_cast<const char*>(buf), 8);
 
-        if (!table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-            v.push_back(std::move(elem_str));
-        })) {
-            ElementList new_vec;
-            new_vec.push_back(std::move(elem_str));
-            table->put(keyGroup, k, std::move(new_vec));
-        }
+        cached_list_add(handle, table, std::move(elem_str), keyGroup, k);
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_listAddRowRange(
+        JNIEnv* env, jclass, jlong state, jlong key, jbyteArray genericKey, jint group,
+        jlong nsStart, jlong nsEnd, jint mode, jbyteArray row, jint offset, jint length) {
+    JNI_ENTRY_VOID({
+        if (!row || offset < 0 || length < 0 || offset > env->GetArrayLength(row) - length)
+            throw std::invalid_argument("invalid list row range");
+        auto* h = from_handle<StateHandle>(state);
+        // Canonical elements retain RowDataSerializer's length framing.
+        std::string element(size_t(length) + 4, '\0');
+        for (int i = 0; i < 4; ++i) element[i] = char(static_cast<uint32_t>(length) >> (24 - 8 * i));
+        env->GetByteArrayRegion(row, offset, length, reinterpret_cast<jbyte*>(element.data() + 4));
+        if (mode == 0) {
+            auto* table = h->engine->get_state_table<int64_t, ElementList>(h->table_id);
+            cached_list_add(h, table, std::move(element), int(group), int64_t(key));
+        } else if (mode == 1) {
+            auto* table = h->engine->get_state_table<int64_t, ElementList>(h->table_id);
+            cached_list_add(h, table, std::move(element), int(group), TimeWindow(nsStart, nsEnd), int64_t(key));
+        } else if (mode == 2 && genericKey) {
+            auto* table = h->engine->get_state_table<std::string, ElementList>(h->table_id);
+            std::string parent = jbytearray_to_string(env, genericKey);
+            cached_list_add(h, table, std::move(element), int(group), parent);
+        } else throw std::invalid_argument("invalid list row key mode");
     })
 }
 
@@ -89,7 +96,7 @@ static std::string long_to_be_string(int64_t v) {
 }
 
 // Helper: decode 8-byte big-endian string to int64_t
-static int64_t be_string_to_long(const std::string& s) {
+static int64_t be_string_to_long(std::string_view s) {
     const uint8_t* p = reinterpret_cast<const uint8_t*>(s.data());
     int64_t v = 0;
     for (int i = 0; i < 8; ++i) { v = (v << 8) | p[i]; }
@@ -111,8 +118,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetLongElements(
         if (!vec || vec->empty()) return nullptr;
         jsize count = static_cast<jsize>(vec->size());
         std::vector<jlong> longs(count);
+        MapCallCache cache(handle, keyGroup, static_cast<int64_t>(key));
         for (jsize i = 0; i < count; ++i) {
-            longs[i] = be_string_to_long((*vec)[i]);
+            std::string_view bytes;
+            if (!cache.get(uint64_t(i), &bytes)) {
+                bytes = (*vec)[i]; cache.put(uint64_t(i), bytes);
+            }
+            longs[i] = be_string_to_long(bytes);
         }
         jlongArray arr = env->NewLongArray(count);
         env->SetLongArrayRegion(arr, 0, count, longs.data());
@@ -139,7 +151,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listUpdateLongElements(
         for (jsize i = 0; i < count; ++i) {
             vec.push_back(long_to_be_string(longs[i]));
         }
-        table->put(keyGroup, static_cast<int64_t>(key), std::move(vec));
+        cached_list_update(handle, table, std::move(vec), keyGroup, static_cast<int64_t>(key));
     })
 }
 
@@ -163,16 +175,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAllLongElements(
         for (jsize i = 0; i < count; ++i) {
             new_elems.push_back(long_to_be_string(longs[i]));
         }
-        ElementList* vec = table->get(keyGroup, k);
-        if (vec) {
-            table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-                v.insert(v.end(),
-                    std::make_move_iterator(new_elems.begin()),
-                    std::make_move_iterator(new_elems.end()));
-            });
-        } else {
-            table->put(keyGroup, k, std::move(new_elems));
-        }
+        cached_list_append(handle, table, std::move(new_elems), keyGroup, k);
     })
 }
 
@@ -186,13 +189,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAdd(
         int64_t k = static_cast<int64_t>(key);
         std::string elem = jbytearray_to_string(env, element);
 
-        if (!table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-            v.push_back(std::move(elem));
-        })) {
-            ElementList new_vec;
-            new_vec.push_back(std::move(elem));
-            table->put(keyGroup, k, std::move(new_vec));
-        }
+        cached_list_add(handle, table, std::move(elem), keyGroup, k);
     })
 }
 
@@ -206,13 +203,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddGeneric(
         std::string k = jbytearray_to_string(env, key);
         std::string elem = jbytearray_to_string(env, element);
 
-        if (!table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-            v.push_back(std::move(elem));
-        })) {
-            ElementList new_vec;
-            new_vec.push_back(std::move(elem));
-            table->put(keyGroup, k, std::move(new_vec));
-        }
+        cached_list_add(handle, table, std::move(elem), keyGroup, k);
     })
 }
 
@@ -244,6 +235,22 @@ static ElementList parse_serialized_list(const uint8_t* data, size_t len,
 }
 
 JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_listWriteWithTW(
+        JNIEnv* env, jclass, jlong stateHandle, jlong key, jint keyGroup,
+        jlong nsStart, jlong nsEnd, jbyteArray serializedList, jboolean append) {
+    JNI_ENTRY_VOID({
+        auto* handle = from_handle<StateHandle>(stateHandle);
+        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        std::string raw = jbytearray_to_string(env, serializedList);
+        ElementList elements = parse_serialized_list(
+                reinterpret_cast<const uint8_t*>(raw.data()), raw.size(), handle->get_element_layout());
+        TimeWindow ns(nsStart, nsEnd);
+        if (append) cached_list_append(handle, table, std::move(elements), keyGroup, ns, static_cast<int64_t>(key));
+        else cached_list_update(handle, table, std::move(elements), keyGroup, ns, static_cast<int64_t>(key));
+    })
+}
+
+JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_listUpdate(
         JNIEnv* env, jclass,
         jlong stateHandle, jlong key, jint keyGroup, jbyteArray serializedList) {
@@ -254,7 +261,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listUpdate(
         ElementList vec = parse_serialized_list(
             reinterpret_cast<const uint8_t*>(raw.data()), raw.size(),
             handle->get_element_layout());
-        table->put(keyGroup, static_cast<int64_t>(key), std::move(vec));
+        cached_list_update(handle, table, std::move(vec), keyGroup, static_cast<int64_t>(key));
     })
 }
 
@@ -270,7 +277,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listUpdateGeneric(
         ElementList vec = parse_serialized_list(
             reinterpret_cast<const uint8_t*>(raw.data()), raw.size(),
             handle->get_element_layout());
-        table->put(keyGroup, k, std::move(vec));
+        cached_list_update(handle, table, std::move(vec), keyGroup, k);
     })
 }
 
@@ -293,16 +300,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAll(
             handle->get_element_layout());
         if (new_elems.empty()) return;
 
-        ElementList* vec = table->get(keyGroup, k);
-        if (vec) {
-            table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-                v.insert(v.end(),
-                    std::make_move_iterator(new_elems.begin()),
-                    std::make_move_iterator(new_elems.end()));
-            });
-        } else {
-            table->put(keyGroup, k, std::move(new_elems));
-        }
+        cached_list_append(handle, table, std::move(new_elems), keyGroup, k);
     })
 }
 
@@ -320,16 +318,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAllGeneric(
             handle->get_element_layout());
         if (new_elems.empty()) return;
 
-        ElementList* vec = table->get(keyGroup, k);
-        if (vec) {
-            table->modify_in_place(keyGroup, k, [&](ElementList& v) {
-                v.insert(v.end(),
-                    std::make_move_iterator(new_elems.begin()),
-                    std::make_move_iterator(new_elems.end()));
-            });
-        } else {
-            table->put(keyGroup, k, std::move(new_elems));
-        }
+        cached_list_append(handle, table, std::move(new_elems), keyGroup, k);
     })
 }
 
@@ -344,7 +333,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listClear(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
-        table->remove(keyGroup, static_cast<int64_t>(key));
+        cached_list_clear(handle, table, keyGroup, static_cast<int64_t>(key));
     })
 }
 
@@ -356,7 +345,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listClearGeneric(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
         std::string k = jbytearray_to_string(env, key);
-        table->remove(keyGroup, k);
+        cached_list_clear(handle, table, keyGroup, k);
     })
 }
 
@@ -385,6 +374,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_listMergeNamespaces(
             sources.push_back(static_cast<int64_t>(srcNs[i]));
         }
 
+        // This legacy entry point merges every key in the namespaces.
+        if (handle->serialized_cache) handle->serialized_cache->clear();
         // Merge: concatenate element vectors
         auto merge_lists = [](const ElementList& a, ElementList&& b) -> ElementList {
             ElementList result = a;
