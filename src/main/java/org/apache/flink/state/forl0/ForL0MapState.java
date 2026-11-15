@@ -436,7 +436,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @SuppressWarnings("unchecked")
     @Override
     public Iterable<Map.Entry<UK, UV>> entries() {
-        if (serializedCacheEnabled) { return () -> new RemovableIterator(bulkEntries().iterator()); }
+        if (serializedCacheEnabled || timeWindowMap) { return () -> new RemovableIterator(bulkEntries().iterator()); }
         try {
             switch (mapStrategy) {
                 case LONG_LONG_VOID: {
@@ -591,7 +591,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @SuppressWarnings("unchecked")
     @Override
     public Iterator<Map.Entry<UK, UV>> iterator() {
-        if (serializedCacheEnabled) { return new RemovableIterator(bulkEntries().iterator()); }
+        if (serializedCacheEnabled || timeWindowMap) { return new RemovableIterator(bulkEntries().iterator()); }
         try {
             switch (mapStrategy) {
                 case LONG_LONG_VOID: {

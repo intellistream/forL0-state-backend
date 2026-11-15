@@ -96,6 +96,9 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
     if (kind == StateHandle::StateKind::MAP_) {
         if (kt == StateHandle::KeyType::INT64) {
             switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::WINDOW_WINDOW:
+                    WRITE_KG(int64_t, InnerMapTimeWindow);
+                    break;
                 case StateHandle::MapInnerKind::LONG_LONG:
                     WRITE_KG(int64_t, InnerMapLongLong);
                     break;
@@ -195,6 +198,9 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
     if (kind == StateHandle::StateKind::MAP_) {
         if (kt == StateHandle::KeyType::INT64) {
             switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::WINDOW_WINDOW:
+                    READ_KG(int64_t, InnerMapTimeWindow);
+                    break;
                 case StateHandle::MapInnerKind::LONG_LONG:
                     READ_KG(int64_t, InnerMapLongLong);
                     break;

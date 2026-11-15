@@ -5,23 +5,65 @@
 namespace forl0 {
 
 // Each element has its own cache slot. Append never serializes or recopies the
-// existing list. Java receives an owned bulk result, so read misses may admit.
+// existing list. Read admission happens after consuming all cached elements:
+// filling an old prefix during the scan must not evict its still-readable tail.
+template<class Consumer>
+void read_cached_list(MapCallCache& cache, const ElementList& elements,
+                      size_t footprint, Consumer&& consume) {
+    bool admit = cache.admit_list_read(footprint);
+    if (!admit) {
+        // The prefix directory already links every resident element. Walk it
+        // once instead of hashing every cold element of an oversized list.
+        // Borrowed views stay valid: this read performs no cache mutations.
+        auto resident = cache.list_entries(elements.size());
+        cache.record_hits(resident.size());
+        cache.record_misses(elements.size() - resident.size());
+        size_t next = 0;
+        for (size_t i = 0; i < elements.size(); ++i) {
+            if (next < resident.size() && resident[next].first == i) consume(i, resident[next++].second);
+            else consume(i, std::string_view(elements[i]));
+        }
+        return;
+    }
+    bool present = cache.has_entries();
+    std::vector<size_t> missed;
+    if (!present) cache.record_misses(elements.size());
+    for (size_t i = 0; i < elements.size(); ++i) {
+        std::string_view bytes;
+        if (!present || !cache.get(uint64_t(i), &bytes)) {
+            bytes = elements[i];
+            if (present && admit) {
+                if (missed.empty()) missed.reserve(elements.size());
+                missed.push_back(i);
+            }
+        }
+        consume(i, bytes);
+    }
+    // Large lists cannot reside together; refilling them just churns the ring.
+    if (admit) {
+        if (!present) {
+            for (size_t i = 0; i < elements.size(); ++i) cache.put(uint64_t(i), elements[i]);
+        } else {
+            for (size_t i : missed) cache.put(uint64_t(i), elements[i]);
+        }
+    }
+}
+
 template<class K, class... Args>
 jbyteArray cached_list_get(JNIEnv* env, StateHandle* h,
                           StateTable<K, ElementList>* table, Args&&... args) {
     auto* elements = table->get(args...);
     if (!elements || elements->empty()) return nullptr;
     MapCallCache cache(h, args...);
-    WriteBuffer buffer;
-    buffer.write_int(static_cast<int32_t>(elements->size()));
-    for (size_t i = 0; i < elements->size(); ++i) {
-        std::string_view bytes;
-        if (!cache.get(uint64_t(i), &bytes)) {
-            bytes = (*elements)[i];
-            cache.put(uint64_t(i), bytes);
-        }
-        buffer.write_raw(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    size_t bytes = 4, footprint = 0;
+    for (const auto& element : *elements) {
+        bytes += element.size(); footprint += cache.list_entry_bytes(element.size());
     }
+    WriteBuffer buffer(bytes);
+    buffer.write_int(static_cast<int32_t>(elements->size()));
+    read_cached_list(cache, *elements, footprint, [&](size_t, std::string_view element) {
+        buffer.write_raw(reinterpret_cast<const uint8_t*>(element.data()), element.size());
+    });
     return buffer_to_jbytearray(env, buffer.data(), buffer.size());
 }
 

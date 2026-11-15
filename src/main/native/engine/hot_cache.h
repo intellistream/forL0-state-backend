@@ -235,6 +235,12 @@ public:
     void record_serialized_lookup(bool hit) noexcept {
         (hit ? hits_ : misses_).fetch_add(1, std::memory_order_relaxed);
     }
+    void record_serialized_misses(uint64_t count) noexcept {
+        misses_.fetch_add(count, std::memory_order_relaxed);
+    }
+    void record_serialized_hits(uint64_t count) noexcept {
+        hits_.fetch_add(count, std::memory_order_relaxed);
+    }
     void record_serialized_write() noexcept { writes_.fetch_add(1, std::memory_order_relaxed); }
     void record_serialized_invalidation() noexcept { invalidations_.fetch_add(1, std::memory_order_relaxed); }
     void record_serialized_bypass() noexcept { bypass_events_.fetch_add(1, std::memory_order_relaxed); }

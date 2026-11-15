@@ -346,7 +346,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             && parsed_val_layout->children.size() >= 2) {
             TypeId uk_id = parsed_val_layout->children[0]->type_id;
             TypeId uv_id = parsed_val_layout->children[1]->type_id;
-            if (uk_id == TypeId::INT64 && uv_id == TypeId::INT64) {
+            if (void_ns && keyTypeId == 2 && uk_id == TypeId::TIME_WINDOW && uv_id == TypeId::TIME_WINDOW) {
+                map_inner_kind = StateHandle::MapInnerKind::WINDOW_WINDOW;
+            } else if (uk_id == TypeId::INT64 && uv_id == TypeId::INT64) {
                 map_inner_kind = StateHandle::MapInnerKind::LONG_LONG;
             } else if (uk_id == TypeId::INT64) {
                 map_inner_kind = StateHandle::MapInnerKind::LONG_STRING;
@@ -468,6 +470,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             if (keyTypeId == 2) {
                 stored_key_type = StateHandle::KeyType::INT64;
                 switch (map_inner_kind) {
+                    case StateHandle::MapInnerKind::WINDOW_WINDOW:
+                        table_id = engine->register_state<int64_t, InnerMapTimeWindow>(name, void_ns);
+                        break;
                     case StateHandle::MapInnerKind::LONG_LONG:
                         table_id = engine->register_state<int64_t, InnerMapLongLong>(name, void_ns);
                         break;
@@ -674,6 +679,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_stateEntries(
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::MAP) {
             // Dispatch based on InnerMap specialization
             switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::WINDOW_WINDOW: {
+                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
                 case StateHandle::MapInnerKind::LONG_LONG: {
                     auto* tbl = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
@@ -787,6 +796,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
                 emit_keys(handle->engine->get_state_table<int64_t, ElementList>(handle->table_id));
             } else if (vt == StateHandle::ValueType::MAP) {
                 switch (handle->map_inner_kind) {
+                    case StateHandle::MapInnerKind::WINDOW_WINDOW:
+                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id));
+                        break;
                     case StateHandle::MapInnerKind::LONG_LONG:
                         emit_keys(handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id));
                         break;

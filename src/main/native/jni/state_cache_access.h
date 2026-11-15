@@ -1,6 +1,7 @@
 #pragma once
 #include "jni_utils.h"
 #include <array>
+#include <algorithm>
 #include <optional>
 #include <type_traits>
 
@@ -199,6 +200,27 @@ public:
         if (!cache_) return;
         auto key = *parent_; key.append(uint8_t(2));
         cache_->put(key.view(), {reinterpret_cast<const char*>(data), size}, parent_->view().size());
+    }
+    bool has_entries() const { return cache_ && cache_->has_prefix(parent_->view()); }
+    size_t list_entry_bytes(size_t value_size) const {
+        return cache_ ? SerializedHotCache::entry_bytes(parent_->view().size() + 1 + sizeof(uint64_t), value_size) : 0;
+    }
+    bool admit_list_read(size_t footprint) const { return cache_ && footprint <= cache_->capacity() / 2; }
+    void record_misses(size_t count) { if (cache_) cache_->record_misses(count); }
+    void record_hits(size_t count) { if (cache_) cache_->record_hits(count); }
+    using ListEntry = std::pair<size_t, std::string_view>;
+    std::vector<ListEntry> list_entries(size_t count) const {
+        std::vector<ListEntry> entries;
+        if (!cache_) return entries;
+        const size_t prefix_size = parent_->view().size();
+        cache_->for_each_prefix(parent_->view(), [&](std::string_view key, std::string_view value) {
+            if (key.size() != prefix_size + 1 + sizeof(uint64_t) || key[prefix_size] != 1) return;
+            uint64_t index;
+            std::memcpy(&index, key.data() + prefix_size + 1, sizeof(index));
+            if (index < count) entries.emplace_back(size_t(index), value);
+        });
+        std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        return entries;
     }
 private:
     SerializedHotCache* cache_;

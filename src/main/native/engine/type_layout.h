@@ -328,5 +328,12 @@ using InnerMap = std::unordered_map<std::string, std::string>;
 using InnerMapLongLong   = std::unordered_map<int64_t, int64_t>;
 using InnerMapLongString = std::unordered_map<int64_t, std::string>;
 using InnerMapStringLong = std::unordered_map<std::string, int64_t>;
+using InnerMapTimeWindow = std::unordered_map<TimeWindow, TimeWindow, TimeWindowHash>;
+
+// Constant-sized allocation scratch; it is never visible as keyed state.
+struct TimeWindowMapScratch {
+    InnerMapTimeWindow empty_map;
+    InnerMapTimeWindow::node_type node;
+};
 
 }  // namespace forl0

@@ -6,6 +6,7 @@
 #include "jni_utils.h"
 #include "state_cache_access.h"
 #include "list_cache_access.h"
+#include "native_map_iterator.h"
 #include "state_engine.h"
 #include "type_layout.h"
 #include "flink_binary_format.h"
@@ -626,7 +627,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntriesWithTW(
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         InnerMap* inner = table->get(keyGroup, tw, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return nullptr;
-        WriteBuffer buf;
+        size_t encoded_size = 4;
+        for (const auto& entry : *inner) encoded_size += entry.first.size() + entry.second.size();
+        WriteBuffer buf(encoded_size);
         buf.write_int(static_cast<int32_t>(inner->size()));
         for (const auto& entry : *inner) {
             buf.write_raw(reinterpret_cast<const uint8_t*>(entry.first.data()), entry.first.size());
@@ -655,13 +658,6 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapClearWithTW(
 // ============================================================================
 //  MapState streaming iterator for TimeWindow namespace
 // ============================================================================
-
-namespace {
-struct NativeMapIterator {
-    InnerMap::const_iterator current;
-    InnerMap::const_iterator end;
-};
-}  // namespace
 
 JNIEXPORT jlong JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_mapIteratorCreateWithTW(

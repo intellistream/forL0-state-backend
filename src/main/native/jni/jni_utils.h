@@ -112,7 +112,7 @@ struct StateHandle {
     enum class StateKind : uint8_t { VALUE, LIST, MAP_, REDUCING, AGGREGATING };
     enum class NsType : uint8_t { VOID_NS, BYTES, TIME_WINDOW, LONG_NS };
     // MapState InnerMap specialization kind
-    enum class MapInnerKind : uint8_t { STRING_STRING, LONG_LONG, LONG_STRING, STRING_LONG };
+    enum class MapInnerKind : uint8_t { STRING_STRING, LONG_LONG, LONG_STRING, STRING_LONG, WINDOW_WINDOW };
 
     std::string state_name;
     StateEngine* engine;
@@ -171,6 +171,7 @@ struct StateHandle {
         }
         return nullptr;
     }
+    TimeWindowMapScratch window_scratch;
 };
 
 }  // namespace forl0

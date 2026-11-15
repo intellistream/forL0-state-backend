@@ -98,9 +98,9 @@ static std::string long_to_be_string(int64_t v) {
 // Helper: decode 8-byte big-endian string to int64_t
 static int64_t be_string_to_long(std::string_view s) {
     const uint8_t* p = reinterpret_cast<const uint8_t*>(s.data());
-    int64_t v = 0;
+    uint64_t v = 0;
     for (int i = 0; i < 8; ++i) { v = (v << 8) | p[i]; }
-    return v;
+    return static_cast<int64_t>(v);
 }
 
 // ============================================================================
@@ -117,15 +117,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetLongElements(
         ElementList* vec = table->get(keyGroup, static_cast<int64_t>(key));
         if (!vec || vec->empty()) return nullptr;
         jsize count = static_cast<jsize>(vec->size());
-        std::vector<jlong> longs(count);
+        std::vector<jlong> longs;
+        longs.reserve(count);
         MapCallCache cache(handle, keyGroup, static_cast<int64_t>(key));
-        for (jsize i = 0; i < count; ++i) {
-            std::string_view bytes;
-            if (!cache.get(uint64_t(i), &bytes)) {
-                bytes = (*vec)[i]; cache.put(uint64_t(i), bytes);
-            }
-            longs[i] = be_string_to_long(bytes);
-        }
+        read_cached_list(cache, *vec, size_t(count) * cache.list_entry_bytes(8),
+                [&](size_t, std::string_view bytes) { longs.push_back(be_string_to_long(bytes)); });
         jlongArray arr = env->NewLongArray(count);
         env->SetLongArrayRegion(arr, 0, count, longs.data());
         return arr;

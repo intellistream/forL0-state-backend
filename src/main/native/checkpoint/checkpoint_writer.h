@@ -98,6 +98,19 @@ inline void write_flink_value<InnerMap>(WriteBuffer& buf, const InnerMap& value,
     buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
 }
 
+// Keep the legacy 16-byte BE key/value encoding for both SQL and streaming windows.
+template <>
+inline void write_flink_value<InnerMapTimeWindow>(WriteBuffer& buf, const InnerMapTimeWindow& value, const TypeLayout&) {
+    size_t length = buf.size();
+    buf.write_int(0);
+    buf.write_int(static_cast<int32_t>(value.size()));
+    for (const auto& entry : value) {
+        buf.write_long(entry.first.first); buf.write_long(entry.first.second);
+        buf.write_long(entry.second.first); buf.write_long(entry.second.second);
+    }
+    buf.patch_int(length, static_cast<int32_t>(buf.size() - length - 4));
+}
+
 // Typed InnerMap variants — same checkpoint format as InnerMap but with typed entries.
 
 template <>

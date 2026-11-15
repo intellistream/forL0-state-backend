@@ -1,6 +1,7 @@
 // Numeric arguments for SQL windows, retaining the original serialized table
 // and checkpoint encodings. Cache hits do not allocate temporary string keys.
 #include "state_cache_access.h"
+#include "window_map_storage.h"
 using namespace forl0;
 
 namespace {
@@ -127,13 +128,16 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetTimeWindow(
         MapCallCache cache(h, int(group), int64_t(key));
         std::string_view value;
         if (!cache.get(user.view(), &value)) {
-            auto* table = h->engine->get_state_table<int64_t, InnerMap>(h->table_id);
+            auto* table = h->engine->get_state_table<int64_t, InnerMapTimeWindow>(h->table_id);
             auto* map = table->get(group, int64_t(key));
             if (!map) return JNI_FALSE;
-            auto it = map->find(std::string(user.view()));
+            auto it = map->find(TimeWindow(start, end));
             if (it == map->end()) return JNI_FALSE;
-            value = it->second;
-            cache.put(user.view(), it->second);
+            WindowBytes encoded(it->second.first, it->second.second);
+            cache.put(user.view(), encoded.view());
+            h->read_result[0] = it->second.first;
+            h->read_result[1] = it->second.second;
+            return JNI_TRUE;
         }
         if (value.size() != 16) throw std::runtime_error("invalid TimeWindow map value width");
         h->read_result[0] = read_be(value.data());
@@ -151,17 +155,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutTimeWindow(
         WindowBytes user(user_start, user_end), value(value_start, value_end);
         MapCallCache cache(h, int(group), int64_t(key));
         cache.prepare(user.view());
-        std::string uk(user.view()), uv(value.view());
-        auto* table = h->engine->get_state_table<int64_t, InnerMap>(h->table_id);
-        std::string* stored = nullptr;
-        if (!table->modify_in_place(group, int64_t(key), [&](InnerMap& map) {
-            stored = &map[std::move(uk)]; *stored = std::move(uv);
-        })) {
-            InnerMap map;
-            stored = &map[std::move(uk)]; *stored = std::move(uv);
-            table->put(group, int64_t(key), std::move(map));
-        }
-        cache.put_prepared(*stored);
+        TimeWindow uk(user_start, user_end), uv(value_start, value_end);
+        auto* table = h->engine->get_state_table<int64_t, InnerMapTimeWindow>(h->table_id);
+        put_window_entry(table, h->window_scratch, group, key, uk, uv);
+        cache.put_prepared(value.view());
     })
 }
 
@@ -173,9 +170,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemoveTimeWindow(
         WindowBytes user(start, end);
         MapCallCache cache(h, int(group), int64_t(key));
         cache.remove(user.view());
-        std::string uk(user.view());
-        auto* table = h->engine->get_state_table<int64_t, InnerMap>(h->table_id);
-        table->modify_or_remove_in_place(group, int64_t(key), [&](InnerMap& map) { map.erase(uk); });
+        auto* table = h->engine->get_state_table<int64_t, InnerMapTimeWindow>(h->table_id);
+        remove_window_entry(table, h->window_scratch, group, key, TimeWindow(start, end));
     })
 }
 }

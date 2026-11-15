@@ -93,6 +93,23 @@ inline ElementList read_flink_value<ElementList>(ReadBuffer& buf, const TypeLayo
     return result;
 }
 
+template <>
+inline InnerMapTimeWindow read_flink_value<InnerMapTimeWindow>(ReadBuffer& buf, const TypeLayout&) {
+    int32_t length = buf.read_int();
+    if (length < 4) return {};
+    int32_t count = buf.read_int();
+    if (count < 0 || int64_t(count) * 32 + 4 != length)
+        throw std::runtime_error("Invalid TimeWindow map payload size");
+    InnerMapTimeWindow result;
+    result.reserve(static_cast<size_t>(count));
+    for (int32_t i = 0; i < count; ++i) {
+        int64_t start = buf.read_long(), end = buf.read_long();
+        int64_t value_start = buf.read_long(), value_end = buf.read_long();
+        result.emplace(TimeWindow(start, end), TimeWindow(value_start, value_end));
+    }
+    return result;
+}
+
 // InnerMap: read from [total_byte_length(4)][count(4)][uk1][uv1][uk2][uv2]...
 // Each UK/UV is captured as raw serialized bytes using user_key/user_value layouts.
 template <>

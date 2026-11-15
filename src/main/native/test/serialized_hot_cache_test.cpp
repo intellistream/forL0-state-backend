@@ -49,15 +49,30 @@ TEST(SerializedHotCache, VariableRowsWrapEvictionAndOversizedUpdates) {
 TEST(SerializedHotCache, PrefixInvalidationDoesNotCrossNamespaces) {
     alignas(64) HotSet memory[16];
     HotCacheLL backing(memory, 16);
-    SerializedHotCache cache(&backing);
+    SerializedHotCache cache(&backing, collide);
     cache.put("window1/key/a", "a", 8); cache.put("window1/key/b", "b", 8);
     cache.put("window2/key/a", "other", 8);
+    ASSERT_TRUE(cache.has_prefix("window1/"));
+    ASSERT_TRUE(cache.has_prefix("window2/"));
+    ASSERT_FALSE(cache.has_prefix("missing/"));
+    std::unordered_map<std::string, std::string> resident;
+    cache.for_each_prefix("window1/", [&](std::string_view key, std::string_view value) {
+        resident.emplace(key, value);
+    });
+    ASSERT_EQ(resident.size(), 2u);
+    ASSERT_EQ(resident.at("window1/key/a"), "a");
+    ASSERT_EQ(resident.at("window1/key/b"), "b");
     cache.invalidate_prefix("window1/");
+    ASSERT_FALSE(cache.has_prefix("window1/"));
+    ASSERT_TRUE(cache.has_prefix("window2/"));
     std::string out;
     ASSERT_FALSE(cache.get("window1/key/a", &out));
     ASSERT_FALSE(cache.get("window1/key/b", &out));
     ASSERT_TRUE(cache.get("window2/key/a", &out)); ASSERT_EQ(out, "other");
     cache.clear(); ASSERT_FALSE(cache.get("window2/key/a", &out));
+    ASSERT_FALSE(cache.has_prefix("window2/"));
+    auto before = backing.misses(); cache.record_misses(100);
+    ASSERT_EQ(backing.misses(), before + 100);
 }
 
 TEST(SerializedHotCache, MixedPrefixMutationsSurviveRingWrapAndDirectoryCollisions) {

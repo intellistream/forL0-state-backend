@@ -22,6 +22,37 @@ public:
     HotCacheLL* backing() const { return backing_; }
     const char* data() const { return data_; }
     size_t capacity() const { return capacity_; }
+    static size_t entry_bytes(size_t key_size, size_t value_size) {
+        return std::max(size_t(1), (key_size + value_size + line_size - 1) / line_size) * line_size;
+    }
+    void record_misses(uint64_t count) { backing_->record_serialized_misses(count); }
+    void record_hits(uint64_t count) { backing_->record_serialized_hits(count); }
+    template<class Consumer>
+    void for_each_prefix(std::string_view prefix, Consumer&& consume) const {
+        const uint64_t h = hasher_(prefix);
+        uint32_t slot = prefixes_[h & (prefixes_.size() - 1)];
+        while (slot != none) {
+            const Entry& entry = entries_[slot];
+            const char* data = data_ + size_t(slot) * line_size;
+            if (entry.prefix_hash == h && entry.prefix_size == prefix.size()
+                    && std::memcmp(data, prefix.data(), prefix.size()) == 0) {
+                consume(std::string_view(data, entry.key_size),
+                        std::string_view(data + entry.key_size, entry.value_size));
+            }
+            slot = entry.prefix_next;
+        }
+    }
+    bool has_prefix(std::string_view prefix) const {
+        const uint64_t h = hasher_(prefix);
+        uint32_t slot = prefixes_[h & (prefixes_.size() - 1)];
+        while (slot != none) {
+            const Entry& entry = entries_[slot];
+            if (entry.prefix_hash == h && entry.prefix_size == prefix.size()
+                    && std::memcmp(data_ + size_t(slot) * line_size, prefix.data(), prefix.size()) == 0) return true;
+            slot = entry.prefix_next;
+        }
+        return false;
+    }
 
     bool get(std::string_view key, std::string* out) {
         std::string_view view;

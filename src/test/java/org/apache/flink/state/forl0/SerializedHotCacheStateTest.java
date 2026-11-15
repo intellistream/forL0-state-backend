@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -143,6 +144,17 @@ class SerializedHotCacheStateTest {
             org.apache.flink.table.runtime.operators.window.TimeWindow key = new org.apache.flink.table.runtime.operators.window.TimeWindow(-10, 0);
             org.apache.flink.table.runtime.operators.window.TimeWindow value = new org.apache.flink.table.runtime.operators.window.TimeWindow(-10, 30);
             state.put(key, value);
+            org.apache.flink.core.memory.DataOutputSerializer legacy = new org.apache.flink.core.memory.DataOutputSerializer(64);
+            legacy.writeInt(1); legacy.writeByte(0); legacy.writeLong(1L);
+            legacy.writeInt(36); legacy.writeInt(1);
+            legacy.writeLong(-10); legacy.writeLong(0); legacy.writeLong(-10); legacy.writeLong(30);
+            NativeEngine.prepareSnapshot(engine);
+            assertArrayEquals(legacy.getCopyOfBuffer(), NativeEngine.writeStateKeyGroupEntries(handle, 0));
+            NativeEngine.releaseSnapshot(engine);
+            assertEquals(1, NativeEngine.stateEntries(handle));
+            org.apache.flink.core.memory.DataInputDeserializer storedKeys =
+                    new org.apache.flink.core.memory.DataInputDeserializer(NativeEngine.getStateKeys(handle));
+            assertEquals(1, storedKeys.readInt()); assertEquals(1L, storedKeys.readLong());
             for (int i = 0; i < 20; i++) { assertEquals(value, state.get(key)); assertTrue(state.contains(key)); }
             assertEquals(0, keys.serializations); assertEquals(0, values.serializations); assertEquals(0, values.deserializations);
             NativeEngine.prepareSnapshot(engine);
@@ -154,8 +166,67 @@ class SerializedHotCacheStateTest {
             Iterator<Map.Entry<org.apache.flink.table.runtime.operators.window.TimeWindow, org.apache.flink.table.runtime.operators.window.TimeWindow>> it = state.iterator();
             assertEquals(value, it.next().getValue()); it.remove();
             assertNull(state.get(key)); assertTrue(state.isEmpty());
+            org.apache.flink.core.memory.DataOutputSerializer user = new org.apache.flink.core.memory.DataOutputSerializer(16);
+            org.apache.flink.core.memory.DataOutputSerializer val = new org.apache.flink.core.memory.DataOutputSerializer(16);
+            user.writeLong(-10); user.writeLong(0); val.writeLong(-10); val.writeLong(30);
+            NativeEngine.mapPut(handle, 1L, 0, user.getCopyOfBuffer(), val.getCopyOfBuffer());
+            assertArrayEquals(val.getCopyOfBuffer(), NativeEngine.mapGet(handle, 1L, 0, user.getCopyOfBuffer()));
+            assertTrue(NativeEngine.mapContains(handle, 1L, 0, user.getCopyOfBuffer()));
+            assertEquals(value, state.get(key));
+            NativeEngine.mapRemove(handle, 1L, 0, user.getCopyOfBuffer());
+            assertFalse(state.contains(key));
+            state.put(key, value); state.clear(); assertTrue(state.isEmpty());
             assertEquals(0, keys.serializations); assertEquals(0, values.serializations);
             traffic(handle);
+        } finally { NativeEngine.destroyEngine(engine); }
+    }
+
+    @Test void typedWindowMapWorksWithProductionCacheDisabled() throws Exception {
+        long engine = NativeEngine.createEngine(0, 2, 2, false, 0, false, 65536, 0, 16, 0, .875, 0);
+        try {
+            TimeWindow.Serializer windows = new TimeWindow.Serializer();
+            MapSerializer<TimeWindow, TimeWindow> maps = new MapSerializer<>(windows, windows);
+            long handle = NativeEngine.registerState(engine, "uncached-windows", 2, TypeAnalyzer.TYPE_INT64,
+                    TypeAnalyzer.TYPE_MAP, TypeAnalyzer.TYPE_VOID_NS,
+                    TypeAnalyzer.generateStateDescriptor(LongSerializer.INSTANCE, VoidNamespaceSerializer.INSTANCE, maps));
+            assertFalse(NativeEngine.hasSerializedCache(handle));
+            ForL0MapState<Long, VoidNamespace, TimeWindow, TimeWindow> state = new ForL0MapState<>(handle,
+                    context(1L), LongSerializer.INSTANCE, VoidNamespaceSerializer.INSTANCE, maps, windows, windows);
+            state.setCurrentNamespace(VoidNamespace.INSTANCE);
+            TimeWindow key = new TimeWindow(-10, 0), value = new TimeWindow(-10, 20);
+            state.put(key, value); assertEquals(value, state.get(key)); assertTrue(state.contains(key));
+            NativeEngine.prepareSnapshot(engine);
+            byte[] snapshot = NativeEngine.writeKeyGroupData(engine, 0);
+            state.remove(key); state.put(new TimeWindow(0, 30), new TimeWindow(0, 40));
+            NativeEngine.releaseSnapshot(engine);
+            NativeEngine.readKeyGroupData(engine, 0, snapshot);
+            assertEquals(value, state.get(key));
+            long iteratorHandle = NativeEngine.mapIteratorCreate(handle, 1L, 0);
+            assertNotEquals(0, iteratorHandle);
+            try {
+                org.apache.flink.core.memory.DataInputDeserializer entry =
+                        new org.apache.flink.core.memory.DataInputDeserializer(NativeEngine.mapIteratorNext(iteratorHandle));
+                assertEquals(key, windows.deserialize(entry));
+                assertEquals(value, windows.deserialize(entry));
+                assertEquals(0, entry.available());
+                assertNull(NativeEngine.mapIteratorNext(iteratorHandle));
+            } finally { NativeEngine.mapIteratorDestroy(iteratorHandle); }
+            TimeWindow otherKey = new TimeWindow(30, 40), otherValue = new TimeWindow(30, 50);
+            state.put(otherKey, otherValue);
+            Map<TimeWindow, TimeWindow> expected = new HashMap<>();
+            expected.put(key, value); expected.put(otherKey, otherValue);
+            Map<TimeWindow, TimeWindow> actual = new HashMap<>();
+            for (Map.Entry<TimeWindow, TimeWindow> entry : state.entries()) actual.put(entry.getKey(), entry.getValue());
+            assertEquals(expected, actual);
+            Iterator<Map.Entry<TimeWindow, TimeWindow>> entries = state.iterator();
+            while (entries.hasNext()) {
+                Map.Entry<TimeWindow, TimeWindow> entry = entries.next();
+                assertEquals(expected.remove(entry.getKey()), entry.getValue());
+                entries.remove();
+            }
+            assertTrue(expected.isEmpty()); assertTrue(state.isEmpty());
+            state.put(key, value); state.clear(); assertTrue(state.isEmpty());
+            assertEquals(0, NativeEngine.stateEntries(handle));
         } finally { NativeEngine.destroyEngine(engine); }
     }
 
@@ -479,6 +550,39 @@ class SerializedHotCacheStateTest {
                 else checkLongList(engine, VoidNamespaceSerializer.INSTANCE, VoidNamespace.INSTANCE);
             } finally { NativeEngine.destroyEngine(engine); }
         }
+    }
+
+    @Test void listReadMissesKeepTheCachedTailAndSmallListsCanWarm() throws Exception {
+        long engine = engine();
+        try {
+            ListSerializer<Long> values = new ListSerializer<>(LongSerializer.INSTANCE);
+            long handle = register(engine, 1, LongSerializer.INSTANCE, VoidNamespaceSerializer.INSTANCE, values);
+            ForL0ListState<Long, VoidNamespace, Long> state = new ForL0ListState<>(handle, context(1L),
+                    LongSerializer.INSTANCE, VoidNamespaceSerializer.INSTANCE, LongSerializer.INSTANCE, values, null);
+            state.setCurrentNamespace(VoidNamespace.INSTANCE);
+            List<Long> input = new java.util.ArrayList<>();
+            for (long i = 0; i < 1200; ++i) input.add(i);
+            state.addAll(input);
+            long[] before = new long[7]; NativeEngine.getHotCacheStats(handle, before);
+            assertEquals(input, state.getInternal());
+            long[] after = new long[7]; NativeEngine.getHotCacheStats(handle, after);
+            assertEquals(before[4], after[4], "Oversized lists are not refilled during a scan");
+            assertTrue(after[2] - before[2] > 600, "Cold prefix reads retain the resident tail");
+            state.update(Arrays.asList(Long.MIN_VALUE, -1L, 0L, Long.MAX_VALUE));
+            NativeEngine.prepareSnapshot(engine);
+            byte[] snapshot = NativeEngine.writeKeyGroupData(engine, 0);
+            NativeEngine.releaseSnapshot(engine);
+            state.clear(); NativeEngine.readKeyGroupData(engine, 0, snapshot);
+            NativeEngine.getHotCacheStats(handle, before);
+            List<Long> expected = Arrays.asList(Long.MIN_VALUE, -1L, 0L, Long.MAX_VALUE);
+            assertEquals(expected, state.getInternal());
+            NativeEngine.getHotCacheStats(handle, after);
+            assertEquals(4, after[4] - before[4], "A small restored list warms after the read");
+            NativeEngine.getHotCacheStats(handle, before);
+            assertEquals(expected, state.getInternal());
+            NativeEngine.getHotCacheStats(handle, after);
+            assertEquals(4, after[2] - before[2]);
+        } finally { NativeEngine.destroyEngine(engine); }
     }
 
     private <N> void checkLongList(long engine, TypeSerializer<N> nsSerializer, N namespace) throws Exception {
