@@ -4,11 +4,24 @@
 #include <gtest/gtest.h>
 #endif
 #include "serialized_hot_cache.h"
+#include "state_cache_access.h"
 #include <random>
 #include <unordered_map>
 
 using namespace forl0;
 static uint64_t collide(std::string_view) { return 7; }
+
+TEST(SerializedHotCache, PackedLongNamespaceIdentityMatchesGenericEncoding) {
+    for (int group : {INT32_MIN, 0, 7, INT32_MAX}) {
+        for (int64_t ns : {INT64_MIN, INT64_C(-1), INT64_C(0), INT64_MAX}) {
+            for (int64_t key : {INT64_MIN, INT64_C(0), INT64_MAX}) {
+                StateCacheKey generic(group, ns, key);
+                LongNamespaceCacheKey packed(group, ns, key);
+                ASSERT_TRUE(generic.view() == packed.view());
+            }
+        }
+    }
+}
 
 TEST(SerializedHotCache, ExactIdentityDespiteHashCollisionsAndBinaryKeys) {
     alignas(64) HotSet memory[16];

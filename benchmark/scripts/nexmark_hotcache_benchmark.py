@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--checkpoint-ms", type=int, help="Override the project checkpoint interval")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=900)
-    parser.add_argument("--native-offheap", default="8g", help="Native state reservation within each 32-GiB TM budget")
+    parser.add_argument("--native-offheap", default="16g", help="Native state reservation within each 32-GiB TM budget")
     parser.add_argument("--lock-file", type=Path, default=Path("/tmp/forl0-nexmark-hotcache.lock"),
                         help="Serialize campaigns that use the same TaskManager CPU cores")
     args = parser.parse_args()

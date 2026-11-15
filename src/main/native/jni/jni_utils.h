@@ -117,6 +117,8 @@ struct StateHandle {
     std::string state_name;
     StateEngine* engine;
     int64_t table_id;       // StateEngine table registration id
+    // StateEngine keeps this table object stable until engine destruction.
+    StateTable<int64_t, std::string>* long_ns_blob_table = nullptr;
     KeyType key_type;
     ValueType value_type;
     StateKind kind;
@@ -128,7 +130,7 @@ struct StateHandle {
 
     // Synchronous read results, owned by this handle and accessed only by its
     // task thread. Avoid JNI primitive-array copies for two-number results.
-    alignas(8) int64_t read_result[2] = {};
+    alignas(8) jlong read_result[2] = {};
 
     // Primitive scalar shortcut. SQL rows, complete composite identities and
     // MapState payloads use serialized_cache instead. Both share SDK-backed
@@ -173,5 +175,16 @@ struct StateHandle {
     }
     TimeWindowMapScratch window_scratch;
 };
+
+inline void set_blob_result(JNIEnv* env, StateHandle* handle, std::string_view value, jlongArray out = nullptr) {
+    handle->read_result[0] = reinterpret_cast<jlong>(value.data());
+    handle->read_result[1] = static_cast<int64_t>(value.size());
+    if (out) env->SetLongArrayRegion(out, 0, 2, handle->read_result);
+}
+
+inline void set_long_result(JNIEnv* env, StateHandle* handle, jlong value, jlongArray out) {
+    handle->read_result[0] = value;
+    if (out) env->SetLongArrayRegion(out, 0, 1, handle->read_result);
+}
 
 }  // namespace forl0

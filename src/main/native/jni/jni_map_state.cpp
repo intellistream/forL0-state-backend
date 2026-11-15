@@ -483,7 +483,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetLongLongSafe(
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         int64_t cached;
         if (state_cache.get_number(uk, &cached)) {
-            jlong value = cached; env->SetLongArrayRegion(buf, 0, 1, &value); return JNI_TRUE;
+            set_long_result(env, handle, cached, buf);
+            return JNI_TRUE;
         }
         auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
         InnerMapLongLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
@@ -492,7 +493,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetLongLongSafe(
         if (it == inner->end()) return JNI_FALSE;
         state_cache.put(uk, it->second);
         jlong val = static_cast<jlong>(it->second);
-        env->SetLongArrayRegion(buf, 0, 1, &val);
+        set_long_result(env, handle, val, buf);
         return JNI_TRUE;
     })
 }
@@ -524,7 +525,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetBytesLongSafe(
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         int64_t cached;
         if (state_cache.get_number(uk, &cached)) {
-            jlong value = cached; env->SetLongArrayRegion(buf, 0, 1, &value); return JNI_TRUE;
+            set_long_result(env, handle, cached, buf);
+            return JNI_TRUE;
         }
         auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
         InnerMapStringLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
@@ -533,7 +535,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetBytesLongSafe(
         if (it == inner->end()) return JNI_FALSE;
         state_cache.put(uk, it->second);
         jlong val = static_cast<jlong>(it->second);
-        env->SetLongArrayRegion(buf, 0, 1, &val);
+        set_long_result(env, handle, val, buf);
         return JNI_TRUE;
     })
 }

@@ -6,6 +6,21 @@
 #include <type_traits>
 
 namespace forl0 {
+// Byte-identical to StateCacheKey(group, int64 namespace, int64 key), without
+// constructing the generic key's string storage on this frequent read path.
+class LongNamespaceCacheKey {
+public:
+    LongNamespaceCacheKey(int32_t group, int64_t ns, int64_t key) {
+        std::memcpy(bytes_.data(), &group, 4);
+        bytes_[4] = 1;
+        std::memcpy(bytes_.data() + 5, &ns, 8);
+        std::memcpy(bytes_.data() + 13, &key, 8);
+    }
+    std::string_view view() const { return {bytes_.data(), bytes_.size()}; }
+private:
+    std::array<char, 21> bytes_;
+};
+
 // Common numeric/FixedRow identities fit on the stack. Generic paths reuse the
 // bytes already received by JNI, without another Java serializer invocation.
 class StateCacheKey {

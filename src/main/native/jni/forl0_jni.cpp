@@ -532,6 +532,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         handle->row_data_key = row_data_key;
         handle->row_data_value = row_data_value;
         handle->map_inner_kind = map_inner_kind;
+        if (typed_long_namespace && is_value_state
+                && stored_key_type == StateHandle::KeyType::INT64
+                && stored_value_type == StateHandle::ValueType::BYTES) {
+            handle->long_ns_blob_table = engine->get_state_table<int64_t, std::string>(table_id);
+        }
 
         // Register StateHandle pointer in engine for checkpoint type dispatch.
         // Engine takes ownership and will free on destruction.

@@ -43,15 +43,36 @@ std::optional<std::string_view> sql_window_get(StateHandle* h, int group, const 
         if (h->serialized_cache->get_view(identity.view(), &value)) return value;
     }
     auto* table = h->engine->get_state_table<std::string, std::string>(h->table_id);
-    auto* value = table->get(group, key.owned());
+    auto* value = table->get_string_view(group, key.view());
     // Do not evict borrowed positive views while servicing another read.
     return value ? std::optional<std::string_view>(*value) : std::nullopt;
 }
 template<class Copy>
 void sql_window_put(StateHandle* h, int group, const SqlWindowKey& key, size_t length, Copy&& copy) {
     auto* table = h->engine->get_state_table<std::string, std::string>(h->table_id);
-    std::string owned = key.owned();
-    put_owned_blob(h, table, length, std::forward<Copy>(copy), group, owned);
+    std::string* stored = nullptr;
+    auto update = [&](std::string& value) {
+        value.resize(length);
+        copy(value.data());
+        stored = &value;
+    };
+    try {
+        if (!table->modify_string_view(group, key.view(), update)) {
+            std::string value;
+            update(value);
+            stored = table->put(group, key.owned(), std::move(value));
+        }
+        if (h->serialized_cache) {
+            StateCacheKey identity(group, key.view());
+            h->serialized_cache->put(identity.view(), *stored);
+        }
+    } catch (...) {
+        if (h->serialized_cache) {
+            StateCacheKey identity(group, key.view());
+            h->serialized_cache->invalidate(identity.view());
+        }
+        throw;
+    }
 }
 }
 
@@ -64,8 +85,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetSqlWindowPtr(
         auto* h = from_handle<StateHandle>(state);
         auto value = sql_window_get(h, group, SqlWindowKey(h, key, start, end, header));
         if (!value || value->empty()) return JNI_FALSE;
-        h->read_result[0] = reinterpret_cast<int64_t>(value->data());
-        h->read_result[1] = static_cast<int64_t>(value->size());
+        set_blob_result(env, h, *value);
         return JNI_TRUE;
     })
 }

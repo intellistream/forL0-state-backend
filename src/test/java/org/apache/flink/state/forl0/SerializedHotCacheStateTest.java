@@ -270,6 +270,11 @@ class SerializedHotCacheStateTest {
             state.setCurrentNamespace(VoidNamespace.INSTANCE);
             state.update(values.toBinaryRow(row(7, "payload")));
             for (int i = 0; i < 20; i++) assertEquals("payload", state.value().getString(1).toString());
+            long[] legacy = new long[2];
+            assertTrue(NativeEngine.valueGetFixedRow2GenericPtr(handle, 1L, 2L, 0, legacy));
+            long result = NativeEngine.stateReadResultAddress(handle);
+            assertEquals(legacy[0], org.apache.flink.core.memory.MemorySegmentBridge.readNativeLong(result));
+            assertEquals(legacy[1], org.apache.flink.core.memory.MemorySegmentBridge.readNativeLong(result + 8));
             assertEquals(0, keys.serializations, "Composite keys use existing typed JNI arguments");
             assertEquals(0, values.serializations, "BinaryRowData uses its existing raw bytes");
             assertEquals(0, values.deserializations, "Cache hits return the existing native RowData view");
@@ -409,6 +414,38 @@ class SerializedHotCacheStateTest {
             ctx.currentKey = GenericRowData.of(0L); assertEquals(8L, state.value());
             traffic(handle);
         } finally { NativeEngine.destroyEngine(engine); }
+    }
+
+    @Test void longNamespacePointerReadHonorsGroupsAndRestoreWithAndWithoutCache() throws Exception {
+        Assumptions.assumeTrue(Boolean.getBoolean("forl0.test.l0"));
+        for (boolean cached : new boolean[]{false, true}) {
+            long engine = cached ? engine() : NativeEngine.createEngine(0, 2, 2, false, 0, false, 65536, 0, 16, 0, .875, 0);
+            try {
+                RowDataSerializer values = rowSerializer();
+                long handle = NativeEngine.registerState(engine, "long-result", 0, TypeAnalyzer.TYPE_INT64,
+                        TypeAnalyzer.getTypeId(values), TypeAnalyzer.TYPE_INT64,
+                        TypeAnalyzer.generateStateDescriptor(LongSerializer.INSTANCE, LongSerializer.INSTANCE, values));
+                ForL0KeyContext<Long> ctx = context(Long.MIN_VALUE);
+                ForL0ValueState<Long, Long, RowData> state = new ForL0ValueState<>(handle, ctx,
+                        LongSerializer.INSTANCE, LongSerializer.INSTANCE, values, null);
+                state.setCurrentNamespace(Long.MAX_VALUE);
+                state.update(row(7L, "original"));
+                ctx.currentKeyGroupIndex = 1; state.update(row(9L, "other-group"));
+                ctx.currentKeyGroupIndex = 0;
+                assertEquals("original", state.value().getString(1).toString());
+                NativeEngine.prepareSnapshot(engine);
+                byte[] snapshot = NativeEngine.writeKeyGroupData(engine, 0);
+                state.update(row(11L, "mutated"));
+                NativeEngine.releaseSnapshot(engine);
+                NativeEngine.readKeyGroupData(engine, 0, snapshot);
+                assertEquals("original", state.value().getString(1).toString());
+                state.clear();
+                assertFalse(NativeEngine.valueGetBlobPtrLongNs(handle, Long.MIN_VALUE, 0, Long.MAX_VALUE, 0));
+                assertNull(state.value());
+                ctx.currentKeyGroupIndex = 1;
+                assertEquals("other-group", state.value().getString(1).toString());
+            } finally { NativeEngine.destroyEngine(engine); }
+        }
     }
 
     @Test void longNamespaceRowsUseArrayRangesAndBorrowedNativeInputWithoutSerialization() throws Exception {

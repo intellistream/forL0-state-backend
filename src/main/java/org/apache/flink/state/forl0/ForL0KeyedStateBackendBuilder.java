@@ -709,22 +709,15 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             byte[] rawKeyBytes = Arrays.copyOfRange(compositeKey, keyGroupPrefixBytes, keyEndAbsPos);
             byte[] rawNsBytes = Arrays.copyOfRange(compositeKey, keyEndAbsPos, compositeKey.length);
 
-            // Write namespace
             if (voidNs || typedTimeWindow) {
                 dos.write(rawNsBytes);
+                if (keyFmt == 0) {
+                    dos.writeInt(rawKeyBytes.length);
+                }
+                dos.write(rawKeyBytes);
             } else {
                 dos.writeInt(rawNsBytes.length + rawKeyBytes.length);
                 dos.write(rawNsBytes);
-                dos.write(rawKeyBytes);
-            }
-
-            // Write key in stored format
-            if (!voidNs && !typedTimeWindow) {
-                // The complete namespace/key field was written above.
-            } else if (keyFmt > 0) {
-                dos.write(rawKeyBytes);
-            } else {
-                dos.writeInt(rawKeyBytes.length);
                 dos.write(rawKeyBytes);
             }
 

@@ -6,6 +6,8 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.base.MapSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
+import org.apache.flink.core.memory.MemorySegmentBridge;
+import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalMapState;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
@@ -69,7 +71,6 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
     private final DataOutputSerializer ukOut = new DataOutputSerializer(64);
     private final DataOutputSerializer uvOut = new DataOutputSerializer(128);
-    private final long[] primitiveBuf = new long[2];
 
     ForL0MapState(
             long stateHandle,
@@ -97,7 +98,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         this.timeWindowMap = voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT64
                 && TypeAnalyzer.isAnyTimeWindowSerializer(userKeySerializer)
                 && TypeAnalyzer.isAnyTimeWindowSerializer(userValueSerializer);
-        this.readResultAddress = timeWindowMap ? NativeEngine.stateReadResultAddress(stateHandle) : 0;
+        this.readResultAddress = NativeEngine.stateReadResultAddress(stateHandle);
         this.isRowDataKey = TypeAnalyzer.isRowDataSerializer(keySerializer);
         this.rowDataKeyAccessor = isRowDataKey ? TypeAnalyzer.createRowDataKeyAccessor(keySerializer) : null;
         this.isRowDataUK = userKeySerializer != null && TypeAnalyzer.isRowDataSerializer(userKeySerializer);
@@ -173,57 +174,79 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     }
 
     @SuppressWarnings("unchecked")
+    private UV getWindowMapping(UK userKey) {
+        long key = resolveKeyAsLong(keyContext.currentKey);
+        int group = keyContext.currentKeyGroupIndex;
+        if (!NativeEngine.mapGetTimeWindow(stateHandle, key, group,
+                TypeAnalyzer.windowStart(userKey), TypeAnalyzer.windowEnd(userKey))) {
+            return null;
+        }
+        return (UV) TypeAnalyzer.timeWindow(userValueSerializer,
+                MemorySegmentBridge.readNativeLong(readResultAddress),
+                MemorySegmentBridge.readNativeLong(readResultAddress + 8));
+    }
+
     @Override
     public UV get(UK userKey) {
-        if (rowKeyIntMap) {
-            org.apache.flink.table.data.binary.BinaryRowData row = binaryUserKey(userKey);
-            long encoded = NativeEngine.mapGetRowKeyInt(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                    keyContext.currentKeyGroupIndex, row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes());
-            return encoded == 0 ? null : (UV) Integer.valueOf((int) encoded);
-        }
-        if (timeWindowMap) {
-            if (!NativeEngine.mapGetTimeWindow(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
-                    TypeAnalyzer.windowStart(userKey), TypeAnalyzer.windowEnd(userKey))) return null;
-            return (UV) TypeAnalyzer.timeWindow(userValueSerializer,
-                    org.apache.flink.core.memory.MemorySegmentBridge.readNativeLong(readResultAddress),
-                    org.apache.flink.core.memory.MemorySegmentBridge.readNativeLong(readResultAddress + 8));
-        }
+        if (rowKeyIntMap) return getRowKeyInt(userKey);
+        if (timeWindowMap) return getWindowMapping(userKey);
+        if (rowKeyMap) return getRowKeyBytes(userKey);
+        return getOtherStrategies(userKey);
+    }
+
+    @SuppressWarnings("unchecked")
+    private UV getRowKeyInt(UK userKey) {
+        BinaryRowData row = binaryUserKey(userKey);
+        long encoded = NativeEngine.mapGetRowKeyInt(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex, row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes());
+        return encoded == 0 ? null : (UV) Integer.valueOf((int) encoded);
+    }
+
+    private UV getRowKeyBytes(UK userKey) {
         try {
-            if (rowKeyMap) {
-                org.apache.flink.table.data.binary.BinaryRowData row = binaryUserKey(userKey);
-                byte[] bytes = NativeEngine.mapGetRowKeyBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
-                        keyContext.currentKeyGroupIndex, row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes());
-                return bytes == null ? null : deserializeUserValue(bytes);
-            }
+            BinaryRowData row = binaryUserKey(userKey);
+            byte[] bytes = NativeEngine.mapGetRowKeyBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                    keyContext.currentKeyGroupIndex, row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes());
+            return bytes == null ? null : deserializeUserValue(bytes);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to get from MapState", e);
+        }
+    }
+
+    private UV getWithTimeWindowNamespace(UK userKey) throws IOException {
+        long key = resolveKeyAsLong(keyContext.currentKey);
+        TimeWindow window = (TimeWindow) currentNamespace;
+        byte[] bytes = NativeEngine.mapGetWithTW(stateHandle, key, keyContext.currentKeyGroupIndex,
+                window.getStart(), window.getEnd(), serializeUserKey(userKey));
+        return bytes == null ? null : deserializeUserValue(bytes);
+    }
+
+    private UV getOtherStrategies(UK userKey) {
+        try {
             long k;
             switch (mapStrategy) {
                 case LONG_LONG_VOID:
                     k = resolveKeyAsLong(keyContext.currentKey);
-                    if (!NativeEngine.mapGetLongLongSafe(stateHandle, k, keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey), primitiveBuf))
+                    if (!NativeEngine.mapGetLongLongSafe(stateHandle, k, keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey), null))
                         return null;
-                    return wrapLongAsUV(primitiveBuf[0]);
+                    return wrapLongAsUV(MemorySegmentBridge.readNativeLong(readResultAddress));
                 case LONG_BYTES_VOID:
                     k = resolveKeyAsLong(keyContext.currentKey);
                     byte[] lb = NativeEngine.mapGetLongBytes(stateHandle, k, keyContext.currentKeyGroupIndex, resolveUKAsLong(userKey));
                     return lb != null ? deserializeUserValue(lb) : null;
                 case BYTES_LONG_VOID: {
                     k = resolveKeyAsLong(keyContext.currentKey);
-                    if (!NativeEngine.mapGetBytesLongSafe(stateHandle, k, keyContext.currentKeyGroupIndex, serializeUserKey(userKey), primitiveBuf))
+                    if (!NativeEngine.mapGetBytesLongSafe(stateHandle, k, keyContext.currentKeyGroupIndex, serializeUserKey(userKey), null))
                         return null;
-                    return wrapLongAsUV(primitiveBuf[0]);
+                    return wrapLongAsUV(MemorySegmentBridge.readNativeLong(readResultAddress));
                 }
                 case LONG_MAP_VOID: {
                     k = resolveKeyAsLong(keyContext.currentKey);
                     byte[] r = NativeEngine.mapGet(stateHandle, k, keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
                     return r != null ? deserializeUserValue(r) : null;
                 }
-                case LONG_MAP_TW: {
-                    k = resolveKeyAsLong(keyContext.currentKey);
-                    TimeWindow tw = (TimeWindow) currentNamespace;
-                    byte[] r = NativeEngine.mapGetWithTW(stateHandle, k, keyContext.currentKeyGroupIndex,
-                            tw.getStart(), tw.getEnd(), serializeUserKey(userKey));
-                    return r != null ? deserializeUserValue(r) : null;
-                }
+                case LONG_MAP_TW:
+                    return getWithTimeWindowNamespace(userKey);
                 default: {
                     byte[] r = NativeEngine.mapGetGeneric(stateHandle, serializeKey(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeUserKey(userKey));
@@ -238,24 +261,40 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public void put(UK userKey, UV userValue) {
         if (rowKeyIntMap) {
-            org.apache.flink.table.data.binary.BinaryRowData row = binaryUserKey(userKey);
-            NativeEngine.mapPutRowKeyInt(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
-                    row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes(), (Integer) userValue);
-            return;
+            putRowKeyInt(userKey, userValue);
+        } else if (timeWindowMap) {
+            putWindowMapping(userKey, userValue);
+        } else if (rowKeyMap) {
+            putRowKeyBytes(userKey, userValue);
+        } else {
+            putOtherStrategies(userKey, userValue);
         }
-        if (timeWindowMap) {
-            NativeEngine.mapPutTimeWindow(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
-                    TypeAnalyzer.windowStart(userKey), TypeAnalyzer.windowEnd(userKey),
-                    TypeAnalyzer.windowStart(userValue), TypeAnalyzer.windowEnd(userValue));
-            return;
-        }
+    }
+
+    private void putRowKeyInt(UK userKey, UV userValue) {
+        BinaryRowData row = binaryUserKey(userKey);
+        NativeEngine.mapPutRowKeyInt(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
+                row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes(), (Integer) userValue);
+    }
+
+    private void putWindowMapping(UK userKey, UV userValue) {
+        NativeEngine.mapPutTimeWindow(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex, TypeAnalyzer.windowStart(userKey), TypeAnalyzer.windowEnd(userKey),
+                TypeAnalyzer.windowStart(userValue), TypeAnalyzer.windowEnd(userValue));
+    }
+
+    private void putRowKeyBytes(UK userKey, UV userValue) {
         try {
-            if (rowKeyMap) {
-                org.apache.flink.table.data.binary.BinaryRowData row = binaryUserKey(userKey);
-                NativeEngine.mapPutRowKeyBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
-                        row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes(), serializeUserValue(userValue));
-                return;
-            }
+            BinaryRowData row = binaryUserKey(userKey);
+            NativeEngine.mapPutRowKeyBytes(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
+                    row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes(), serializeUserValue(userValue));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to put to MapState", e);
+        }
+    }
+
+    private void putOtherStrategies(UK userKey, UV userValue) {
+        try {
             long k;
             switch (mapStrategy) {
                 case LONG_LONG_VOID:
@@ -360,10 +399,18 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @Override
     public void remove(UK userKey) {
         if (timeWindowMap) {
-            NativeEngine.mapRemoveTimeWindow(stateHandle, resolveKeyAsLong(keyContext.currentKey), keyContext.currentKeyGroupIndex,
-                    TypeAnalyzer.windowStart(userKey), TypeAnalyzer.windowEnd(userKey));
-            return;
+            removeWindowMapping(userKey);
+        } else {
+            removeOtherStrategies(userKey);
         }
+    }
+
+    private void removeWindowMapping(UK userKey) {
+        NativeEngine.mapRemoveTimeWindow(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex, TypeAnalyzer.windowStart(userKey), TypeAnalyzer.windowEnd(userKey));
+    }
+
+    private void removeOtherStrategies(UK userKey) {
         try {
             long k;
             switch (mapStrategy) {
@@ -694,7 +741,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         private <T> T read(TypeSerializer<T> serializer, boolean row, RowDataKeyAccessor accessor) throws IOException {
             if (!row) return serializer.deserialize(input);
             int size = input.readInt();
-            org.apache.flink.table.data.binary.BinaryRowData value = new org.apache.flink.table.data.binary.BinaryRowData(accessor.getArity());
+            BinaryRowData value = new BinaryRowData(accessor.getArity());
             value.pointTo(segment, data.length - input.available(), size);
             input.skipBytesToRead(size);
             return (T) value;
@@ -878,7 +925,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
 
     private byte[] serializeUserValue(UV userValue) throws IOException {
         if (isRowDataUV) {
-            org.apache.flink.table.data.binary.BinaryRowData row = TypeAnalyzer.toBinaryRow(
+            BinaryRowData row = TypeAnalyzer.toBinaryRow(
                     userValueSerializer, (org.apache.flink.table.data.RowData) userValue);
             if (row.getSegments().length != 1 || row.getOffset() > row.getSegments()[0].size() - row.getSizeInBytes()) row = row.copy();
             byte[] raw = RowDataKeyAccessor.extractBinaryRowDataBytesCompat(row);
@@ -892,7 +939,7 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     private void writeUserValueBuffer(UV value) throws IOException {
         uvOut.clear();
         if (isRowDataUV) {
-            org.apache.flink.table.data.binary.BinaryRowData row = TypeAnalyzer.toBinaryRow(
+            BinaryRowData row = TypeAnalyzer.toBinaryRow(
                     userValueSerializer, (org.apache.flink.table.data.RowData) value);
             if (row.getSegments().length != 1 || row.getSegments()[0].getArray() == null
                     || row.getOffset() > row.getSegments()[0].size() - row.getSizeInBytes()) row = row.copy();
@@ -901,8 +948,8 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
         } else userValueSerializer.serialize(value, uvOut);
     }
 
-    private org.apache.flink.table.data.binary.BinaryRowData binaryUserKey(UK key) {
-        org.apache.flink.table.data.binary.BinaryRowData row = TypeAnalyzer.toBinaryRow(
+    private BinaryRowData binaryUserKey(UK key) {
+        BinaryRowData row = TypeAnalyzer.toBinaryRow(
                 userKeySerializer, (org.apache.flink.table.data.RowData) key);
         if (row.getSegments().length != 1 || row.getSegments()[0].getArray() == null
                 || row.getOffset() > row.getSegments()[0].size() - row.getSizeInBytes()) row = row.copy();

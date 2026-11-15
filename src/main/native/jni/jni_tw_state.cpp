@@ -32,7 +32,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLongWithTW(
         if (handle->hot_cache_ll) {
             int64_t cached;
             if (handle->hot_cache_ll->get(folded, &cached)) {
-                env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&cached));
+                set_long_result(env, handle, cached, out);
                 return JNI_TRUE;
             }
         }
@@ -42,7 +42,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLongWithTW(
         if (!val) return JNI_FALSE;
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(folded, *val);
         jlong v = static_cast<jlong>(*val);
-        env->SetLongArrayRegion(out, 0, 1, &v);
+        set_long_result(env, handle, v, out);
         return JNI_TRUE;
     })
 }
@@ -183,11 +183,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongStringPtrWithTW(
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         auto val = cached_get(handle, table, keyGroup, tw, static_cast<int64_t>(key));
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -222,7 +218,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDoubleWithTW(
         if (handle->hot_cache_ll) {
             int64_t cached;
             if (handle->hot_cache_ll->get(folded, &cached)) {
-                env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&cached));
+                set_long_result(env, handle, cached, out);
                 return JNI_TRUE;
             }
         }
@@ -234,7 +230,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDoubleWithTW(
         jlong bits;
         memcpy(&bits, &*val, sizeof(double));
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(folded, static_cast<int64_t>(bits));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -273,7 +269,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetLongWithTW(
         int64_t* val = table->get(keyGroup, tw, static_cast<int64_t>(key));
         if (!val) return JNI_FALSE;
         jlong v = static_cast<jlong>(*val);
-        env->SetLongArrayRegion(out, 0, 1, &v);
+        set_long_result(env, handle, v, out);
         return JNI_TRUE;
     })
 }
@@ -340,7 +336,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetBytesLongWithTW(
         int64_t* val = table->get(keyGroup, tw, k);
         if (!val) return JNI_FALSE;
         jlong v = static_cast<jlong>(*val);
-        env->SetLongArrayRegion(out, 0, 1, &v);
+        set_long_result(env, handle, v, out);
         return JNI_TRUE;
     })
 }
@@ -425,7 +421,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutBytesLongWithTW(
         int64_t* val = table->get(keyGroup, tw, k);
         if (val) {
             jlong v = static_cast<jlong>(*val);
-            env->SetLongArrayRegion(out, 0, 1, &v);
+            set_long_result(env, handle, v, out);
             return JNI_TRUE;
         }
         table->put(keyGroup, tw, std::move(k), static_cast<int64_t>(newValue));

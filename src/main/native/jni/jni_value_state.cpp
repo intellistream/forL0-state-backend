@@ -767,7 +767,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearFixedRow2(
 }
 
 // ============================================================================
-//  Zero-copy pointer return: writes [nativeAddress, size] into jlongArray out
+//  Zero-copy results use the handle area and optionally copy to jlongArray out
 //  Returns JNI_TRUE if value found, JNI_FALSE if not.
 //  The returned pointer is std::string::data() within the SwissTable — valid
 //  until the next mutation on the same key.
@@ -782,11 +782,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongStringPtr(
         auto* table = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
         auto val = cached_get(handle, table, keyGroup, static_cast<int64_t>(key));
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -801,11 +797,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetGenericPtr(
         std::string k = jbytearray_to_string(env, key);
         auto val = cached_get(handle, table, keyGroup, k);
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -829,7 +821,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLongSafe(
             int64_t cached;
             if (handle->hot_cache_ll->get(k, &cached)) {
                 jlong out_val = static_cast<jlong>(cached);
-                env->SetLongArrayRegion(out, 0, 1, &out_val);
+                set_long_result(env, handle, out_val, out);
                 return JNI_TRUE;
             }
         }
@@ -837,7 +829,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLongSafe(
         auto val = cached_get(handle, table, keyGroup, k);
         if (!val) return JNI_FALSE;
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(k, *val);
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&*val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -854,7 +846,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDoubleSafe(
             int64_t bits;
             if (handle->hot_cache_ll->get(k, &bits)) {
                 jlong jbits = static_cast<jlong>(bits);
-                env->SetLongArrayRegion(out, 0, 1, &jbits);
+                set_long_result(env, handle, jbits, out);
                 return JNI_TRUE;
             }
         }
@@ -864,7 +856,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDoubleSafe(
         jlong bits;
         memcpy(&bits, &*val, sizeof(jlong));
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(k, static_cast<int64_t>(bits));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -882,7 +874,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntLongSafe(
             int64_t cached;
             if (handle->hot_cache_ll->get(kc, &cached)) {
                 jlong out_val = static_cast<jlong>(cached);
-                env->SetLongArrayRegion(out, 0, 1, &out_val);
+                set_long_result(env, handle, out_val, out);
                 return JNI_TRUE;
             }
         }
@@ -890,7 +882,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntLongSafe(
         auto val = cached_get(handle, table, keyGroup, k);
         if (!val) return JNI_FALSE;
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(kc, *val);
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&*val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -908,7 +900,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntDoubleSafe(
             int64_t bits;
             if (handle->hot_cache_ll->get(kc, &bits)) {
                 jlong jbits = static_cast<jlong>(bits);
-                env->SetLongArrayRegion(out, 0, 1, &jbits);
+                set_long_result(env, handle, jbits, out);
                 return JNI_TRUE;
             }
         }
@@ -918,7 +910,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntDoubleSafe(
         jlong bits;
         memcpy(&bits, &*val, sizeof(jlong));
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(kc, static_cast<int64_t>(bits));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -934,7 +926,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowLongSafe(
         auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
         auto val = cached_get(handle, table, keyGroup, key);
         if (!val) return JNI_FALSE;
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&*val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -949,7 +941,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRow2LongSafe(
         auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
         auto val = cached_get(handle, table, keyGroup, key);
         if (!val) return JNI_FALSE;
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&*val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -967,7 +959,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowDoubleSafe(
         if (!val) return JNI_FALSE;
         jlong bits;
         memcpy(&bits, &*val, sizeof(jlong));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -984,7 +976,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRow2DoubleSafe(
         if (!val) return JNI_FALSE;
         jlong bits;
         memcpy(&bits, &*val, sizeof(jlong));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -1000,11 +992,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowGenericPtr(
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
         auto val = cached_get(handle, table, keyGroup, key);
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -1019,11 +1007,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRow2GenericPtr(
         FixedRow key = fixedrow2_from_longs(key0, key1);
         auto val = cached_get(handle, table, keyGroup, key);
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -1044,7 +1028,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutLong(
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
         auto val = cached_get(handle, table, keyGroup, static_cast<int64_t>(key));
         if (val) {
-            env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&*val));
+            set_long_result(env, handle, *val, out);
             return JNI_TRUE;
         }
         cached_put(handle, table, keyGroup, static_cast<int64_t>(key), static_cast<int64_t>(newValue));
@@ -1064,7 +1048,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutLongWithTW(
         TimeWindow tw{static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd)};
         auto val = cached_get(handle, table, keyGroup, tw, static_cast<int64_t>(key));
         if (val) {
-            env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(&*val));
+            set_long_result(env, handle, *val, out);
             return JNI_TRUE;
         }
         cached_put(handle, table, keyGroup, tw, static_cast<int64_t>(key), static_cast<int64_t>(newValue));

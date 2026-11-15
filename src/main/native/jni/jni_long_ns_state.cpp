@@ -13,6 +13,21 @@ template<class F> decltype(auto) with_namespace(jlong ns, jlong header, F&& fn) 
     std::memcpy(identity.data() + 8, &header, 8);
     return fn(identity);
 }
+std::optional<std::string_view> get_blob(StateHandle* h, int group, int64_t ns, int64_t header, int64_t key) {
+    auto* table = h->long_ns_blob_table;
+    if (header != 0) {
+        return with_namespace(ns, header, [&](const auto& identity) {
+            return cached_get(h, table, group, identity, key);
+        });
+    }
+    if (h->serialized_cache) {
+        LongNamespaceCacheKey identity(group, ns, key);
+        std::string_view bytes;
+        if (h->serialized_cache->get_view(identity.view(), &bytes)) return bytes;
+    }
+    auto* value = table->get(group, ns, key);
+    return value ? std::optional<std::string_view>(*value) : std::nullopt;
+}
 }
 
 extern "C" {
@@ -33,7 +48,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetNumberLongNs(
             if (!value) return JNI_FALSE;
             bits = *value;
         }
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, h, bits, out);
         return JNI_TRUE;
     })
 }
@@ -59,22 +74,19 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetBlobLongNs(
         JNIEnv* env, jclass, jlong state, jlong key, jint group, jlong ns, jlong header) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* h = from_handle<StateHandle>(state);
-        auto* table = h->engine->get_state_table<int64_t, std::string>(h->table_id);
-        auto value = with_namespace(ns, header, [&](const auto& identity) { return cached_get(h, table, int(group), identity, int64_t(key)); });
+        auto value = get_blob(h, group, ns, header, key);
         return value ? string_to_jbytearray(env, *value) : nullptr;
     })
 }
 
 JNIEXPORT jboolean JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_valueGetBlobPtrLongNs(
-        JNIEnv* env, jclass, jlong state, jlong key, jint group, jlong ns, jlong header, jlongArray out) {
+        JNIEnv* env, jclass, jlong state, jlong key, jint group, jlong ns, jlong header) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* h = from_handle<StateHandle>(state);
-        auto* table = h->engine->get_state_table<int64_t, std::string>(h->table_id);
-        auto value = with_namespace(ns, header, [&](const auto& identity) { return cached_get(h, table, int(group), identity, int64_t(key)); });
+        auto value = get_blob(h, group, ns, header, key);
         if (!value || value->empty()) return JNI_FALSE;
-        jlong buffer[2] = {reinterpret_cast<jlong>(value->data()), jlong(value->size())};
-        env->SetLongArrayRegion(out, 0, 2, buffer);
+        set_blob_result(env, h, *value);
         return JNI_TRUE;
     })
 }
@@ -84,7 +96,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutBlobLongNs(
         JNIEnv* env, jclass, jlong state, jlong key, jint group, jlong ns, jlong header, jbyteArray bytes) {
     JNI_ENTRY_VOID({
         auto* h = from_handle<StateHandle>(state);
-        auto* table = h->engine->get_state_table<int64_t, std::string>(h->table_id);
+        auto* table = h->long_ns_blob_table;
         with_namespace(ns, header, [&](const auto& identity) { put_java_blob(env, h, table, bytes, int(group), identity, int64_t(key)); });
     })
 }
@@ -97,7 +109,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutBlobRangeLongNs(
         auto* h = from_handle<StateHandle>(state);
         if (offset < 0 || length < 0 || offset > env->GetArrayLength(bytes) - length)
             throw std::invalid_argument("invalid row byte range");
-        auto* table = h->engine->get_state_table<int64_t, std::string>(h->table_id);
+        auto* table = h->long_ns_blob_table;
         with_namespace(ns, header, [&](const auto& identity) {
             put_owned_blob(h, table, size_t(length), [&](char* target) {
                 env->GetByteArrayRegion(bytes, offset, length, reinterpret_cast<jbyte*>(target));
@@ -115,7 +127,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutBlobAddressLongNs(
         // this synchronous copy, including caller-owned direct buffers.
         auto* h = from_handle<StateHandle>(state);
         if (!owner || !address || length < 0) throw std::invalid_argument("invalid native row range");
-        auto* table = h->engine->get_state_table<int64_t, std::string>(h->table_id);
+        auto* table = h->long_ns_blob_table;
         with_namespace(ns, header, [&](const auto& identity) {
             put_owned_blob(h, table, size_t(length), [&](char* target) {
                 std::memmove(target, reinterpret_cast<const void*>(address), size_t(length));
@@ -134,7 +146,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearLongNs(
         } else if (h->value_type == StateHandle::ValueType::INT64 || h->value_type == StateHandle::ValueType::INT32) {
             with_namespace(ns, header, [&](const auto& identity) { return cached_remove(h, h->engine->get_state_table<int64_t, int64_t>(h->table_id), int(group), identity, int64_t(key)); });
         } else {
-            with_namespace(ns, header, [&](const auto& identity) { return cached_remove(h, h->engine->get_state_table<int64_t, std::string>(h->table_id), int(group), identity, int64_t(key)); });
+            with_namespace(ns, header, [&](const auto& identity) { return cached_remove(h, h->long_ns_blob_table, int(group), identity, int64_t(key)); });
         }
     })
 }

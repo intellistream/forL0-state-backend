@@ -93,7 +93,7 @@ public final class NativeEngine {
     static native boolean valueGetNumberLongNs(long state, long key, int group, long ns, long keyHeader, long[] out);
     static native void valuePutNumberLongNs(long state, long key, int group, long ns, long keyHeader, long bits);
     static native byte[] valueGetBlobLongNs(long state, long key, int group, long ns, long keyHeader);
-    static native boolean valueGetBlobPtrLongNs(long state, long key, int group, long ns, long keyHeader, long[] out);
+    static native boolean valueGetBlobPtrLongNs(long state, long key, int group, long ns, long keyHeader);
     static native void valuePutBlobLongNs(long state, long key, int group, long ns, long keyHeader, byte[] value);
     static native void valuePutBlobRangeLongNs(long state, long key, int group, long ns, long keyHeader, byte[] value, int offset, int length);
     static native void valuePutBlobAddressLongNs(long state, long key, int group, long ns, long keyHeader, Object owner, long address, int length);
@@ -252,7 +252,7 @@ public final class NativeEngine {
 
     public static native void valueClearGeneric(long stateHandle, byte[] key, int keyGroup);
 
-    // --- Zero-copy pointer return: writes [nativeAddress, size] into out array ---
+    // Zero-copy results use the handle result area; a non-null out array receives a copy.
     // Returns true if value found, false if not. Caller wraps as off-heap MemorySegment.
     //
     // SAFETY: The returned pointer references std::string::data() inside a SwissTable slot.
@@ -264,7 +264,7 @@ public final class NativeEngine {
     public static native boolean valueGetGenericPtr(long stateHandle, byte[] key, int keyGroup, long[] out);
 
     // --- Combined get: single JNI call, single hash lookup ---
-    // Returns true if key exists and writes value to out[0]; returns false otherwise.
+    // Returns true if key exists; null out uses the handle result area, otherwise writes out[0].
     // For double values, out[0] stores the raw bits (use Double.longBitsToDouble).
 
     public static native boolean valueGetLongLongSafe(long stateHandle, long key, int keyGroup, long[] out);
