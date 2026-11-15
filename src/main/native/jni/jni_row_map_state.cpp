@@ -26,14 +26,17 @@ std::optional<std::string_view> get_row_value(StateHandle* h, int group, int64_t
     return std::string_view(found->second);
 }
 
-template<class Copy>
+template<bool AdmitInsert, class Copy>
 void put_row_value(StateHandle* h, int group, int64_t key, std::string&& user, size_t size, Copy&& copy) {
     MapCallCache cache(h, group, key);
     cache.prepare(user);
     auto* table = h->engine->get_state_table<int64_t, InnerMap>(h->table_id);
     std::string* stored = nullptr;
+    bool inserted = false;
     auto update = [&](InnerMap& map) {
-        auto& bytes = map[std::move(user)];
+        auto entry = map.try_emplace(std::move(user));
+        inserted = entry.second;
+        auto& bytes = entry.first->second;
         bytes.resize(size);
         copy(bytes.data());
         stored = &bytes;
@@ -42,7 +45,8 @@ void put_row_value(StateHandle* h, int group, int64_t key, std::string&& user, s
         InnerMap map; update(map);
         table->put(group, key, std::move(map));
     }
-    cache.put_prepared(*stored);
+    // One-time integer-count rows should not churn L0.
+    if (AdmitInsert || !inserted) cache.put_prepared(*stored);
 }
 }
 
@@ -71,7 +75,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutRowKeyInt(
     JNI_ENTRY_VOID({
         auto* h = from_handle<StateHandle>(state);
         std::string user = row_key(env, array, offset, size);
-        put_row_value(h, group, key, std::move(user), 4, [&](char* bytes) {
+        put_row_value<false>(h, group, key, std::move(user), 4, [&](char* bytes) {
             uint32_t bits = static_cast<uint32_t>(value);
             for (int i = 0; i < 4; ++i) bytes[i] = char(bits >> (24 - 8 * i));
         });
@@ -99,7 +103,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutRowKeyBytes(
         auto* h = from_handle<StateHandle>(state);
         std::string user = row_key(env, array, offset, size);
         jsize length = env->GetArrayLength(value);
-        put_row_value(h, group, key, std::move(user), size_t(length), [&](char* bytes) {
+        put_row_value<true>(h, group, key, std::move(user), size_t(length), [&](char* bytes) {
             env->GetByteArrayRegion(value, 0, length, reinterpret_cast<jbyte*>(bytes));
         });
     })

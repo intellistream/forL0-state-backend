@@ -727,6 +727,7 @@ class SerializedHotCacheStateTest {
             NativeEngine.readKeyGroupData(engine, 0, snapshot);
             assertEquals(Integer.MIN_VALUE, state.get(first));
             state.remove(first); assertNull(state.get(first)); assertEquals(0, state.get(second));
+            state.put(first, 7); assertEquals(7, state.get(first));
             state.clear(); assertNull(state.get(second));
             assertEquals(0, rows.serializations); assertEquals(0, rows.deserializations);
             traffic(handle);
