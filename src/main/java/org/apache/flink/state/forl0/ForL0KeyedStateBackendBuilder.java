@@ -819,7 +819,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     //
     //  Always expose manager-level gauges so operators can tell whether their
     //  `l0-cache.enabled=true` request actually resolved to an active cache —
-    //  especially important when hardware gating forces a fallback to
+    //  especially important when allocation failure forces a fallback to
     //  disabled (bytes_capacity == 0, active == 0).
     // -----------------------------------------------------------------------
     private static void registerHotCacheMetrics(MetricGroup parent, long engineHandle) {

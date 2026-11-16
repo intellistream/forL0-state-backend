@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Isolated, identical-SQL Heap/ForL0 comparison on a 2 x 4-core/32-GiB cluster.
 
-The cache arm explicitly loads the separately built DRAM test allocator. It
-measures implementation overhead, never hardware-L0 latency or acceleration.
+All arms load the production library. HotCache selects L0 or ordinary native
+memory automatically; each run records the actual memory type from its logs.
 """
 import argparse
 import fcntl
@@ -60,7 +60,7 @@ def main():
         "queries": args.queries, "arms": args.arms, "repeats": args.repeats,
         "taskmanagers": 2, "cores_per_taskmanager": 4, "process_memory_per_taskmanager": "32g",
         "native_offheap": args.native_offheap,
-        "allocator": "DRAM_TEST_ONLY", "flink": str(args.flink),
+        "allocator": "AUTOMATIC", "flink": str(args.flink),
     }, indent=2))
     queries = source / "benchmark/nexmark-src/nexmark-flink/src/main/resources/queries"
     results = []
@@ -133,7 +133,7 @@ def main():
         rest_port, rpc_port, blob_port = port(), port(), port()
         native = run / "native"
         native.mkdir()
-        library = build / ("libforl0_engine_test_l0.so" if arm == "cache" else "libforl0_engine.so")
+        library = build / "libforl0_engine.so"
         (native / "libforl0_engine.so").symlink_to(library)
         rest = f"http://127.0.0.1:{rest_port}"
         configs, processes = [], []
@@ -256,10 +256,14 @@ def main():
             traffic["states"] += 1
             for key in ("lookups", "hits", "writes"):
                 traffic[key] += int(counters[key].group(1))
+        allocation = "off"
         if "state.backend.forl0.l0-cache.enabled: true" in conf.joinpath("flink-conf.yaml").read_text():
-            if not all(traffic[key] > 0 for key in ("engines", "states", "writes")) or "TEST ALLOCATOR: DRAM" not in console:
+            memory = set(re.findall(r"active=1 memory=(L0|DRAM)\b", console))
+            if not all(traffic[key] > 0 for key in ("engines", "states", "writes")) or not memory:
                 raise RuntimeError("Cache arm did not show real owned-payload cache traffic")
+            allocation = "+".join(sorted(memory))
         return {"query": query, "events": events, "seconds": duration, "events_per_second": events / duration,
+                "allocation": allocation,
                 "tm_cpu_seconds": cpu([task_pid(p.pid) for p in processes[1:]]) - before, "job_id": job_id,
                 "tm_gc_cpu_seconds": gc_cpu(run) - gc_before,
                 "checkpoint_counts": checkpoint_stats.get("counts", {}), "cache_traffic": traffic,
@@ -285,7 +289,7 @@ def main():
                     (root / "progress.json").write_text(json.dumps(progress))
                     events = args.events if args.events is not None else workload[f"q{query}_events"]
                     result = execute(run, rest, conf, processes, query, events, "measure")
-                    result.update(arm=arm, repeat=repeat, allocation="DRAM_TEST_ONLY" if arm == "cache" else "off")
+                    result.update(arm=arm, repeat=repeat)
                     results.append(result)
                     (root / "results.json").write_text(json.dumps(results, indent=2))
                     print(json.dumps(result), flush=True)

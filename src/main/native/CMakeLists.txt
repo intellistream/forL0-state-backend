@@ -92,12 +92,12 @@ target_include_directories(forl0_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/jni
 )
 
-option(FORL0_BUILD_TEST_L0_LIBRARY "Build separate JNI library with a test-only L0 allocator" OFF)
-if(FORL0_BUILD_TEST_L0_LIBRARY)
-    add_library(forl0_engine_test_l0 SHARED ${FORL0_SOURCES} test/test_l0_loader.cpp)
-    target_compile_definitions(forl0_engine_test_l0 PRIVATE FORL0_TEST_L0=1)
-    target_link_libraries(forl0_engine_test_l0 PRIVATE ${CMAKE_DL_LIBS})
-    target_include_directories(forl0_engine_test_l0 PRIVATE
+option(FORL0_BUILD_TEST_JNI_LIBRARY "Build JNI library with SQL test counters" OFF)
+if(FORL0_BUILD_TEST_JNI_LIBRARY)
+    add_library(forl0_engine_test SHARED ${FORL0_SOURCES} test/test_hot_cache_stats.cpp)
+    target_compile_definitions(forl0_engine_test PRIVATE FORL0_TEST_CACHE_STATS=1)
+    target_link_libraries(forl0_engine_test PRIVATE ${CMAKE_DL_LIBS})
+    target_include_directories(forl0_engine_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/engine ${CMAKE_CURRENT_SOURCE_DIR}/platform
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint ${CMAKE_CURRENT_SOURCE_DIR}/jni)
 endif()

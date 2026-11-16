@@ -395,12 +395,12 @@ env.setStateBackend(stateBackend);
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `state.backend.forl0.l0-cache.enabled` | boolean | `false` | 是否请求开启 L0 Hot-Key Cache |
+| `state.backend.forl0.l0-cache.enabled` | boolean | `false` | 开启 HotCache；优先分配 L0，不可用时自动分配普通 native 内存 |
 | `state.backend.forl0.l0-cache.total-size` | MemorySize | 无 | 作业级 L0 总预算，由进程级 manager 均分 |
 | `state.backend.forl0.l0-cache.expected-engines` | int | `1` | 兼容键：共享总预算的 TaskManager/进程级 manager 数 |
-| `state.backend.forl0.l0-cache.strict-allocation` | boolean | `false` | 分配缩小或硬件不可用时直接失败 |
+| `state.backend.forl0.l0-cache.strict-allocation` | boolean | `false` | 要求完整额度；L0 无法满足时改用普通内存，普通内存也分配失败则报错 |
 | `state.backend.forl0.l0-cache.size` | MemorySize | `20mb` | 兼容选项：每个 TaskManager 进程的容量 |
-| `state.backend.forl0.l0-cache.state-size` | MemorySize | `1mb` | 每个可缓存 scalar ValueState 的申请额度 |
+| `state.backend.forl0.l0-cache.state-size` | MemorySize | `1mb` | 每个可缓存 ValueState、MapState、ListState 的申请额度 |
 | `state.backend.forl0.l0-cache.write-bypass-threshold` | long | `1048576` | 连续只写多少次后停止污染 L0；0 表示关闭 |
 | `state.backend.forl0.native-memory.max-size` | MemorySize | `0` | 每个 StateEngine 的 SwissTable native 内存上限；0 表示不限 |
 | `state.backend.forl0.max-table-capacity` | int | `0` | 每个 SwissTable 的最大容量；0 表示不限 |
@@ -412,12 +412,12 @@ env.setStateBackend(stateBackend);
 ```bash
 grep -E "ForL0|L0 mode" $FLINK_HOME/log/flink-*-taskexecutor-*.log
 
-# L0 模式成功时显示：
-# [ForL0] L0 device detected (/dev/hisi_l0)
-# [ForL0] Running in L0 MODE
+# L0 SDK、驱动可用且分配成功时：
+# [ForL0-HotCache] engine_start active=1 memory=L0 ...
 
-# L0 不可用或初始化失败时显示 WARN，HotCache 被禁用；StateTable 继续运行：
-# [ForL0-HotCache] WARN: L0 hardware not available (...); cache forcibly disabled.
+# 无 L0 硬件、SDK 不可用或分配失败时，自动使用普通内存：
+# [ForL0-HotCache] engine_start active=1 memory=DRAM ...
+# [ForL0-HotCache] L0 unavailable, using DRAM: ...
 ```
 
 #### 4. 使用状态 API

@@ -1,4 +1,4 @@
-// Exact serialized-key cache. Keys and values live in the SDK L0 allocation.
+// Exact serialized-key cache. Keys and values live in the HotCache allocation.
 // The fixed directory holds only hashes, offsets and links in DRAM. All
 // metadata is allocated at attachment; state accesses never allocate nodes.
 #pragma once

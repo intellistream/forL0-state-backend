@@ -1,7 +1,4 @@
 // hot_cache.cpp — HotCacheManager implementation.
-//
-// On dev machines without /dev/hisi_l0 the loader fails gracefully and
-// `is_active()` returns false. Per design §3.2 we never fall back to heap.
 
 #include "hot_cache.h"
 
@@ -89,79 +86,56 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
         return;
     }
 
-    L0BindingsLoader use_loader = loader ? loader : &default_l0_bindings_loader;
-    std::string load_reason;
-    if (!use_loader(&bindings_, &load_reason)) {
-        failure_reason_ = std::move(load_reason);
-        return;
+    size_t allocated = allocate_l0(loader ? loader : &default_l0_bindings_loader);
+    l0_backed_ = allocated != 0;
+    if (!l0_backed_) {
+        shutdown();
+        if (posix_memalign(&raw_base_, 64, requested_capacity_bytes) != 0) {
+            failure_reason_ += "; DRAM allocation failed";
+            return;
+        }
+        allocated = requested_capacity_bytes;
     }
+    uintptr_t addr = reinterpret_cast<uintptr_t>(raw_base_);
+    uintptr_t aligned = (addr + 63u) & ~uintptr_t(63);
+    l0_base_ = reinterpret_cast<void*>(aligned);
+    total_sets_ = static_cast<uint32_t>((allocated - (aligned - addr)) / sizeof(HotSet));
+    capacity_bytes_ = static_cast<size_t>(total_sets_) * sizeof(HotSet);
+    active_ = true;
+}
 
-    int rc = bindings_.cache_tuner_init(&tuner_, requested_capacity_bytes);
+size_t HotCacheManager::allocate_l0(L0BindingsLoader loader) {
+    if (!loader(&bindings_, &failure_reason_)) return 0;
+
+    int rc = bindings_.cache_tuner_init(&tuner_, requested_capacity_bytes_);
     if (rc != 0 || !tuner_) {
         failure_reason_ = "cache_tuner_init failed (rc != 0)";
-        if (bindings_.lib_handle && bindings_.owns_lib_handle) dlclose(bindings_.lib_handle);
-        bindings_ = {};
-        return;
+        return 0;
     }
 
     // Probe the configured quota without ever asking l0_mem_alloc for more
     // than cache_tuner_init registered. Non-strict mode may halve on failure;
     // strict mode makes exactly one full-quota attempt.
-    size_t want = requested_capacity_bytes;
-    void* base = nullptr;
+    size_t want = requested_capacity_bytes_;
     while (want >= sizeof(HotSet)) {
-        base = bindings_.l0_mem_alloc(tuner_, want);
-        if (base) break;
+        raw_base_ = bindings_.l0_mem_alloc(tuner_, want);
+        if (raw_base_) break;
         if (strict_allocation_) break;
         want >>= 1;
     }
-    if (!base) {
+    if (!raw_base_) {
         failure_reason_ = "l0_mem_alloc probe failed";
-        bindings_.cache_tuner_destroy(tuner_);
-        tuner_ = nullptr;
-        if (bindings_.lib_handle && bindings_.owns_lib_handle) dlclose(bindings_.lib_handle);
-        bindings_ = {};
-        return;
+        return 0;
     }
 
-    uintptr_t addr         = reinterpret_cast<uintptr_t>(base);
+    uintptr_t addr         = reinterpret_cast<uintptr_t>(raw_base_);
     uintptr_t aligned_addr = (addr + 63u) & ~uintptr_t(63);
     size_t pad             = aligned_addr - addr;
     if (pad + sizeof(HotSet) > want) {
         failure_reason_ = "l0_mem_alloc returned unalignable region";
-        bindings_.l0_mem_free(tuner_, base);
-        bindings_.cache_tuner_destroy(tuner_);
-        tuner_ = nullptr;
-        if (bindings_.lib_handle && bindings_.owns_lib_handle) dlclose(bindings_.lib_handle);
-        bindings_ = {};
-        return;
+        return 0;
     }
-    raw_base_       = base;
-    l0_base_        = reinterpret_cast<void*>(aligned_addr);
-    size_t usable   = want - pad;
-    total_sets_     = static_cast<uint32_t>(usable / sizeof(HotSet));
-    capacity_bytes_ = static_cast<size_t>(total_sets_) * sizeof(HotSet);
-    bump_next_      = 0;
-    active_         = total_sets_ > 0;
-    if (!active_) failure_reason_ = "no HotSet fits in usable region";
-    // A caller-provided pointer may need at most 63 bytes of 64B alignment
-    // padding. This deterministic loss is not quota shrinkage.
-    const size_t strict_usable_floor = requested_capacity_bytes_ > 63
-        ? ((requested_capacity_bytes_ - 63) / sizeof(HotSet)) * sizeof(HotSet)
-        : 0;
-    if (active_ && strict_allocation_ && capacity_bytes_ < strict_usable_floor) {
-        failure_reason_ = "strict L0 allocation returned less than requested quota";
-        bindings_.l0_mem_free(tuner_, raw_base_);
-        raw_base_ = nullptr;
-        l0_base_ = nullptr;
-        bindings_.cache_tuner_destroy(tuner_);
-        tuner_ = nullptr;
-        if (bindings_.lib_handle && bindings_.owns_lib_handle) dlclose(bindings_.lib_handle);
-        bindings_ = {};
-        total_sets_ = 0;
-        capacity_bytes_ = 0;
-        active_ = false;
-    }
+    return want;
 }
 
 HotCacheManager::~HotCacheManager() { shutdown(); }
@@ -204,8 +178,9 @@ void HotCacheManager::shutdown() noexcept {
     released_runs_.clear();
     active_ = false;
 
-    if (tuner_ && bindings_.l0_mem_free && raw_base_) {
-        bindings_.l0_mem_free(tuner_, raw_base_);
+    if (raw_base_) {
+        if (tuner_) bindings_.l0_mem_free(tuner_, raw_base_);
+        else std::free(raw_base_);
     }
     raw_base_ = nullptr;
     l0_base_  = nullptr;
@@ -217,6 +192,7 @@ void HotCacheManager::shutdown() noexcept {
         dlclose(bindings_.lib_handle);
     }
     bindings_ = {};
+    l0_backed_ = false;
 }
 
 uint32_t HotCacheManager::free_sets() const noexcept {

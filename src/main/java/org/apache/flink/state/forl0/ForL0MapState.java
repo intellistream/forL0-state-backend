@@ -159,7 +159,8 @@ public class ForL0MapState<K, N, UK, UV> implements InternalMapState<K, N, UK, U
     @SuppressWarnings("unchecked")
     private UK wrapLongAsUK(long value) {
         if (isRowDataUK) {
-            return (UK) rowDataUKAccessor.reconstructFromLong(value);
+            return (UK) TypeAnalyzer.toBinaryRow(userKeySerializer,
+                    rowDataUKAccessor.reconstructFromLong(value)).copy();
         }
         return (UK) Long.valueOf(value);
     }

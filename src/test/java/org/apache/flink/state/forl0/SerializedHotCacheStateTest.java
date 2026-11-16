@@ -540,6 +540,34 @@ class SerializedHotCacheStateTest {
         } finally { NativeEngine.destroyEngine(engine); }
     }
 
+    @Test void numericRowMapIterationPreservesBinaryKeyEquality() throws Exception {
+        for (boolean cached : new boolean[]{false, true}) {
+            long engine = NativeEngine.createEngine(0, 2, 2, cached, 8 * 1024 * 1024,
+                    true, 65536, 0, 16, 0, .875, 0);
+            try {
+                RowDataSerializer keys = new RowDataSerializer(new BigIntType());
+                ListSerializer<RowData> lists = new ListSerializer<>(keys);
+                MapSerializer<RowData, List<RowData>> maps = new MapSerializer<>(keys, lists);
+                long handle = NativeEngine.registerState(engine, "prices", 2, TypeAnalyzer.TYPE_INT64,
+                        TypeAnalyzer.getTypeId(maps), TypeAnalyzer.TYPE_VOID_NS,
+                        TypeAnalyzer.generateStateDescriptor(LongSerializer.INSTANCE, VoidNamespaceSerializer.INSTANCE, maps));
+                ForL0MapState<Long, VoidNamespace, RowData, List<RowData>> state = new ForL0MapState<>(handle,
+                        context(1L), LongSerializer.INSTANCE, VoidNamespaceSerializer.INSTANCE, maps, keys, lists);
+                state.setCurrentNamespace(VoidNamespace.INSTANCE);
+                RowData first = keys.toBinaryRow(GenericRowData.of(7L)).copy();
+                RowData second = keys.toBinaryRow(GenericRowData.of(9L)).copy();
+                state.put(first, Arrays.asList(GenericRowData.of(42L)));
+                state.put(second, Arrays.asList(GenericRowData.of(43L)));
+                Map<Long, RowData> restored = new HashMap<>();
+                for (Map.Entry<RowData, List<RowData>> entry : state.entries()) {
+                    restored.put(entry.getKey().getLong(0), entry.getKey());
+                }
+                assertEquals(first, restored.get(7L));
+                assertEquals(second, restored.get(9L));
+            } finally { NativeEngine.destroyEngine(engine); }
+        }
+    }
+
     @Test void listCacheAppendsOnlyNewElementsAndRestoresOwnedRows() throws Exception {
         long engine = engine();
         try {

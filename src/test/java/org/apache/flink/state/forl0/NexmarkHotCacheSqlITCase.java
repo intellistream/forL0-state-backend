@@ -27,7 +27,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Runs unmodified repository SELECTs; the optional JNI test library uses DRAM. */
+/** Runs unmodified repository SELECTs with optional native test counters. */
 class NexmarkHotCacheSqlITCase {
     private static native long[] testCacheStats(boolean reset);
     private static final LocalDateTime START = LocalDateTime.of(2020, 1, 1, 0, 0);
@@ -36,7 +36,7 @@ class NexmarkHotCacheSqlITCase {
     @ValueSource(ints = {4, 5, 8, 9, 11, 18, 19, 20})
     void queryOutputsAndCacheTraffic(int query) throws Exception {
         Assumptions.assumeTrue(Boolean.getBoolean("forl0.test.l0"),
-                "Requires the separately built test-only JNI allocator");
+                "Requires the JNI library with SQL test counters");
         NativeEngine.ensureLoaded();
         Map<String, Integer> expected = run(query, "hashmap", false);
         assertFalse(expected.isEmpty(), "Fixture must exercise the query output");

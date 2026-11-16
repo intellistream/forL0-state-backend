@@ -11,9 +11,8 @@
 #include "flink_binary_format.h"
 
 using namespace forl0;
-#ifdef FORL0_TEST_L0
-extern bool test_l0_loader(L0LibBindings*, std::string*);
-extern void test_l0_record(HotCacheLL*);
+#ifdef FORL0_TEST_CACHE_STATS
+extern void test_cache_record(HotCacheLL*);
 #endif
 
 // Emit a lifecycle record in one write so Java console output cannot split
@@ -62,31 +61,30 @@ Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
         std::shared_ptr<HotCacheManager> mgr;
         if (l0Enabled) {
             bool reused = false;
-            L0BindingsLoader loader = nullptr;
-#ifdef FORL0_TEST_L0
-            loader = &test_l0_loader;
-            native_lifecycle_log( "[ForL0-HotCache] TEST ALLOCATOR: DRAM, not L0 hardware\n");
-#endif
             mgr = HotCacheManager::acquire_process_shared(
-                static_cast<size_t>(l0Capacity), loader,
+                static_cast<size_t>(l0Capacity), nullptr,
                 l0StrictAllocation == JNI_TRUE,
                 static_cast<uint64_t>(l0WriteBypassThreshold), &reused);
-            // Hardware-gating telemetry per design §3.2.
             if (mgr->is_active()) {
                 native_lifecycle_log(
-                        "[ForL0-HotCache] %s active=1 key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
+                        "[ForL0-HotCache] %s active=1 memory=%s key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
                         reused ? "engine_reuse" : "engine_start",
+                        mgr->is_l0_backed() ? "L0" : "DRAM",
                         static_cast<int>(startKeyGroup),
                         static_cast<int>(startKeyGroup + numKeyGroups),
                         mgr->requested_capacity_bytes(), mgr->capacity_bytes(),
                         mgr->total_sets(), l0StrictAllocation == JNI_TRUE ? 1 : 0);
+                if (!reused && !mgr->is_l0_backed()) {
+                    native_lifecycle_log("[ForL0-HotCache] L0 unavailable, using DRAM: %s\n",
+                                         mgr->failure_reason().c_str());
+                }
             } else {
                 if (l0StrictAllocation == JNI_TRUE) {
                     throw std::runtime_error(
-                        std::string("strict L0 allocation failed: ") + mgr->failure_reason());
+                        std::string("strict HotCache allocation failed: ") + mgr->failure_reason());
                 }
                 native_lifecycle_log(
-                        "[ForL0-HotCache] WARN: L0 hardware not available (reason: %s); "
+                        "[ForL0-HotCache] WARN: allocation failed (reason: %s); "
                         "cache forcibly disabled.\n",
                         mgr->failure_reason().c_str());
                 mgr.reset();  // Drop manager so cache_ pointers stay null.
@@ -114,8 +112,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
         for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
             StateHandle* state = entry.second;
             if (!state || !state->cache_backing()) continue;
-#ifdef FORL0_TEST_L0
-            test_l0_record(state->cache_backing());
+#ifdef FORL0_TEST_CACHE_STATS
+            test_cache_record(state->cache_backing());
 #endif
             native_lifecycle_log(
                     "[ForL0-HotCache] state_summary name=%s sets=%u lookups=%llu hits=%llu invalidations=%llu writes=%llu bypass_events=%llu bypassed=%d\n",
@@ -160,7 +158,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
 // --- Hot-cache metrics (design §8) ---
 // Layout of the returned long[12]:
 //   [0] active              (1 = L0 cache active, 0 = disabled / hw unavailable)
-//   [1] capacity_bytes      (actual bytes obtained from l0_mem_alloc)
+//   [1] capacity_bytes      (actual usable HotCache bytes)
 //   [2] used_bytes          (sets currently acquired × sizeof(HotSet))
 //   [3] total_sets
 //   [4] free_sets
