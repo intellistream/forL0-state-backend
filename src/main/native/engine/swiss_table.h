@@ -27,6 +27,8 @@
 #include <functional>
 #include <new>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -68,8 +70,27 @@ inline size_t alloc_size(size_t capacity) {
 //  SwissTable
 // ============================================================================
 
+// H1 and H2 need entropy across the entire hash. std::hash on integers is
+// commonly identity: shifting it for H1 clusters nearby keys, while high-bit
+// keys can all land in the same bucket with the same fingerprint.
+template <typename K>
+struct SwissKeyHash {
+    size_t operator()(const K& key) const {
+        size_t hash = std::hash<K>{}(key);
+        if constexpr (std::is_integral_v<K>) {
+            uint64_t mixed = static_cast<uint64_t>(hash);
+            mixed ^= mixed >> 30;
+            mixed *= UINT64_C(0xbf58476d1ce4e5b9);
+            mixed ^= mixed >> 27;
+            mixed *= UINT64_C(0x94d049bb133111eb);
+            return static_cast<size_t>(mixed ^ (mixed >> 31));
+        }
+        return hash;
+    }
+};
+
 template <typename K, typename V,
-          typename Hash = std::hash<K>,
+          typename Hash = SwissKeyHash<K>,
           typename KeyEqual = std::equal_to<K>>
 class SwissTable {
 public:
@@ -147,34 +168,19 @@ public:
 
     // --- find ---
     // Returns pointer to the value if found, nullptr otherwise.
-    V* find(const K& key) {
-        size_t hash = hash_(key);
-        int8_t h2 = H2(hash);
-        ProbeSeq seq(H1(hash), capacity_ - 1);
-
-        while (true) {
-            Group g(ctrl_ + seq.pos());
-            BitMask matches = g.match(h2);
-            while (matches.has_next()) {
-                uint32_t i = matches.next();
-                size_t idx = seq.pos() + i;
-                // Wrap around (idx may be >= capacity due to cloned ctrl reads,
-                // but slot access must be < capacity).
-                if (idx >= capacity_) idx -= capacity_;
-                slot_type& slot = slots_[idx];
-                if (eq_(slot.first, key)) {
-                    return &slot.second;
-                }
-            }
-            if (g.match_empty()) {
-                return nullptr;  // Probe sequence ends at empty slot.
-            }
-            seq.next();
-        }
-    }
+    V* find(const K& key) { return find_impl(key, hash_, eq_); }
 
     const V* find(const K& key) const {
         return const_cast<SwissTable*>(this)->find(key);
+    }
+
+    // Lookup serialized keys without allocating an owning string. The
+    // standard string and string_view hash specializations are equivalent.
+    V* find_string_view(std::string_view key) {
+        static_assert(std::is_same_v<K, std::string>
+                && std::is_same_v<Hash, SwissKeyHash<std::string>>
+                && std::is_same_v<KeyEqual, std::equal_to<std::string>>);
+        return find_impl(key, std::hash<std::string_view>{}, std::equal_to<std::string_view>{});
     }
 
     // --- insert_or_assign ---
@@ -291,6 +297,29 @@ public:
     const slot_type* slot_data() const { return slots_; }
 
 private:
+    template<class Query, class QueryHash, class QueryEqual>
+    V* find_impl(const Query& key, const QueryHash& query_hash, const QueryEqual& query_equal) {
+        size_t hash = query_hash(key);
+        int8_t h2 = H2(hash);
+        ProbeSeq seq(H1(hash), capacity_ - 1);
+
+        while (true) {
+            Group g(ctrl_ + seq.pos());
+            BitMask matches = g.match(h2);
+            while (matches.has_next()) {
+                size_t idx = wrap(seq.pos() + matches.next());
+                slot_type& slot = slots_[idx];
+                if (query_equal(slot.first, key)) {
+                    return &slot.second;
+                }
+            }
+            if (g.match_empty()) {
+                return nullptr;  // Probe sequence ends at empty slot.
+            }
+            seq.next();
+        }
+    }
+
     // --- helpers ---
 
     static bool is_full(int8_t c) { return c >= 0; }  // H2 values are 0x00..0x7F

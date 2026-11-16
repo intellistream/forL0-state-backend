@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include "jni_utils.h"
+#include "state_cache_access.h"
 #include "state_engine.h"
 #include "type_layout.h"
 
@@ -31,7 +32,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLong(
             }
         }
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (val && handle->hot_cache_ll) {
             handle->hot_cache_ll->put(k, *val);  // backfill on miss
         }
@@ -49,7 +50,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongLong(
         int64_t k = static_cast<int64_t>(key);
         int64_t v = static_cast<int64_t>(value);
         // Write-through: SwissTable is the source of truth, then update cache.
-        table->put(keyGroup, k, v);
+        cached_put(handle, table, keyGroup, k, v);
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(k, v);
         }
@@ -66,12 +67,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueAddAndGetLongLong(
         int64_t k = static_cast<int64_t>(key);
         int64_t d = static_cast<int64_t>(delta);
         int64_t updated = d;
-        bool modified = table->modify_in_place(keyGroup, k, [&](int64_t& existing) {
+        bool modified = cached_modify(handle, table, keyGroup, k, [&](int64_t& existing) {
             existing += d;
             updated = existing;
         });
         if (!modified) {
-            table->put(keyGroup, k, d);
+            cached_put(handle, table, keyGroup, k, d);
         }
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(k, updated);
@@ -89,16 +90,16 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearLong(
         int64_t k = static_cast<int64_t>(key);
         auto vt = handle->value_type;
         if (vt == StateHandle::ValueType::FLOAT64) {
-            handle->engine->get_state_table<int64_t, double>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int64_t, double>(handle->table_id), keyGroup, k);
             if (handle->hot_cache_ll) handle->hot_cache_ll->invalidate(k);
         } else if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING) {
-            handle->engine->get_state_table<int64_t, std::string>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int64_t, std::string>(handle->table_id), keyGroup, k);
         } else if (vt == StateHandle::ValueType::LIST) {
-            handle->engine->get_state_table<int64_t, ElementList>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int64_t, ElementList>(handle->table_id), keyGroup, k);
         } else if (vt == StateHandle::ValueType::MAP) {
-            handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id), keyGroup, k);
         } else {
-            handle->engine->get_state_table<int64_t, int64_t>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int64_t, int64_t>(handle->table_id), keyGroup, k);
             if (handle->hot_cache_ll) handle->hot_cache_ll->invalidate(k);
         }
     })
@@ -115,7 +116,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongInt(
     JNI_ENTRY_RETURN(jint, 0, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, static_cast<int64_t>(key));
+        auto val = cached_get(handle, table, keyGroup, static_cast<int64_t>(key));
         return val ? static_cast<jint>(*val) : 0;
     })
 }
@@ -127,7 +128,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongInt(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
-        table->put(keyGroup, static_cast<int64_t>(key), static_cast<int64_t>(value));
+        cached_put(handle, table, keyGroup, static_cast<int64_t>(key), static_cast<int64_t>(value));
     })
 }
 
@@ -149,7 +150,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDouble(
             }
         }
         auto* table = handle->engine->get_state_table<int64_t, double>(handle->table_id);
-        double* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (val && handle->hot_cache_ll) {
             handle->hot_cache_ll->put(k, hotcache_val_from_double(*val));
         }
@@ -166,7 +167,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongDouble(
         auto* table = handle->engine->get_state_table<int64_t, double>(handle->table_id);
         int64_t k = static_cast<int64_t>(key);
         double v = static_cast<double>(value);
-        table->put(keyGroup, k, v);
+        cached_put(handle, table, keyGroup, k, v);
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(k, hotcache_val_from_double(v));
         }
@@ -184,7 +185,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongString(
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
-        std::string* val = table->get(keyGroup, static_cast<int64_t>(key));
+        auto val = cached_get(handle, table, keyGroup, static_cast<int64_t>(key));
         return val ? string_to_jbytearray(env, *val) : nullptr;
     })
 }
@@ -197,7 +198,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongString(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
         std::string val = jbytearray_to_string(env, value);
-        table->put(keyGroup, static_cast<int64_t>(key), std::move(val));
+        cached_put(handle, table, keyGroup, static_cast<int64_t>(key), std::move(val));
     })
 }
 
@@ -220,7 +221,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntLong(
             }
         }
         auto* table = handle->engine->get_state_table<int32_t, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (val && handle->hot_cache_ll) {
             handle->hot_cache_ll->put(kc, *val);
         }
@@ -237,7 +238,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutIntLong(
         auto* table = handle->engine->get_state_table<int32_t, int64_t>(handle->table_id);
         int32_t k = static_cast<int32_t>(key);
         int64_t v = static_cast<int64_t>(value);
-        table->put(keyGroup, k, v);
+        cached_put(handle, table, keyGroup, k, v);
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(hotcache_key_from_i32(k), v);
         }
@@ -254,12 +255,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueAddAndGetIntLong(
         int32_t k = static_cast<int32_t>(key);
         int64_t d = static_cast<int64_t>(delta);
         int64_t updated = d;
-        bool modified = table->modify_in_place(keyGroup, k, [&](int64_t& existing) {
+        bool modified = cached_modify(handle, table, keyGroup, k, [&](int64_t& existing) {
             existing += d;
             updated = existing;
         });
         if (!modified) {
-            table->put(keyGroup, k, d);
+            cached_put(handle, table, keyGroup, k, d);
         }
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(hotcache_key_from_i32(k), updated);
@@ -287,7 +288,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntDouble(
             }
         }
         auto* table = handle->engine->get_state_table<int32_t, double>(handle->table_id);
-        double* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (val && handle->hot_cache_ll) {
             handle->hot_cache_ll->put(kc, hotcache_val_from_double(*val));
         }
@@ -304,7 +305,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutIntDouble(
         auto* table = handle->engine->get_state_table<int32_t, double>(handle->table_id);
         int32_t k = static_cast<int32_t>(key);
         double v = static_cast<double>(value);
-        table->put(keyGroup, k, v);
+        cached_put(handle, table, keyGroup, k, v);
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(hotcache_key_from_i32(k), hotcache_val_from_double(v));
         }
@@ -322,7 +323,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntString(
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int32_t, std::string>(handle->table_id);
-        std::string* val = table->get(keyGroup, static_cast<int32_t>(key));
+        auto val = cached_get(handle, table, keyGroup, static_cast<int32_t>(key));
         return val ? string_to_jbytearray(env, *val) : nullptr;
     })
 }
@@ -335,7 +336,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutIntString(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int32_t, std::string>(handle->table_id);
         std::string val = jbytearray_to_string(env, value);
-        table->put(keyGroup, static_cast<int32_t>(key), std::move(val));
+        cached_put(handle, table, keyGroup, static_cast<int32_t>(key), std::move(val));
     })
 }
 
@@ -379,12 +380,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearInt(
         int32_t k = static_cast<int32_t>(key);
         auto vt = handle->value_type;
         if (vt == StateHandle::ValueType::FLOAT64) {
-            handle->engine->get_state_table<int32_t, double>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int32_t, double>(handle->table_id), keyGroup, k);
             if (handle->hot_cache_ll) handle->hot_cache_ll->invalidate(hotcache_key_from_i32(k));
         } else if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING) {
-            handle->engine->get_state_table<int32_t, std::string>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int32_t, std::string>(handle->table_id), keyGroup, k);
         } else {
-            handle->engine->get_state_table<int32_t, int64_t>(handle->table_id)->remove(keyGroup, k);
+            cached_remove(handle, handle->engine->get_state_table<int32_t, int64_t>(handle->table_id), keyGroup, k);
             if (handle->hot_cache_ll) handle->hot_cache_ll->invalidate(hotcache_key_from_i32(k));
         }
     })
@@ -402,7 +403,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetGeneric(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
         std::string k = jbytearray_to_string(env, key);
-        std::string* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         return val ? string_to_jbytearray(env, *val) : nullptr;
     })
 }
@@ -416,7 +417,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutGeneric(
         auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
         std::string k = jbytearray_to_string(env, key);
         std::string v = jbytearray_to_string(env, value);
-        table->put(keyGroup, k, std::move(v));
+        cached_put(handle, table, keyGroup, k, std::move(v));
     })
 }
 
@@ -428,7 +429,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearGeneric(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
         std::string k = jbytearray_to_string(env, key);
-        table->remove(keyGroup, k);
+        cached_remove(handle, table, keyGroup, k);
     })
 }
 
@@ -532,13 +533,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowLong(
                 return static_cast<jlong>(cached);
             }
             auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
-            int64_t* val = table->get(keyGroup, key);
+            auto val = cached_get(handle, table, keyGroup, key);
             if (!val) return 0;
             handle->hot_cache_ll->put(folded, *val);
             return static_cast<jlong>(*val);
         }
         auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         return val ? static_cast<jlong>(*val) : 0;
     })
 }
@@ -551,7 +552,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutFixedRowLong(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
-        table->put(keyGroup, key, static_cast<int64_t>(value));
+        cached_put(handle, table, keyGroup, key, static_cast<int64_t>(value));
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(
                 hotcache_fold_fixed_row_key(key.f, key.arity),
@@ -568,7 +569,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutFixedRow2Long(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
         FixedRow key = fixedrow2_from_longs(key0, key1);
-        table->put(keyGroup, key, static_cast<int64_t>(value));
+        cached_put(handle, table, keyGroup, key, static_cast<int64_t>(value));
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(
                 hotcache_fold_fixed_row_key(key.f, key.arity),
@@ -595,13 +596,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowDouble(
                 return hotcache_val_to_double(cached);
             }
             auto* table = handle->engine->get_state_table<FixedRow, double>(handle->table_id);
-            double* val = table->get(keyGroup, key);
+            auto val = cached_get(handle, table, keyGroup, key);
             if (!val) return 0.0;
             handle->hot_cache_ll->put(folded, hotcache_val_from_double(*val));
             return *val;
         }
         auto* table = handle->engine->get_state_table<FixedRow, double>(handle->table_id);
-        double* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         return val ? *val : 0.0;
     })
 }
@@ -614,7 +615,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutFixedRowDouble(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, double>(handle->table_id);
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
-        table->put(keyGroup, key, static_cast<double>(value));
+        cached_put(handle, table, keyGroup, key, static_cast<double>(value));
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(
                 hotcache_fold_fixed_row_key(key.f, key.arity),
@@ -631,7 +632,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutFixedRow2Double(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, double>(handle->table_id);
         FixedRow key = fixedrow2_from_longs(key0, key1);
-        table->put(keyGroup, key, static_cast<double>(value));
+        cached_put(handle, table, keyGroup, key, static_cast<double>(value));
         if (handle->hot_cache_ll) {
             handle->hot_cache_ll->put(
                 hotcache_fold_fixed_row_key(key.f, key.arity),
@@ -652,7 +653,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowGeneric(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, std::string>(handle->table_id);
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
-        std::string* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         return val ? string_to_jbytearray(env, *val) : nullptr;
     })
 }
@@ -665,7 +666,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRow2Generic(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, std::string>(handle->table_id);
         FixedRow key = fixedrow2_from_longs(key0, key1);
-        std::string* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         return val ? string_to_jbytearray(env, *val) : nullptr;
     })
 }
@@ -679,7 +680,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutFixedRowGeneric(
         auto* table = handle->engine->get_state_table<FixedRow, std::string>(handle->table_id);
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
         std::string v = jbytearray_to_string(env, value);
-        table->put(keyGroup, key, std::move(v));
+        cached_put(handle, table, keyGroup, key, std::move(v));
     })
 }
 
@@ -692,7 +693,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutFixedRow2Generic(
         auto* table = handle->engine->get_state_table<FixedRow, std::string>(handle->table_id);
         FixedRow key = fixedrow2_from_longs(key0, key1);
         std::string v = jbytearray_to_string(env, value);
-        table->put(keyGroup, key, std::move(v));
+        cached_put(handle, table, keyGroup, key, std::move(v));
     })
 }
 
@@ -734,11 +735,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearFixedRow(
                 hotcache_fold_fixed_row_key(key.f, key.arity));
         }
         if (vt == StateHandle::ValueType::INT64 || vt == StateHandle::ValueType::INT32) {
-            handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id)->remove(keyGroup, key);
+            cached_remove(handle, handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id), keyGroup, key);
         } else if (vt == StateHandle::ValueType::FLOAT64) {
-            handle->engine->get_state_table<FixedRow, double>(handle->table_id)->remove(keyGroup, key);
+            cached_remove(handle, handle->engine->get_state_table<FixedRow, double>(handle->table_id), keyGroup, key);
         } else {
-            handle->engine->get_state_table<FixedRow, std::string>(handle->table_id)->remove(keyGroup, key);
+            cached_remove(handle, handle->engine->get_state_table<FixedRow, std::string>(handle->table_id), keyGroup, key);
         }
     })
 }
@@ -756,17 +757,17 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearFixedRow2(
                 hotcache_fold_fixed_row_key(key.f, key.arity));
         }
         if (vt == StateHandle::ValueType::INT64 || vt == StateHandle::ValueType::INT32) {
-            handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id)->remove(keyGroup, key);
+            cached_remove(handle, handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id), keyGroup, key);
         } else if (vt == StateHandle::ValueType::FLOAT64) {
-            handle->engine->get_state_table<FixedRow, double>(handle->table_id)->remove(keyGroup, key);
+            cached_remove(handle, handle->engine->get_state_table<FixedRow, double>(handle->table_id), keyGroup, key);
         } else {
-            handle->engine->get_state_table<FixedRow, std::string>(handle->table_id)->remove(keyGroup, key);
+            cached_remove(handle, handle->engine->get_state_table<FixedRow, std::string>(handle->table_id), keyGroup, key);
         }
     })
 }
 
 // ============================================================================
-//  Zero-copy pointer return: writes [nativeAddress, size] into jlongArray out
+//  Zero-copy results use the handle area and optionally copy to jlongArray out
 //  Returns JNI_TRUE if value found, JNI_FALSE if not.
 //  The returned pointer is std::string::data() within the SwissTable — valid
 //  until the next mutation on the same key.
@@ -779,13 +780,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongStringPtr(
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
-        std::string* val = table->get(keyGroup, static_cast<int64_t>(key));
+        auto val = cached_get(handle, table, keyGroup, static_cast<int64_t>(key));
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -798,13 +795,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetGenericPtr(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
         std::string k = jbytearray_to_string(env, key);
-        std::string* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -828,15 +821,15 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLongSafe(
             int64_t cached;
             if (handle->hot_cache_ll->get(k, &cached)) {
                 jlong out_val = static_cast<jlong>(cached);
-                env->SetLongArrayRegion(out, 0, 1, &out_val);
+                set_long_result(env, handle, out_val, out);
                 return JNI_TRUE;
             }
         }
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (!val) return JNI_FALSE;
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(k, *val);
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -853,17 +846,17 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDoubleSafe(
             int64_t bits;
             if (handle->hot_cache_ll->get(k, &bits)) {
                 jlong jbits = static_cast<jlong>(bits);
-                env->SetLongArrayRegion(out, 0, 1, &jbits);
+                set_long_result(env, handle, jbits, out);
                 return JNI_TRUE;
             }
         }
         auto* table = handle->engine->get_state_table<int64_t, double>(handle->table_id);
-        double* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (!val) return JNI_FALSE;
         jlong bits;
-        memcpy(&bits, val, sizeof(jlong));
+        memcpy(&bits, &*val, sizeof(jlong));
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(k, static_cast<int64_t>(bits));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -881,15 +874,15 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntLongSafe(
             int64_t cached;
             if (handle->hot_cache_ll->get(kc, &cached)) {
                 jlong out_val = static_cast<jlong>(cached);
-                env->SetLongArrayRegion(out, 0, 1, &out_val);
+                set_long_result(env, handle, out_val, out);
                 return JNI_TRUE;
             }
         }
         auto* table = handle->engine->get_state_table<int32_t, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (!val) return JNI_FALSE;
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(kc, *val);
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -907,17 +900,17 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetIntDoubleSafe(
             int64_t bits;
             if (handle->hot_cache_ll->get(kc, &bits)) {
                 jlong jbits = static_cast<jlong>(bits);
-                env->SetLongArrayRegion(out, 0, 1, &jbits);
+                set_long_result(env, handle, jbits, out);
                 return JNI_TRUE;
             }
         }
         auto* table = handle->engine->get_state_table<int32_t, double>(handle->table_id);
-        double* val = table->get(keyGroup, k);
+        auto val = cached_get(handle, table, keyGroup, k);
         if (!val) return JNI_FALSE;
         jlong bits;
-        memcpy(&bits, val, sizeof(jlong));
+        memcpy(&bits, &*val, sizeof(jlong));
         if (handle->hot_cache_ll) handle->hot_cache_ll->put(kc, static_cast<int64_t>(bits));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -931,9 +924,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowLongSafe(
         auto* handle = from_handle<StateHandle>(stateHandle);
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
         auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         if (!val) return JNI_FALSE;
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -946,9 +939,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRow2LongSafe(
         auto* handle = from_handle<StateHandle>(stateHandle);
         FixedRow key = fixedrow2_from_longs(key0, key1);
         auto* table = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         if (!val) return JNI_FALSE;
-        env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(val));
+        set_long_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -962,11 +955,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowDoubleSafe(
         auto* handle = from_handle<StateHandle>(stateHandle);
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
         auto* table = handle->engine->get_state_table<FixedRow, double>(handle->table_id);
-        double* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         if (!val) return JNI_FALSE;
         jlong bits;
-        memcpy(&bits, val, sizeof(jlong));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        memcpy(&bits, &*val, sizeof(jlong));
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -979,11 +972,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRow2DoubleSafe(
         auto* handle = from_handle<StateHandle>(stateHandle);
         FixedRow key = fixedrow2_from_longs(key0, key1);
         auto* table = handle->engine->get_state_table<FixedRow, double>(handle->table_id);
-        double* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         if (!val) return JNI_FALSE;
         jlong bits;
-        memcpy(&bits, val, sizeof(jlong));
-        env->SetLongArrayRegion(out, 0, 1, &bits);
+        memcpy(&bits, &*val, sizeof(jlong));
+        set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
 }
@@ -997,13 +990,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRowGenericPtr(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, std::string>(handle->table_id);
         FixedRow key = jlongarray_to_fixedrow(env, keyFields);
-        std::string* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -1016,13 +1005,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetFixedRow2GenericPtr(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<FixedRow, std::string>(handle->table_id);
         FixedRow key = fixedrow2_from_longs(key0, key1);
-        std::string* val = table->get(keyGroup, key);
+        auto val = cached_get(handle, table, keyGroup, key);
         if (!val || val->empty()) return JNI_FALSE;
-        jlong arr[2] = {
-            reinterpret_cast<jlong>(val->data()),
-            static_cast<jlong>(val->size())
-        };
-        env->SetLongArrayRegion(out, 0, 2, arr);
+        set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
     })
 }
@@ -1041,12 +1026,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutLong(
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
-        int64_t* val = table->get(keyGroup, static_cast<int64_t>(key));
+        auto val = cached_get(handle, table, keyGroup, static_cast<int64_t>(key));
         if (val) {
-            env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(val));
+            set_long_result(env, handle, *val, out);
             return JNI_TRUE;
         }
-        table->put(keyGroup, static_cast<int64_t>(key), static_cast<int64_t>(newValue));
+        cached_put(handle, table, keyGroup, static_cast<int64_t>(key), static_cast<int64_t>(newValue));
         return JNI_FALSE;
     })
 }
@@ -1061,12 +1046,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutLongWithTW(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
         TimeWindow tw{static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd)};
-        int64_t* val = table->get(keyGroup, tw, static_cast<int64_t>(key));
+        auto val = cached_get(handle, table, keyGroup, tw, static_cast<int64_t>(key));
         if (val) {
-            env->SetLongArrayRegion(out, 0, 1, reinterpret_cast<jlong*>(val));
+            set_long_result(env, handle, *val, out);
             return JNI_TRUE;
         }
-        table->put(keyGroup, tw, static_cast<int64_t>(key), static_cast<int64_t>(newValue));
+        cached_put(handle, table, keyGroup, tw, static_cast<int64_t>(key), static_cast<int64_t>(newValue));
         return JNI_FALSE;
     })
 }
@@ -1091,10 +1076,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetAndPutLongBytes(
         std::string nv = jbytearray_to_string(env, newValue);
         if (existing) {
             jbyteArray result = string_to_jbytearray(env, *existing);
-            table->put(keyGroup, k, std::move(nv));
+            cached_put(handle, table, keyGroup, k, std::move(nv));
             return result;
         }
-        table->put(keyGroup, k, std::move(nv));
+        cached_put(handle, table, keyGroup, k, std::move(nv));
         return nullptr;
     })
 }
@@ -1114,10 +1099,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetAndPutLongBytesWithTW(
         std::string nv = jbytearray_to_string(env, newValue);
         if (existing) {
             jbyteArray result = string_to_jbytearray(env, *existing);
-            table->put(keyGroup, tw, k, std::move(nv));
+            cached_put(handle, table, keyGroup, tw, k, std::move(nv));
             return result;
         }
-        table->put(keyGroup, tw, k, std::move(nv));
+        cached_put(handle, table, keyGroup, tw, k, std::move(nv));
         return nullptr;
     })
 }
@@ -1135,10 +1120,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetAndPutGenericBytes(
         std::string nv = jbytearray_to_string(env, newValue);
         if (existing) {
             jbyteArray result = string_to_jbytearray(env, *existing);
-            table->put(keyGroup, k, std::move(nv));
+            cached_put(handle, table, keyGroup, k, std::move(nv));
             return result;
         }
-        table->put(keyGroup, k, std::move(nv));
+        cached_put(handle, table, keyGroup, k, std::move(nv));
         return nullptr;
     })
 }
@@ -1164,7 +1149,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetOrPutLongBytes(
             return string_to_jbytearray(env, *existing);
         }
         std::string nv = jbytearray_to_string(env, newValue);
-        table->put(keyGroup, k, std::move(nv));
+        cached_put(handle, table, keyGroup, k, std::move(nv));
         return nullptr;
     })
 }
@@ -1185,7 +1170,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetOrPutLongBytesWithTW(
             return string_to_jbytearray(env, *existing);
         }
         std::string nv = jbytearray_to_string(env, newValue);
-        table->put(keyGroup, tw, k, std::move(nv));
+        cached_put(handle, table, keyGroup, tw, k, std::move(nv));
         return nullptr;
     })
 }
@@ -1204,7 +1189,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetOrPutGenericBytes(
             return string_to_jbytearray(env, *existing);
         }
         std::string nv = jbytearray_to_string(env, newValue);
-        table->put(keyGroup, k, std::move(nv));
+        cached_put(handle, table, keyGroup, k, std::move(nv));
         return nullptr;
     })
 }

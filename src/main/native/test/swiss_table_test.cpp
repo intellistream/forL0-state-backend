@@ -11,8 +11,30 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 using namespace forl0;
+
+struct CountIntegralComparisons {
+    static inline size_t calls = 0;
+    bool operator()(int64_t left, int64_t right) const { ++calls; return left == right; }
+};
+
+TEST(SwissTableTest, IntegralHighBitsDoNotCollapseIntoOneProbeChain) {
+    constexpr int64_t count = 4096;
+    SwissTable<int64_t, int64_t, SwissKeyHash<int64_t>, CountIntegralComparisons> table(count * 2);
+    for (int64_t i = 1; i <= count; ++i) table.insert_or_assign(i << 32, i);
+    CountIntegralComparisons::calls = 0;
+    for (int64_t i = 1; i <= count; ++i) {
+        auto* value = table.find(i << 32);
+        ASSERT_NE(value, nullptr);
+        ASSERT_EQ(*value, i);
+        ASSERT_EQ(table.find((i + count) << 32), nullptr);
+    }
+    // Identity hashing needs millions of comparisons for this valid key shape.
+    // Bound comparisons rather than time so the regression is machine-independent.
+    ASSERT_LT(CountIntegralComparisons::calls, size_t(count * 8));
+}
 
 // ============================================================================
 //  Basic Operations
@@ -251,6 +273,31 @@ TEST(SwissTableTest, StringValues) {
 
     table.erase(std::string("hello"));
     ASSERT_EQ(table.find(std::string("hello")), nullptr);
+}
+
+TEST(SwissTableTest, SerializedStringViewsSurviveGrowthAndTombstones) {
+    SwissTable<std::string, int64_t> table;
+    std::vector<std::string> keys;
+    for (int64_t i = 0; i < 4096; ++i) {
+        std::string key(36, '\0');
+        std::memcpy(key.data() + 4, &i, sizeof(i));
+        key.back() = static_cast<char>(i);
+        table.insert_or_assign(key, i);
+        keys.push_back(std::move(key));
+    }
+    for (int64_t i = 0; i < 4096; i += 3) table.erase(keys[i]);
+    for (int64_t i = 0; i < 4096; ++i) {
+        // Views need neither a terminator nor an allocation of their own.
+        std::string padded = "prefix" + keys[i] + "suffix";
+        std::string_view key(padded.data() + 6, keys[i].size());
+        auto* value = table.find_string_view(key);
+        ASSERT_EQ(value, table.find(keys[i]));
+        if (i % 3) { ASSERT_NE(value, nullptr); ASSERT_EQ(*value, i); }
+        else ASSERT_EQ(value, nullptr);
+        ASSERT_EQ(table.find_string_view(key.substr(0, key.size() - 1)), nullptr);
+    }
+    table.insert_or_assign(std::string(), -1);
+    ASSERT_EQ(*table.find_string_view(std::string_view()), -1);
 }
 
 // ============================================================================

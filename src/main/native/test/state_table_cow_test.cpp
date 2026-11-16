@@ -42,6 +42,29 @@ TEST(StateTableCOWTest, VoidNamespaceRemove) {
     ASSERT_NE(st.get(0, 20), nullptr);
 }
 
+TEST(StateTableCOWTest, SerializedViewOverwriteKeepsSnapshotAndOwnedKeys) {
+    StateTable<std::string, std::string> table(10, 2, false);
+    std::string key(36, '\0');
+    key[8] = 'k';
+    table.put(10, key, std::string("before"));
+    table.put(11, key, std::string("other-group"));
+    table.prepare_snapshot();
+    ASSERT_TRUE(table.modify_string_view(10, std::string_view(key), [](std::string& v) { v = "after"; }));
+    ASSERT_TRUE(table.modify_string_view(10, std::string_view(key), [](std::string& v) { v = "after-again"; }));
+    ASSERT_EQ(*table.get_string_view(10, key), "after-again");
+    ASSERT_EQ(*table.get_string_view(11, key), "other-group");
+    std::map<std::string, std::string> snapshot;
+    table.for_each_snapshot_in_key_group(10, [&](const std::string& k, const std::string& v) { snapshot[k] = v; });
+    ASSERT_EQ(snapshot[key], "before");
+    key[8] = 'x';
+    ASSERT_EQ(table.get_string_view(10, key), nullptr);
+    ASSERT_FALSE(table.modify_string_view(10, key, [](std::string& v) { v = "missing"; }));
+    table.release_snapshot();
+    key[8] = 'k';
+    ASSERT_TRUE(table.modify_string_view(10, key, [](std::string& v) { v = "no-snapshot"; }));
+    ASSERT_EQ(*table.get_string_view(10, key), "no-snapshot");
+}
+
 TEST(StateTableCOWTest, VoidNamespaceForEach) {
     StateTable<int64_t, int64_t> st(0, 2, true);
 

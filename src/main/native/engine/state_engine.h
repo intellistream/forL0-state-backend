@@ -134,6 +134,28 @@ public:
         return tables_[key_group - start_key_group_]->find(key);
     }
 
+    V* get_string_view(int key_group, std::string_view key) {
+        static_assert(std::is_same_v<K, std::string>);
+        return tables_[key_group - start_key_group_]->find_string_view(key);
+    }
+
+    // Owning keys are needed for COW records, but ordinary overwrites can use
+    // the serialized stack view all the way through the table lookup.
+    template <typename ModifyFn>
+    bool modify_string_view(int key_group, std::string_view key, ModifyFn&& fn) {
+        static_assert(std::is_same_v<K, std::string>);
+        int idx = key_group - start_key_group_;
+        std::unique_lock<std::recursive_mutex> lock(*cow_mutexes_[idx], std::defer_lock);
+        if (cow_states_[idx].active) {
+            lock.lock();
+            cow_before_write(idx, std::string(key));
+        }
+        V* value = tables_[idx]->find_string_view(key);
+        if (!value) return false;
+        fn(*value);
+        return true;
+    }
+
     // COW-safe in-place modification. Locks + cow_before_write internally,
     // then calls fn(*val). Returns true if key existed and was modified.
     // Total: 1 copy per unique key per snapshot (in cow_before_write), vs 2 with copy-and-put.

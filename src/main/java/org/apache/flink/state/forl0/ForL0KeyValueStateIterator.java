@@ -3,6 +3,7 @@ package org.apache.flink.state.forl0;
 import org.apache.flink.api.common.state.StateDescriptor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
+import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.runtime.state.CompositeKeySerializationUtils;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.KeyValueStateIterator;
@@ -52,18 +53,23 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
         final int keyFormat;   // FMT_FIXED8 or FMT_LEN_PREFIXED
         final int valueFormat; // FMT_FIXED8 or FMT_LEN_PREFIXED
         final boolean voidNamespace;
+        final boolean typedTimeWindow;
+        final TypeSerializer<?> namespaceSerializer;
         // PQ fields
         final HeapPriorityQueueStateSnapshot<?> pqSnapshot;
         final TypeSerializer<?> elementSerializer;
 
         /** KV state constructor. */
-        StateDesc(int kvStateId, long handle, int keyFmt, int valFmt, boolean voidNs) {
+        StateDesc(int kvStateId, long handle, int keyFmt, int valFmt, boolean voidNs,
+                  boolean typedTimeWindow, TypeSerializer<?> namespaceSerializer) {
             this.kvStateId = kvStateId;
             this.isKV = true;
             this.nativeHandle = handle;
             this.keyFormat = keyFmt;
             this.valueFormat = valFmt;
             this.voidNamespace = voidNs;
+            this.typedTimeWindow = typedTimeWindow;
+            this.namespaceSerializer = namespaceSerializer;
             this.pqSnapshot = null;
             this.elementSerializer = null;
         }
@@ -77,6 +83,8 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
             this.keyFormat = 0;
             this.valueFormat = 0;
             this.voidNamespace = false;
+            this.typedTimeWindow = false;
+            this.namespaceSerializer = null;
             this.pqSnapshot = snapshot;
             this.elementSerializer = elemSer;
         }
@@ -199,7 +207,14 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
                 }
 
                 boolean voidNs = meta.getNamespaceSerializer() instanceof VoidNamespaceSerializer;
-                list.add(new StateDesc(kvStateId, handle, keyFmt, valFmt, voidNs));
+                boolean typedTimeWindow = TypeAnalyzer.getTypeId(meta.getNamespaceSerializer()) == TypeAnalyzer.TYPE_TIME_WINDOW
+                        && keyTypeId == TypeAnalyzer.TYPE_INT64;
+                if (!voidNs && !typedTimeWindow) {
+                    keyFmt = FMT_LEN_PREFIXED;
+                    valFmt = FMT_LEN_PREFIXED;
+                }
+                list.add(new StateDesc(kvStateId, handle, keyFmt, valFmt, voidNs,
+                        typedTimeWindow, meta.getNamespaceSerializer()));
             } else {
                 // Priority queue state
                 StateSnapshot snapshot = pqSnapshots.get(uid);
@@ -329,17 +344,24 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
         if (kvIdx >= kvTotal) return false;
 
         // Read namespace bytes
-        byte[] nsBytes;
+        byte[] nsBytes, keyBytes;
         if (desc.voidNamespace) {
             nsBytes = new byte[]{kvBuf.get()};
-        } else {
-            int nsLen = kvBuf.getInt();
-            nsBytes = new byte[nsLen];
+            keyBytes = readField(desc.keyFormat);
+        } else if (desc.typedTimeWindow) {
+            nsBytes = new byte[16];
             kvBuf.get(nsBytes);
+            keyBytes = readField(desc.keyFormat);
+        } else {
+            // Generic and Long slice namespaces share main's opaque
+            // [serialized namespace + serialized key] checkpoint field.
+            byte[] composite = readField(FMT_LEN_PREFIXED);
+            DataInputDeserializer input = new DataInputDeserializer(composite);
+            desc.namespaceSerializer.deserialize(input);
+            int namespaceLength = input.getPosition();
+            nsBytes = java.util.Arrays.copyOfRange(composite, 0, namespaceLength);
+            keyBytes = java.util.Arrays.copyOfRange(composite, namespaceLength, composite.length);
         }
-
-        // Read key bytes (strip length prefix for BYTES format)
-        byte[] keyBytes = readField(desc.keyFormat);
 
         // Read value bytes (strip length prefix for BYTES format)
         byte[] valBytes = readField(desc.valueFormat);

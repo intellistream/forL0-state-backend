@@ -31,11 +31,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (int64+int64, int64+double, int32+int64, int32+double) and verifies:
  * <ul>
  *   <li>When {@code l0-cache.enabled=false}, semantics are identical to
- *       the no-cache path — this is always true on macOS today.</li>
- *   <li>When {@code l0-cache.enabled=true} and the platform lacks L0
- *       hardware (macOS), the manager gate trips and the cache is forcibly
- *       disabled — manager stats show {@code active=0}, but the
- *       state semantics MUST remain identical (no silent corruption).</li>
+ *       the no-cache path.</li>
+ *   <li>When {@code l0-cache.enabled=true}, the cache uses L0 if available
+ *       and ordinary native memory otherwise.</li>
  *   <li>Manager metric buffer is populated with 6 slots and is internally
  *       consistent (e.g. {@code freeSets <= totalSets}, no negative values).</li>
  * </ul>
@@ -109,6 +107,11 @@ public class HotCacheIntegrationTest {
                 assertEquals(Long.valueOf(42L), state.value());
                 state.update(100L); // update in place
                 assertEquals(Long.valueOf(100L), state.value());
+                if (enabled) {
+                    long[] stats = new long[12];
+                    NativeEngine.getHotCacheManagerStats(backend.getEngineHandle(), stats);
+                    assertTrue(stats[6] > 0, "enabled HotCache must serve the repeated reads");
+                }
                 state.clear();
                 assertNull(state.value(), "clear must drop cached entry too");
             } finally {
@@ -182,26 +185,17 @@ public class HotCacheIntegrationTest {
         }
     }
 
-    // -----------------------------------------------------------------------
-    //  Hardware gating: on macOS the cache MUST not actually activate even
-    //  when enabled=true. The manager reports active=0 in that case.
-    // -----------------------------------------------------------------------
     @Test
-    void managerGateClosesOnPlatformsWithoutL0() throws Exception {
+    void managerActivatesWithOrWithoutL0() throws Exception {
         ForL0KeyedStateBackend<Long> backend = buildLongBackend(true, 4L * 1024 * 1024);
         try {
             long engineHandle = backend.getEngineHandle();
             long[] mgrStats = new long[6];
             NativeEngine.getHotCacheManagerStats(engineHandle, mgrStats);
 
-            // On macOS / any box without /dev/hisi_l0, active must be 0 and the
-            // capacity must be reported as 0 so downstream metrics don't lie.
-            String os = System.getProperty("os.name", "").toLowerCase();
-            if (os.contains("mac") || os.contains("darwin")) {
-                assertEquals(0L, mgrStats[0], "manager must NOT activate on macOS");
-                assertEquals(0L, mgrStats[1], "capacity_bytes must be 0 when gate trips");
-                assertEquals(0L, mgrStats[3], "total_sets must be 0 when gate trips");
-            }
+            assertEquals(1L, mgrStats[0]);
+            assertTrue(mgrStats[1] > 0 && mgrStats[1] <= 4L * 1024 * 1024);
+            assertTrue(mgrStats[3] > 0);
             // Cross-platform invariants.
             assertTrue(mgrStats[4] <= mgrStats[3], "freeSets must be <= totalSets");
             assertTrue(mgrStats[2] <= mgrStats[1], "usedBytes must be <= capacityBytes");
@@ -254,7 +248,7 @@ public class HotCacheIntegrationTest {
 
     // -----------------------------------------------------------------------
     //  `NativeEngine.rebalanceHotCache` must be safe to invoke on a backend
-    //  whose manager is inactive (hardware unavailable or disabled). It
+    //  whose manager is disabled. It
     //  returns 0 without doing anything and without crashing the JVM.
     // -----------------------------------------------------------------------
     @Test

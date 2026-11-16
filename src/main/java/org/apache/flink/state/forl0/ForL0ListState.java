@@ -129,6 +129,10 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     public void add(V value) {
         Preconditions.checkNotNull(value, "You cannot add null to a ListState.");
         try {
+            if (isRowDataElement) {
+                addRow(value);
+                return;
+            }
             switch (listStrategy) {
                 case LONG_ELEM_LONG_VOID:
                     NativeEngine.listAddLong(stateHandle, resolveKeyAsLong(keyContext.currentKey),
@@ -173,6 +177,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                     NativeEngine.listUpdate(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElementList(values));
                     return;
+                case LONG_TW:
+                    writeWindowList(values, false);
+                    return;
                 default:
                     NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElementList(values));
@@ -200,6 +207,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                 case LONG_VOID:
                     NativeEngine.listAddAll(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElementList(values));
+                    return;
+                case LONG_TW:
+                    writeWindowList(values, true);
                     return;
                 default:
                     NativeEngine.listAddAllGeneric(stateHandle, serializeKey(keyContext.currentKey),
@@ -297,6 +307,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                     NativeEngine.listUpdate(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElementList(valueToStore));
                     return;
+                case LONG_TW:
+                    writeWindowList(valueToStore, false);
+                    return;
                 default:
                     NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElementList(valueToStore));
@@ -389,7 +402,8 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
 
     private byte[] serializeElement(V element) throws IOException {
         if (isRowDataElement) {
-            byte[] raw = RowDataKeyAccessor.extractBinaryRowDataBytesCompat(element);
+            byte[] raw = RowDataKeyAccessor.extractBinaryRowDataBytesCompat(
+                    TypeAnalyzer.toBinaryRow(elementSerializer, (org.apache.flink.table.data.RowData) element));
             if (raw != null) return raw;
         }
         elemOut.clear();
@@ -404,12 +418,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
         if (isRowDataElement) {
             for (V elem : elements) {
                 Preconditions.checkNotNull(elem, "You cannot add null to a ListState.");
-                byte[] raw = RowDataKeyAccessor.extractBinaryRowDataBytesCompat(elem);
-                if (raw != null) {
-                    out.write(raw);
-                } else {
-                    elementSerializer.serialize(elem, out);
-                }
+                org.apache.flink.table.data.binary.BinaryRowData row = heapBinaryRow(elem);
+                out.writeInt(row.getSizeInBytes());
+                out.write(row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes());
             }
         } else {
             for (V elem : elements) {
@@ -428,12 +439,17 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
         List<V> list = new ArrayList<>(count);
         if (isRowDataElement) {
             int arity = rowDataElementAccessor.getArity();
+            org.apache.flink.core.memory.MemorySegment segment =
+                    org.apache.flink.core.memory.MemorySegmentFactory.wrap(data);
             for (int i = 0; i < count; i++) {
                 // Compat format: [4-byte size][raw BinaryRowData bytes]
                 int size = in.readInt();
-                byte[] raw = new byte[size];
-                in.readFully(raw);
-                list.add((V) RowDataKeyAccessor.wrapBinaryRowData(raw, arity));
+                if (size < 0 || size > in.available()) throw new IOException("Invalid ListState row length");
+                org.apache.flink.table.data.binary.BinaryRowData row =
+                        new org.apache.flink.table.data.binary.BinaryRowData(arity);
+                row.pointTo(segment, data.length - in.available(), size);
+                in.skipBytesToRead(size);
+                list.add((V) row);
             }
         } else {
             for (int i = 0; i < count; i++) {
@@ -441,6 +457,34 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
             }
         }
         return list;
+    }
+
+    private void writeWindowList(List<V> values, boolean append) throws IOException {
+        TimeWindow window = (TimeWindow) currentNamespace;
+        NativeEngine.listWriteWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
+                keyContext.currentKeyGroupIndex, window.getStart(), window.getEnd(),
+                serializeElementList(values), append);
+    }
+
+    private org.apache.flink.table.data.binary.BinaryRowData heapBinaryRow(V value) {
+        org.apache.flink.table.data.binary.BinaryRowData row = TypeAnalyzer.toBinaryRow(
+                elementSerializer, (org.apache.flink.table.data.RowData) value);
+        if (row.getSegments().length != 1 || row.getSegments()[0].getArray() == null
+                || row.getOffset() > row.getSegments()[0].size() - row.getSizeInBytes()) row = row.copy();
+        return row;
+    }
+
+    private void addRow(V value) throws IOException {
+        // Serialize the parent first; the element conversion can reuse its
+        // serializer's scratch array. The row itself goes straight into JNI.
+        byte[] key = listStrategy == ListStrategy.GENERIC ? serializeKey(keyContext.currentKey) : null;
+        org.apache.flink.table.data.binary.BinaryRowData row = heapBinaryRow(value);
+        int mode = listStrategy == ListStrategy.GENERIC ? 2 : listStrategy == ListStrategy.LONG_TW ? 1 : 0;
+        long numeric = mode == 2 ? 0 : resolveKeyAsLong(keyContext.currentKey);
+        TimeWindow window = mode == 1 ? (TimeWindow) currentNamespace : null;
+        NativeEngine.listAddRowRange(stateHandle, numeric, key, keyContext.currentKeyGroupIndex,
+                window == null ? 0 : window.getStart(), window == null ? 0 : window.getEnd(), mode,
+                row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes());
     }
 
     // ========== Factory Methods ==========

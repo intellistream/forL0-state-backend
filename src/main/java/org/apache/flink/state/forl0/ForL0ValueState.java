@@ -61,9 +61,8 @@ public class ForL0ValueState<K, N, V>
     private final DataOutputSerializer valueOut = new DataOutputSerializer(128);
 
     /** Pre-allocated buffer for combined get-or-null JNI calls (single hash lookup). */
-    private final long[] primitiveBuf = new long[1];
+    private final long readResultAddress;
     /** Pre-allocated buffer for zero-copy native pointer return [address, size]. */
-    private final long[] nativePtrBuf;
     /** Arity of RowData value (for BinaryRowData reconstruction). */
     private final int rowDataValueArity;
 
@@ -75,10 +74,16 @@ public class ForL0ValueState<K, N, V>
         ROWDATA_INT_VOID,    // voidNamespace, RowData key → extractSingleInt
         ROWDATA_FIXED2_VOID, // voidNamespace, RowData key → two fixed fields without JNI array access
         ROWDATA_FIXED_VOID,  // voidNamespace, RowData key → extractFixedFields
+        LONG_NS,             // Long window/slice namespace, numeric key
         LONG_TW,             // TimeWindow namespace, key=Long
+        SQL_WINDOW,          // SQL TimeWindow, legacy serialized checkpoint key
         GENERIC              // fallback (generic namespace / unsupported key type)
     }
     private final KeyNsStrategy keyNsStrategy;
+    private final MemorySegment serializedCacheSegment;
+    private final long serializedCacheAddress;
+    private BinaryRowData reusableNativeRow;
+    private boolean nativeViewInUse;
 
     ForL0ValueState(
             long stateHandle,
@@ -88,6 +93,7 @@ public class ForL0ValueState<K, N, V>
             TypeSerializer<V> valueSerializer,
             V defaultValue) {
         this.stateHandle = stateHandle;
+        this.readResultAddress = NativeEngine.stateReadResultAddress(stateHandle);
         this.keyContext = keyContext;
         this.keySerializer = keySerializer;
         this.namespaceSerializer = namespaceSerializer;
@@ -107,8 +113,11 @@ public class ForL0ValueState<K, N, V>
         this.isRowDataValue = TypeAnalyzer.isRowDataSerializer(valueSerializer);
         this.rowDataValueAccessor = isRowDataValue
                 ? TypeAnalyzer.createRowDataKeyAccessor(valueSerializer) : null;
-        this.nativePtrBuf = isRowDataValue ? new long[2] : null;
         this.rowDataValueArity = isRowDataValue ? rowDataValueAccessor.getArity() : 0;
+        long[] cacheRange = isRowDataValue ? NativeEngine.serializedCacheMemoryRange(stateHandle) : null;
+        this.serializedCacheAddress = cacheRange == null ? 0L : cacheRange[0];
+        this.serializedCacheSegment = cacheRange == null ? null
+                : MemorySegmentBridge.wrapNativeAddress(cacheRange[0], (int) cacheRange[1]);
 
         // Pre-compute dispatch strategy (O(1) switch vs multi-level if chains)
         if (isRowDataKey && voidNamespace && rowDataKeyAccessor != null) {
@@ -126,8 +135,13 @@ public class ForL0ValueState<K, N, V>
             this.keyNsStrategy = KeyNsStrategy.LONG_VOID;
         } else if (voidNamespace && keyTypeId == TypeAnalyzer.TYPE_INT32) {
             this.keyNsStrategy = KeyNsStrategy.INT_VOID;
+        } else if (namespaceSerializer instanceof org.apache.flink.api.common.typeutils.base.LongSerializer
+                && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.keyNsStrategy = KeyNsStrategy.LONG_NS;
         } else if (isTimeWindowNs && keyTypeId == TypeAnalyzer.TYPE_INT64) {
             this.keyNsStrategy = KeyNsStrategy.LONG_TW;
+        } else if (TypeAnalyzer.isSqlTimeWindowSerializer(namespaceSerializer) && keyTypeId == TypeAnalyzer.TYPE_INT64) {
+            this.keyNsStrategy = KeyNsStrategy.SQL_WINDOW;
         } else {
             this.keyNsStrategy = KeyNsStrategy.GENERIC;
         }
@@ -137,39 +151,57 @@ public class ForL0ValueState<K, N, V>
     public V value() {
         K key = keyContext.currentKey;
         int keyGroup = keyContext.currentKeyGroupIndex;
-
         try {
-            switch (keyNsStrategy) {
-                case LONG_VOID:
-                    return valueForLongKey((Long) key, keyGroup);
-                case INT_VOID:
-                    return valueForIntKey((Integer) key, keyGroup);
-                case ROWDATA_LONG_VOID:
-                    return valueForLongKey(rowDataKeyAccessor.extractSingleLong(key), keyGroup);
-                case ROWDATA_INT_VOID:
-                    return valueForIntKey(rowDataKeyAccessor.extractSingleInt(key), keyGroup);
-                case ROWDATA_FIXED2_VOID:
-                    return valueForFixedRow2Key(
-                            rowDataKeyAccessor.extractFixedField(key, 0),
-                            rowDataKeyAccessor.extractFixedField(key, 1),
-                            keyGroup);
-                case ROWDATA_FIXED_VOID:
-                    return valueForFixedRowKey(rowDataKeyAccessor.extractFixedFields(key), keyGroup);
-                case LONG_TW: {
-                    TimeWindow tw = (TimeWindow) currentNamespace;
-                    return valueWithTimeWindow((Long) key, keyGroup, tw.getStart(), tw.getEnd());
-                }
-                default: {
-                    byte[] keyBytes = serializeKey(key);
-                    if (isRowDataValue) {
-                        return zeroCopyGetGeneric(keyBytes, keyGroup);
-                    }
-                    byte[] valueBytes = NativeEngine.valueGetGeneric(stateHandle, keyBytes, keyGroup);
-                    return valueBytes != null ? deserializeValue(valueBytes) : getDefaultValue();
-                }
+            if (keyNsStrategy == KeyNsStrategy.LONG_NS) {
+                return valueWithLongNamespace(keyAsLong(key), keyGroup, (Long) currentNamespace, longNamespaceKeyHeader(key));
             }
+            if (keyNsStrategy == KeyNsStrategy.SQL_WINDOW) {
+                return valueWithSqlWindow(key, keyGroup);
+            }
+            return valueOtherStrategies(key, keyGroup);
         } catch (IOException e) {
             throw new RuntimeException("Failed to access ValueState", e);
+        }
+    }
+
+    private V valueWithSqlWindow(K key, int keyGroup) throws IOException {
+        long start = TypeAnalyzer.windowStart(currentNamespace), end = TypeAnalyzer.windowEnd(currentNamespace);
+        long numeric = keyAsLong(key), header = longNamespaceKeyHeader(key);
+        if (isRowDataValue) return NativeEngine.valueGetSqlWindowPtr(stateHandle, numeric, keyGroup, start, end, header)
+                ? wrapNativePtr() : getDefaultValue();
+        byte[] bytes = NativeEngine.valueGetSqlWindowBytes(stateHandle, numeric, keyGroup, start, end, header);
+        return bytes == null ? getDefaultValue() : deserializeValue(bytes);
+    }
+
+    private V valueOtherStrategies(K key, int keyGroup) throws IOException {
+        switch (keyNsStrategy) {
+            case LONG_VOID:
+                return valueForLongKey((Long) key, keyGroup);
+            case INT_VOID:
+                return valueForIntKey((Integer) key, keyGroup);
+            case ROWDATA_LONG_VOID:
+                return valueForLongKey(rowDataKeyAccessor.extractSingleLong(key), keyGroup);
+            case ROWDATA_INT_VOID:
+                return valueForIntKey(rowDataKeyAccessor.extractSingleInt(key), keyGroup);
+            case ROWDATA_FIXED2_VOID:
+                return valueForFixedRow2Key(
+                        rowDataKeyAccessor.extractFixedField(key, 0),
+                        rowDataKeyAccessor.extractFixedField(key, 1),
+                        keyGroup);
+            case ROWDATA_FIXED_VOID:
+                return valueForFixedRowKey(rowDataKeyAccessor.extractFixedFields(key), keyGroup);
+            case LONG_TW: {
+                TimeWindow tw = (TimeWindow) currentNamespace;
+                return valueWithTimeWindow(isRowDataKey ? rowDataKeyAccessor.extractSingleLong(key) : (Long) key, keyGroup, tw.getStart(), tw.getEnd());
+            }
+            default: {
+                byte[] keyBytes = serializeKey(key);
+                if (isRowDataValue) {
+                    return zeroCopyGetGeneric(keyBytes, keyGroup);
+                }
+                byte[] valueBytes = NativeEngine.valueGetGeneric(stateHandle, keyBytes, keyGroup);
+                return valueBytes != null ? deserializeValue(valueBytes) : getDefaultValue();
+            }
         }
     }
 
@@ -218,32 +250,107 @@ public class ForL0ValueState<K, N, V>
         }
     }
 
+    private long keyAsLong(K key) {
+        return isRowDataKey ? (((org.apache.flink.table.data.RowData) key).isNullAt(0) ? 0L
+                : rowDataKeyAccessor.extractFixedField(key, 0)) : (Long) key;
+    }
+
+    private long longNamespaceKeyHeader(K key) {
+        if (!isRowDataKey) return 0;
+        org.apache.flink.table.data.RowData row = (org.apache.flink.table.data.RowData) key;
+        return row.getRowKind().toByteValue() | (row.isNullAt(0) ? 256L : 0L);
+    }
+
+    @SuppressWarnings("unchecked")
+    private V valueWithLongNamespace(long key, int group, long ns, long header) throws IOException {
+        if (!isRowDataValue && (valueTypeId == TypeAnalyzer.TYPE_INT64 || valueTypeId == TypeAnalyzer.TYPE_INT32
+                || valueTypeId == TypeAnalyzer.TYPE_FLOAT64)) {
+            if (!NativeEngine.valueGetNumberLongNs(stateHandle, key, group, ns, header, null)) return getDefaultValue();
+            long bits = readLongResult();
+            if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) return (V) Double.valueOf(Double.longBitsToDouble(bits));
+            if (valueTypeId == TypeAnalyzer.TYPE_INT32) return (V) Integer.valueOf((int) bits);
+            return (V) Long.valueOf(bits);
+        }
+        if (isRowDataValue) {
+            return NativeEngine.valueGetBlobPtrLongNs(stateHandle, key, group, ns, header)
+                    ? wrapNativePtr() : getDefaultValue();
+        }
+        byte[] bytes = NativeEngine.valueGetBlobLongNs(stateHandle, key, group, ns, header);
+        return bytes == null ? getDefaultValue() : deserializeValue(bytes);
+    }
+
+    private void updateWithLongNamespace(long key, int group, long ns, long header, V value) throws IOException {
+        if (!isRowDataValue && (valueTypeId == TypeAnalyzer.TYPE_INT64 || valueTypeId == TypeAnalyzer.TYPE_INT32
+                || valueTypeId == TypeAnalyzer.TYPE_FLOAT64)) {
+            long bits = valueTypeId == TypeAnalyzer.TYPE_FLOAT64 ? Double.doubleToRawLongBits((Double) value)
+                    : ((Number) value).longValue();
+            NativeEngine.valuePutNumberLongNs(stateHandle, key, group, ns, header, bits);
+        } else if (isRowDataValue) {
+            BinaryRowData row = TypeAnalyzer.toBinaryRow(valueSerializer, (org.apache.flink.table.data.RowData) value);
+            MemorySegment[] segments = row.getSegments();
+            if (segments.length == 1 && row.getOffset() <= segments[0].size() - row.getSizeInBytes()) {
+                MemorySegment segment = segments[0];
+                if (segment.isOffHeap()) {
+                    NativeEngine.valuePutBlobAddressLongNs(stateHandle, key, group, ns, header,
+                            row, segment.getAddress() + row.getOffset(), row.getSizeInBytes());
+                } else {
+                    NativeEngine.valuePutBlobRangeLongNs(stateHandle, key, group, ns, header,
+                            segment.getArray(), row.getOffset(), row.getSizeInBytes());
+                }
+            } else {
+                // Rare segmented rows are flattened once using Flink's own copier.
+                BinaryRowData flat = row.copy();
+                NativeEngine.valuePutBlobRangeLongNs(stateHandle, key, group, ns, header,
+                        flat.getSegments()[0].getArray(), flat.getOffset(), flat.getSizeInBytes());
+            }
+        } else NativeEngine.valuePutBlobLongNs(stateHandle, key, group, ns, header, serializeValue(value));
+    }
+
+    private void updateSqlWindow(long key, int group, long header, V value) throws IOException {
+        long start = TypeAnalyzer.windowStart(currentNamespace), end = TypeAnalyzer.windowEnd(currentNamespace);
+        if (!isRowDataValue) {
+            byte[] bytes = serializeValue(value);
+            NativeEngine.valuePutSqlWindowRange(stateHandle, key, group, start, end, header, bytes, 0, bytes.length);
+            return;
+        }
+        BinaryRowData row = TypeAnalyzer.toBinaryRow(valueSerializer, (org.apache.flink.table.data.RowData) value);
+        if (row.getSegments().length != 1 || row.getOffset() > row.getSegments()[0].size() - row.getSizeInBytes()) row = row.copy();
+        MemorySegment segment = row.getSegments()[0];
+        if (segment.isOffHeap()) {
+            NativeEngine.valuePutSqlWindowAddress(stateHandle, key, group, start, end, header,
+                    row, segment.getAddress() + row.getOffset(), row.getSizeInBytes());
+        } else {
+            NativeEngine.valuePutSqlWindowRange(stateHandle, key, group, start, end, header,
+                    segment.getArray(), row.getOffset(), row.getSizeInBytes());
+        }
+    }
+
     /** Get value for a long key extracted from RowData. */
     @SuppressWarnings("unchecked")
     private V valueForLongKey(long k, int keyGroup) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (!NativeEngine.valueGetLongLongSafe(stateHandle, k, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetLongLongSafe(stateHandle, k, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Long.valueOf(primitiveBuf[0]);
+            return (V) Long.valueOf(readLongResult());
         }
         if (valueTypeId == TypeAnalyzer.TYPE_INT32) {
-            if (!NativeEngine.valueGetLongLongSafe(stateHandle, k, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetLongLongSafe(stateHandle, k, keyGroup, null)) {
                 return getDefaultValue();
             }
-            return (V) Integer.valueOf((int) primitiveBuf[0]);
+            return (V) Integer.valueOf((int) readLongResult());
         }
         if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
-            if (!NativeEngine.valueGetLongDoubleSafe(stateHandle, k, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetLongDoubleSafe(stateHandle, k, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Double.valueOf(Double.longBitsToDouble(primitiveBuf[0]));
+            return (V) Double.valueOf(Double.longBitsToDouble(readLongResult()));
         }
         // String/bytes value
         if (isRowDataValue) {
@@ -260,22 +367,22 @@ public class ForL0ValueState<K, N, V>
     @SuppressWarnings("unchecked")
     private V valueForIntKey(int k, int keyGroup) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (!NativeEngine.valueGetIntLongSafe(stateHandle, k, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetIntLongSafe(stateHandle, k, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Long.valueOf(primitiveBuf[0]);
+            return (V) Long.valueOf(readLongResult());
         }
         if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
-            if (!NativeEngine.valueGetIntDoubleSafe(stateHandle, k, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetIntDoubleSafe(stateHandle, k, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Double.valueOf(Double.longBitsToDouble(primitiveBuf[0]));
+            return (V) Double.valueOf(Double.longBitsToDouble(readLongResult()));
         }
         // String/bytes value
         byte[] valueBytes = NativeEngine.valueGetIntString(stateHandle, k, keyGroup);
@@ -289,25 +396,25 @@ public class ForL0ValueState<K, N, V>
     @SuppressWarnings("unchecked")
     private V valueForFixedRow2Key(long key0, long key1, int keyGroup) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (!NativeEngine.valueGetFixedRow2LongSafe(stateHandle, key0, key1, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetFixedRow2LongSafe(stateHandle, key0, key1, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Long.valueOf(primitiveBuf[0]);
+            return (V) Long.valueOf(readLongResult());
         }
         if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
-            if (!NativeEngine.valueGetFixedRow2DoubleSafe(stateHandle, key0, key1, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetFixedRow2DoubleSafe(stateHandle, key0, key1, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Double.valueOf(Double.longBitsToDouble(primitiveBuf[0]));
+            return (V) Double.valueOf(Double.longBitsToDouble(readLongResult()));
         }
         if (isRowDataValue) {
-            if (NativeEngine.valueGetFixedRow2GenericPtr(stateHandle, key0, key1, keyGroup, nativePtrBuf)) {
+            if (NativeEngine.valueGetFixedRow2GenericPtr(stateHandle, key0, key1, keyGroup, null)) {
                 return wrapNativePtr();
             }
             return getDefaultValue();
@@ -323,26 +430,26 @@ public class ForL0ValueState<K, N, V>
     @SuppressWarnings("unchecked")
     private V valueForFixedRowKey(long[] fields, int keyGroup) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (!NativeEngine.valueGetFixedRowLongSafe(stateHandle, fields, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetFixedRowLongSafe(stateHandle, fields, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Long.valueOf(primitiveBuf[0]);
+            return (V) Long.valueOf(readLongResult());
         }
         if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
-            if (!NativeEngine.valueGetFixedRowDoubleSafe(stateHandle, fields, keyGroup, primitiveBuf)) {
+            if (!NativeEngine.valueGetFixedRowDoubleSafe(stateHandle, fields, keyGroup, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Double.valueOf(Double.longBitsToDouble(primitiveBuf[0]));
+            return (V) Double.valueOf(Double.longBitsToDouble(readLongResult()));
         }
         // String/bytes value
         if (isRowDataValue) {
-            if (NativeEngine.valueGetFixedRowGenericPtr(stateHandle, fields, keyGroup, nativePtrBuf)) {
+            if (NativeEngine.valueGetFixedRowGenericPtr(stateHandle, fields, keyGroup, null)) {
                 return wrapNativePtr();
             }
             return getDefaultValue();
@@ -358,31 +465,31 @@ public class ForL0ValueState<K, N, V>
     @SuppressWarnings("unchecked")
     private V valueWithTimeWindow(long k, int keyGroup, long nsStart, long nsEnd) throws IOException {
         if (valueTypeId == TypeAnalyzer.TYPE_INT64) {
-            if (!NativeEngine.valueGetLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, primitiveBuf)) {
+            if (!NativeEngine.valueGetLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Long.valueOf(primitiveBuf[0]);
+            return (V) Long.valueOf(readLongResult());
         }
         if (valueTypeId == TypeAnalyzer.TYPE_INT32) {
-            if (!NativeEngine.valueGetLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, primitiveBuf)) {
+            if (!NativeEngine.valueGetLongLongWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Integer.valueOf((int) primitiveBuf[0]);
+            return (V) Integer.valueOf((int) readLongResult());
         }
         if (valueTypeId == TypeAnalyzer.TYPE_FLOAT64) {
-            if (!NativeEngine.valueGetLongDoubleWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, primitiveBuf)) {
+            if (!NativeEngine.valueGetLongDoubleWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, null)) {
                 return getDefaultValue();
             }
             if (isRowDataValue) {
-                return (V) rowDataValueAccessor.reconstructFromLong(primitiveBuf[0]);
+                return (V) rowDataValueAccessor.reconstructFromLong(readLongResult());
             }
-            return (V) Double.valueOf(Double.longBitsToDouble(primitiveBuf[0]));
+            return (V) Double.valueOf(Double.longBitsToDouble(readLongResult()));
         }
         if (isRowDataValue) {
             return zeroCopyGetLongWithTimeWindow(k, keyGroup, nsStart, nsEnd);
@@ -419,50 +526,58 @@ public class ForL0ValueState<K, N, V>
 
     @Override
     public void update(V value) {
-        if (value == null) {
-            clear();
-            return;
-        }
+        if (value == null) { clear(); return; }
         K key = keyContext.currentKey;
         int keyGroup = keyContext.currentKeyGroupIndex;
-
         try {
-            switch (keyNsStrategy) {
-                case LONG_VOID:
-                    updateForLongKey((Long) key, keyGroup, value);
-                    return;
-                case INT_VOID:
-                    updateForIntKey((Integer) key, keyGroup, value);
-                    return;
-                case ROWDATA_LONG_VOID:
-                    updateForLongKey(rowDataKeyAccessor.extractSingleLong(key), keyGroup, value);
-                    return;
-                case ROWDATA_INT_VOID:
-                    updateForIntKey(rowDataKeyAccessor.extractSingleInt(key), keyGroup, value);
-                    return;
-                case ROWDATA_FIXED2_VOID:
-                    updateForFixedRow2Key(
-                            rowDataKeyAccessor.extractFixedField(key, 0),
-                            rowDataKeyAccessor.extractFixedField(key, 1),
-                            keyGroup,
-                            value);
-                    return;
-                case ROWDATA_FIXED_VOID:
-                    updateForFixedRowKey(rowDataKeyAccessor.extractFixedFields(key), keyGroup, value);
-                    return;
-                case LONG_TW: {
-                    TimeWindow tw = (TimeWindow) currentNamespace;
-                    updateWithTimeWindow((Long) key, keyGroup, tw.getStart(), tw.getEnd(), value);
-                    return;
-                }
-                default: {
-                    byte[] keyBytes = serializeKey(key);
-                    byte[] valueBytes = serializeValue(value);
-                    NativeEngine.valuePutGeneric(stateHandle, keyBytes, keyGroup, valueBytes);
-                }
+            if (keyNsStrategy == KeyNsStrategy.LONG_NS) {
+                updateWithLongNamespace(keyAsLong(key), keyGroup, (Long) currentNamespace, longNamespaceKeyHeader(key), value);
+            } else if (keyNsStrategy == KeyNsStrategy.SQL_WINDOW) {
+                updateSqlWindow(keyAsLong(key), keyGroup, longNamespaceKeyHeader(key), value);
+            } else {
+                updateOtherStrategies(key, keyGroup, value);
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to update ValueState", e);
+        } finally {
+            nativeViewInUse = false;
+        }
+    }
+
+    private void updateOtherStrategies(K key, int keyGroup, V value) throws IOException {
+        switch (keyNsStrategy) {
+            case LONG_VOID:
+                updateForLongKey((Long) key, keyGroup, value);
+                return;
+            case INT_VOID:
+                updateForIntKey((Integer) key, keyGroup, value);
+                return;
+            case ROWDATA_LONG_VOID:
+                updateForLongKey(rowDataKeyAccessor.extractSingleLong(key), keyGroup, value);
+                return;
+            case ROWDATA_INT_VOID:
+                updateForIntKey(rowDataKeyAccessor.extractSingleInt(key), keyGroup, value);
+                return;
+            case ROWDATA_FIXED2_VOID:
+                updateForFixedRow2Key(
+                        rowDataKeyAccessor.extractFixedField(key, 0),
+                        rowDataKeyAccessor.extractFixedField(key, 1),
+                        keyGroup,
+                        value);
+                return;
+            case ROWDATA_FIXED_VOID:
+                updateForFixedRowKey(rowDataKeyAccessor.extractFixedFields(key), keyGroup, value);
+                return;
+            case LONG_TW: {
+                TimeWindow tw = (TimeWindow) currentNamespace;
+                updateWithTimeWindow(isRowDataKey ? rowDataKeyAccessor.extractSingleLong(key) : (Long) key, keyGroup, tw.getStart(), tw.getEnd(), value);
+                return;
+            }
+            default: {
+                byte[] keyBytes = serializeKey(key);
+                byte[] valueBytes = serializeValue(value);
+                NativeEngine.valuePutGeneric(stateHandle, keyBytes, keyGroup, valueBytes);
+            }
         }
     }
 
@@ -579,9 +694,16 @@ public class ForL0ValueState<K, N, V>
                 case ROWDATA_FIXED_VOID:
                     NativeEngine.valueClearFixedRow(stateHandle, rowDataKeyAccessor.extractFixedFields(key), keyGroup);
                     return;
+                case LONG_NS:
+                    NativeEngine.valueClearLongNs(stateHandle, keyAsLong(key), keyGroup, (Long) currentNamespace, longNamespaceKeyHeader(key));
+                    return;
+                case SQL_WINDOW:
+                    NativeEngine.valueClearSqlWindow(stateHandle, keyAsLong(key), keyGroup,
+                            TypeAnalyzer.windowStart(currentNamespace), TypeAnalyzer.windowEnd(currentNamespace), longNamespaceKeyHeader(key));
+                    return;
                 case LONG_TW: {
                     TimeWindow tw = (TimeWindow) currentNamespace;
-                    NativeEngine.valueClearWithTW(stateHandle, (Long) key, keyGroup, tw.getStart(), tw.getEnd());
+                    NativeEngine.valueClearWithTW(stateHandle, isRowDataKey ? rowDataKeyAccessor.extractSingleLong(key) : (Long) key, keyGroup, tw.getStart(), tw.getEnd());
                     return;
                 }
                 default: {
@@ -591,6 +713,8 @@ public class ForL0ValueState<K, N, V>
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to clear ValueState", e);
+        } finally {
+            nativeViewInUse = false;
         }
     }
 
@@ -633,7 +757,7 @@ public class ForL0ValueState<K, N, V>
 
     /** Zero-copy read via Long key: returns value or defaultValue. */
     private V zeroCopyGetLong(long k, int keyGroup) {
-        if (NativeEngine.valueGetLongStringPtr(stateHandle, k, keyGroup, nativePtrBuf)) {
+        if (NativeEngine.valueGetLongStringPtr(stateHandle, k, keyGroup, null)) {
             return wrapNativePtr();
         }
         return getDefaultValue();
@@ -641,7 +765,7 @@ public class ForL0ValueState<K, N, V>
 
     /** Zero-copy read via Long key + TimeWindow namespace: returns value or defaultValue. */
     private V zeroCopyGetLongWithTimeWindow(long k, int keyGroup, long nsStart, long nsEnd) {
-        if (NativeEngine.valueGetLongStringPtrWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, nativePtrBuf)) {
+        if (NativeEngine.valueGetLongStringPtrWithTW(stateHandle, k, keyGroup, nsStart, nsEnd, null)) {
             return wrapNativePtr();
         }
         return getDefaultValue();
@@ -649,7 +773,7 @@ public class ForL0ValueState<K, N, V>
 
     /** Zero-copy read via Generic key: returns value or defaultValue. */
     private V zeroCopyGetGeneric(byte[] keyBytes, int keyGroup) {
-        if (NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, keyGroup, nativePtrBuf)) {
+        if (NativeEngine.valueGetGenericPtr(stateHandle, keyBytes, keyGroup, null)) {
             return wrapNativePtr();
         }
         return getDefaultValue();
@@ -658,21 +782,43 @@ public class ForL0ValueState<K, N, V>
     /**
      * Wrap native pointer [address, size] as BinaryRowData via off-heap MemorySegment.
      *
-     * <p><b>Lifetime safety:</b> The returned BinaryRowData references C++ memory
-     * (std::string::data()) inside a SwissTable slot. The pointer is valid only until
+     * <p><b>Lifetime safety:</b> The returned BinaryRowData borrows C++ memory
+     * from SwissTable or the owned L0 cache. The view is valid only until
      * the next write operation (put/remove) on the same StateTable, which may trigger
      * rehash or overwrite the slot. Callers must consume or copy the returned value
-     * before performing any state mutation.
+     * before performing any state mutation. Its wrapper may also be reused after
+     * that mutation; consecutive reads have independent wrappers.
      *
      * <p>During COW snapshot iteration, no rehash is triggered, so checkpoint reads
      * via this path are safe.
      */
-    @SuppressWarnings("unchecked")
+    private long readLongResult() {
+        return MemorySegmentBridge.readNativeLong(readResultAddress);
+    }
+
     private V wrapNativePtr() {
-        int size = (int) nativePtrBuf[1];
-        MemorySegment seg = MemorySegmentBridge.wrapNativeAddress(nativePtrBuf[0], size);
-        BinaryRowData row = new BinaryRowData(rowDataValueArity);
-        row.pointTo(seg, 0, size);
+        return wrapNativePtr(readLongResult(),
+                (int) MemorySegmentBridge.readNativeLong(readResultAddress + 8));
+    }
+
+    @SuppressWarnings("unchecked")
+    private V wrapNativePtr(long address, int size) {
+        long cacheOffset = address - serializedCacheAddress;
+        boolean inCache = serializedCacheSegment != null && cacheOffset >= 0
+                && cacheOffset <= serializedCacheSegment.size() - size;
+        MemorySegment seg = inCache ? serializedCacheSegment
+                : MemorySegmentBridge.wrapNativeAddress(address, size);
+        // Native views expire at the next mutation. Reuse the wrapper only
+        // after that boundary; consecutive reads still receive independent
+        // wrappers and may retain their views until a state mutation.
+        BinaryRowData row = !nativeViewInUse && reusableNativeRow != null
+                ? reusableNativeRow : new BinaryRowData(rowDataValueArity);
+        MemorySegment[] segments = row.getSegments();
+        if (segments == null) segments = new MemorySegment[]{seg};
+        else segments[0] = seg;
+        row.pointTo(segments, inCache ? (int) cacheOffset : 0, size);
+        reusableNativeRow = row;
+        nativeViewInUse = true;
         return (V) row;
     }
 
@@ -689,8 +835,9 @@ public class ForL0ValueState<K, N, V>
 
     private byte[] serializeValue(V value) throws IOException {
         if (isRowDataValue) {
-            byte[] raw = RowDataKeyAccessor.extractBinaryRowDataBytes(value);
-            if (raw != null) return raw;  // zero-ser: raw BinaryRowData bytes
+            BinaryRowData row = TypeAnalyzer.toBinaryRow(valueSerializer, (org.apache.flink.table.data.RowData) value);
+            if (row.getSegments().length != 1 || row.getOffset() > row.getSegments()[0].size() - row.getSizeInBytes()) row = row.copy();
+            return RowDataKeyAccessor.extractBinaryRowDataBytes(row);
         }
         valueOut.clear();
         valueSerializer.serialize(value, valueOut);

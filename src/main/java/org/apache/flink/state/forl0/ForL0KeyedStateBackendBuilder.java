@@ -653,6 +653,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
         int valueTypeId = TypeAnalyzer.getTypeId(metaInfo.getStateSerializer());
         boolean isValue = metaInfo.getStateType() == StateDescriptor.Type.VALUE;
         boolean voidNs = metaInfo.getNamespaceSerializer() instanceof VoidNamespaceSerializer;
+        boolean typedTimeWindow = TypeAnalyzer.getTypeId(metaInfo.getNamespaceSerializer()) == TypeAnalyzer.TYPE_TIME_WINDOW
+                && keyTypeId == TypeAnalyzer.TYPE_INT64;
 
         // Key format: 8=fixed8, 4=fixed4, 0=len-prefixed
         // Value format: 8=fixed8, 0=len-prefixed
@@ -686,6 +688,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             }
         }
 
+        if (!voidNs && !typedTimeWindow) { keyFmt = 0; valFmt = 0; }
+
         // Build binary data: [count(4)][entries: ns+key+value]
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
@@ -705,19 +709,15 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
             byte[] rawKeyBytes = Arrays.copyOfRange(compositeKey, keyGroupPrefixBytes, keyEndAbsPos);
             byte[] rawNsBytes = Arrays.copyOfRange(compositeKey, keyEndAbsPos, compositeKey.length);
 
-            // Write namespace
-            if (voidNs) {
+            if (voidNs || typedTimeWindow) {
                 dos.write(rawNsBytes);
-            } else {
-                dos.writeInt(rawNsBytes.length);
-                dos.write(rawNsBytes);
-            }
-
-            // Write key in stored format
-            if (keyFmt > 0) {
+                if (keyFmt == 0) {
+                    dos.writeInt(rawKeyBytes.length);
+                }
                 dos.write(rawKeyBytes);
             } else {
-                dos.writeInt(rawKeyBytes.length);
+                dos.writeInt(rawNsBytes.length + rawKeyBytes.length);
+                dos.write(rawNsBytes);
                 dos.write(rawKeyBytes);
             }
 
@@ -819,7 +819,7 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
     //
     //  Always expose manager-level gauges so operators can tell whether their
     //  `l0-cache.enabled=true` request actually resolved to an active cache —
-    //  especially important when hardware gating forces a fallback to
+    //  especially important when allocation failure forces a fallback to
     //  disabled (bytes_capacity == 0, active == 0).
     // -----------------------------------------------------------------------
     private static void registerHotCacheMetrics(MetricGroup parent, long engineHandle) {

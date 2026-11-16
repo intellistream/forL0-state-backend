@@ -3,6 +3,7 @@
 
 #include <jni.h>
 #include <cstdio>
+#include <unistd.h>
 #include "jni_utils.h"
 #include "state_engine.h"
 #include "hot_cache.h"
@@ -10,6 +11,25 @@
 #include "flink_binary_format.h"
 
 using namespace forl0;
+#ifdef FORL0_TEST_CACHE_STATS
+extern void test_cache_record(HotCacheLL*);
+#endif
+
+// Emit a lifecycle record in one write so Java console output cannot split
+// the numeric telemetry fields when stdout and stderr share a pipe.
+template<class... Args>
+static void native_lifecycle_log(const char* format, Args... args) {
+    char line[1024];
+    int length = std::snprintf(line, sizeof(line), format, args...);
+    if (length <= 0) return;
+    if (size_t(length) < sizeof(line)) {
+        (void)::write(STDERR_FILENO, line, size_t(length));
+    } else {
+        std::string full(size_t(length) + 1, '\0');
+        std::snprintf(full.data(), full.size(), format, args...);
+        (void)::write(STDERR_FILENO, full.data(), size_t(length));
+    }
+}
 
 // ============================================================================
 //  JNI class: org.apache.flink.state.forl0.NativeEngine
@@ -45,28 +65,32 @@ Java_org_apache_flink_state_forl0_NativeEngine_createEngine(
                 static_cast<size_t>(l0Capacity), nullptr,
                 l0StrictAllocation == JNI_TRUE,
                 static_cast<uint64_t>(l0WriteBypassThreshold), &reused);
-            // Hardware-gating telemetry per design §3.2.
             if (mgr->is_active()) {
-                fprintf(stderr,
-                        "[ForL0-HotCache] %s active=1 key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
+                native_lifecycle_log(
+                        "[ForL0-HotCache] %s active=1 memory=%s key_groups=%d:%d requested_bytes=%zu actual_bytes=%zu total_sets=%u strict=%d\n",
                         reused ? "engine_reuse" : "engine_start",
+                        mgr->is_l0_backed() ? "L0" : "DRAM",
                         static_cast<int>(startKeyGroup),
                         static_cast<int>(startKeyGroup + numKeyGroups),
                         mgr->requested_capacity_bytes(), mgr->capacity_bytes(),
                         mgr->total_sets(), l0StrictAllocation == JNI_TRUE ? 1 : 0);
+                if (!reused && !mgr->is_l0_backed()) {
+                    native_lifecycle_log("[ForL0-HotCache] L0 unavailable, using DRAM: %s\n",
+                                         mgr->failure_reason().c_str());
+                }
             } else {
                 if (l0StrictAllocation == JNI_TRUE) {
                     throw std::runtime_error(
-                        std::string("strict L0 allocation failed: ") + mgr->failure_reason());
+                        std::string("strict HotCache allocation failed: ") + mgr->failure_reason());
                 }
-                fprintf(stderr,
-                        "[ForL0-HotCache] WARN: L0 hardware not available (reason: %s); "
+                native_lifecycle_log(
+                        "[ForL0-HotCache] WARN: allocation failed (reason: %s); "
                         "cache forcibly disabled.\n",
                         mgr->failure_reason().c_str());
                 mgr.reset();  // Drop manager so cache_ pointers stay null.
             }
         } else {
-            fprintf(stderr, "[ForL0-HotCache] L0 cache disabled by config.\n");
+            native_lifecycle_log( "[ForL0-HotCache] L0 cache disabled by config.\n");
         }
         auto* engine = new StateEngine(startKeyGroup, numKeyGroups, totalKeyGroups,
                                        std::move(mgr),
@@ -87,19 +111,22 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
         auto* mgr = engine->hot_cache_manager();
         for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
             StateHandle* state = entry.second;
-            if (!state || !state->hot_cache_ll) continue;
-            fprintf(stderr,
+            if (!state || !state->cache_backing()) continue;
+#ifdef FORL0_TEST_CACHE_STATS
+            test_cache_record(state->cache_backing());
+#endif
+            native_lifecycle_log(
                     "[ForL0-HotCache] state_summary name=%s sets=%u lookups=%llu hits=%llu invalidations=%llu writes=%llu bypass_events=%llu bypassed=%d\n",
-                    state->state_name.c_str(), state->hot_cache_ll->num_sets(),
-                    static_cast<unsigned long long>(state->hot_cache_ll->lookups()),
-                    static_cast<unsigned long long>(state->hot_cache_ll->hits()),
-                    static_cast<unsigned long long>(state->hot_cache_ll->invalidations()),
-                    static_cast<unsigned long long>(state->hot_cache_ll->writes()),
-                    static_cast<unsigned long long>(state->hot_cache_ll->bypass_events()),
-                    state->hot_cache_ll->write_bypassed() ? 1 : 0);
+                    state->state_name.c_str(), state->cache_backing()->num_sets(),
+                    static_cast<unsigned long long>(state->cache_backing()->lookups()),
+                    static_cast<unsigned long long>(state->cache_backing()->hits()),
+                    static_cast<unsigned long long>(state->cache_backing()->invalidations()),
+                    static_cast<unsigned long long>(state->cache_backing()->writes()),
+                    static_cast<unsigned long long>(state->cache_backing()->bypass_events()),
+                    state->cache_backing()->write_bypassed() ? 1 : 0);
         }
         if (mgr) {
-            fprintf(stderr,
+            native_lifecycle_log(
                     "[ForL0-HotCache] engine_summary requested_bytes=%zu actual_bytes=%zu used_bytes=%zu total_sets=%u free_sets=%u caches=%u lookups=%llu hits=%llu invalidations=%llu writes=%llu bypass_events=%llu\n",
                     mgr->requested_capacity_bytes(), mgr->capacity_bytes(), mgr->used_bytes(),
                     mgr->total_sets(), mgr->free_sets(), mgr->cache_count(),
@@ -113,13 +140,14 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
             // a restarted subtask cannot strand capacity until job teardown.
             for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
                 StateHandle* state = entry.second;
-                if (!state || !state->hot_cache_ll) continue;
-                mgr->release_ll(state->hot_cache_ll);
+                if (!state || !state->cache_backing()) continue;
+                mgr->release_ll(state->cache_backing());
+                state->serialized_cache.reset();
                 state->hot_cache_ll = nullptr;
             }
         }
         if (auto* allocator = engine->counting_allocator()) {
-            fprintf(stderr,
+            native_lifecycle_log(
                     "[ForL0-Memory] engine_summary used_bytes=%zu peak_bytes=%zu max_bytes=%zu\n",
                     allocator->used_bytes(), allocator->peak_bytes(), allocator->max_bytes());
         }
@@ -130,7 +158,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_destroyEngine(
 // --- Hot-cache metrics (design §8) ---
 // Layout of the returned long[12]:
 //   [0] active              (1 = L0 cache active, 0 = disabled / hw unavailable)
-//   [1] capacity_bytes      (actual bytes obtained from l0_mem_alloc)
+//   [1] capacity_bytes      (actual usable HotCache bytes)
 //   [2] used_bytes          (sets currently acquired × sizeof(HotSet))
 //   [3] total_sets
 //   [4] free_sets
@@ -186,7 +214,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_getEngineMemoryStats(
     })
 }
 
-// Layout of the returned long[7] for a single state's attached HotCacheLL:
+// Layout of the returned long[7] for a single state's attached scalar or serialized cache:
 //   [0] attached (1 = cache attached, 0 = not attached)
 //   [1] lookups  (hits + misses)
 //   [2] hits
@@ -201,14 +229,14 @@ Java_org_apache_flink_state_forl0_NativeEngine_getHotCacheStats(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         jlong buf[7] = {0, 0, 0, 0, 0, 0, 0};
-        if (handle->hot_cache_ll) {
+        if (handle->cache_backing()) {
             buf[0] = 1;
-            buf[1] = static_cast<jlong>(handle->hot_cache_ll->lookups());
-            buf[2] = static_cast<jlong>(handle->hot_cache_ll->hits());
-            buf[3] = static_cast<jlong>(handle->hot_cache_ll->invalidations());
-            buf[4] = static_cast<jlong>(handle->hot_cache_ll->writes());
-            buf[5] = static_cast<jlong>(handle->hot_cache_ll->bypass_events());
-            buf[6] = static_cast<jlong>(handle->hot_cache_ll->num_sets());
+            buf[1] = static_cast<jlong>(handle->cache_backing()->lookups());
+            buf[2] = static_cast<jlong>(handle->cache_backing()->hits());
+            buf[3] = static_cast<jlong>(handle->cache_backing()->invalidations());
+            buf[4] = static_cast<jlong>(handle->cache_backing()->writes());
+            buf[5] = static_cast<jlong>(handle->cache_backing()->bypass_events());
+            buf[6] = static_cast<jlong>(handle->cache_backing()->num_sets());
         }
         jsize n = env->GetArrayLength(out);
         env->SetLongArrayRegion(out, 0, n < 7 ? n : 7, buf);
@@ -229,8 +257,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_rebalanceHotCache(
         jint rebalanced = 0;
         for (const auto& entry : engine->registered_state_handles<StateHandle>()) {
             StateHandle* state = entry.second;
-            if (state && state->hot_cache_ll
-                    && state->hot_cache_ll->rebalance_if_needed(
+            if (state && state->cache_backing()
+                    && state->cache_backing()->rebalance_if_needed(
                         static_cast<uint64_t>(intervalOps),
                         static_cast<double>(missRateThreshold))) {
                 ++rebalanced;
@@ -271,6 +299,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
 
         // Pre-parse type descriptor to extract layout info needed for registration.
         // MapState needs UK/UV types from parsed value_layout to select InnerMap specialization.
+        bool row_data_key = false, row_data_value = false;
         std::unique_ptr<TypeLayout> parsed_key_layout;
         std::unique_ptr<TypeLayout> parsed_ns_layout;
         std::unique_ptr<TypeLayout> parsed_val_layout;
@@ -285,6 +314,25 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
                     parsed_key_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
                     parsed_ns_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
                     parsed_val_layout = TypeLayoutParser::parse_at(desc.data(), descLen, offset);
+                    if (offset + 2 <= static_cast<size_t>(descLen) && desc[offset] == 0xC7) {
+                        row_data_key = (desc[offset + 1] & 1) != 0;
+                        row_data_value = (desc[offset + 1] & 2) != 0;
+                        offset += 2;
+                    }
+                    if (offset < static_cast<size_t>(descLen) && desc[offset] == 0xC8) {
+                        ++offset;
+                        auto read_physical = [&](auto&& self, TypeLayout& layout) -> void {
+                            if (offset + 5 > desc.size()) throw std::runtime_error("Truncated physical type layout");
+                            uint8_t flags = desc[offset++];
+                            layout.serialized_row = (flags & 1) != 0;
+                            layout.serialized_container = (flags & 2) != 0;
+                            uint32_t length = 0;
+                            for (int i = 0; i < 4; ++i) length = (length << 8) | desc[offset++];
+                            layout.serialized_fixed_size = static_cast<int32_t>(length);
+                            for (auto& child : layout.children) self(self, *child);
+                        };
+                        read_physical(read_physical, *parsed_val_layout);
+                    }
                 } catch (const std::exception&) {}
             }
         }
@@ -296,7 +344,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             && parsed_val_layout->children.size() >= 2) {
             TypeId uk_id = parsed_val_layout->children[0]->type_id;
             TypeId uv_id = parsed_val_layout->children[1]->type_id;
-            if (uk_id == TypeId::INT64 && uv_id == TypeId::INT64) {
+            if (void_ns && keyTypeId == 2 && uk_id == TypeId::TIME_WINDOW && uv_id == TypeId::TIME_WINDOW) {
+                map_inner_kind = StateHandle::MapInnerKind::WINDOW_WINDOW;
+            } else if (uk_id == TypeId::INT64 && uv_id == TypeId::INT64) {
                 map_inner_kind = StateHandle::MapInnerKind::LONG_LONG;
             } else if (uk_id == TypeId::INT64) {
                 map_inner_kind = StateHandle::MapInnerKind::LONG_STRING;
@@ -309,36 +359,45 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         StateHandle::KeyType stored_key_type;
         StateHandle::ValueType stored_value_type;
 
-        // CRITICAL: When void_ns is false and namespace is not a known specialization,
-        // Java ALWAYS uses the generic byte[] JNI path
-        // (serializing key+namespace together). The C++ table MUST be <std::string, std::string>
-        // to match. Typed specializations are valid for VoidNamespace and TimeWindow states.
-        bool is_time_window_ns = (nsTypeId == 21);  // TYPE_TIME_WINDOW
-        if (!void_ns && !is_time_window_ns) {
-            table_id = engine->register_state<std::string, std::string>(name, void_ns);
+        // Namespace selection must preserve the value container used by Java.
+        // A generic namespace changes the outer key to serialized bytes; it
+        // does not turn MapState/ListState payloads into std::string values.
+        const bool is_time_window_ns = (nsTypeId == 21);
+        const bool typed_time_window = is_time_window_ns && keyTypeId == 2;
+        const bool typed_long_namespace = nsTypeId == 2 && keyTypeId == 2 && is_value_state;
+        if (!void_ns && !typed_time_window && !typed_long_namespace) {
             stored_key_type = StateHandle::KeyType::BYTES;
-            stored_value_type = StateHandle::ValueType::BYTES;
-        } else if (is_time_window_ns) {
-            // TimeWindow namespace: register typed tables (same specialization as VoidNamespace).
-            // Java will use *WithTW JNI methods with typed key/value.
-            if (keyTypeId == 2 && (valueTypeId == 2 || valueTypeId == 1)) {
-                table_id = engine->register_state<int64_t, int64_t>(name, void_ns);
-                stored_key_type = StateHandle::KeyType::INT64;
-                stored_value_type = StateHandle::ValueType::INT64;
-            } else if (keyTypeId == 2 && valueTypeId == 4) {
-                table_id = engine->register_state<int64_t, double>(name, void_ns);
-                stored_key_type = StateHandle::KeyType::INT64;
-                stored_value_type = StateHandle::ValueType::FLOAT64;
-            } else if (keyTypeId == 2) {
-                table_id = engine->register_state<int64_t, std::string>(name, void_ns);
-                stored_key_type = StateHandle::KeyType::INT64;
-                stored_value_type = StateHandle::ValueType::BYTES;
+            if (kind == StateHandle::StateKind::MAP_) {
+                table_id = engine->register_state<std::string, InnerMap>(name, false);
+                stored_value_type = StateHandle::ValueType::MAP;
+                map_inner_kind = StateHandle::MapInnerKind::STRING_STRING;
+            } else if (kind == StateHandle::StateKind::LIST) {
+                table_id = engine->register_state<std::string, ElementList>(name, false);
+                stored_value_type = StateHandle::ValueType::LIST;
             } else {
-                // Non-long keys use ForL0ReducingState's generic serialized-byte path,
-                // including TimeWindow namespaces.  Keep the native value type in sync
-                // with valuePutGeneric/reduceGetGeneric.
-                table_id = engine->register_state<std::string, std::string>(name, void_ns);
-                stored_key_type = StateHandle::KeyType::BYTES;
+                table_id = engine->register_state<std::string, std::string>(name, false);
+                stored_value_type = StateHandle::ValueType::BYTES;
+            }
+        } else if (typed_time_window || typed_long_namespace) {
+            stored_key_type = StateHandle::KeyType::INT64;
+            if (kind == StateHandle::StateKind::MAP_) {
+                // Java's LONG_MAP_TW uses serialized user keys and values.
+                table_id = engine->register_state<int64_t, InnerMap>(name, false);
+                stored_value_type = StateHandle::ValueType::MAP;
+                map_inner_kind = StateHandle::MapInnerKind::STRING_STRING;
+            } else if (kind == StateHandle::StateKind::LIST) {
+                table_id = engine->register_state<int64_t, ElementList>(name, false);
+                stored_value_type = StateHandle::ValueType::LIST;
+            } else if ((is_value_state && !(typed_long_namespace && row_data_value)
+                        && (valueTypeId == 2 || valueTypeId == 1))
+                       || (kind == StateHandle::StateKind::REDUCING && valueTypeId == 2)) {
+                table_id = engine->register_state<int64_t, int64_t>(name, false);
+                stored_value_type = StateHandle::ValueType::INT64;
+            } else if (is_value_state && !(typed_long_namespace && row_data_value) && valueTypeId == 4) {
+                table_id = engine->register_state<int64_t, double>(name, false);
+                stored_value_type = StateHandle::ValueType::FLOAT64;
+            } else {
+                table_id = engine->register_state<int64_t, std::string>(name, false);
                 stored_value_type = StateHandle::ValueType::BYTES;
             }
         } else if (is_value_state) {
@@ -409,6 +468,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
             if (keyTypeId == 2) {
                 stored_key_type = StateHandle::KeyType::INT64;
                 switch (map_inner_kind) {
+                    case StateHandle::MapInnerKind::WINDOW_WINDOW:
+                        table_id = engine->register_state<int64_t, InnerMapTimeWindow>(name, void_ns);
+                        break;
                     case StateHandle::MapInnerKind::LONG_LONG:
                         table_id = engine->register_state<int64_t, InnerMapLongLong>(name, void_ns);
                         break;
@@ -460,11 +522,19 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         handle->key_type = stored_key_type;
         handle->value_type = stored_value_type;
         handle->kind = kind;
-        handle->ns_type = is_time_window_ns ? StateHandle::NsType::TIME_WINDOW
+        handle->ns_type = typed_long_namespace ? StateHandle::NsType::LONG_NS
+                        : typed_time_window ? StateHandle::NsType::TIME_WINDOW
                         : (void_ns ? StateHandle::NsType::VOID_NS
                                    : StateHandle::NsType::BYTES);
         handle->void_namespace = void_ns;
+        handle->row_data_key = row_data_key;
+        handle->row_data_value = row_data_value;
         handle->map_inner_kind = map_inner_kind;
+        if (typed_long_namespace && is_value_state
+                && stored_key_type == StateHandle::KeyType::INT64
+                && stored_value_type == StateHandle::ValueType::BYTES) {
+            handle->long_ns_blob_table = engine->get_state_table<int64_t, std::string>(table_id);
+        }
 
         // Register StateHandle pointer in engine for checkpoint type dispatch.
         // Engine takes ownership and will free on destruction.
@@ -486,8 +556,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         // Composite TimeWindow/FIXED_ROW keys are deliberately excluded: a
         // lossy 64-bit fold cannot distinguish collisions on a cache hit and
         // therefore cannot safely bypass the authoritative SwissTable lookup.
-        // Variable-length values would require a pointer-mode cache with a
-        // SwissTable rehash hook; deferred until that hook exists.
+        // Other Value/Map states attach the owned-payload cache below; it
+        // keeps complete keys and never retains a pointer into SwissTable.
         if (auto* mgr = engine->hot_cache_manager()) {
             const bool scalar_value =
                 stored_value_type == StateHandle::ValueType::INT64
@@ -508,21 +578,69 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
                     // Manager retains ownership; release the unique_ptr so
                     // the raw pointer survives until manager teardown.
                     handle->hot_cache_ll = cache.release();
-                    fprintf(stderr,
+                    native_lifecycle_log(
                             "[ForL0-HotCache] state_attach name=%s requested_bytes=%zu actual_bytes=%zu sets=%u\n",
                             name.c_str(), requested_bytes,
                             static_cast<size_t>(handle->hot_cache_ll->num_sets()) * sizeof(HotSet),
                             handle->hot_cache_ll->num_sets());
                 } else {
-                    fprintf(stderr,
+                    native_lifecycle_log(
                             "[ForL0-HotCache] WARN state_attach_failed name=%s requested_bytes=%zu free_bytes=%zu\n",
                             name.c_str(), requested_bytes,
                             static_cast<size_t>(mgr->free_sets()) * sizeof(HotSet));
                 }
             }
+            // SQL windows, composite keys and rows need exact serialized identity.
+            // Honor the same per-state quota used by the scalar cache.
+            if (!handle->hot_cache_ll && mgr->is_active()
+                && (kind == StateHandle::StateKind::VALUE || kind == StateHandle::StateKind::MAP_
+                    || kind == StateHandle::StateKind::LIST)) {
+                size_t requested = engine->hot_cache_state_bytes();
+                auto backing = mgr->acquire_ll(static_cast<uint32_t>(requested / sizeof(HotSet)));
+                if (backing) {
+                    handle->serialized_cache = std::make_unique<SerializedHotCache>(backing.get());
+                    auto* cache = backing.release();
+                    native_lifecycle_log( "[ForL0-HotCache] state_attach name=%s mode=serialized actual_bytes=%zu sets=%u\n",
+                            name.c_str(), size_t(cache->num_sets()) * sizeof(HotSet), cache->num_sets());
+                } else {
+                    native_lifecycle_log( "[ForL0-HotCache] WARN state_attach_failed name=%s mode=serialized free_sets=%u\n",
+                            name.c_str(), mgr->free_sets());
+                }
+            }
         }
 
         return to_handle(handle);
+    })
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_hasSerializedCache(JNIEnv*, jclass, jlong state) {
+    return from_handle<StateHandle>(state)->serialized_cache ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_stateReadResultAddress(JNIEnv*, jclass, jlong state) {
+    return reinterpret_cast<jlong>(from_handle<StateHandle>(state)->read_result);
+}
+JNIEXPORT jlongArray JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_serializedCacheMemoryRange(JNIEnv* env, jclass, jlong state) {
+    JNI_ENTRY_RETURN(jlongArray, nullptr, {
+        auto& cache = from_handle<StateHandle>(state)->serialized_cache;
+        if (!cache) return nullptr;
+        jlong range[2] = {reinterpret_cast<jlong>(cache->data()), jlong(cache->capacity())};
+        jlongArray out = env->NewLongArray(2);
+        env->SetLongArrayRegion(out, 0, 2, range);
+        return out;
+    })
+}
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_serializedCacheInvalidate(JNIEnv* env, jclass, jlong state, jbyteArray prefix) {
+    JNI_ENTRY_VOID({
+        auto& cache = from_handle<StateHandle>(state)->serialized_cache;
+        if (cache) {
+            std::string key = jbytearray_to_string(env, prefix);
+            if (key.empty()) cache->clear(); else cache->invalidate_prefix(key);
+        }
     })
 }
 
@@ -564,6 +682,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_stateEntries(
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::MAP) {
             // Dispatch based on InnerMap specialization
             switch (handle->map_inner_kind) {
+                case StateHandle::MapInnerKind::WINDOW_WINDOW: {
+                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id);
+                    return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
+                }
                 case StateHandle::MapInnerKind::LONG_LONG: {
                     auto* tbl = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
@@ -677,6 +799,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
                 emit_keys(handle->engine->get_state_table<int64_t, ElementList>(handle->table_id));
             } else if (vt == StateHandle::ValueType::MAP) {
                 switch (handle->map_inner_kind) {
+                    case StateHandle::MapInnerKind::WINDOW_WINDOW:
+                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id));
+                        break;
                     case StateHandle::MapInnerKind::LONG_LONG:
                         emit_keys(handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id));
                         break;

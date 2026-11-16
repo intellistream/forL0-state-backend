@@ -90,6 +90,32 @@ public final class NativeEngine {
     //  StateEngine lifecycle
     // ========================================================================
 
+    static native boolean valueGetNumberLongNs(long state, long key, int group, long ns, long keyHeader, long[] out);
+    static native void valuePutNumberLongNs(long state, long key, int group, long ns, long keyHeader, long bits);
+    static native byte[] valueGetBlobLongNs(long state, long key, int group, long ns, long keyHeader);
+    static native boolean valueGetBlobPtrLongNs(long state, long key, int group, long ns, long keyHeader);
+    static native void valuePutBlobLongNs(long state, long key, int group, long ns, long keyHeader, byte[] value);
+    static native void valuePutBlobRangeLongNs(long state, long key, int group, long ns, long keyHeader, byte[] value, int offset, int length);
+    static native void valuePutBlobAddressLongNs(long state, long key, int group, long ns, long keyHeader, Object owner, long address, int length);
+    static native void valueClearLongNs(long state, long key, int group, long ns, long keyHeader);
+    static native boolean valueGetSqlWindowPtr(long state, long key, int group, long start, long end, long header);
+    static native byte[] valueGetSqlWindowBytes(long state, long key, int group, long start, long end, long header);
+    static native void valuePutSqlWindowRange(long state, long key, int group, long start, long end, long header, byte[] bytes, int offset, int length);
+    static native void valuePutSqlWindowAddress(long state, long key, int group, long start, long end, long header, Object owner, long address, int length);
+    static native void valueClearSqlWindow(long state, long key, int group, long start, long end, long header);
+    static native boolean mapGetTimeWindow(long state, long key, int group, long start, long end);
+    static native long stateReadResultAddress(long state);
+    static native long mapGetRowKeyInt(long state, long key, int group, byte[] row, int offset, int length);
+    static native void mapPutRowKeyInt(long state, long key, int group, byte[] row, int offset, int length, int value);
+    static native byte[] mapGetRowKeyBytes(long state, long key, int group, byte[] row, int offset, int length);
+    static native void mapPutRowKeyBytes(long state, long key, int group, byte[] row, int offset, int length, byte[] value);
+    static native void mapPutTimeWindow(long state, long key, int group, long userStart, long userEnd, long valueStart, long valueEnd);
+    static native void mapRemoveTimeWindow(long state, long key, int group, long start, long end);
+
+    static native boolean hasSerializedCache(long stateHandle);
+    static native long[] serializedCacheMemoryRange(long stateHandle);
+    static native void serializedCacheInvalidate(long stateHandle, byte[] prefix);
+
     /** Create a new StateEngine. Returns native handle. */
     public static native long createEngine(int startKeyGroup, int numKeyGroups, int totalKeyGroups,
                                            boolean l0Enabled, long l0CapacityBytes,
@@ -226,7 +252,7 @@ public final class NativeEngine {
 
     public static native void valueClearGeneric(long stateHandle, byte[] key, int keyGroup);
 
-    // --- Zero-copy pointer return: writes [nativeAddress, size] into out array ---
+    // Zero-copy results use the handle result area; a non-null out array receives a copy.
     // Returns true if value found, false if not. Caller wraps as off-heap MemorySegment.
     //
     // SAFETY: The returned pointer references std::string::data() inside a SwissTable slot.
@@ -238,7 +264,7 @@ public final class NativeEngine {
     public static native boolean valueGetGenericPtr(long stateHandle, byte[] key, int keyGroup, long[] out);
 
     // --- Combined get: single JNI call, single hash lookup ---
-    // Returns true if key exists and writes value to out[0]; returns false otherwise.
+    // Returns true if key exists; null out uses the handle result area, otherwise writes out[0].
     // For double values, out[0] stores the raw bits (use Double.longBitsToDouble).
 
     public static native boolean valueGetLongLongSafe(long stateHandle, long key, int keyGroup, long[] out);
@@ -272,6 +298,9 @@ public final class NativeEngine {
 
     public static native void listAddGeneric(long stateHandle, byte[] key, int keyGroup, byte[] element);
 
+    static native void listAddRowRange(long state, long key, byte[] genericKey, int group,
+            long nsStart, long nsEnd, int mode, byte[] row, int offset, int length);
+
     /** Get list elements as long[] (int64 key + long elements). Returns null if absent. */
     public static native long[] listGetLongElements(long stateHandle, long key, int keyGroup);
 
@@ -285,6 +314,9 @@ public final class NativeEngine {
     public static native void listUpdate(long stateHandle, long key, int keyGroup, byte[] serializedList);
 
     public static native void listUpdateGeneric(long stateHandle, byte[] key, int keyGroup, byte[] serializedList);
+
+    public static native void listWriteWithTW(long stateHandle, long key, int keyGroup,
+            long nsStart, long nsEnd, byte[] serializedList, boolean append);
 
     /** Add all elements. */
     public static native void listAddAll(long stateHandle, long key, int keyGroup, byte[] serializedElements);
@@ -378,6 +410,9 @@ public final class NativeEngine {
     public static native byte[] mapGetLongBytes(long stateHandle, long key, int keyGroup, long userKey);
     /** Put Long UK + bytes UV. */
     public static native void mapPutLongBytes(long stateHandle, long key, int keyGroup, long userKey, byte[] userValue);
+
+    static native void mapPutLongBytesRange(long stateHandle, long key, int keyGroup,
+            long userKey, byte[] userValue, int offset, int length);
     /** Remove by Long UK (Long-Bytes InnerMap). */
     public static native void mapRemoveLongBytes(long stateHandle, long key, int keyGroup, long userKey);
     /** Check existence by Long UK (Long-Bytes InnerMap). */

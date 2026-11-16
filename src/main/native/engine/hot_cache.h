@@ -1,20 +1,12 @@
 // hot_cache.h — L0 Hot-Key Cache.
 //
-// A set-associative read/write-through cache that lives in Kunpeng L0 memory
-// (a user-space partition of the L3 cache). It sits ABOVE the SwissTable in
+// A set-associative read/write-through cache backed by L0 memory when available,
+// otherwise aligned DRAM. It sits ABOVE the SwissTable in
 // every supported StateTable<K,V> and short-circuits hot-key get/put.
 //
 // Layout: each HotSet is exactly 192 bytes / 3 cache lines (tags / keys /
 // values), 8-way associative. Lookup uses NEON `vceq_u8` on aarch64, an SSE2
 // `pcmpeqb` on x86_64, and a portable scalar fallback elsewhere.
-//
-// Hardware gating (`HotCacheManager::is_active()`):
-//   - dlopen("libl0mempool.so") succeeds
-//   - /dev/hisi_l0 exists
-//   - cache_tuner_init() returns a non-null tuner
-//   - probe l0_mem_alloc succeeds for at least one HotSet
-// If any step fails, the manager is NOT active and StateTable::cache_ is
-// left null — there is no heap fallback (see L0_HotKey_Cache_Design §3.2).
 //
 // Each individual HotCacheLL remains single-writer because Flink keyed-state
 // access is single-threaded per subtask. HotCacheManager bookkeeping is
@@ -229,11 +221,28 @@ public:
     uint64_t bypass_events() const noexcept { return bypass_events_.load(std::memory_order_relaxed); }
     bool write_bypassed()    const noexcept { return write_bypassed_.load(std::memory_order_relaxed); }
 
+    // A serialized cache reuses this manager-owned L0 slice and its telemetry.
+    // Its bytes must never be interpreted as scalar HotSet tags by rebalancing.
+    void set_serialized_payload() noexcept { serialized_payload_ = true; }
+    void record_serialized_lookup(bool hit) noexcept {
+        (hit ? hits_ : misses_).fetch_add(1, std::memory_order_relaxed);
+    }
+    void record_serialized_misses(uint64_t count) noexcept {
+        misses_.fetch_add(count, std::memory_order_relaxed);
+    }
+    void record_serialized_hits(uint64_t count) noexcept {
+        hits_.fetch_add(count, std::memory_order_relaxed);
+    }
+    void record_serialized_write() noexcept { writes_.fetch_add(1, std::memory_order_relaxed); }
+    void record_serialized_invalidation() noexcept { invalidations_.fetch_add(1, std::memory_order_relaxed); }
+    void record_serialized_bypass() noexcept { bypass_events_.fetch_add(1, std::memory_order_relaxed); }
+
     // Called by the owning StateEngine thread only. Keeping rebalance scoped
     // to one cache avoids clearing another parallel subtask's cache after the
     // manager becomes process-shared.
     bool rebalance_if_needed(uint64_t interval_ops,
                              double miss_rate_threshold) noexcept {
+        if (serialized_payload_) return false;
         uint64_t current_hits = hits();
         uint64_t current_misses = misses();
         uint64_t delta = consume_rebalance_delta();
@@ -348,6 +357,7 @@ public:
     }
 
 private:
+    bool serialized_payload_ = false;
     HotSet*  sets_;
     uint32_t set_mask_;     // num_sets_ - 1 (num_sets_ is power of 2)
     uint32_t num_sets_;
@@ -522,6 +532,7 @@ public:
     static void reset_process_shared_for_tests();
 
     bool   is_active()        const noexcept { return active_; }
+    bool   is_l0_backed()     const noexcept { return l0_backed_; }
     size_t capacity_bytes()   const noexcept { return capacity_bytes_; }
     size_t requested_capacity_bytes() const noexcept { return requested_capacity_bytes_; }
     size_t used_bytes()       const noexcept;
@@ -568,13 +579,14 @@ public:
 private:
     L0LibBindings bindings_{};
     void*         tuner_           = nullptr;
-    void*         raw_base_        = nullptr;   // ptr returned by l0_mem_alloc (for free)
+    void*         raw_base_        = nullptr;
     void*         l0_base_         = nullptr;   // 64B-aligned region used as HotSet[]
     size_t        capacity_bytes_  = 0;
     size_t        requested_capacity_bytes_ = 0;
     uint32_t      total_sets_      = 0;
     uint32_t      bump_next_       = 0;        // next set id to hand out from the unused tail
     bool          active_          = false;
+    bool          l0_backed_       = false;
     std::string   failure_reason_;
     bool          strict_allocation_ = false;
     uint64_t      write_only_bypass_threshold_ = (1u << 20);
@@ -592,6 +604,7 @@ private:
 
     uint32_t free_sets_unlocked() const noexcept;
 
+    size_t allocate_l0(L0BindingsLoader loader);
     void shutdown() noexcept;
 };
 

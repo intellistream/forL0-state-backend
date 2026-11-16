@@ -47,6 +47,8 @@ public class GeneratorConfig implements Serializable {
   /** Environment options. */
   private final NexmarkConfiguration configuration;
 
+  public boolean isRateLimited() { return configuration.isRateLimited; }
+
   /**
    * Delay between events, in microseconds. If the array has more than one entry then the rate is
    * changed every {@link #stepLengthSec}, and wraps around.

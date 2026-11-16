@@ -62,8 +62,7 @@ public class ForL0Options {
             ConfigOptions.key("state.backend.forl0.l0-cache.enabled")
                     .booleanType()
                     .defaultValue(false)
-                    .withDescription("Whether to enable L0 Cache memory allocation. " +
-                            "This requires the native library and Kunpeng CPU with L0 support.");
+                    .withDescription("Enable HotCache using L0 memory when available, otherwise ordinary native memory.");
 
     public static final ConfigOption<MemorySize> L0_CACHE_SIZE =
             ConfigOptions.key("state.backend.forl0.l0-cache.size")
@@ -87,13 +86,13 @@ public class ForL0Options {
             ConfigOptions.key("state.backend.forl0.l0-cache.strict-allocation")
                     .booleanType()
                     .defaultValue(false)
-                    .withDescription("Fail backend construction instead of silently shrinking or disabling an L0 quota.");
+                    .withDescription("Require the full HotCache quota, using ordinary native memory if L0 cannot supply it.");
 
     public static final ConfigOption<MemorySize> L0_CACHE_STATE_SIZE =
             ConfigOptions.key("state.backend.forl0.l0-cache.state-size")
                     .memoryType()
                     .defaultValue(MemorySize.ofMebiBytes(1))
-                    .withDescription("Requested L0 quota for each eligible scalar ValueState.");
+                    .withDescription("Requested L0 quota per eligible ValueState, MapState or ListState.");
 
     public static final ConfigOption<Long> L0_CACHE_WRITE_BYPASS_THRESHOLD =
             ConfigOptions.key("state.backend.forl0.l0-cache.write-bypass-threshold")

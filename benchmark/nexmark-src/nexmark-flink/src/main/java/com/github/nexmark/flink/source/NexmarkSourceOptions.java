@@ -158,6 +158,18 @@ public class NexmarkSourceOptions {
 		nexmarkConf.isRateLimited = config.get(RATE_LIMITED);
 		nexmarkConf.firstEventRate = config.get(FIRST_EVENT_RATE);
 		nexmarkConf.nextEventRate = config.get(NEXT_EVENT_RATE);
+		if (nexmarkConf.firstEventRate < 0 || nexmarkConf.nextEventRate < 0) {
+			throw new IllegalArgumentException("Nexmark event rates must be non-negative");
+		}
+		if (nexmarkConf.firstEventRate == 0 && nexmarkConf.nextEventRate == 0) {
+			// Zero is the project's unlimited-throughput setting. Event time
+			// still needs a finite rate; retain Nexmark's default 10k events/s.
+			nexmarkConf.isRateLimited = false;
+			nexmarkConf.firstEventRate = new NexmarkConfiguration().firstEventRate;
+			nexmarkConf.nextEventRate = nexmarkConf.firstEventRate;
+		} else if (nexmarkConf.firstEventRate == 0 || nexmarkConf.nextEventRate == 0) {
+			throw new IllegalArgumentException("Both Nexmark rates must be zero for unlimited throughput");
+		}
 		nexmarkConf.avgPersonByteSize = (int) config.get(PERSON_AVG_SIZE).getBytes();
 		nexmarkConf.avgAuctionByteSize = (int) config.get(AUCTION_AVG_SIZE).getBytes();
 		nexmarkConf.avgBidByteSize = (int) config.get(BID_AVG_SIZE).getBytes();

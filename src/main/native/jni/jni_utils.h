@@ -10,6 +10,7 @@
 #include "state_engine.h"
 #include "type_layout.h"
 #include "hot_cache.h"
+#include "serialized_hot_cache.h"
 
 namespace forl0 {
 
@@ -39,7 +40,7 @@ inline std::string jbytearray_to_string(JNIEnv* env, jbyteArray arr) {
     return s;
 }
 
-inline jbyteArray string_to_jbytearray(JNIEnv* env, const std::string& s) {
+inline jbyteArray string_to_jbytearray(JNIEnv* env, std::string_view s) {
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(s.size()));
     if (arr) {
         env->SetByteArrayRegion(arr, 0, static_cast<jsize>(s.size()),
@@ -109,26 +110,36 @@ struct StateHandle {
     enum class KeyType : uint8_t { INT32, INT64, STRING, BYTES, FIXED_ROW };
     enum class ValueType : uint8_t { INT32, INT64, FLOAT32, FLOAT64, BOOL, STRING, BYTES, LIST, MAP };
     enum class StateKind : uint8_t { VALUE, LIST, MAP_, REDUCING, AGGREGATING };
-    enum class NsType : uint8_t { VOID_NS, BYTES, TIME_WINDOW };
+    enum class NsType : uint8_t { VOID_NS, BYTES, TIME_WINDOW, LONG_NS };
     // MapState InnerMap specialization kind
-    enum class MapInnerKind : uint8_t { STRING_STRING, LONG_LONG, LONG_STRING, STRING_LONG };
+    enum class MapInnerKind : uint8_t { STRING_STRING, LONG_LONG, LONG_STRING, STRING_LONG, WINDOW_WINDOW };
 
     std::string state_name;
     StateEngine* engine;
     int64_t table_id;       // StateEngine table registration id
+    // StateEngine keeps this table object stable until engine destruction.
+    StateTable<int64_t, std::string>* long_ns_blob_table = nullptr;
     KeyType key_type;
     ValueType value_type;
     StateKind kind;
     NsType ns_type = NsType::VOID_NS;
     bool void_namespace;
+    bool row_data_key = false;
+    bool row_data_value = false;
     MapInnerKind map_inner_kind = MapInnerKind::STRING_STRING;
 
-    // Optional L0 hot-key cache attached to this state. Null when:
-    //   (a) HotCacheManager is not active (no L0 hardware / disabled), OR
-    //   (b) the state's <K,V> specialization is not yet covered (Phase A: only
-    //       int64 key + int64 value with VoidNamespace or TimeWindow ns).
-    // The HotCacheLL is owned by the StateEngine via HotCacheManager.
+    // Synchronous read results, owned by this handle and accessed only by its
+    // task thread. Avoid JNI primitive-array copies for two-number results.
+    alignas(8) jlong read_result[2] = {};
+
+    // Primitive scalar shortcut. SQL rows, complete composite identities and
+    // MapState payloads use serialized_cache instead. Both share SDK-backed
+    // pool accounting and counters; neither has a production DRAM fallback.
     HotCacheLL* hot_cache_ll = nullptr;
+    std::unique_ptr<SerializedHotCache> serialized_cache;
+    HotCacheLL* cache_backing() const {
+        return serialized_cache ? serialized_cache->backing() : hot_cache_ll;
+    }
 
     // Type descriptors (for checkpoint format — used by C++ checkpoint codec).
     // key_layout holds the parsed key type layout (needed for FIXED_ROW arity).
@@ -162,6 +173,18 @@ struct StateHandle {
         }
         return nullptr;
     }
+    TimeWindowMapScratch window_scratch;
 };
+
+inline void set_blob_result(JNIEnv* env, StateHandle* handle, std::string_view value, jlongArray out = nullptr) {
+    handle->read_result[0] = reinterpret_cast<jlong>(value.data());
+    handle->read_result[1] = static_cast<int64_t>(value.size());
+    if (out) env->SetLongArrayRegion(out, 0, 2, handle->read_result);
+}
+
+inline void set_long_result(JNIEnv* env, StateHandle* handle, jlong value, jlongArray out) {
+    handle->read_result[0] = value;
+    if (out) env->SetLongArrayRegion(out, 0, 1, handle->read_result);
+}
 
 }  // namespace forl0

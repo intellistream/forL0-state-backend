@@ -98,6 +98,19 @@ inline void write_flink_value<InnerMap>(WriteBuffer& buf, const InnerMap& value,
     buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
 }
 
+// Keep the legacy 16-byte BE key/value encoding for both SQL and streaming windows.
+template <>
+inline void write_flink_value<InnerMapTimeWindow>(WriteBuffer& buf, const InnerMapTimeWindow& value, const TypeLayout&) {
+    size_t length = buf.size();
+    buf.write_int(0);
+    buf.write_int(static_cast<int32_t>(value.size()));
+    for (const auto& entry : value) {
+        buf.write_long(entry.first.first); buf.write_long(entry.first.second);
+        buf.write_long(entry.second.first); buf.write_long(entry.second.second);
+    }
+    buf.patch_int(length, static_cast<int32_t>(buf.size() - length - 4));
+}
+
 // Typed InnerMap variants — same checkpoint format as InnerMap but with typed entries.
 
 template <>
@@ -216,6 +229,45 @@ public:
                 ++count;
             });
         return count;
+    }
+
+    // Preserve the pre-existing opaque [namespace + key] checkpoint encoding,
+    // even though the live table now uses a numeric namespace and numeric key.
+    size_t write_key_group_long(const StateTable<K, V>& table, int key_group, WriteBuffer& buf, bool row_key) {
+        if constexpr (std::is_same_v<K, int64_t>) {
+            size_t count = 0;
+            auto emit = [&](int64_t ns, const K& key, const V& value, uint64_t header) {
+                    buf.write_int(row_key ? 28 : 16);
+                    buf.write_long(ns);
+                    if (row_key) {
+                        buf.write_int(16);
+                        for (int i = 0; i < 8; ++i) buf.write_byte(uint8_t(header >> (8 * i)));
+                        uint64_t bits = static_cast<uint64_t>(key);
+                        for (int i = 0; i < 8; ++i) buf.write_byte(uint8_t(bits >> (8 * i)));
+                    } else buf.write_long(key);
+                    if constexpr (std::is_same_v<V, std::string>) {
+                        buf.write_int(static_cast<int32_t>(value.size()));
+                        buf.write_raw(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+                    } else if constexpr (std::is_same_v<V, int64_t>) {
+                        bool narrow = value_layout_.type_id == TypeId::INT32;
+                        buf.write_int(narrow ? 4 : 8);
+                        if (narrow) buf.write_int(static_cast<int32_t>(value)); else buf.write_long(value);
+                    } else if constexpr (std::is_same_v<V, double>) {
+                        buf.write_int(8); buf.write_double(value);
+                    } else throw std::runtime_error("unsupported Long-namespace value encoding");
+                    ++count;
+                };
+            table.template for_each_snapshot_in_key_group_ns<int64_t>(key_group,
+                [&](int64_t ns, const K& key, const V& value) { emit(ns, key, value, 0); });
+            table.template for_each_snapshot_in_key_group_ns<std::string>(key_group,
+                [&](const std::string& ns, const K& key, const V& value) {
+                    if (!row_key || ns.size() != 16) throw std::runtime_error("invalid RowData namespace identity");
+                    int64_t number; uint64_t header;
+                    std::memcpy(&number, ns.data(), 8); std::memcpy(&header, ns.data() + 8, 8);
+                    emit(number, key, value, header);
+                });
+            return count;
+        } else throw std::runtime_error("Long namespace requires numeric key");
     }
 
     // Write for ListState: value is std::vector<T>

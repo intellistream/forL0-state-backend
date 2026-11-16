@@ -7,9 +7,88 @@
 #endif
 #include "state_engine.h"
 #include "type_layout.h"
+#include "checkpoint_reader.h"
+#include "checkpoint_writer.h"
+#include "window_map_storage.h"
 #include <map>
 
 using namespace forl0;
+
+TEST(TypedInnerMapTest, TimeWindowEncodingMatchesLegacyStringMap) {
+    TypeLayout layout(TypeId::MAP);
+    InnerMapTimeWindow windows;
+    windows.emplace(TimeWindow(-10, 0), TimeWindow(-20, 30));
+    WriteBuffer typed;
+    write_flink_value(typed, windows, layout);
+    WriteBuffer key, value;
+    key.write_long(-10); key.write_long(0);
+    value.write_long(-20); value.write_long(30);
+    InnerMap legacy;
+    legacy.emplace(std::string(reinterpret_cast<const char*>(key.data()), key.size()),
+                   std::string(reinterpret_cast<const char*>(value.data()), value.size()));
+    WriteBuffer expected;
+    write_flink_value(expected, legacy, layout);
+    ASSERT_EQ(typed.size(), expected.size());
+    ASSERT_EQ(std::memcmp(typed.data(), expected.data(), typed.size()), 0);
+    ReadBuffer input(expected.data(), expected.size());
+    auto restored = read_flink_value<InnerMapTimeWindow>(input, layout);
+    ASSERT_EQ(restored.size(), 1u);
+    ASSERT_TRUE(restored.at(TimeWindow(-10, 0)) == TimeWindow(-20, 30));
+    ASSERT_EQ(input.remaining(), 0u);
+}
+
+TEST(TypedInnerMapTest, TimeWindowSnapshotKeepsValuesBeforeMutation) {
+    StateTable<int64_t, InnerMapTimeWindow> table(0, 1, true);
+    InnerMapTimeWindow initial;
+    initial.emplace(TimeWindow(0, 10), TimeWindow(0, 20));
+    table.put(0, 7, std::move(initial));
+    table.prepare_snapshot();
+    table.modify_in_place(0, int64_t(7), [](InnerMapTimeWindow& map) { map[TimeWindow(0, 10)] = TimeWindow(0, 99); });
+    TypeLayout keys(TypeId::INT64), values(TypeId::MAP);
+    CheckpointStateWriter<int64_t, InnerMapTimeWindow> writer(keys, values, true);
+    WriteBuffer bytes;
+    ASSERT_EQ(writer.write_key_group(table, 0, bytes), 1u);
+    StateTable<int64_t, InnerMapTimeWindow> restored(0, 1, true);
+    CheckpointStateReader<int64_t, InnerMapTimeWindow> reader(keys, values, true);
+    ReadBuffer input(bytes.data(), bytes.size());
+    reader.read_entries(input, restored, 0, 1);
+    ASSERT_TRUE(restored.get(0, 7)->at(TimeWindow(0, 10)) == TimeWindow(0, 20));
+    ASSERT_TRUE(table.get(0, 7)->at(TimeWindow(0, 10)) == TimeWindow(0, 99));
+    table.release_snapshot();
+}
+
+TEST(TypedInnerMapTest, TimeWindowReplacementReusesNodeAndRemovesEmptyParent) {
+    StateTable<int64_t, InnerMapTimeWindow> table(0, 1, true);
+    TimeWindowMapScratch scratch;
+    put_window_entry(&table, scratch, 0, 7, TimeWindow(0, 10), TimeWindow(0, 20));
+    auto* original_value = &table.get(0, 7)->begin()->second;
+    size_t buckets = table.get(0, 7)->bucket_count();
+    table.prepare_snapshot();
+    remove_window_entry(&table, scratch, 0, 7, TimeWindow(0, 10));
+    ASSERT_EQ(table.total_size(), 0u);
+    ASSERT_FALSE(scratch.node.empty());
+    ASSERT_EQ(scratch.empty_map.bucket_count(), buckets);
+    put_window_entry(&table, scratch, 0, 7, TimeWindow(0, 30), TimeWindow(0, 40));
+    ASSERT_EQ(table.total_size(), 1u);
+    ASSERT_EQ(&table.get(0, 7)->begin()->second, original_value);
+    ASSERT_EQ(table.get(0, 7)->bucket_count(), buckets);
+    ASSERT_TRUE(scratch.node.empty());
+    TypeLayout keys(TypeId::INT64), values(TypeId::MAP);
+    CheckpointStateWriter<int64_t, InnerMapTimeWindow> writer(keys, values, true);
+    WriteBuffer bytes;
+    ASSERT_EQ(writer.write_key_group(table, 0, bytes), 1u);
+    StateTable<int64_t, InnerMapTimeWindow> restored(0, 1, true);
+    CheckpointStateReader<int64_t, InnerMapTimeWindow> reader(keys, values, true);
+    ReadBuffer input(bytes.data(), bytes.size());
+    reader.read_entries(input, restored, 0, 1);
+    ASSERT_TRUE(restored.get(0, 7)->at(TimeWindow(0, 10)) == TimeWindow(0, 20));
+    table.release_snapshot();
+    for (int64_t i = 0; i < 100; ++i)
+        put_window_entry(&table, scratch, 0, 8, TimeWindow(i, i + 1), TimeWindow(i, i + 2));
+    for (int64_t i = 0; i < 100; ++i)
+        remove_window_entry(&table, scratch, 0, 8, TimeWindow(i, i + 1));
+    ASSERT_LT(scratch.empty_map.bucket_count(), 65u);
+}
 
 // ============================================================================
 //  InnerMapLongLong

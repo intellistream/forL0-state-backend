@@ -88,31 +88,40 @@ static bool failing_loader(L0LibBindings* /*out*/, std::string* reason) {
 //  Tests
 // ----------------------------------------------------------------------
 
-TEST(HotCacheManager, LoaderFailureLeavesManagerInactive) {
+TEST(HotCacheManager, LoaderFailureUsesDram) {
     fake_backend::reset();
     HotCacheManager mgr(8 * 1024 * 1024, &fake_backend::failing_loader);
-    ASSERT_FALSE(mgr.is_active());
-    ASSERT_EQ(mgr.capacity_bytes(), 0u);
+    ASSERT_TRUE(mgr.is_active());
+    ASSERT_FALSE(mgr.is_l0_backed());
+    ASSERT_EQ(mgr.capacity_bytes(), (8 * 1024 * 1024 / sizeof(HotSet)) * sizeof(HotSet));
     ASSERT_EQ(mgr.failure_reason(), "loader-failure-injected");
-    // acquire on inactive manager must return null.
-    ASSERT_TRUE(mgr.acquire_ll(8) == nullptr);
+    auto cache = mgr.acquire_ll(8);
+    ASSERT_TRUE(cache != nullptr);
+    ASSERT_EQ(reinterpret_cast<uintptr_t>(cache->sets()) % 64, 0u);
+    cache->put(7, 42);
+    int64_t value = 0;
+    ASSERT_TRUE(cache->get(7, &value));
+    ASSERT_EQ(value, 42);
+    mgr.release_ll(cache.release());
 }
 
-TEST(HotCacheManager, TunerInitFailureLeavesManagerInactive) {
+TEST(HotCacheManager, TunerInitFailureUsesDram) {
     fake_backend::reset();
     fake_backend::s_force_init_fail = true;
     HotCacheManager mgr(8 * 1024 * 1024, &fake_backend::loader);
-    ASSERT_FALSE(mgr.is_active());
+    ASSERT_TRUE(mgr.is_active());
+    ASSERT_FALSE(mgr.is_l0_backed());
     ASSERT_EQ(fake_backend::s_init_calls, 1);
     // tuner was never created → no destroy.
     ASSERT_EQ(fake_backend::s_destroy_calls, 0);
 }
 
-TEST(HotCacheManager, AllocFailureLeavesManagerInactive) {
+TEST(HotCacheManager, AllocFailureUsesDram) {
     fake_backend::reset();
     fake_backend::s_force_alloc_fail = true;
     HotCacheManager mgr(8 * 1024 * 1024, &fake_backend::loader);
-    ASSERT_FALSE(mgr.is_active());
+    ASSERT_TRUE(mgr.is_active());
+    ASSERT_FALSE(mgr.is_l0_backed());
     ASSERT_GE(fake_backend::s_alloc_calls, 1);
     // tuner was created, then destroyed during failure cleanup.
     ASSERT_EQ(fake_backend::s_init_calls, 1);
@@ -123,6 +132,7 @@ TEST(HotCacheManager, AcquireAndReleaseAccountsForFreeSets) {
     fake_backend::reset();
     HotCacheManager mgr(64 * 192, &fake_backend::loader);  // 64 HotSets exactly
     ASSERT_TRUE(mgr.is_active());
+    ASSERT_TRUE(mgr.is_l0_backed());
     uint32_t total = mgr.total_sets();
     ASSERT_GE(total, 32u);  // we asked for 64; alignment may shave one
     uint32_t free_before = mgr.free_sets();
@@ -206,13 +216,17 @@ TEST(HotCacheManager, StrictAllocationNeverSilentlyHalvesQuota) {
     const size_t requested = 64 * 192;
     fake_backend::s_max_alloc_bytes = requested / 2;
     HotCacheManager strict_mgr(requested, &fake_backend::loader, true);
-    ASSERT_FALSE(strict_mgr.is_active());
+    ASSERT_TRUE(strict_mgr.is_active());
+    ASSERT_FALSE(strict_mgr.is_l0_backed());
+    ASSERT_EQ(strict_mgr.capacity_bytes(), requested);
     ASSERT_EQ(fake_backend::s_alloc_calls, 1);
 
     fake_backend::reset();
     fake_backend::s_max_alloc_bytes = requested / 2;
     HotCacheManager permissive_mgr(requested, &fake_backend::loader, false);
     ASSERT_TRUE(permissive_mgr.is_active());
+    ASSERT_TRUE(permissive_mgr.is_l0_backed());
+    ASSERT_EQ(permissive_mgr.capacity_bytes(), requested / 2);
     ASSERT_GT(fake_backend::s_alloc_calls, 1);
 }
 
