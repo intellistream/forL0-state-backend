@@ -50,7 +50,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGet(
         std::string_view cached;
         if (state_cache.get(uk, &cached)) return string_to_jbytearray(env, cached);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* inner = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)->get(keyGroup, int64_t(key));
+            auto* inner = handle->table<int64_t, InnerMapTimeWindow>()->get(keyGroup, int64_t(key));
             if (!inner) return nullptr;
             auto it = inner->find(decode_window(uk));
             if (it == inner->end()) return nullptr;
@@ -59,7 +59,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGet(
             state_cache.put(uk, bytes);
             return string_to_jbytearray(env, bytes);
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         InnerMap* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return nullptr;
         auto it = inner->find(uk);
@@ -79,7 +79,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetGeneric(
         std::string uk = jbytearray_to_string(env, userKey);
         std::string_view cached;
         if (state_cache.get(uk, &cached)) return string_to_jbytearray(env, cached);
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         InnerMap* inner = table->get(keyGroup, k);
         if (!inner) return nullptr;
         auto it = inner->find(uk);
@@ -101,13 +101,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPut(
         std::string uv = jbytearray_to_string(env, userValue);
         state_cache.prepare(uk);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* windows = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id);
+            auto* windows = handle->table<int64_t, InnerMapTimeWindow>();
             TimeWindow user = decode_window(uk), value = decode_window(uv);
             put_window_entry(windows, handle->window_scratch, keyGroup, k, user, value);
             state_cache.put_prepared(uv);
             return;
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         std::string* cache_stored = nullptr;
         if (!table->modify_in_place(keyGroup, k, [&](InnerMap& m) {
             auto& cache_target = m[std::move(uk)]; cache_target = std::move(uv); cache_stored = &cache_target;
@@ -129,7 +129,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutGeneric(
         auto* handle = from_handle<StateHandle>(stateHandle);
         std::string k = jbytearray_to_string(env, key);
         MapCallCache state_cache(handle, keyGroup, k);
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         std::string uk = jbytearray_to_string(env, userKey);
         std::string uv = jbytearray_to_string(env, userValue);
         state_cache.prepare(uk);
@@ -156,12 +156,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemove(
         std::string uk = jbytearray_to_string(env, userKey);
         state_cache.remove(uk);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* windows = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id);
+            auto* windows = handle->table<int64_t, InnerMapTimeWindow>();
             TimeWindow user = decode_window(uk);
             remove_window_entry(windows, handle->window_scratch, keyGroup, k, user);
             return;
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         table->modify_or_remove_in_place(keyGroup, k, [&](InnerMap& m) {
             m.erase(uk);
         });
@@ -176,7 +176,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemoveGeneric(
         auto* handle = from_handle<StateHandle>(stateHandle);
         std::string k = jbytearray_to_string(env, key);
         MapCallCache state_cache(handle, keyGroup, k);
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         std::string uk = jbytearray_to_string(env, userKey);
         state_cache.remove(uk);
         table->modify_or_remove_in_place(keyGroup, k, [&](InnerMap& m) {
@@ -192,11 +192,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapContains(
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* inner = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)->get(keyGroup, int64_t(key));
+            auto* inner = handle->table<int64_t, InnerMapTimeWindow>()->get(keyGroup, int64_t(key));
             if (!inner) return JNI_FALSE;
             return inner->find(decode_window(jbytearray_to_string(env, userKey))) != inner->end() ? JNI_TRUE : JNI_FALSE;
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         InnerMap* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return JNI_FALSE;
         std::string uk = jbytearray_to_string(env, userKey);
@@ -210,7 +210,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapContainsGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup, jbyteArray userKey) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         std::string k = jbytearray_to_string(env, key);
         InnerMap* inner = table->get(keyGroup, k);
         if (!inner) return JNI_FALSE;
@@ -237,7 +237,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntries(
         std::string_view cached;
         if (state_cache.get_bulk(&cached)) return string_to_jbytearray(env, cached);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* inner = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)->get(keyGroup, int64_t(key));
+            auto* inner = handle->table<int64_t, InnerMapTimeWindow>()->get(keyGroup, int64_t(key));
             if (!inner || inner->empty()) return nullptr;
             WriteBuffer buffer(4 + inner->size() * 32);
             buffer.write_int(static_cast<int32_t>(inner->size()));
@@ -248,7 +248,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntries(
             state_cache.put_bulk(buffer.data(), buffer.size());
             return buffer_to_jbytearray(env, buffer.data(), buffer.size());
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         InnerMap* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return nullptr;
         size_t encoded_size = 4;
@@ -274,7 +274,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntriesGeneric(
         MapCallCache state_cache(handle, keyGroup, k);
         std::string_view cached;
         if (state_cache.get_bulk(&cached)) return string_to_jbytearray(env, cached);
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         InnerMap* inner = table->get(keyGroup, k);
         if (!inner || inner->empty()) return nullptr;
         size_t encoded_size = 4;
@@ -297,7 +297,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapKeys(
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* inner = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)->get(keyGroup, int64_t(key));
+            auto* inner = handle->table<int64_t, InnerMapTimeWindow>()->get(keyGroup, int64_t(key));
             if (!inner || inner->empty()) return nullptr;
             WriteBuffer buffer(4 + inner->size() * 16);
             buffer.write_int(static_cast<int32_t>(inner->size()));
@@ -306,7 +306,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapKeys(
             }
             return buffer_to_jbytearray(env, buffer.data(), buffer.size());
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         InnerMap* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return nullptr;
         size_t encoded_size = 4;
@@ -327,7 +327,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapValues(
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* inner = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)->get(keyGroup, int64_t(key));
+            auto* inner = handle->table<int64_t, InnerMapTimeWindow>()->get(keyGroup, int64_t(key));
             if (!inner || inner->empty()) return nullptr;
             WriteBuffer buffer(4 + inner->size() * 16);
             buffer.write_int(static_cast<int32_t>(inner->size()));
@@ -336,7 +336,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapValues(
             }
             return buffer_to_jbytearray(env, buffer.data(), buffer.size());
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         InnerMap* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return nullptr;
         size_t encoded_size = 4;
@@ -359,26 +359,26 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapIsEmpty(
         int64_t k = static_cast<int64_t>(key);
         switch (handle->map_inner_kind) {
             case StateHandle::MapInnerKind::WINDOW_WINDOW: {
-                auto* inner = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)->get(keyGroup, k);
+                auto* inner = handle->table<int64_t, InnerMapTimeWindow>()->get(keyGroup, k);
                 return (!inner || inner->empty()) ? JNI_TRUE : JNI_FALSE;
             }
             case StateHandle::MapInnerKind::LONG_LONG: {
-                auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+                auto* table = handle->table<int64_t, InnerMapLongLong>();
                 auto* inner = table->get(keyGroup, k);
                 return (!inner || inner->empty()) ? JNI_TRUE : JNI_FALSE;
             }
             case StateHandle::MapInnerKind::LONG_STRING: {
-                auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+                auto* table = handle->table<int64_t, InnerMapLongString>();
                 auto* inner = table->get(keyGroup, k);
                 return (!inner || inner->empty()) ? JNI_TRUE : JNI_FALSE;
             }
             case StateHandle::MapInnerKind::STRING_LONG: {
-                auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+                auto* table = handle->table<int64_t, InnerMapStringLong>();
                 auto* inner = table->get(keyGroup, k);
                 return (!inner || inner->empty()) ? JNI_TRUE : JNI_FALSE;
             }
             default: {
-                auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+                auto* table = handle->table<int64_t, InnerMap>();
                 auto* inner = table->get(keyGroup, k);
                 return (!inner || inner->empty()) ? JNI_TRUE : JNI_FALSE;
             }
@@ -392,7 +392,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapIsEmptyGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup) {
     JNI_ENTRY_RETURN(jboolean, JNI_TRUE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         std::string k = jbytearray_to_string(env, key);
         InnerMap* inner = table->get(keyGroup, k);
         return (!inner || inner->empty()) ? JNI_TRUE : JNI_FALSE;
@@ -410,22 +410,22 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapClear(
         int64_t k = static_cast<int64_t>(key);
         switch (handle->map_inner_kind) {
             case StateHandle::MapInnerKind::WINDOW_WINDOW:
-                handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)->remove(keyGroup, k);
+                handle->table<int64_t, InnerMapTimeWindow>()->remove(keyGroup, k);
                 break;
             case StateHandle::MapInnerKind::LONG_LONG:
-                handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id)
+                handle->table<int64_t, InnerMapLongLong>()
                     ->remove(keyGroup, k);
                 break;
             case StateHandle::MapInnerKind::LONG_STRING:
-                handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id)
+                handle->table<int64_t, InnerMapLongString>()
                     ->remove(keyGroup, k);
                 break;
             case StateHandle::MapInnerKind::STRING_LONG:
-                handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id)
+                handle->table<int64_t, InnerMapStringLong>()
                     ->remove(keyGroup, k);
                 break;
             default:
-                handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id)
+                handle->table<int64_t, InnerMap>()
                     ->remove(keyGroup, k);
                 break;
         }
@@ -441,7 +441,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapClearGeneric(
         std::string k = jbytearray_to_string(env, key);
         MapCallCache state_cache(handle, keyGroup, k);
         state_cache.invalidate();
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         table->remove(keyGroup, k);
     })
 }
@@ -461,7 +461,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetLongLong(
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         int64_t cached;
         if (state_cache.get_number(uk, &cached)) return cached;
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         InnerMapLongLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return 0x8000000000000000LL; // Long.MIN_VALUE = absent
         auto it = inner->find(uk);
@@ -486,7 +486,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetLongLongSafe(
             set_long_result(env, handle, cached, buf);
             return JNI_TRUE;
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         InnerMapLongLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return JNI_FALSE;
         auto it = inner->find(uk);
@@ -506,7 +506,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetLongBytesSafe(
         jlong stateHandle, jlong key, jint keyGroup, jlong userKey) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongString>();
         InnerMapLongString* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return nullptr;
         auto it = inner->find(static_cast<int64_t>(userKey));
@@ -528,7 +528,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetBytesLongSafe(
             set_long_result(env, handle, cached, buf);
             return JNI_TRUE;
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapStringLong>();
         InnerMapStringLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return JNI_FALSE;
         auto it = inner->find(uk);
@@ -546,7 +546,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapContainsLongLong(
         jlong stateHandle, jlong key, jint keyGroup, jlong userKey) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         InnerMapLongLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return JNI_FALSE;
         return (inner->find(static_cast<int64_t>(userKey)) != inner->end()) ? JNI_TRUE : JNI_FALSE;
@@ -561,7 +561,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutLongLong(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         int64_t k = static_cast<int64_t>(key);
         int64_t uk = static_cast<int64_t>(userKey);
         int64_t uv = static_cast<int64_t>(userValue);
@@ -587,7 +587,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapAddAndGetLongLong(
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         state_cache.invalidate();
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         int64_t k = static_cast<int64_t>(key);
         int64_t uk = static_cast<int64_t>(userKey);
         int64_t d = static_cast<int64_t>(delta);
@@ -618,7 +618,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapAddSequentialAndSumLongLong(
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         state_cache.invalidate();
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         int64_t k = static_cast<int64_t>(key);
         int64_t start = static_cast<int64_t>(startUserKey);
         int64_t mod = static_cast<int64_t>(modulo);
@@ -660,7 +660,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapSumSequentialLongLong(
         jlong startUserKey, jint count, jlong modulo) {
     JNI_ENTRY_RETURN(jlong, 0, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         InnerMapLongLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return static_cast<jlong>(0);
         int64_t start = static_cast<int64_t>(startUserKey);
@@ -690,7 +690,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemoveLongLong(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         int64_t k = static_cast<int64_t>(key);
         state_cache.remove(static_cast<int64_t>(userKey));
         table->modify_or_remove_in_place(keyGroup, k, [&](InnerMapLongLong& m) {
@@ -705,7 +705,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntriesLongLong(
         jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_RETURN(jlongArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongLong>();
         InnerMapLongLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return nullptr;
         jsize count = static_cast<jsize>(inner->size());
@@ -734,7 +734,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetLongBytes(
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         std::string_view cached;
         if (state_cache.get(static_cast<int64_t>(userKey), &cached)) return string_to_jbytearray(env, cached);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongString>();
         InnerMapLongString* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return nullptr;
         auto it = inner->find(static_cast<int64_t>(userKey));
@@ -751,7 +751,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutLongBytes(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongString>();
         int64_t k = static_cast<int64_t>(key);
         int64_t uk = static_cast<int64_t>(userKey);
         std::string uv = jbytearray_to_string(env, userValue);
@@ -778,7 +778,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutLongBytesRange(
         auto* handle = from_handle<StateHandle>(state);
         MapCallCache cache(handle, int(group), int64_t(key));
         cache.prepare(int64_t(userKey));
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongString>();
         std::string* stored = nullptr;
         auto update = [&](InnerMapLongString& map) {
             auto& bytes = map[int64_t(userKey)];
@@ -801,7 +801,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemoveLongBytes(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongString>();
         int64_t k = static_cast<int64_t>(key);
         state_cache.remove(static_cast<int64_t>(userKey));
         table->modify_or_remove_in_place(keyGroup, k, [&](InnerMapLongString& m) {
@@ -816,7 +816,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapContainsLongBytes(
         jlong stateHandle, jlong key, jint keyGroup, jlong userKey) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongString>();
         InnerMapLongString* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return JNI_FALSE;
         return (inner->find(static_cast<int64_t>(userKey)) != inner->end()) ? JNI_TRUE : JNI_FALSE;
@@ -832,7 +832,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntriesLongBytes(
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         std::string_view cached;
         if (state_cache.get_bulk(&cached)) return string_to_jbytearray(env, cached);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapLongString>();
         InnerMapLongString* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return nullptr;
         // Format: [count(4B)][uk0(8B BE)][uv0_len(4B)][uv0_bytes]...
@@ -864,7 +864,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetBytesLong(
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         int64_t cached;
         if (state_cache.get_number(uk, &cached)) return cached;
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapStringLong>();
         InnerMapStringLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return 0x8000000000000000LL;
         auto it = inner->find(uk);
@@ -882,7 +882,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutBytesLong(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapStringLong>();
         int64_t k = static_cast<int64_t>(key);
         std::string uk = jbytearray_to_string(env, userKey);
         int64_t uv = static_cast<int64_t>(userValue);
@@ -906,7 +906,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemoveBytesLong(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapStringLong>();
         int64_t k = static_cast<int64_t>(key);
         std::string uk = jbytearray_to_string(env, userKey);
         state_cache.remove(uk);
@@ -922,7 +922,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapContainsBytesLong(
         jlong stateHandle, jlong key, jint keyGroup, jbyteArray userKey) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapStringLong>();
         InnerMapStringLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner) return JNI_FALSE;
         std::string uk = jbytearray_to_string(env, userKey);
@@ -939,7 +939,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntriesBytesLong(
         MapCallCache state_cache(handle, keyGroup, static_cast<int64_t>(key));
         std::string_view cached;
         if (state_cache.get_bulk(&cached)) return string_to_jbytearray(env, cached);
-        auto* table = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMapStringLong>();
         InnerMapStringLong* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return nullptr;
         // Format: [count(4B)][uk0_len(4B)][uk0_bytes][uv0(8B BE)]...
@@ -967,7 +967,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetLong(
         jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_RETURN(jlong, 0, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
+        auto* table = handle->table<int64_t, int64_t>();
         int64_t* val = table->get(keyGroup, static_cast<int64_t>(key));
         return val ? static_cast<jlong>(*val) : 0;
     })
@@ -980,7 +980,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddLong(
         jlong value, jint builtinAggType) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
+        auto* table = handle->table<int64_t, int64_t>();
         int64_t k = static_cast<int64_t>(key);
         int64_t v = static_cast<int64_t>(value);
         int64_t updated = v;
@@ -1009,7 +1009,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
+        auto* table = handle->table<std::string, std::string>();
         std::string k = jbytearray_to_string(env, key);
         std::string* val = table->get(keyGroup, k);
         return val ? string_to_jbytearray(env, *val) : nullptr;
@@ -1022,7 +1022,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetGenericLongSafe(
         jlong stateHandle, jbyteArray key, jint keyGroup, jlongArray out) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        auto* table = handle->table<std::string, int64_t>();
         std::string k = jbytearray_to_string(env, key);
         int64_t* val = table->get(keyGroup, k);
         if (!val) {
@@ -1040,7 +1040,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutGenericLong(
         jlong stateHandle, jbyteArray key, jint keyGroup, jlong value) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        auto* table = handle->table<std::string, int64_t>();
         std::string k = jbytearray_to_string(env, key);
         table->put(keyGroup, std::move(k), static_cast<int64_t>(value));
     })
@@ -1053,7 +1053,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddGenericLong(
         jlong value, jint builtinAggType) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        auto* table = handle->table<std::string, int64_t>();
         std::string k = jbytearray_to_string(env, key);
         int64_t v = static_cast<int64_t>(value);
         bool modified = table->modify_in_place(keyGroup, k, [&](int64_t& existing) {
@@ -1078,7 +1078,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutGenericLong(
         jlong newValue, jlongArray out) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, int64_t>(handle->table_id);
+        auto* table = handle->table<std::string, int64_t>();
         std::string k = jbytearray_to_string(env, key);
         int64_t* val = table->get(keyGroup, k);
         if (val) {
@@ -1098,7 +1098,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddGeneric(
         jbyteArray value, jint builtinAggType) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
+        auto* table = handle->table<std::string, std::string>();
         std::string k = jbytearray_to_string(env, key);
         std::string v = jbytearray_to_string(env, value);
         // For generic path, store directly (Java side handles reduce logic)
@@ -1112,7 +1112,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceClear(
         jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
+        auto* table = handle->table<int64_t, int64_t>();
         table->remove(keyGroup, static_cast<int64_t>(key));
     })
 }
@@ -1123,7 +1123,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_aggGetGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
+        auto* table = handle->table<std::string, std::string>();
         std::string k = jbytearray_to_string(env, key);
         std::string* val = table->get(keyGroup, k);
         return val ? string_to_jbytearray(env, *val) : nullptr;
@@ -1137,7 +1137,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_aggAddGeneric(
         jbyteArray accumulator) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
+        auto* table = handle->table<std::string, std::string>();
         std::string k = jbytearray_to_string(env, key);
         std::string acc = jbytearray_to_string(env, accumulator);
         table->put(keyGroup, k, std::move(acc));
@@ -1150,7 +1150,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceClearGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
+        auto* table = handle->table<std::string, std::string>();
         std::string k = jbytearray_to_string(env, key);
         table->remove(keyGroup, k);
     })
@@ -1172,12 +1172,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapIteratorCreate(
     JNI_ENTRY_RETURN(jlong, 0, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         if (handle->map_inner_kind == StateHandle::MapInnerKind::WINDOW_WINDOW) {
-            auto* inner = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id)
+            auto* inner = handle->table<int64_t, InnerMapTimeWindow>()
                 ->get(keyGroup, static_cast<int64_t>(key));
             if (!inner || inner->empty()) return 0;
             return to_handle(new NativeMapIterator{inner->cbegin(), inner->cend()});
         }
-        auto* table = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+        auto* table = handle->table<int64_t, InnerMap>();
         InnerMap* inner = table->get(keyGroup, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return 0;
         auto* iter = new NativeMapIterator{inner->cbegin(), inner->cend()};
@@ -1192,7 +1192,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapIteratorCreateGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup) {
     JNI_ENTRY_RETURN(jlong, 0, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+        auto* table = handle->table<std::string, InnerMap>();
         std::string k = jbytearray_to_string(env, key);
         InnerMap* inner = table->get(keyGroup, k);
         if (!inner || inner->empty()) return 0;

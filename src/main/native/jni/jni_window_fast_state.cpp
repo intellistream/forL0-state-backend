@@ -42,14 +42,14 @@ std::optional<std::string_view> sql_window_get(StateHandle* h, int group, const 
         std::string_view value;
         if (h->serialized_cache->get_view(identity.view(), &value)) return value;
     }
-    auto* table = h->engine->get_state_table<std::string, std::string>(h->table_id);
+    auto* table = h->table<std::string, std::string>();
     auto* value = table->get_string_view(group, key.view());
     // Do not evict borrowed positive views while servicing another read.
     return value ? std::optional<std::string_view>(*value) : std::nullopt;
 }
 template<class Copy>
 void sql_window_put(StateHandle* h, int group, const SqlWindowKey& key, size_t length, Copy&& copy) {
-    auto* table = h->engine->get_state_table<std::string, std::string>(h->table_id);
+    auto* table = h->table<std::string, std::string>();
     std::string* stored = nullptr;
     auto update = [&](std::string& value) {
         value.resize(length);
@@ -133,7 +133,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearSqlWindow(
         JNIEnv* env, jclass, jlong state, jlong key, jint group, jlong start, jlong end, jlong header) {
     JNI_ENTRY_VOID({
         auto* h = from_handle<StateHandle>(state);
-        auto* table = h->engine->get_state_table<std::string, std::string>(h->table_id);
+        auto* table = h->table<std::string, std::string>();
         std::string encoded = SqlWindowKey(h, key, start, end, header).owned();
         cached_remove(h, table, int(group), encoded);
     })
@@ -148,7 +148,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetTimeWindow(
         MapCallCache cache(h, int(group), int64_t(key));
         std::string_view value;
         if (!cache.get(user.view(), &value)) {
-            auto* table = h->engine->get_state_table<int64_t, InnerMapTimeWindow>(h->table_id);
+            auto* table = h->table<int64_t, InnerMapTimeWindow>();
             auto* map = table->get(group, int64_t(key));
             if (!map) return JNI_FALSE;
             auto it = map->find(TimeWindow(start, end));
@@ -176,7 +176,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutTimeWindow(
         MapCallCache cache(h, int(group), int64_t(key));
         cache.prepare(user.view());
         TimeWindow uk(user_start, user_end), uv(value_start, value_end);
-        auto* table = h->engine->get_state_table<int64_t, InnerMapTimeWindow>(h->table_id);
+        auto* table = h->table<int64_t, InnerMapTimeWindow>();
         put_window_entry(table, h->window_scratch, group, key, uk, uv);
         cache.put_prepared(value.view());
     })
@@ -190,7 +190,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemoveTimeWindow(
         WindowBytes user(start, end);
         MapCallCache cache(h, int(group), int64_t(key));
         cache.remove(user.view());
-        auto* table = h->engine->get_state_table<int64_t, InnerMapTimeWindow>(h->table_id);
+        auto* table = h->table<int64_t, InnerMapTimeWindow>();
         remove_window_entry(table, h->window_scratch, group, key, TimeWindow(start, end));
     })
 }

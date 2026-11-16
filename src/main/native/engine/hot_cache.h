@@ -225,17 +225,17 @@ public:
     // Its bytes must never be interpreted as scalar HotSet tags by rebalancing.
     void set_serialized_payload() noexcept { serialized_payload_ = true; }
     void record_serialized_lookup(bool hit) noexcept {
-        (hit ? hits_ : misses_).fetch_add(1, std::memory_order_relaxed);
+        add_counter(hit ? hits_ : misses_);
     }
     void record_serialized_misses(uint64_t count) noexcept {
-        misses_.fetch_add(count, std::memory_order_relaxed);
+        add_counter(misses_, count);
     }
     void record_serialized_hits(uint64_t count) noexcept {
-        hits_.fetch_add(count, std::memory_order_relaxed);
+        add_counter(hits_, count);
     }
-    void record_serialized_write() noexcept { writes_.fetch_add(1, std::memory_order_relaxed); }
-    void record_serialized_invalidation() noexcept { invalidations_.fetch_add(1, std::memory_order_relaxed); }
-    void record_serialized_bypass() noexcept { bypass_events_.fetch_add(1, std::memory_order_relaxed); }
+    void record_serialized_write() noexcept { add_counter(writes_); }
+    void record_serialized_invalidation() noexcept { add_counter(invalidations_); }
+    void record_serialized_bypass() noexcept { add_counter(bypass_events_); }
 
     // Called by the owning StateEngine thread only. Keeping rebalance scoped
     // to one cache avoids clearing another parallel subtask's cache after the
@@ -260,12 +260,13 @@ public:
     bool get(int64_t key, int64_t* out) noexcept {
         // A cache that observed a long write-only phase may contain skipped
         // updates. The first later read must miss and re-learn from SwissTable.
-        if (write_bypassed_.exchange(false, std::memory_order_relaxed)) {
-            writes_since_lookup_.store(0, std::memory_order_relaxed);
-            misses_.fetch_add(1, std::memory_order_relaxed);
+        if (write_bypassed_.load(std::memory_order_relaxed)) {
+            write_bypassed_.store(false, std::memory_order_relaxed);
+            writes_since_lookup_ = 0;
+            add_counter(misses_);
             return false;
         }
-        writes_since_lookup_.store(0, std::memory_order_relaxed);
+        writes_since_lookup_ = 0;
         uint64_t h  = hotcache_mix64(static_cast<uint64_t>(key));
         uint8_t  h2 = static_cast<uint8_t>(h & 0x7F);
         HotSet*  s  = &sets_[(h >> 7) & set_mask_];
@@ -274,23 +275,23 @@ public:
             int i = hotcache_pop_match(m);
             if (s->keys[i] == key) {
                 *out = s->vals[i];
-                hits_.fetch_add(1, std::memory_order_relaxed);
+                add_counter(hits_);
                 return true;
             }
         }
-        misses_.fetch_add(1, std::memory_order_relaxed);
+        add_counter(misses_);
         return false;
     }
 
     void put(int64_t key, int64_t val) noexcept {
-        writes_.fetch_add(1, std::memory_order_relaxed);
+        add_counter(writes_);
         if (write_bypassed_.load(std::memory_order_relaxed)) return;
-        uint64_t write_run = writes_since_lookup_.fetch_add(1, std::memory_order_relaxed) + 1;
+        uint64_t write_run = ++writes_since_lookup_;
         if (write_only_bypass_threshold_ > 0
             && write_run >= write_only_bypass_threshold_) {
             clear();
             write_bypassed_.store(true, std::memory_order_relaxed);
-            bypass_events_.fetch_add(1, std::memory_order_relaxed);
+            add_counter(bypass_events_);
             return;
         }
         uint64_t h  = hotcache_mix64(static_cast<uint64_t>(key));
@@ -329,7 +330,7 @@ public:
             int i = hotcache_pop_match(m);
             if (s->keys[i] == key) {
                 s->tags[i] = HOTCACHE_EMPTY_TAG;
-                invalidations_.fetch_add(1, std::memory_order_relaxed);
+                add_counter(invalidations_);
                 return;
             }
         }
@@ -357,6 +358,11 @@ public:
     }
 
 private:
+    // One task thread writes counters; atomics allow concurrent metric reads.
+    static void add_counter(std::atomic<uint64_t>& counter, uint64_t count = 1) noexcept {
+        counter.store(counter.load(std::memory_order_relaxed) + count, std::memory_order_relaxed);
+    }
+
     bool serialized_payload_ = false;
     HotSet*  sets_;
     uint32_t set_mask_;     // num_sets_ - 1 (num_sets_ is power of 2)
@@ -366,7 +372,7 @@ private:
     std::atomic<uint64_t> invalidations_{0};
     std::atomic<uint64_t> writes_{0};
     std::atomic<uint64_t> bypass_events_{0};
-    std::atomic<uint64_t> writes_since_lookup_{0};
+    uint64_t writes_since_lookup_ = 0;
     std::atomic<bool> write_bypassed_{false};
     uint64_t write_only_bypass_threshold_;
     uint64_t last_rebalance_lookups_ = 0;   // baseline for rebalance_if_needed

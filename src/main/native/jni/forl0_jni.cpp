@@ -530,11 +530,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_registerState(
         handle->row_data_key = row_data_key;
         handle->row_data_value = row_data_value;
         handle->map_inner_kind = map_inner_kind;
-        if (typed_long_namespace && is_value_state
-                && stored_key_type == StateHandle::KeyType::INT64
-                && stored_value_type == StateHandle::ValueType::BYTES) {
-            handle->long_ns_blob_table = engine->get_state_table<int64_t, std::string>(table_id);
-        }
+        handle->table_handle = engine->state_handles().at(table_id).get();
 
         // Register StateHandle pointer in engine for checkpoint type dispatch.
         // Engine takes ownership and will free on destruction.
@@ -664,105 +660,105 @@ Java_org_apache_flink_state_forl0_NativeEngine_stateEntries(
         auto vt = handle->value_type;
         // Dispatch based on stored types (must match registration)
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::INT64) {
-            auto* tbl = handle->engine->get_state_table<int64_t, int64_t>(handle->table_id);
+            auto* tbl = handle->table<int64_t, int64_t>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::FLOAT64) {
-            auto* tbl = handle->engine->get_state_table<int64_t, double>(handle->table_id);
+            auto* tbl = handle->table<int64_t, double>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::BYTES) {
-            auto* tbl = handle->engine->get_state_table<int64_t, std::string>(handle->table_id);
+            auto* tbl = handle->table<int64_t, std::string>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::LIST) {
-            auto* tbl = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+            auto* tbl = handle->table<int64_t, ElementList>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::MAP) {
             // Dispatch based on InnerMap specialization
             switch (handle->map_inner_kind) {
                 case StateHandle::MapInnerKind::WINDOW_WINDOW: {
-                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id);
+                    auto* tbl = handle->table<int64_t, InnerMapTimeWindow>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
                 case StateHandle::MapInnerKind::LONG_LONG: {
-                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id);
+                    auto* tbl = handle->table<int64_t, InnerMapLongLong>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
                 case StateHandle::MapInnerKind::LONG_STRING: {
-                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id);
+                    auto* tbl = handle->table<int64_t, InnerMapLongString>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
                 case StateHandle::MapInnerKind::STRING_LONG: {
-                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id);
+                    auto* tbl = handle->table<int64_t, InnerMapStringLong>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
                 default: {
-                    auto* tbl = handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id);
+                    auto* tbl = handle->table<int64_t, InnerMap>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
             }
         }
         if (kt == StateHandle::KeyType::FIXED_ROW && vt == StateHandle::ValueType::INT64) {
-            auto* tbl = handle->engine->get_state_table<FixedRow, int64_t>(handle->table_id);
+            auto* tbl = handle->table<FixedRow, int64_t>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::FIXED_ROW && vt == StateHandle::ValueType::FLOAT64) {
-            auto* tbl = handle->engine->get_state_table<FixedRow, double>(handle->table_id);
+            auto* tbl = handle->table<FixedRow, double>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::FIXED_ROW && vt == StateHandle::ValueType::BYTES) {
-            auto* tbl = handle->engine->get_state_table<FixedRow, std::string>(handle->table_id);
+            auto* tbl = handle->table<FixedRow, std::string>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         // INT32 key types
         if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::INT64) {
-            auto* tbl = handle->engine->get_state_table<int32_t, int64_t>(handle->table_id);
+            auto* tbl = handle->table<int32_t, int64_t>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::FLOAT64) {
-            auto* tbl = handle->engine->get_state_table<int32_t, double>(handle->table_id);
+            auto* tbl = handle->table<int32_t, double>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::BYTES) {
-            auto* tbl = handle->engine->get_state_table<int32_t, std::string>(handle->table_id);
+            auto* tbl = handle->table<int32_t, std::string>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::LIST) {
-            auto* tbl = handle->engine->get_state_table<int32_t, ElementList>(handle->table_id);
+            auto* tbl = handle->table<int32_t, ElementList>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (kt == StateHandle::KeyType::INT32 && vt == StateHandle::ValueType::MAP) {
             switch (handle->map_inner_kind) {
                 case StateHandle::MapInnerKind::LONG_LONG: {
-                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMapLongLong>(handle->table_id);
+                    auto* tbl = handle->table<int32_t, InnerMapLongLong>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
                 case StateHandle::MapInnerKind::LONG_STRING: {
-                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMapLongString>(handle->table_id);
+                    auto* tbl = handle->table<int32_t, InnerMapLongString>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
                 case StateHandle::MapInnerKind::STRING_LONG: {
-                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMapStringLong>(handle->table_id);
+                    auto* tbl = handle->table<int32_t, InnerMapStringLong>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
                 default: {
-                    auto* tbl = handle->engine->get_state_table<int32_t, InnerMap>(handle->table_id);
+                    auto* tbl = handle->table<int32_t, InnerMap>();
                     return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
                 }
             }
         }
         if (vt == StateHandle::ValueType::LIST) {
-            auto* tbl = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
+            auto* tbl = handle->table<std::string, ElementList>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         if (vt == StateHandle::ValueType::MAP) {
-            auto* tbl = handle->engine->get_state_table<std::string, InnerMap>(handle->table_id);
+            auto* tbl = handle->table<std::string, InnerMap>();
             return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
         }
         // Generic fallback: all other types use <std::string, std::string>
-        auto* tbl = handle->engine->get_state_table<std::string, std::string>(handle->table_id);
+        auto* tbl = handle->table<std::string, std::string>();
         return tbl ? static_cast<jlong>(tbl->total_size()) : 0;
     })
 }
@@ -792,32 +788,32 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
             };
 
             if (vt == StateHandle::ValueType::INT64) {
-                emit_keys(handle->engine->get_state_table<int64_t, int64_t>(handle->table_id));
+                emit_keys(handle->table<int64_t, int64_t>());
             } else if (vt == StateHandle::ValueType::FLOAT64) {
-                emit_keys(handle->engine->get_state_table<int64_t, double>(handle->table_id));
+                emit_keys(handle->table<int64_t, double>());
             } else if (vt == StateHandle::ValueType::LIST) {
-                emit_keys(handle->engine->get_state_table<int64_t, ElementList>(handle->table_id));
+                emit_keys(handle->table<int64_t, ElementList>());
             } else if (vt == StateHandle::ValueType::MAP) {
                 switch (handle->map_inner_kind) {
                     case StateHandle::MapInnerKind::WINDOW_WINDOW:
-                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapTimeWindow>(handle->table_id));
+                        emit_keys(handle->table<int64_t, InnerMapTimeWindow>());
                         break;
                     case StateHandle::MapInnerKind::LONG_LONG:
-                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapLongLong>(handle->table_id));
+                        emit_keys(handle->table<int64_t, InnerMapLongLong>());
                         break;
                     case StateHandle::MapInnerKind::LONG_STRING:
-                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapLongString>(handle->table_id));
+                        emit_keys(handle->table<int64_t, InnerMapLongString>());
                         break;
                     case StateHandle::MapInnerKind::STRING_LONG:
-                        emit_keys(handle->engine->get_state_table<int64_t, InnerMapStringLong>(handle->table_id));
+                        emit_keys(handle->table<int64_t, InnerMapStringLong>());
                         break;
                     default:
-                        emit_keys(handle->engine->get_state_table<int64_t, InnerMap>(handle->table_id));
+                        emit_keys(handle->table<int64_t, InnerMap>());
                         break;
                 }
             } else {
                 // BYTES or STRING value type → <int64_t, std::string>
-                emit_keys(handle->engine->get_state_table<int64_t, std::string>(handle->table_id));
+                emit_keys(handle->table<int64_t, std::string>());
             }
 
             uint8_t* p = buf.data_mut() + count_pos;
@@ -840,11 +836,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
             };
 
             if (vt == StateHandle::ValueType::INT64) {
-                emit_keys(handle->engine->get_state_table<int32_t, int64_t>(handle->table_id));
+                emit_keys(handle->table<int32_t, int64_t>());
             } else if (vt == StateHandle::ValueType::FLOAT64) {
-                emit_keys(handle->engine->get_state_table<int32_t, double>(handle->table_id));
+                emit_keys(handle->table<int32_t, double>());
             } else {
-                emit_keys(handle->engine->get_state_table<int32_t, std::string>(handle->table_id));
+                emit_keys(handle->table<int32_t, std::string>());
             }
 
             uint8_t* p = buf.data_mut() + count_pos;
@@ -868,11 +864,11 @@ Java_org_apache_flink_state_forl0_NativeEngine_getStateKeys(
             };
 
             if (vt == StateHandle::ValueType::LIST) {
-                emit_str_keys(handle->engine->get_state_table<std::string, ElementList>(handle->table_id));
+                emit_str_keys(handle->table<std::string, ElementList>());
             } else if (vt == StateHandle::ValueType::MAP) {
-                emit_str_keys(handle->engine->get_state_table<std::string, InnerMap>(handle->table_id));
+                emit_str_keys(handle->table<std::string, InnerMap>());
             } else {
-                emit_str_keys(handle->engine->get_state_table<std::string, std::string>(handle->table_id));
+                emit_str_keys(handle->table<std::string, std::string>());
             }
             uint8_t* p = buf.data_mut() + count_pos;
             p[0] = (count >> 24) & 0xFF;
