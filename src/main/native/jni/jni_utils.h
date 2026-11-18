@@ -117,8 +117,11 @@ struct StateHandle {
     std::string state_name;
     StateEngine* engine;
     int64_t table_id;       // StateEngine table registration id
-    // StateEngine keeps this table object stable until engine destruction.
-    StateTable<int64_t, std::string>* long_ns_blob_table = nullptr;
+    // Registered tables remain stable until engine destruction.
+    StateTableHandle* table_handle = nullptr;
+    template<class K, class V> StateTable<K, V>* table() const {
+        return static_cast<TypedStateTableHandle<K, V>*>(table_handle)->get();
+    }
     KeyType key_type;
     ValueType value_type;
     StateKind kind;
@@ -133,8 +136,8 @@ struct StateHandle {
     alignas(8) jlong read_result[2] = {};
 
     // Primitive scalar shortcut. SQL rows, complete composite identities and
-    // MapState payloads use serialized_cache instead. Both share SDK-backed
-    // pool accounting and counters; neither has a production DRAM fallback.
+    // MapState payloads use serialized_cache instead. Both share the selected
+    // L0/DRAM pool accounting and counters.
     HotCacheLL* hot_cache_ll = nullptr;
     std::unique_ptr<SerializedHotCache> serialized_cache;
     HotCacheLL* cache_backing() const {

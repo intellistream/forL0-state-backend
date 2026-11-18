@@ -37,8 +37,9 @@ public:
         append(group); append(uint8_t(1)); append(ns); append(key);
     }
     template<class T> void append(const T& value) { bytes(&value, sizeof(value)); }
-    void append(const std::string& value) { append(uint64_t(value.size())); bytes(value.data(), value.size()); }
-    void append(std::string_view value) { append(uint64_t(value.size())); bytes(value.data(), value.size()); }
+    // JNI byte-array identities have 32-bit lengths.
+    void append(const std::string& value) { append(uint32_t(value.size())); bytes(value.data(), value.size()); }
+    void append(std::string_view value) { append(uint32_t(value.size())); bytes(value.data(), value.size()); }
     void append(const FixedRow& row) { append(row.arity); bytes(row.f, size_t(row.arity) * sizeof(int64_t)); }
     void append(const TimeWindow& ns) { append(ns.first); append(ns.second); }
     std::string_view view() const { return {large_.empty() ? small_.data() : large_.data(), size_}; }

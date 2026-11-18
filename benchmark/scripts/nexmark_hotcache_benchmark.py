@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--native-offheap", default="16g", help="Native state reservation within each 32-GiB TM budget")
+    parser.add_argument("--cache-state-size", default="1mb", help="Per-state quota within the 32-MiB TaskManager cache pool")
     parser.add_argument("--lock-file", type=Path, default=Path("/tmp/forl0-nexmark-hotcache.lock"),
                         help="Serialize campaigns that use the same TaskManager CPU cores")
     args = parser.parse_args()
@@ -60,6 +61,7 @@ def main():
         "queries": args.queries, "arms": args.arms, "repeats": args.repeats,
         "taskmanagers": 2, "cores_per_taskmanager": 4, "process_memory_per_taskmanager": "32g",
         "native_offheap": args.native_offheap,
+        "cache_state_size": args.cache_state_size,
         "allocator": "AUTOMATIC", "flink": str(args.flink),
     }, indent=2))
     queries = source / "benchmark/nexmark-src/nexmark-flink/src/main/resources/queries"
@@ -154,6 +156,7 @@ def main():
                 "state.backend.type": "hashmap" if arm == "heap" else "org.apache.flink.state.forl0.ForL0StateBackendFactory",
                 "state.backend.forl0.l0-cache.enabled": str(arm == "cache").lower(),
                 "state.backend.forl0.l0-cache.size": "32mb",
+                "state.backend.forl0.l0-cache.state-size": args.cache_state_size,
                 "state.backend.forl0.l0-cache.strict-allocation": "true",
                 "state.checkpoints.dir": "file://" + str(checkpoints / run.name),
                 "execution.checkpointing.checkpoints-after-tasks-finish.enabled": "false",

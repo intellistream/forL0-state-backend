@@ -23,7 +23,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGet(
         jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         return cached_list_get(env, handle, table, keyGroup, static_cast<int64_t>(key));
     })
 }
@@ -34,7 +34,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
+        auto* table = handle->table<std::string, ElementList>();
         std::string k = jbytearray_to_string(env, key);
         return cached_list_get(env, handle, table, keyGroup, k);
     })
@@ -50,7 +50,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddLong(
         jlong stateHandle, jlong key, jint keyGroup, jlong element) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         int64_t k = static_cast<int64_t>(key);
         // Serialize the long element as 8-byte big-endian
         int64_t elem = static_cast<int64_t>(element);
@@ -75,13 +75,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddRowRange(
         for (int i = 0; i < 4; ++i) element[i] = char(static_cast<uint32_t>(length) >> (24 - 8 * i));
         env->GetByteArrayRegion(row, offset, length, reinterpret_cast<jbyte*>(element.data() + 4));
         if (mode == 0) {
-            auto* table = h->engine->get_state_table<int64_t, ElementList>(h->table_id);
+            auto* table = h->table<int64_t, ElementList>();
             cached_list_add(h, table, std::move(element), int(group), int64_t(key));
         } else if (mode == 1) {
-            auto* table = h->engine->get_state_table<int64_t, ElementList>(h->table_id);
+            auto* table = h->table<int64_t, ElementList>();
             cached_list_add(h, table, std::move(element), int(group), TimeWindow(nsStart, nsEnd), int64_t(key));
         } else if (mode == 2 && genericKey) {
-            auto* table = h->engine->get_state_table<std::string, ElementList>(h->table_id);
+            auto* table = h->table<std::string, ElementList>();
             std::string parent = jbytearray_to_string(env, genericKey);
             cached_list_add(h, table, std::move(element), int(group), parent);
         } else throw std::invalid_argument("invalid list row key mode");
@@ -113,7 +113,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetLongElements(
         jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_RETURN(jlongArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         ElementList* vec = table->get(keyGroup, static_cast<int64_t>(key));
         if (!vec || vec->empty()) return nullptr;
         jsize count = static_cast<jsize>(vec->size());
@@ -138,7 +138,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listUpdateLongElements(
         jlong stateHandle, jlong key, jint keyGroup, jlongArray elements) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         jsize count = env->GetArrayLength(elements);
         std::vector<jlong> longs(count);
         env->GetLongArrayRegion(elements, 0, count, longs.data());
@@ -161,7 +161,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAllLongElements(
         jlong stateHandle, jlong key, jint keyGroup, jlongArray elements) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         int64_t k = static_cast<int64_t>(key);
         jsize count = env->GetArrayLength(elements);
         std::vector<jlong> longs(count);
@@ -181,7 +181,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAdd(
         jlong stateHandle, jlong key, jint keyGroup, jbyteArray element) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         int64_t k = static_cast<int64_t>(key);
         std::string elem = jbytearray_to_string(env, element);
 
@@ -195,7 +195,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup, jbyteArray element) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
+        auto* table = handle->table<std::string, ElementList>();
         std::string k = jbytearray_to_string(env, key);
         std::string elem = jbytearray_to_string(env, element);
 
@@ -236,7 +236,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listWriteWithTW(
         jlong nsStart, jlong nsEnd, jbyteArray serializedList, jboolean append) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         std::string raw = jbytearray_to_string(env, serializedList);
         ElementList elements = parse_serialized_list(
                 reinterpret_cast<const uint8_t*>(raw.data()), raw.size(), handle->get_element_layout());
@@ -252,7 +252,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listUpdate(
         jlong stateHandle, jlong key, jint keyGroup, jbyteArray serializedList) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         std::string raw = jbytearray_to_string(env, serializedList);
         ElementList vec = parse_serialized_list(
             reinterpret_cast<const uint8_t*>(raw.data()), raw.size(),
@@ -267,7 +267,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listUpdateGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup, jbyteArray serializedList) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
+        auto* table = handle->table<std::string, ElementList>();
         std::string k = jbytearray_to_string(env, key);
         std::string raw = jbytearray_to_string(env, serializedList);
         ElementList vec = parse_serialized_list(
@@ -288,7 +288,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAll(
         jlong stateHandle, jlong key, jint keyGroup, jbyteArray serializedElements) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         int64_t k = static_cast<int64_t>(key);
         std::string raw = jbytearray_to_string(env, serializedElements);
         ElementList new_elems = parse_serialized_list(
@@ -306,7 +306,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddAllGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup, jbyteArray serializedElements) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
+        auto* table = handle->table<std::string, ElementList>();
         std::string k = jbytearray_to_string(env, key);
         std::string raw = jbytearray_to_string(env, serializedElements);
         ElementList new_elems = parse_serialized_list(
@@ -328,7 +328,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listClear(
         jlong stateHandle, jlong key, jint keyGroup) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+        auto* table = handle->table<int64_t, ElementList>();
         cached_list_clear(handle, table, keyGroup, static_cast<int64_t>(key));
     })
 }
@@ -339,7 +339,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listClearGeneric(
         jlong stateHandle, jbyteArray key, jint keyGroup) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
+        auto* table = handle->table<std::string, ElementList>();
         std::string k = jbytearray_to_string(env, key);
         cached_list_clear(handle, table, keyGroup, k);
     })
@@ -382,12 +382,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_listMergeNamespaces(
         };
 
         if (handle->key_type == StateHandle::KeyType::INT64) {
-            auto* table = handle->engine->get_state_table<int64_t, ElementList>(handle->table_id);
+            auto* table = handle->table<int64_t, ElementList>();
             if (!table) return;
             table->merge_namespaces<int64_t>(
                 keyGroup, static_cast<int64_t>(targetNamespace), sources, merge_lists);
         } else {
-            auto* table = handle->engine->get_state_table<std::string, ElementList>(handle->table_id);
+            auto* table = handle->table<std::string, ElementList>();
             if (!table) return;
             table->merge_namespaces<int64_t>(
                 keyGroup, static_cast<int64_t>(targetNamespace), sources, merge_lists);

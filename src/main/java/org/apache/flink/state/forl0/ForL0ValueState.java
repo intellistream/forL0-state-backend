@@ -7,12 +7,16 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.core.memory.MemorySegmentBridge;
+import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalValueState;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.table.data.binary.BinaryRowData;
+import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.types.logical.LogicalTypeRoot;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 /**
  * ForL0 implementation of {@link InternalValueState}.
@@ -65,6 +69,7 @@ public class ForL0ValueState<K, N, V>
     /** Pre-allocated buffer for zero-copy native pointer return [address, size]. */
     /** Arity of RowData value (for BinaryRowData reconstruction). */
     private final int rowDataValueArity;
+    private final BinaryRowData longRowBuffer;
 
     /** Pre-computed dispatch strategy — eliminates multi-level if chains on hot path. */
     private enum KeyNsStrategy {
@@ -144,6 +149,13 @@ public class ForL0ValueState<K, N, V>
             this.keyNsStrategy = KeyNsStrategy.SQL_WINDOW;
         } else {
             this.keyNsStrategy = KeyNsStrategy.GENERIC;
+        }
+        if (keyNsStrategy == KeyNsStrategy.SQL_WINDOW && rowDataValueArity == 1
+                && rowDataValueAccessor.getFieldTypes()[0].getTypeRoot() == LogicalTypeRoot.BIGINT) {
+            this.longRowBuffer = new BinaryRowData(1);
+            this.longRowBuffer.pointTo(new MemorySegment[]{MemorySegmentFactory.wrapOffHeapMemory(ByteBuffer.allocateDirect(16))}, 0, 16);
+        } else {
+            this.longRowBuffer = null;
         }
     }
 
@@ -313,7 +325,16 @@ public class ForL0ValueState<K, N, V>
             NativeEngine.valuePutSqlWindowRange(stateHandle, key, group, start, end, header, bytes, 0, bytes.length);
             return;
         }
-        BinaryRowData row = TypeAnalyzer.toBinaryRow(valueSerializer, (org.apache.flink.table.data.RowData) value);
+        BinaryRowData row;
+        if (longRowBuffer != null && value instanceof GenericRowData) {
+            GenericRowData input = (GenericRowData) value;
+            row = longRowBuffer;
+            row.setRowKind(input.getRowKind());
+            if (input.isNullAt(0)) row.setNullAt(0);
+            else row.setLong(0, input.getLong(0));
+        } else {
+            row = TypeAnalyzer.toBinaryRow(valueSerializer, (org.apache.flink.table.data.RowData) value);
+        }
         if (row.getSegments().length != 1 || row.getOffset() > row.getSegments()[0].size() - row.getSizeInBytes()) row = row.copy();
         MemorySegment segment = row.getSegments()[0];
         if (segment.isOffHeap()) {

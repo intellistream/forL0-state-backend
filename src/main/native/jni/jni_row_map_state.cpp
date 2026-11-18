@@ -18,7 +18,7 @@ std::optional<std::string_view> get_row_value(StateHandle* h, int group, int64_t
     MapCallCache cache(h, group, key);
     std::string_view bytes;
     if (cache.get(user, &bytes)) return bytes;
-    auto* map = h->engine->get_state_table<int64_t, InnerMap>(h->table_id)->get(group, key);
+    auto* map = h->table<int64_t, InnerMap>()->get(group, key);
     if (!map) return std::nullopt;
     auto found = map->find(user);
     if (found == map->end()) return std::nullopt;
@@ -30,7 +30,7 @@ template<bool AdmitInsert, class Copy>
 void put_row_value(StateHandle* h, int group, int64_t key, std::string&& user, size_t size, Copy&& copy) {
     MapCallCache cache(h, group, key);
     cache.prepare(user);
-    auto* table = h->engine->get_state_table<int64_t, InnerMap>(h->table_id);
+    auto* table = h->table<int64_t, InnerMap>();
     std::string* stored = nullptr;
     bool inserted = false;
     auto update = [&](InnerMap& map) {
