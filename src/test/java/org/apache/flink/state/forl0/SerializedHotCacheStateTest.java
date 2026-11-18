@@ -131,6 +131,70 @@ class SerializedHotCacheStateTest {
         } finally { NativeEngine.destroyEngine(engine); }
     }
 
+    @Test void sqlWindowLongRowsPreserveBytesKindsAndSnapshotOwnership() throws Exception {
+        Assumptions.assumeTrue(Boolean.getBoolean("forl0.test.l0"));
+        for (boolean cached : new boolean[]{false, true}) {
+            long engine = cached ? engine() : NativeEngine.createEngine(0, 2, 2, false, 0, false, 65536, 0, 16, 0, .875, 0);
+            try {
+                RowDataSerializer keys = new RowDataSerializer(new BigIntType());
+                RowDataSerializer values = new RowDataSerializer(new BigIntType());
+                org.apache.flink.table.runtime.operators.window.TimeWindow.Serializer windows =
+                        new org.apache.flink.table.runtime.operators.window.TimeWindow.Serializer();
+                long handle = NativeEngine.registerState(engine, "test", 0, TypeAnalyzer.getTypeId(keys),
+                        TypeAnalyzer.getTypeId(values), TypeAnalyzer.getTypeId(windows),
+                        TypeAnalyzer.generateStateDescriptor(keys, windows, values));
+                ForL0KeyContext<RowData> context = context(GenericRowData.of(1L));
+                ForL0ValueState<RowData, org.apache.flink.table.runtime.operators.window.TimeWindow, RowData> state =
+                        new ForL0ValueState<>(handle, context, keys, windows, values, null);
+                org.apache.flink.table.runtime.operators.window.TimeWindow window =
+                        new org.apache.flink.table.runtime.operators.window.TimeWindow(-10, 20);
+                state.setCurrentNamespace(window);
+                org.apache.flink.core.memory.DataOutputSerializer keyBytes = new org.apache.flink.core.memory.DataOutputSerializer(32);
+                windows.serialize(window, keyBytes); keys.serialize(context.currentKey, keyBytes);
+                for (org.apache.flink.types.RowKind kind : org.apache.flink.types.RowKind.values()) {
+                    for (Long number : Arrays.asList(null, Long.MIN_VALUE, 0L, Long.MAX_VALUE)) {
+                        GenericRowData input = GenericRowData.of((Object) number); input.setRowKind(kind);
+                        state.update(input);
+                        byte[] raw = RowDataKeyAccessor.extractBinaryRowDataBytes(values.toBinaryRow(input));
+                        org.apache.flink.core.memory.DataOutputSerializer expected = new org.apache.flink.core.memory.DataOutputSerializer(64);
+                        expected.writeInt(1); expected.writeInt(keyBytes.length()); expected.write(keyBytes.getCopyOfBuffer());
+                        expected.writeInt(raw.length); expected.write(raw);
+                        NativeEngine.prepareSnapshot(engine);
+                        assertArrayEquals(expected.getCopyOfBuffer(), NativeEngine.writeStateKeyGroupEntries(handle, 0));
+                        byte[] snapshot = NativeEngine.writeKeyGroupData(engine, 0);
+                        state.update(GenericRowData.of(99L));
+                        NativeEngine.releaseSnapshot(engine);
+                        NativeEngine.readKeyGroupData(engine, 0, snapshot);
+                        RowData restored = state.value();
+                        assertEquals(kind, restored.getRowKind()); assertEquals(number == null, restored.isNullAt(0));
+                        if (number != null) assertEquals(number.longValue(), restored.getLong(0));
+                        state.update(restored);
+                        assertEquals(kind, state.value().getRowKind());
+                    }
+                }
+                if (cached) {
+                    for (long i = 0; i < 500; i++) {
+                        context.currentKey = GenericRowData.of(i);
+                        state.update(GenericRowData.of(i));
+                    }
+                    long[] before = new long[7], after = new long[7];
+                    NativeEngine.getHotCacheStats(handle, before);
+                    for (long i = 0; i < 500; i++) {
+                        context.currentKey = GenericRowData.of(i);
+                        assertEquals(i, state.value().getLong(0));
+                    }
+                    NativeEngine.getHotCacheStats(handle, after);
+                    assertEquals(500, after[2] - before[2], "Compact SQL row entries must fit the configured cache");
+                    long[] range = NativeEngine.serializedCacheMemoryRange(handle);
+                    long address = org.apache.flink.core.memory.MemorySegmentBridge.readNativeLong(NativeEngine.stateReadResultAddress(handle));
+                    assertTrue(address >= range[0] && address < range[0] + range[1]);
+                    assertTrue(((address - range[0]) & 63) + 16 <= 64, "SQL row payload must stay within one cache unit");
+                    traffic(handle);
+                }
+            } finally { NativeEngine.destroyEngine(engine); }
+        }
+    }
+
     @Test void sqlWindowMapsUseNumericArgumentsAndPreserveIterationAndRestore() throws Exception {
         long engine = engine();
         try {
