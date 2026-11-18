@@ -55,6 +55,10 @@ def inspect_l0(runtime, env, progress=None):
     # Keep main's fast lookup rules; the expanded search below has a time limit.
     detection_env = dict(env, FORL0_L0_SEARCH_ROOTS='/__briskstate_skip_unbounded_search__',
                          FORL0_NUMA_SEARCH_ROOTS='/__briskstate_skip_unbounded_search__')
+    known_library = Path('/opt/pkg/l0memlib/libl0mempool.so')
+    use_known_library = not env.get('L0_MEMPOOL_LIB_HOST_PATH') and known_library.is_file()
+    if use_known_library:
+        detection_env['L0_MEMPOOL_LIB_HOST_PATH'] = str(known_library)
     detector = command(['bash', '-c', 'source "$1"; forl0_detect_l0_environment; detected=$?; '
                         'forl0_print_l0_detection; printf "\\nDEVICE=%s\\nLIBRARY=%s\\n" '
                         '"$FORL0_L0_DEVICE_PATH" "$FORL0_L0_LIBRARY_PATH"; exit "$detected"',
@@ -110,6 +114,8 @@ def inspect_l0(runtime, env, progress=None):
             report['library_discovery_errors'][str(path)] = str(error)
     if env.get('L0_MEMPOOL_LIB_HOST_PATH'):
         add_library(env['L0_MEMPOOL_LIB_HOST_PATH'])
+    if use_known_library:
+        add_library(known_library)
     if library_match:
         add_library(library_match.group(1))
     roots = []
@@ -168,7 +174,7 @@ def inspect_l0(runtime, env, progress=None):
                 library = path
                 return
     select_library()
-    if not library:
+    if not library and not use_known_library:
         if progress:
             progress('自动搜索仓库、/home及常见SDK目录，最长45秒')
         # -H handles an explicitly symlinked root; -xdev avoids crossing mounts.

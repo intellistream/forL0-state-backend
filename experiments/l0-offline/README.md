@@ -49,7 +49,7 @@ SDK的tuner管理上限与实际申请量分开：沿用main的collect_profile.p
 
 需要Linux ARM64 / Ubuntu22.04，与验收裸机一致；需要同一NUMA节点内至少12个可用CPU、约76GiB可用内存、可写的仓库结果目录和数GiB运行空间。硬件测试还需已安装并有权限使用L0驱动和libl0mempool.so；脚本不会修改驱动、BIOS或内核。
 
-Java、Flink、Python及其依赖和编译产物使用仓库内普通Git分片提供，无需Release/LFS下载，不访问外网。先使用main的l0_detector.sh进行常见路径检测，再自动排查驱动、设备权限和SDK。找不到可加载SDK时扩大搜索至仓库、当前目录、/home、/root、/opt、/usr/local、/data、/mnt等本地目录，不受root的HOME范围限制；递归深度8，搜索限时45秒，跳过常见网络文件系统。候选SDK检查ELF架构、真实动态加载和四个必需接口，自动使用通过检查的库；依赖缺失时保留原始加载错误。只使用loopback上的Flink通信。
+Java、Flink、Python及其依赖和编译产物使用仓库内普通Git分片提供，无需Release/LFS下载，不访问外网。硬件环境默认直接使用已确认的 `/opt/pkg/l0memlib/libl0mempool.so`，检查 ELF 架构、动态加载和四个必需接口，加载失败直接报告该库的错误。可以用 `L0_MEMPOOL_LIB_HOST_PATH` 指定其他路径。默认路径不存在时，继续使用 main 的检测器和有界目录搜索来兼容其他机器。Flink 只使用本地回环通信。
 
 自动检查会记录运行uid/HOME、搜索目录、候选库、/dev设备权限、sysfs、L0内核模块及驱动参数，写入同一个结果JSON的l0_diagnostics。未发现仅代表当前环境与搜索范围未匹配，不能据此认定整台机器没有安装。若发现非标准设备名，明确提示当前native后端支持/dev/l0、/dev/hisi_l0，需要核对接口；不会创建假节点、修改权限或自动加载驱动。
 
