@@ -851,14 +851,12 @@ class Campaign:
 
     def run(self):
         try:
-            for repeat in range(1, self.a.repeats + 1):
-                workloads = self.a.workloads.copy()
-                random.Random(20261111 + repeat).shuffle(workloads)
-                for index, workload in enumerate(workloads):
-                    selected = self.a.arms
-                    offset = (repeat + index) % len(selected)
-                    arms = selected[offset:] + selected[:offset]
-                    self.plan.extend(dict(workload=workload, arm=arm, repeat=repeat) for arm in arms)
+            for arm in self.a.arms:
+                for repeat in range(1, self.a.repeats + 1):
+                    workloads = self.a.workloads.copy()
+                    random.Random(20261111 + repeat).shuffle(workloads)
+                    self.plan.extend(dict(workload=workload, arm=arm, repeat=repeat)
+                                     for workload in workloads)
             self.state = 'running'
             self.phase('检查实验环境和运行资源')
             self.write_results()
