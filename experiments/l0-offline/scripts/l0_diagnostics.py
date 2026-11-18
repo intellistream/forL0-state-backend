@@ -60,6 +60,7 @@ def inspect_l0(runtime, env, progress=None):
                         '"$FORL0_L0_DEVICE_PATH" "$FORL0_L0_LIBRARY_PATH"; exit "$detected"',
                         'l0-detect', str(package / 'scripts/l0_detector.sh')], detection_env)
     report['main_detector'] = detector
+    detector['scope'] = 'Initial quick lookup only; recursive search disabled. selected_library is the final result.'
     device_match = re.search(r'^DEVICE=(.+)', detector['stdout'], re.M)
     library_match = re.search(r'^LIBRARY=(.+)', detector['stdout'], re.M)
     device = device_match.group(1) if device_match else None

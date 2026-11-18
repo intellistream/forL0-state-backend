@@ -75,7 +75,9 @@ if [[ ! -f "$CACHE_ROOT/READY" || "$(cat "$CACHE_ROOT/READY")" != "$ARCHIVE_SHA"
     cat "$PACKAGE"/payload/runtime.tar.gz.part* > "$STAGE/runtime.tar.gz"
     ACTUAL=$(sha256sum "$STAGE/runtime.tar.gz"); ACTUAL=${ACTUAL%% *}
     [[ "$ACTUAL" == "$ARCHIVE_SHA" ]] || { echo '离线依赖整体校验失败。' >&2; exit 3; }
-    tar -xzf "$STAGE/runtime.tar.gz" -C "$STAGE"
+    # Runtime updates may append a small gzip/tar member; later files replace
+    # the corresponding base files and MANIFEST without reshipping the base.
+    tar --ignore-zeros -xzf "$STAGE/runtime.tar.gz" -C "$STAGE"
     rm -rf "$CACHE_ROOT/runtime"
     mv "$STAGE/runtime" "$CACHE_ROOT/runtime"
     printf '%s\n' "$ARCHIVE_SHA" > "$CACHE_ROOT/READY"

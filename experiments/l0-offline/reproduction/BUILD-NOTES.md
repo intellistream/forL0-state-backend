@@ -19,4 +19,6 @@ Java后端增量类使用 `javac --release 11`，以同一Flink发行版和原R3
 
 `../scripts/l0_probe.cpp` 是双进程容量读写探测器源码，构建时直接链接同一 `src/main/native/engine/hot_cache.cpp`，并使用同一头文件及ABI。两进程通过barrier同时持有申请区域，再共同释放，不用顺序申请假装验证共享容量。
 
+2026-11-18兼容修正：通过FORL0_L0_TUNER_CAPACITY_BYTES分开SDK管理上限与实际申请量，离线测试沿用main的minimum-l0-tuner-mb=64。未设置该环境变量时保留原有行为。实际l0_mem_alloc请求仍为严格配额，失败信息保留SDK rc、errno和请求量。重建native、探测器及JAR内同一native资源。runtime.tar.gz.part008为小型增量gzip/tar成员，基础000–007分片保持原字节；worker使用GNU tar --ignore-zeros解包所有成员，最后的MANIFEST覆盖为修正后的全文件校验值。整体SHA和各分片SHA均已更新，运行缓存按新整体SHA隔离。
+
 运行时来自已用于主实验/裸机实验的BiSheng JDK11.0.32+9、Flink1.20.3及私有glibc/jemalloc；Python3.10及其标准库和动态依赖随包提供。许可文件在 `../licenses/`、JDK `legal/` 和运行时 `LICENSES/` 中。此处是产物追溯说明；合作方只需运行根目录入口，不需要这些编译工具。

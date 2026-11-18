@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <new>
 #include <chrono>
+#include <cerrno>
 #include <unistd.h>
 #include <unistd.h>
 
@@ -139,6 +140,22 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
         return;
     }
 
+    // The vendor tuner's management limit is distinct from the L0 region
+    // actually allocated below. Main's hardware calibration uses a 64 MiB
+    // tuner even for a 1 MiB allocation; some SDKs reject tiny tuner limits.
+    tuner_capacity_bytes_ = requested_capacity_bytes;
+    if (const char* configured = std::getenv("FORL0_L0_TUNER_CAPACITY_BYTES")) {
+        char* end = nullptr;
+        errno = 0;
+        const auto capacity = std::strtoull(configured, &end, 10);
+        if (errno || end == configured || *end || configured[0] == '-'
+                || capacity < requested_capacity_bytes) {
+            failure_reason_ = "invalid FORL0_L0_TUNER_CAPACITY_BYTES (must cover allocation quota)";
+            return;
+        }
+        tuner_capacity_bytes_ = static_cast<size_t>(capacity);
+    }
+
     L0BindingsLoader use_loader = loader ? loader : &default_l0_bindings_loader;
     std::string load_reason;
     if (!use_loader(&bindings_, &load_reason)) {
@@ -147,9 +164,17 @@ HotCacheManager::HotCacheManager(size_t requested_capacity_bytes,
     }
 
     memory_mode_=bindings_.memory_mode;
-    int rc = bindings_.cache_tuner_init(&tuner_, requested_capacity_bytes);
+    errno = 0;
+    int rc = bindings_.cache_tuner_init(&tuner_, tuner_capacity_bytes_);
+    const int init_errno = errno;
     if (rc != 0 || !tuner_) {
-        failure_reason_ = "cache_tuner_init failed (rc != 0)";
+        failure_reason_ = "cache_tuner_init failed (rc=" + std::to_string(rc)
+            + ", errno=" + std::to_string(init_errno)
+            + ", tuner_created=" + (tuner_ ? "true" : "false")
+            + ", tuner_capacity_bytes=" + std::to_string(tuner_capacity_bytes_)
+            + ", allocation_bytes=" + std::to_string(requested_capacity_bytes) + ")";
+        if (tuner_) bindings_.cache_tuner_destroy(tuner_);
+        tuner_ = nullptr;
         if (bindings_.lib_handle && bindings_.owns_lib_handle) dlclose(bindings_.lib_handle);
         bindings_ = {};
         return;

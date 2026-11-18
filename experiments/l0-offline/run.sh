@@ -32,10 +32,25 @@ fi
 ARCHIVE_SHA=$(cat "$PACKAGE/payload/archive.sha256")
 CACHE_ROOT="${TMPDIR:-/tmp}/briskstate-l0-$(id -u)-${ARCHIVE_SHA:0:16}"
 if [[ "$CACHE_ROOT" == *' '* ]]; then CACHE_ROOT="/tmp/briskstate-l0-$(id -u)-${ARCHIVE_SHA:0:16}"; fi
-mkdir -p "$CACHE_ROOT/runs"
-exec 8>"$CACHE_ROOT/launch.lock"
+CONTROL_ROOT="${CACHE_ROOT%-*}-control"
+mkdir -p "$CACHE_ROOT/runs" "$CONTROL_ROOT"
+exec 8>"$CONTROL_ROOT/launch.lock"
 flock 8
-ACTIVE_RUN=$(cat "$CACHE_ROOT/current" 2>/dev/null || true)
+ACTIVE_RUN=$(cat "$CONTROL_ROOT/current" 2>/dev/null || true)
+run_is_alive() {
+    local candidate_run=$1 candidate_pid
+    candidate_pid=$(cat "$candidate_run/pid" 2>/dev/null || true)
+    [[ "$candidate_pid" =~ ^[0-9]+$ ]] && kill -0 "$candidate_pid" 2>/dev/null &&
+        tr '\0' '\n' < "/proc/$candidate_pid/cmdline" | grep -Fx -- "$candidate_run" >/dev/null
+}
+# Preserve progress and prevent a second experiment when updating the runtime
+# while a campaign from the previous version is still running.
+for current_file in "${CACHE_ROOT%-*}"-*/current; do
+    candidate_run=$(cat "$current_file" 2>/dev/null || true)
+    [[ -n "$candidate_run" ]] || continue
+    if run_is_alive "$candidate_run"; then ACTIVE_RUN=$candidate_run; break; fi
+    if [[ "${candidate_run##*/}" > "${ACTIVE_RUN##*/}" ]]; then ACTIVE_RUN=$candidate_run; fi
+done
 ACTIVE_PID=''
 if [[ -n "$ACTIVE_RUN" ]]; then ACTIVE_PID=$(cat "$ACTIVE_RUN/pid" 2>/dev/null || true); fi
 running=false
@@ -48,6 +63,10 @@ show_status() {
     cat "$ACTIVE_RUN/status.txt" 2>/dev/null || true
     printf '结果文件：%s\n' "$(cat "$ACTIVE_RUN/result-path")"
     printf '诊断日志：%s/console.log\n' "$ACTIVE_RUN"
+    status_python="${ACTIVE_RUN%/runs/*}/runtime/python/bin/python3"
+    if [[ -x "$status_python" ]]; then
+        "$status_python" -I "$PACKAGE/scripts/show_errors.py" "$(cat "$ACTIVE_RUN/result-path")"
+    fi
 }
 case "${1:-}" in
     --status) show_status; exit 0 ;;
@@ -84,6 +103,7 @@ printf '%s\n' "$RESULT_FILE" > "$RUN_DIR/result-path"
 printf '状态：准备离线运行环境。\n' > "$RUN_DIR/status.txt"
 (set -o noclobber; printf '{"schema_version":2,"status":"preparing","runs":[]}\n' > "$RESULT_FILE")
 printf '%s\n' "$RUN_DIR" > "$CACHE_ROOT/current"
+printf '%s\n' "$RUN_DIR" > "$CONTROL_ROOT/current"
 nohup setsid bash "$PACKAGE/scripts/worker.sh" "$RUN_DIR" "$RESULT_FILE" "$PACKAGE" "$CACHE_ROOT" \
     "${FORWARD[@]}" </dev/null >"$RUN_DIR/console.log" 2>&1 8>&- &
 printf '%s\n' "$!" > "$RUN_DIR/pid"

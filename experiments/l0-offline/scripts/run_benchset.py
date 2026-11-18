@@ -26,6 +26,7 @@ ROLES = dict(wc=1, fd=1, sd=2, tm=2, lg=4, vs=9, lr=8)
 MULTIPLIERS = dict(wc=1, fd=1, sd=1, tm=1, lg=3, vs=8, lr=12)
 L0_SIZES = {'brisk_l0_' + str(mib): mib * 1024 ** 2 for mib in [2, 4, 8, 16, 24, 32]}
 ARMS = ['heap', 'brisk_off', *L0_SIZES]
+L0_TUNER_CAPACITY = 64 * 1024 ** 2  # main's SDK management limit; not allocated L0 bytes
 HZ = os.sysconf('SC_CLK_TCK')
 inspect_l0 = runpy.run_path(str(Path(__file__).resolve().with_name('l0_diagnostics.py')))['inspect_l0']
 
@@ -217,6 +218,7 @@ class Campaign:
                         FLINK_HOME=str(self.runtime / 'flink'),
                         OMP_NUM_THREADS='4', MALLOC_CONF='narenas:4',
                         FORL0_L0_MEMORY_MODE='dram' if args.validate_dram else 'hardware',
+                        FORL0_L0_TUNER_CAPACITY_BYTES=str(L0_TUNER_CAPACITY),
                         FORL0_L0_ROW_POLICY='resident', FORL0_L0_SCALAR_CACHE='off')
         self.env['PATH'] = str(self.runtime / 'jdk/bin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')
         self.hashes = {name: sha(self.runtime / name) for name in
@@ -254,7 +256,7 @@ class Campaign:
         if self.error:
             lines.append('原因：' + self.error['message'])
         if self.last_issue:
-            lines.extend(['最近问题：' + self.last_issue['scope'],
+            lines.extend(['最近已处理问题：' + self.last_issue['scope'],
                           '错误编号：' + self.last_issue['guidance']['error_code'],
                           '原因：' + self.last_issue['guidance']['cause'],
                           '原始提示：' + self.last_issue['message']])
@@ -304,6 +306,7 @@ class Campaign:
                                   warmup_seconds=self.a.warmup, measure_seconds=self.a.measure,
                                   repeats=self.a.repeats, distribution='uniform', checkpoint=False,
                                   l0_shared_sizes_mib=[2, 4, 8, 16, 24, 32],
+                                  sdk_tuner_capacity_bytes_per_process=L0_TUNER_CAPACITY,
                                   capacity_source='fixed tiers from historical sweep; driver metadata informational only',
                                   l0_row_policy='resident'))
         dump(out / 'environment.json', info)
@@ -338,7 +341,15 @@ class Campaign:
                 self.l0_diagnostics = inspect_l0(self.runtime, self.env, self.phase)
                 dump(folder / 'diagnostics.json', self.l0_diagnostics)
                 detected = self.l0_diagnostics['main_detector']
-                (folder / 'detection.log').write_text(detected['stdout'] + detected['stderr'])
+                (folder / 'quick-lookup.log').write_text(detected['stdout'] + detected['stderr'])
+                final_device = self.l0_diagnostics['selected_device']
+                final_library = self.l0_diagnostics['selected_library']
+                lines = ['L0 environment detection: FINAL (after expanded search and SDK load check)',
+                         'status: ' + self.l0_diagnostics['status'],
+                         'device: ' + (final_device or 'MISSING'),
+                         'libl0: ' + (final_library or ('UNUSABLE' if self.l0_diagnostics['sdk_candidates'] else 'MISSING'))]
+                lines.extend(item['error_code'] + ': ' + item['cause'] for item in self.l0_diagnostics['issues'])
+                (folder / 'detection.log').write_text('\n'.join(lines) + '\n')
                 self.write_results()
                 if self.l0_diagnostics['status'] != 'ready_for_allocation':
                     raise RuntimeError(self.l0_diagnostics['message'])
@@ -444,7 +455,15 @@ class Campaign:
                 if all((folder / ('ready-' + role)).exists() for role, _, _ in probes):
                     break
                 if any(proc.poll() is not None for _, proc, _ in probes):
-                    raise RuntimeError('L0双进程全容量读写探测失败；见 l0-preflight/*m*.log。')
+                    details = []
+                    for role, proc, _ in probes:
+                        if proc.poll() is not None:
+                            tail = log_tails([folder / (role + '.log')])
+                            text = next(iter(tail.values()), '').strip().splitlines()
+                            details.append('%s退出码%s：%s' % (role, proc.returncode,
+                                           ' | '.join(text[-3:]) or '未输出SDK错误'))
+                    raise RuntimeError('L0双进程预检失败（每进程申请%g MiB，tuner管理上限%g MiB）：%s' %
+                                       (quota / 1024 ** 2, L0_TUNER_CAPACITY / 1024 ** 2, '；'.join(details)))
                 time.sleep(.2)
             else:
                 raise TimeoutError('L0双进程全容量探测超时。')

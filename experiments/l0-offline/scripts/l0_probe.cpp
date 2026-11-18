@@ -38,6 +38,7 @@ int main(int argc,char** argv) {
     }
     std::cout << "{\"active\":true,\"memory_mode\":\"" << manager.memory_mode()
               << "\",\"requested_bytes\":" << quota << ",\"capacity_bytes\":" << manager.capacity_bytes()
+              << ",\"tuner_capacity_bytes\":" << manager.tuner_capacity_bytes()
               << ",\"touched_bytes\":" << bytes << ",\"checksum\":" << checksum << "}\n";
     manager.release_rows(rows.release());
     return 0;

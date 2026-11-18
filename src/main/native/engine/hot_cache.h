@@ -662,6 +662,7 @@ public:
     const char* memory_mode() const noexcept { return memory_mode_; }
     size_t capacity_bytes()   const noexcept { return capacity_bytes_; }
     size_t requested_capacity_bytes() const noexcept { return requested_capacity_bytes_; }
+    size_t tuner_capacity_bytes() const noexcept { return tuner_capacity_bytes_; }
     size_t used_bytes()       const noexcept;
     uint32_t total_sets()     const noexcept { return total_sets_; }
     uint32_t free_sets()      const noexcept;
@@ -714,6 +715,7 @@ private:
     void*         l0_base_         = nullptr;   // 64B-aligned region used as HotSet[]
     size_t        capacity_bytes_  = 0;
     size_t        requested_capacity_bytes_ = 0;
+    size_t        tuner_capacity_bytes_ = 0;
     uint32_t      total_sets_      = 0;
     uint32_t      bump_next_       = 0;        // next set id to hand out from the unused tail
     bool          active_          = false;

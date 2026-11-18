@@ -4,8 +4,8 @@
   "java": "BiSheng 11.0.32+9",
   "flink": "1.20.3",
   "python": "3.10.12",
-  "archive_bytes": 329983903,
-  "archive_sha256": "9eda3a240390ee851b1511efc32e445c5dc265bd4d72ce5e98828acca88223ad",
+  "archive_bytes": 331224483,
+  "archive_sha256": "a1b8f784d79bf53637d952fa4f388f3d9eb261b2e198fd535e5b2e8220f01a82",
   "parts": [
     {
       "name": "runtime.tar.gz.part000",
@@ -46,11 +46,27 @@
       "name": "runtime.tar.gz.part007",
       "bytes": 36382623,
       "sha256": "74d36c466159207519a93dd31190f80715770047485c0e224327288bbcedc5ac"
+    },
+    {
+      "name": "runtime.tar.gz.part008",
+      "bytes": 1240580,
+      "sha256": "bf67fc3cb0d82248119ddc9128800e153c9b50b9b8abf145c7cb1378102ef888"
     }
   ],
   "artifact_hashes": {
-    "native/libforl0_engine.so": "cbc7c139419bf80e43a82acbdf44831d9352eefd768cc98c43f63ce85f86db5e",
+    "native/libforl0_engine.so": "676b1edfbdcf6371d24f75790571f37e00c0cea0e2c4e89f7a00ad6d2edcf65f",
     "job/paper-steady-benchset.jar": "7f6929397ca2187d14b26ceb52ce1dd1a7ab7e276738b9606e45a65f3d337c15",
-    "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "29df516b9ad9be1e5ff7042d639d3fa3c20d418cd3df8543d1672a969ff39b35"
+    "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "ea91d81bbfe867a4c8e9943df47f8eff68065cfbc7616c90a687b67019c0f854"
+  },
+  "archive_format": "concatenated gzip/tar members; extract with GNU tar --ignore-zeros",
+  "runtime_patch": {
+    "part": "runtime.tar.gz.part008",
+    "reason": "Separate SDK tuner management limit from actual L0 quota",
+    "files": {
+      "native/libforl0_engine.so": "676b1edfbdcf6371d24f75790571f37e00c0cea0e2c4e89f7a00ad6d2edcf65f",
+      "native/l0-probe": "0b6fd131532e1db82092c37ee542ddf3c737c57374191ea4b39718ca03ff202d",
+      "bin/l0-probe.real": "0b6fd131532e1db82092c37ee542ddf3c737c57374191ea4b39718ca03ff202d",
+      "flink/lib/flink-statebackend-forL0-1.0-SNAPSHOT.jar": "ea91d81bbfe867a4c8e9943df47f8eff68065cfbc7616c90a687b67019c0f854"
+    }
   }
 }

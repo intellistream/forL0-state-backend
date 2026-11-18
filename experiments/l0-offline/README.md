@@ -14,6 +14,8 @@
 ./run-l0-benchset --status
 ```
 
+如有SDK预检错误，--status直接显示已记录的进程错误原文和最终SDK路径，无需增加参数、外发文件或重跑探测。
+
 需要停止时：
 
 ```bash
@@ -36,6 +38,8 @@
 | brisk_l0_32 | BriskState | 32 MiB | 16 MiB |
 
 六档逐档独立验证，不搜索硬件最大容量，也不把失败档缩小后冒充原容量。大档失败不影响小档、Heap和无L0组。驱动容量信息只作参考，缺失不会阻止固定档位验证。
+
+SDK的tuner管理上限与实际申请量分开：沿用main的collect_profile.py兼容设置，每进程tuner管理上限64MiB；l0_mem_alloc仍只申请本表中的每TM容量。共享2MiB档为两个进程各申请1MiB，不能把64MiB管理上限当作实际L0申请量。预检JSON分别记录tuner_capacity_bytes、requested_bytes和capacity_bytes。初始化失败直接显示SDK返回码、errno及tuner是否建立，不要求合作方外发日志文件。
 
 设备/SDK缺失时，L0组记录跳过原因，基线继续。预检同时建立两个进程的SDK内存池，逐缓存行读写后释放；实际作业还会核对真实TM的L0模式、容量和驻留池，不能把普通内存回退记为硬件启用。
 
@@ -100,6 +104,8 @@ PSS/RSS为两个TM的合计，不含JM。PSS为窗口采样均值，RSS为窗口
 ## 出错后如何处理
 
 --status会持续显示最近一次问题、影响范围、错误编号、原始提示、处理建议和应由谁处理；进入下一个条件后不会把上一个问题隐藏。结果JSON的error、l0_preflight或失败run含guidance：error_code、cause、next_steps、responsible_party。预检失败附设备/SDK检测及双进程日志；作业失败附提交日志、JM/TM日志末尾及可取得的Flink异常。启动环境失败也把错误末尾和处理建议写入同一JSON。
+
+“最近已处理问题”是先前失败或跳过项的历史记录；当前运行阶段由上方“状态/当前”显示。detection.log保存扩大搜索及动态加载检查后的最终结果；quick-lookup.log只保存禁用递归搜索的第一阶段快检，不能据其MISSING判定最终SDK缺失。两个探测进程失败时，--status的原始提示直接带出进程名、退出码及SDK错误末尾。
 
 | 情况 | 合作方如何处理 |
 |---|---|
