@@ -46,6 +46,103 @@ const TypeLayout& layout_for_value_type(StateHandle::ValueType vt) {
     }
 }
 
+template<typename V, typename N, typename K = WindowStateKey>
+size_t write_window_namespaces(const StateHandle& handle, int group, WriteBuffer& out,
+                               const TypeLayout& layout) {
+    const auto* table = handle.table<K, V>();
+    const bool narrow = layout.type_id == TypeId::INT32;
+    constexpr int namespace_bytes = std::is_same_v<N, TimeWindow> ? 16 : 8;
+    size_t count = 0;
+    table->template for_each_snapshot_in_key_group_ns<N>(group,
+        [&](const N& ns, const K& key, const V& value) {
+            int32_t key_bytes;
+            if constexpr (std::is_same_v<K, NamespaceBlob>) key_bytes = static_cast<int32_t>(key.size());
+            else key_bytes = handle.row_data_key ? 20 : 8;
+            out.write_int(namespace_bytes + key_bytes);
+            if constexpr (std::is_same_v<N, TimeWindow>) {
+                out.write_long(ns.first);
+                out.write_long(ns.second);
+            } else {
+                out.write_long(ns);
+            }
+            write_window_state_key(out, key, handle.row_data_key);
+            if constexpr (std::is_same_v<V, ElementList>) {
+                write_flink_value(out, value, layout);
+            } else if constexpr (std::is_same_v<V, NamespaceRow> || is_fixed_window_row<V>) {
+                out.write_int(static_cast<int32_t>(value.size()));
+                out.write_raw(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+            } else if constexpr (std::is_same_v<V, double>) {
+                out.write_int(8);
+                out.write_double(value);
+            } else {
+                out.write_int(narrow ? 4 : 8);
+                if (narrow) out.write_int(static_cast<int32_t>(value));
+                else out.write_long(value);
+            }
+            ++count;
+        });
+    return count;
+}
+
+template<typename V, typename N, typename K = WindowStateKey>
+void read_window_namespaces(StateHandle& handle, int group, ReadBuffer& in, int32_t count,
+                            const TypeLayout& layout) {
+    auto* table = handle.table<K, V>();
+    const bool narrow = std::is_same_v<V, int64_t> && layout.type_id == TypeId::INT32;
+    constexpr int namespace_bytes = std::is_same_v<N, TimeWindow> ? 16 : 8;
+    for (int32_t i = 0; i < count; ++i) {
+        const auto entry_key_bytes = in.read_int();
+        if (entry_key_bytes < namespace_bytes || static_cast<size_t>(entry_key_bytes) > in.remaining()) {
+            throw std::runtime_error("invalid window namespace key length");
+        }
+        N ns;
+        if constexpr (std::is_same_v<N, TimeWindow>) ns = read_time_window_namespace(in);
+        else ns = in.read_long();
+        const auto key = [&]() -> K {
+            const size_t key_length = entry_key_bytes - namespace_bytes;
+            if constexpr (std::is_same_v<K, NamespaceBlob>) {
+                K bytes(reinterpret_cast<const char*>(in.current()), key_length);
+                in.skip(key_length);
+                return bytes;
+            } else {
+                if (key_length != (handle.row_data_key ? 20u : 8u)) {
+                    throw std::runtime_error("invalid numeric window key length");
+                }
+                return read_window_state_key(in, handle.row_data_key);
+            }
+        }();
+        if constexpr (std::is_same_v<V, ElementList>) {
+            table->put(group, ns, key, read_flink_value<ElementList>(in, layout));
+        } else if constexpr (std::is_same_v<V, NamespaceRow> || is_fixed_window_row<V>) {
+            const int32_t length = in.read_int();
+            if (length < 0 || static_cast<size_t>(length) > in.remaining()) {
+                throw std::runtime_error("invalid window namespace blob length");
+            }
+            V value(reinterpret_cast<const char*>(in.current()), static_cast<size_t>(length));
+            in.skip(static_cast<size_t>(length));
+            table->put(group, ns, key, std::move(value));
+        } else {
+            if (in.read_int() != (narrow ? 4 : 8)) throw std::runtime_error("invalid window namespace value length");
+            if constexpr (std::is_same_v<V, double>) table->put(group, ns, key, in.read_double());
+            else table->put(group, ns, key, narrow ? int64_t(in.read_int()) : in.read_long());
+        }
+    }
+}
+
+template<class N, class K = WindowStateKey>
+size_t write_window_rows(StateHandle& handle, int group, WriteBuffer& buf, const TypeLayout& layout) {
+    return StateHandle::dispatch_window_row(handle.window_row_width, [&](auto tag) {
+        return write_window_namespaces<typename decltype(tag)::type, N, K>(handle, group, buf, layout);
+    });
+}
+
+template<class N, class K = WindowStateKey>
+void read_window_rows(StateHandle& handle, int group, ReadBuffer& buf, int32_t count, const TypeLayout& layout) {
+    StateHandle::dispatch_window_row(handle.window_row_width, [&](auto tag) {
+        read_window_namespaces<typename decltype(tag)::type, N, K>(handle, group, buf, count, layout);
+    });
+}
+
 // Write entries for one state + one key group into buf.
 // Returns entry count written.
 size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
@@ -58,7 +155,7 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
 
     // For FIXED_ROW key, use the stored key_layout (contains arity).
     // For other key types, use the static layout.
-    const TypeLayout& kl = (kt == StateHandle::KeyType::FIXED_ROW && handle->key_layout)
+    const TypeLayout& kl = ((kt == StateHandle::KeyType::FIXED_ROW || kt == StateHandle::KeyType::FIXED_PAIR) && handle->key_layout)
         ? *handle->key_layout
         : layout_for_key_type(kt);
     // When stored value type is BYTES, values are opaque serialized bytes →
@@ -67,6 +164,29 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
     const TypeLayout& vl = (vt == StateHandle::ValueType::BYTES)
         ? layout_bytes
         : (handle->value_layout ? *handle->value_layout : layout_for_value_type(vt));
+
+    if (handle->numeric_window_lists) {
+        if (handle->namespace_serialized_keys) return write_window_namespaces<ElementList, int64_t, NamespaceBlob>(*handle, key_group, buf, vl);
+        return write_window_namespaces<ElementList, int64_t>(*handle, key_group, buf, vl);
+    }
+    if (handle->namespace_value_tables) {
+        if (handle->namespace_serialized_keys) {
+            if (handle->ns_type == StateHandle::NsType::SQL_WINDOW) {
+                return write_window_rows<TimeWindow, NamespaceBlob>(*handle, key_group, buf, vl);
+            }
+            return write_window_rows<int64_t, NamespaceBlob>(*handle, key_group, buf, vl);
+        }
+        if (handle->ns_type == StateHandle::NsType::SQL_WINDOW) {
+            return write_window_rows<TimeWindow>(*handle, key_group, buf, vl);
+        }
+        if (vt == StateHandle::ValueType::INT64) {
+            return write_window_namespaces<int64_t, int64_t>(*handle, key_group, buf, vl);
+        }
+        if (vt == StateHandle::ValueType::FLOAT64) {
+            return write_window_namespaces<double, int64_t>(*handle, key_group, buf, vl);
+        }
+        return write_window_rows<int64_t>(*handle, key_group, buf, vl);
+    }
 
     // Macro to reduce boilerplate for each (K,V) combination.
     // Uses the CheckpointStateWriter template to iterate SwissTable entries.
@@ -77,18 +197,23 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
         if (handle->ns_type == StateHandle::NsType::TIME_WINDOW) {           \
             return writer.write_key_group_tw(*tbl, key_group, buf);          \
         }                                                                     \
-        if (handle->ns_type == StateHandle::NsType::LONG_NS) {                 \
-            return writer.write_key_group_long(*tbl, key_group, buf, handle->row_data_key);           \
-        }                                                                      \
         return writer.write_key_group(*tbl, key_group, buf);                  \
     } while (0)
+
+    if (handle->root_rows) {
+        if (kt == StateHandle::KeyType::INT64) WRITE_KG(int64_t, NamespaceRow);
+        if (kt == StateHandle::KeyType::INT32) WRITE_KG(int32_t, NamespaceRow);
+        if (kt == StateHandle::KeyType::FIXED_PAIR) WRITE_KG(FixedPair, NamespaceRow);
+        if (kt == StateHandle::KeyType::FIXED_ROW) WRITE_KG(FixedRow, NamespaceRow);
+        WRITE_KG(NamespaceBlob, NamespaceRow);
+    }
 
     // LIST state: value is ElementList (std::vector<std::string>)
     if (kind == StateHandle::StateKind::LIST) {
         if (kt == StateHandle::KeyType::INT64) {
             WRITE_KG(int64_t, ElementList);
         } else {
-            WRITE_KG(std::string, ElementList);
+            WRITE_KG(NamespaceBlob, ElementList);
         }
     }
 
@@ -108,12 +233,21 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
                 case StateHandle::MapInnerKind::STRING_LONG:
                     WRITE_KG(int64_t, InnerMapStringLong);
                     break;
+                case StateHandle::MapInnerKind::ROW_FOUR:
+                    WRITE_KG(int64_t, InnerMapRowFour);
+                    break;
+                case StateHandle::MapInnerKind::WIDE_ROW_FOUR:
+                    WRITE_KG(int64_t, InnerMapWideRowFour);
+                    break;
+                case StateHandle::MapInnerKind::STRING_INLINE:
+                    WRITE_KG(int64_t, InnerMapInline);
+                    break;
                 default:
                     WRITE_KG(int64_t, InnerMap);
                     break;
             }
         } else {
-            WRITE_KG(std::string, InnerMap);
+            WRITE_KG(NamespaceBlob, InnerMap);
         }
     }
 
@@ -123,10 +257,10 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::INT64)
             WRITE_KG(int64_t, int64_t);
         if (kt == StateHandle::KeyType::INT64 && (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING))
-            WRITE_KG(int64_t, std::string);
+            WRITE_KG(int64_t, NamespaceBlob);
         if (kt == StateHandle::KeyType::BYTES && vt == StateHandle::ValueType::INT64)
-            WRITE_KG(std::string, int64_t);
-        WRITE_KG(std::string, std::string);
+            WRITE_KG(NamespaceBlob, int64_t);
+        WRITE_KG(NamespaceBlob, NamespaceBlob);
     }
 
     // VALUE state: dispatch based on stored (key_type, value_type).
@@ -134,22 +268,28 @@ size_t write_state_key_group(StateEngine* engine, StateHandle* handle,
         if (vt == StateHandle::ValueType::INT64)   WRITE_KG(int64_t, int64_t);
         if (vt == StateHandle::ValueType::FLOAT64) WRITE_KG(int64_t, double);
         if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
-            WRITE_KG(int64_t, std::string);
+            WRITE_KG(int64_t, NamespaceBlob);
     }
     if (kt == StateHandle::KeyType::INT32) {
         if (vt == StateHandle::ValueType::INT64)   WRITE_KG(int32_t, int64_t);
         if (vt == StateHandle::ValueType::FLOAT64) WRITE_KG(int32_t, double);
         if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
-            WRITE_KG(int32_t, std::string);
+            WRITE_KG(int32_t, NamespaceBlob);
+    }
+    if (kt == StateHandle::KeyType::FIXED_PAIR) {
+        if (vt == StateHandle::ValueType::INT64)   WRITE_KG(FixedPair, int64_t);
+        if (vt == StateHandle::ValueType::FLOAT64) WRITE_KG(FixedPair, double);
+        if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
+            WRITE_KG(FixedPair, NamespaceBlob);
     }
     if (kt == StateHandle::KeyType::FIXED_ROW) {
         if (vt == StateHandle::ValueType::INT64)   WRITE_KG(FixedRow, int64_t);
         if (vt == StateHandle::ValueType::FLOAT64) WRITE_KG(FixedRow, double);
         if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
-            WRITE_KG(FixedRow, std::string);
+            WRITE_KG(FixedRow, NamespaceBlob);
     }
     // Default: all other VALUE combos stored as <string, string>
-    WRITE_KG(std::string, std::string);
+    WRITE_KG(NamespaceBlob, NamespaceBlob);
     
 #undef WRITE_KG
 }
@@ -163,7 +303,7 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
     auto kind = handle->kind;
     int64_t tid = handle->table_id;
 
-    const TypeLayout& kl = (kt == StateHandle::KeyType::FIXED_ROW && handle->key_layout)
+    const TypeLayout& kl = ((kt == StateHandle::KeyType::FIXED_ROW || kt == StateHandle::KeyType::FIXED_PAIR) && handle->key_layout)
         ? *handle->key_layout
         : layout_for_key_type(kt);
     // Same BYTES override as write path — see write_state_key_group() comment.
@@ -171,26 +311,56 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
         ? layout_bytes
         : (handle->value_layout ? *handle->value_layout : layout_for_value_type(vt));
 
+    if (handle->numeric_window_lists) {
+        if (handle->namespace_serialized_keys) read_window_namespaces<ElementList, int64_t, NamespaceBlob>(*handle, key_group, reader, entry_count, vl);
+        else read_window_namespaces<ElementList, int64_t>(*handle, key_group, reader, entry_count, vl);
+        return;
+    }
+    if (handle->namespace_value_tables) {
+        if (handle->namespace_serialized_keys) {
+            if (handle->ns_type == StateHandle::NsType::SQL_WINDOW) {
+                read_window_rows<TimeWindow, NamespaceBlob>(*handle, key_group, reader, entry_count, vl);
+            } else {
+                read_window_rows<int64_t, NamespaceBlob>(*handle, key_group, reader, entry_count, vl);
+            }
+        } else if (handle->ns_type == StateHandle::NsType::SQL_WINDOW) {
+            read_window_rows<TimeWindow>(*handle, key_group, reader, entry_count, vl);
+        } else if (vt == StateHandle::ValueType::INT64) {
+            read_window_namespaces<int64_t, int64_t>(*handle, key_group, reader, entry_count, vl);
+        } else if (vt == StateHandle::ValueType::FLOAT64) {
+            read_window_namespaces<double, int64_t>(*handle, key_group, reader, entry_count, vl);
+        } else {
+            read_window_rows<int64_t>(*handle, key_group, reader, entry_count, vl);
+        }
+        return;
+    }
+
 #define READ_KG(KT, VT) do {                                                  \
         auto* tbl = engine->get_state_table<KT, VT>(tid);                     \
         if (!tbl) return;                                                      \
         CheckpointStateReader<KT, VT> rd(kl, vl, vns);                        \
         if (handle->ns_type == StateHandle::NsType::TIME_WINDOW) {            \
             rd.read_entries_tw(reader, *tbl, key_group, entry_count);          \
-        } else if (handle->ns_type == StateHandle::NsType::LONG_NS) {          \
-            rd.read_entries_long(reader, *tbl, key_group, entry_count, handle->row_data_key);         \
         } else {                                                               \
             rd.read_entries(reader, *tbl, key_group, entry_count);             \
         }                                                                      \
         return;                                                                \
     } while (0)
 
+    if (handle->root_rows) {
+        if (kt == StateHandle::KeyType::INT64) READ_KG(int64_t, NamespaceRow);
+        if (kt == StateHandle::KeyType::INT32) READ_KG(int32_t, NamespaceRow);
+        if (kt == StateHandle::KeyType::FIXED_PAIR) READ_KG(FixedPair, NamespaceRow);
+        if (kt == StateHandle::KeyType::FIXED_ROW) READ_KG(FixedRow, NamespaceRow);
+        READ_KG(NamespaceBlob, NamespaceRow);
+    }
+
     // LIST state: value is ElementList
     if (kind == StateHandle::StateKind::LIST) {
         if (kt == StateHandle::KeyType::INT64) {
             READ_KG(int64_t, ElementList);
         } else {
-            READ_KG(std::string, ElementList);
+            READ_KG(NamespaceBlob, ElementList);
         }
     }
 
@@ -210,12 +380,21 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
                 case StateHandle::MapInnerKind::STRING_LONG:
                     READ_KG(int64_t, InnerMapStringLong);
                     break;
+                case StateHandle::MapInnerKind::ROW_FOUR:
+                    READ_KG(int64_t, InnerMapRowFour);
+                    break;
+                case StateHandle::MapInnerKind::WIDE_ROW_FOUR:
+                    READ_KG(int64_t, InnerMapWideRowFour);
+                    break;
+                case StateHandle::MapInnerKind::STRING_INLINE:
+                    READ_KG(int64_t, InnerMapInline);
+                    break;
                 default:
                     READ_KG(int64_t, InnerMap);
                     break;
             }
         } else {
-            READ_KG(std::string, InnerMap);
+            READ_KG(NamespaceBlob, InnerMap);
         }
     }
 
@@ -225,10 +404,10 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
         if (kt == StateHandle::KeyType::INT64 && vt == StateHandle::ValueType::INT64)
             READ_KG(int64_t, int64_t);
         if (kt == StateHandle::KeyType::INT64 && (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING))
-            READ_KG(int64_t, std::string);
+            READ_KG(int64_t, NamespaceBlob);
         if (kt == StateHandle::KeyType::BYTES && vt == StateHandle::ValueType::INT64)
-            READ_KG(std::string, int64_t);
-        READ_KG(std::string, std::string);
+            READ_KG(NamespaceBlob, int64_t);
+        READ_KG(NamespaceBlob, NamespaceBlob);
     }
 
     // VALUE state: dispatch based on stored (key_type, value_type).
@@ -236,22 +415,28 @@ void read_state_key_group(StateEngine* engine, StateHandle* handle,
         if (vt == StateHandle::ValueType::INT64)   READ_KG(int64_t, int64_t);
         if (vt == StateHandle::ValueType::FLOAT64) READ_KG(int64_t, double);
         if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
-            READ_KG(int64_t, std::string);
+            READ_KG(int64_t, NamespaceBlob);
     }
     if (kt == StateHandle::KeyType::INT32) {
         if (vt == StateHandle::ValueType::INT64)   READ_KG(int32_t, int64_t);
         if (vt == StateHandle::ValueType::FLOAT64) READ_KG(int32_t, double);
         if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
-            READ_KG(int32_t, std::string);
+            READ_KG(int32_t, NamespaceBlob);
+    }
+    if (kt == StateHandle::KeyType::FIXED_PAIR) {
+        if (vt == StateHandle::ValueType::INT64)   READ_KG(FixedPair, int64_t);
+        if (vt == StateHandle::ValueType::FLOAT64) READ_KG(FixedPair, double);
+        if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
+            READ_KG(FixedPair, NamespaceBlob);
     }
     if (kt == StateHandle::KeyType::FIXED_ROW) {
         if (vt == StateHandle::ValueType::INT64)   READ_KG(FixedRow, int64_t);
         if (vt == StateHandle::ValueType::FLOAT64) READ_KG(FixedRow, double);
         if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING)
-            READ_KG(FixedRow, std::string);
+            READ_KG(FixedRow, NamespaceBlob);
     }
     // Default: all other VALUE combos stored as <string, string>
-    READ_KG(std::string, std::string);
+    READ_KG(NamespaceBlob, NamespaceBlob);
 
 #undef READ_KG
 }
@@ -283,6 +468,14 @@ Java_org_apache_flink_state_forl0_NativeEngine_releaseSnapshot(
     JNI_ENTRY_VOID({
         auto* engine = from_handle<StateEngine>(engineHandle);
         engine->release_snapshot();
+    })
+}
+
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_releaseCheckpointGroup(
+        JNIEnv* env, jclass, jlong engineHandle, jint group) {
+    JNI_ENTRY_VOID({
+        from_handle<StateEngine>(engineHandle)->release_snapshot_group(group);
     })
 }
 
@@ -342,44 +535,68 @@ Java_org_apache_flink_state_forl0_NativeEngine_writeKeyGroupData(
 //  Reads entries from Flink checkpoint format and populates SwissTables.
 // ============================================================================
 
+static void restore_key_group(JNIEnv* env, jlong engineHandle, jint keyGroupId,
+                              jbyteArray data, jintArray destinationIds) {
+    if (!data) return;
+    auto* engine = from_handle<StateEngine>(engineHandle);
+    std::vector<jint> mapping;
+    if (destinationIds) {
+        mapping.resize(env->GetArrayLength(destinationIds));
+        env->GetIntArrayRegion(destinationIds, 0, static_cast<jsize>(mapping.size()), mapping.data());
+        if (env->ExceptionCheck()) return;
+    }
+
+    jsize dataLen = env->GetArrayLength(data);
+    std::vector<uint8_t> buf(dataLen);
+    env->GetByteArrayRegion(data, 0, dataLen, reinterpret_cast<jbyte*>(buf.data()));
+
+    ReadBuffer reader(buf.data(), buf.size());
+    auto registered = engine->registered_state_handles<StateHandle>();
+
+    while (reader.remaining() > 0) {
+        int16_t stateId = reader.read_short();
+        if (stateId < 0) break;  // end-of-keygroup marker
+
+        int32_t entryCount = reader.read_int();
+        if (entryCount <= 0) continue;
+
+        // Find the StateHandle for this stateId
+        int64_t target = stateId;
+        if (destinationIds) {
+            if (size_t(stateId) >= mapping.size() || mapping[stateId] < 1) {
+                throw std::runtime_error("Unmapped native checkpoint state ID " + std::to_string(stateId));
+            }
+            target = mapping[stateId];
+        }
+        auto it = registered.find(target);
+        if (it == registered.end()) {
+            throw std::runtime_error(
+                "readKeyGroupData: unknown stateId " + std::to_string(stateId));
+        }
+
+        read_state_key_group(engine, it->second, keyGroupId, reader, entryCount);
+    }
+}
+
+JNIEXPORT jint JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_checkpointStateId(JNIEnv* env, jclass, jlong state) {
+    JNI_ENTRY_RETURN(jint, 0, {
+        const auto id = from_handle<StateHandle>(state)->table_id;
+        if (id < 1 || id > INT16_MAX) throw std::runtime_error("State ID exceeds the checkpoint format");
+        return static_cast<jint>(id);
+    })
+}
+
 JNIEXPORT void JNICALL
 Java_org_apache_flink_state_forl0_NativeEngine_readKeyGroupData(
         JNIEnv* env, jclass, jlong engineHandle, jint keyGroupId, jbyteArray data) {
-    JNI_ENTRY_VOID({
-        if (!data) return;
-        auto* engine = from_handle<StateEngine>(engineHandle);
+    JNI_ENTRY_VOID({ restore_key_group(env, engineHandle, keyGroupId, data, nullptr); })
+}
 
-        jsize dataLen = env->GetArrayLength(data);
-        std::vector<uint8_t> buf(dataLen);
-        env->GetByteArrayRegion(data, 0, dataLen, reinterpret_cast<jbyte*>(buf.data()));
-
-        ReadBuffer reader(buf.data(), buf.size());
-        auto registered = engine->registered_state_handles<StateHandle>();
-        // Restore may be invoked on an already registered engine. Cache payloads
-        // are disposable and must not survive authoritative checkpoint writes.
-        for (auto& entry : registered) {
-            auto* state = entry.second;
-            if (state->serialized_cache) state->serialized_cache->clear();
-            else if (state->hot_cache_ll) state->hot_cache_ll->clear();
-        }
-
-        while (reader.remaining() > 0) {
-            int16_t stateId = reader.read_short();
-            if (stateId < 0) break;  // end-of-keygroup marker
-
-            int32_t entryCount = reader.read_int();
-            if (entryCount <= 0) continue;
-
-            // Find the StateHandle for this stateId
-            auto it = registered.find(static_cast<int64_t>(stateId));
-            if (it == registered.end()) {
-                throw std::runtime_error(
-                    "readKeyGroupData: unknown stateId " + std::to_string(stateId));
-            }
-
-            read_state_key_group(engine, it->second, keyGroupId, reader, entryCount);
-        }
-    })
+JNIEXPORT void JNICALL
+Java_org_apache_flink_state_forl0_NativeEngine_readMappedKeyGroupData(
+        JNIEnv* env, jclass, jlong engineHandle, jint keyGroupId, jbyteArray data, jintArray destinationIds) {
+    JNI_ENTRY_VOID({ restore_key_group(env, engineHandle, keyGroupId, data, destinationIds); })
 }
 
 // ============================================================================
@@ -432,8 +649,6 @@ Java_org_apache_flink_state_forl0_NativeEngine_readStateKeyGroupEntries(
         if (!data) return;
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* engine = handle->engine;
-        if (handle->serialized_cache) handle->serialized_cache->clear();
-        else if (handle->hot_cache_ll) handle->hot_cache_ll->clear();
 
         jsize dataLen = env->GetArrayLength(data);
         std::vector<uint8_t> buf(dataLen);

@@ -11,23 +11,27 @@ import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
+import org.apache.flink.client.program.ClusterClient;
+import org.apache.flink.core.execution.CheckpointType;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
 import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
+import org.apache.flink.test.junit5.InjectClusterClient;
 import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.util.Collector;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -374,8 +378,9 @@ public class ForL0CheckpointSavepointITCase {
         Assertions.assertEquals(N, RESTORED_SNAPSHOT.get(), "savepoint 恢复瞬间的状态值不一致");
     }
 
-    @Test
-    void testExternalizedCheckpoint_ExactState() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void testExternalizedCheckpoint_ExactState(boolean cache, @InjectClusterClient ClusterClient<?> cluster) throws Exception {
         // 精确一致性：先处理恰好 N 条并等待外部化 checkpoint 生成；恢复后探测状态值等于 N。
         final long N = 1_000L;
         TARGET_N = N;
@@ -390,6 +395,7 @@ public class ForL0CheckpointSavepointITCase {
         // 1) 首次运行，发出恰好 N 条
         Configuration conf1 = new Configuration();
         conf1.setString("state.backend", "org.apache.flink.state.forl0.ForL0StateBackendFactory");
+        conf1.setBoolean("state.backend.forl0.l0-cache.enabled", cache);
         conf1.setString("state.checkpoints.dir", ckBaseUri);
         StreamExecutionEnvironment env1 = StreamExecutionEnvironment.getExecutionEnvironment();
         env1.configure(conf1, Thread.currentThread().getContextClassLoader());
@@ -413,29 +419,12 @@ public class ForL0CheckpointSavepointITCase {
         boolean reached = STATEFUL_PROCESSED_N_LATCH.await(30, TimeUnit.SECONDS);
         Assertions.assertTrue(reached, "等待处理到第 N 条超时");
 
-        // 轮询 job 目录下的 chk-*，拿到最新 checkpoint 路径
-        Path jobDir = Paths.get(new URI(ckBaseUri)).resolve(jobIdStr);
-        String ckRestorePath = null;
-        long deadline = System.nanoTime() + Duration.ofSeconds(25).toNanos();
-        while (System.nanoTime() < deadline && ckRestorePath == null) {
-            if (Files.isDirectory(jobDir)) {
-                try (Stream<Path> children = Files.list(jobDir)) {
-                    Path latest = children
-                            .filter(p -> p.getFileName().toString().startsWith("chk-"))
-                            .max(Comparator.comparing(p -> p.getFileName().toString()))
-                            .orElse(null);
-                    if (latest != null) {
-                        // 仅当存在 _metadata 文件时，认定 checkpoint 已完成且可恢复
-                        Path meta = latest.resolve("_metadata");
-                        if (Files.isRegularFile(meta)) {
-                            ckRestorePath = latest.toUri().toString();
-                        }
-                    }
-                }
-            }
-            if (ckRestorePath == null) { Thread.sleep(100); }
-        }
-        Assertions.assertNotNull(ckRestorePath, "未检测到已完成的 checkpoint 目录");
+        // 前一个周期检查点可能早于第 N 条。此处显式触发并恢复处理完 N 条后的那个检查点。
+        long checkpointId = cluster.triggerCheckpoint(client1.getJobID(), CheckpointType.CONFIGURED)
+                .get(30, TimeUnit.SECONDS);
+        Path checkpoint = ckBaseDir.resolve(jobIdStr).resolve("chk-" + checkpointId);
+        Assertions.assertTrue(Files.isRegularFile(checkpoint.resolve("_metadata")));
+        String ckRestorePath = checkpoint.toUri().toString();
 
         // 取消作业，保留外部化 checkpoint
         client1.cancel().get(10, TimeUnit.SECONDS);
@@ -447,6 +436,7 @@ public class ForL0CheckpointSavepointITCase {
 
         Configuration conf2 = new Configuration();
         conf2.setString("state.backend", "org.apache.flink.state.forl0.ForL0StateBackendFactory");
+        conf2.setBoolean("state.backend.forl0.l0-cache.enabled", cache);
         // 使用 fromSavepoint 语义从外部化 checkpoint 恢复
         conf2.setString("execution.savepoint.path", ckRestorePath);
 

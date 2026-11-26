@@ -27,6 +27,7 @@ bool default_l0_bindings_loader(L0LibBindings* out, std::string* reason) {
         "/usr/lib64/libl0mempool.so",
         "/lib/libl0mempool.so",
         "/lib64/libl0mempool.so",
+        "/opt/pkg/l0memlib/libl0mempool.so",
     };
 
     void* handle = nullptr;
@@ -214,6 +215,20 @@ size_t HotCacheManager::used_bytes() const noexcept {
 }
 
 std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t sets_requested) {
+    return acquire(sets_requested, false, 0, false);
+}
+
+std::unique_ptr<HotCacheLL> HotCacheManager::acquire_namespace_span(uint32_t sets_requested) {
+    return acquire(sets_requested, true, 0, false);
+}
+
+std::unique_ptr<HotCacheLL> HotCacheManager::borrow_namespace_span(uint32_t sets_requested,
+                                                                uint32_t protected_sets) {
+    return acquire(sets_requested, true, protected_sets, true);
+}
+
+std::unique_ptr<HotCacheLL> HotCacheManager::acquire(uint32_t sets_requested, bool serialized,
+                                                     uint32_t protected_sets, bool exact) {
     std::lock_guard<std::mutex> lock(manager_mutex_);
     if (!active_ || sets_requested == 0) return nullptr;
 
@@ -225,25 +240,42 @@ std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t sets_requested)
     if (best_run == 0) return nullptr;
 
     uint32_t want = std::min(sets_requested, best_run);
-    uint32_t n    = pow2_floor(want);
+    // Whole namespace tables use a linear byte span. Only a set-indexed
+    // scalar cache needs a power-of-two mask.
+    const uint32_t n = serialized ? want : pow2_floor(want);
     if (n == 0) return nullptr;
+    if (exact) {
+        const auto free_sets = free_sets_unlocked();
+        if (n != sets_requested || n > free_sets || protected_sets > free_sets - n) return nullptr;
+    }
+
+    // Releasing all current leases must be possible without allocating metadata.
+    if (owned_.size() == owned_.capacity()) owned_.reserve(std::max(size_t{8}, owned_.size() * 2));
+    const size_t needed = released_runs_.size() + owned_.size() + 1;
+    if (needed > released_runs_.capacity()) released_runs_.reserve(std::max(needed, released_runs_.capacity() * 2));
 
     uint32_t start = 0;
+    uint32_t pick = UINT32_MAX;
     if (bump_avail >= n) {
         start = bump_next_;
-        bump_next_ += n;
     } else {
         // Pick the smallest released run that still fits (best-fit).
-        size_t pick = SIZE_MAX;
-        for (size_t i = 0; i < released_runs_.size(); ++i) {
+        for (uint32_t i = 0; i < released_runs_.size(); ++i) {
             if (released_runs_[i].second >= n) {
-                if (pick == SIZE_MAX || released_runs_[i].second < released_runs_[pick].second) {
+                if (pick == UINT32_MAX || released_runs_[i].second < released_runs_[pick].second) {
                     pick = i;
                 }
             }
         }
-        if (pick == SIZE_MAX) return nullptr;
+        if (pick == UINT32_MAX) return nullptr;
         start = released_runs_[pick].first;
+    }
+
+    auto cache = std::make_unique<HotCacheLL>(base_sets() + start, n,
+                                              write_only_bypass_threshold_, serialized);
+    if (pick == UINT32_MAX) {
+        bump_next_ += n;
+    } else {
         uint32_t leftover = released_runs_[pick].second - n;
         if (leftover > 0) {
             released_runs_[pick] = {start + n, leftover};
@@ -252,9 +284,6 @@ std::unique_ptr<HotCacheLL> HotCacheManager::acquire_ll(uint32_t sets_requested)
         }
     }
 
-    HotSet* run_start = base_sets() + start;
-    auto cache = std::unique_ptr<HotCacheLL>(
-        new HotCacheLL(run_start, n, write_only_bypass_threshold_));
     owned_.push_back(Owned{cache.get(), start, n});
     return cache;
 }
@@ -288,15 +317,16 @@ void HotCacheManager::release_ll(HotCacheLL* cache) {
                 released_runs_.emplace_back(start, count);
                 // Merge any adjacent runs.
                 std::sort(released_runs_.begin(), released_runs_.end());
-                std::vector<std::pair<uint32_t, uint32_t>> coalesced;
-                for (auto& r : released_runs_) {
-                    if (!coalesced.empty() && coalesced.back().first + coalesced.back().second == r.first) {
-                        coalesced.back().second += r.second;
+                size_t coalesced = 0;
+                for (const auto r : released_runs_) {
+                    if (coalesced && released_runs_[coalesced - 1].first
+                            + released_runs_[coalesced - 1].second == r.first) {
+                        released_runs_[coalesced - 1].second += r.second;
                     } else {
-                        coalesced.push_back(r);
+                        released_runs_[coalesced++] = r;
                     }
                 }
-                released_runs_.swap(coalesced);
+                released_runs_.resize(coalesced);
             }
             delete cache;
             return;

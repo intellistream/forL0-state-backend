@@ -17,6 +17,11 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.core.fs.CloseableRegistry;
+import org.apache.flink.runtime.checkpoint.CheckpointOptions;
+import org.apache.flink.runtime.state.KeyGroupsStateHandle;
+import org.apache.flink.runtime.state.KeyedStateHandle;
+import org.apache.flink.runtime.state.SnapshotResult;
+import org.apache.flink.runtime.state.memory.MemCheckpointStreamFactory;
 import org.apache.flink.runtime.state.AbstractStateBackend;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.KeyedStateFunction;
@@ -37,6 +42,8 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.concurrent.RunnableFuture;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -80,6 +87,11 @@ public class ForL0StateSemanticsTest {
 
     private static ForL0KeyedStateBackend<Long> buildBackend(boolean l0Enabled, long l0Size)
             throws Exception {
+        return buildBackend(l0Enabled, l0Size, Collections.emptyList());
+    }
+
+    private static ForL0KeyedStateBackend<Long> buildBackend(boolean l0Enabled, long l0Size,
+                                                              Collection<KeyedStateHandle> restored) throws Exception {
         KeyGroupRange kg = new KeyGroupRange(0, 7);
         ForL0KeyedStateBackendBuilder<Long> b = new ForL0KeyedStateBackendBuilder<>(
                 null,
@@ -90,7 +102,7 @@ public class ForL0StateSemanticsTest {
                 new ExecutionConfig(),
                 TtlTimeProvider.DEFAULT,
                 LatencyTrackingStateConfig.disabled(),
-                Collections.emptyList(),
+                restored,
                 AbstractStateBackend.getCompressionDecorator(new ExecutionConfig()),
                 new HeapPriorityQueueSetFactory(kg, kg.getNumberOfKeyGroups(), 128),
                 true,
@@ -286,6 +298,52 @@ public class ForL0StateSemanticsTest {
     // -----------------------------------------------------------------------
     //  Multiple descriptors on one backend stay isolated
     // -----------------------------------------------------------------------
+
+    @Test
+    void namedStatesRestoreAcrossSubtasksWithOppositeRegistrationOrder() throws Exception {
+        KeyGroupsStateHandle[] sources = new KeyGroupsStateHandle[2];
+        try {
+            for (int part = 0; part < 2; ++part) {
+                ForL0KeyedStateBackend<Long> source = buildBackend(part == 0, 4L << 20);
+                try {
+                    source.setCurrentKey(0L);
+                    ValueState<Long> first = longState(source, part == 0 ? "z" : "a");
+                    ValueState<Long> second = longState(source, part == 0 ? "a" : "z");
+                    for (long key = 0; key < 128; ++key) {
+                        source.setCurrentKey(key);
+                        first.update((part == 0 ? 3000 : 5000) + key);
+                        second.update((part == 0 ? 5000 : 3000) + key);
+                    }
+                    RunnableFuture<SnapshotResult<KeyedStateHandle>> task = source.snapshot(1, 1,
+                            new MemCheckpointStreamFactory(4 << 20), CheckpointOptions.forCheckpointWithDefaultLocation());
+                    task.run();
+                    sources[part] = (KeyGroupsStateHandle) task.get().getJobManagerOwnedSnapshot();
+                } finally { source.dispose(); }
+            }
+            for (boolean enabled : new boolean[]{false, true}) {
+                ForL0KeyedStateBackend<Long> restored = buildBackend(enabled, 4L << 20, Arrays.asList(
+                        sources[0].getIntersection(new KeyGroupRange(0, 3)),
+                        sources[1].getIntersection(new KeyGroupRange(4, 7))));
+                try {
+                    restored.setCurrentKey(0L);
+                    ValueState<Long> a = longState(restored, "a");
+                    ValueState<Long> z = longState(restored, "z");
+                    for (long key = 0; key < 128; ++key) {
+                        restored.setCurrentKey(key);
+                        assertEquals(Long.valueOf(5000 + key), a.value());
+                        assertEquals(Long.valueOf(3000 + key), z.value());
+                    }
+                } finally { restored.dispose(); }
+            }
+        } finally {
+            for (KeyGroupsStateHandle source : sources) if (source != null) source.discardState();
+        }
+    }
+
+    private static ValueState<Long> longState(ForL0KeyedStateBackend<Long> backend, String name) throws Exception {
+        return backend.getPartitionedState(VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE,
+                new ValueStateDescriptor<>(name, LongSerializer.INSTANCE));
+    }
 
     @Test
     void multipleValueStatesAreIndependent() throws Exception {

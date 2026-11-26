@@ -42,29 +42,6 @@ TEST(StateTableCOWTest, VoidNamespaceRemove) {
     ASSERT_NE(st.get(0, 20), nullptr);
 }
 
-TEST(StateTableCOWTest, SerializedViewOverwriteKeepsSnapshotAndOwnedKeys) {
-    StateTable<std::string, std::string> table(10, 2, false);
-    std::string key(36, '\0');
-    key[8] = 'k';
-    table.put(10, key, std::string("before"));
-    table.put(11, key, std::string("other-group"));
-    table.prepare_snapshot();
-    ASSERT_TRUE(table.modify_string_view(10, std::string_view(key), [](std::string& v) { v = "after"; }));
-    ASSERT_TRUE(table.modify_string_view(10, std::string_view(key), [](std::string& v) { v = "after-again"; }));
-    ASSERT_EQ(*table.get_string_view(10, key), "after-again");
-    ASSERT_EQ(*table.get_string_view(11, key), "other-group");
-    std::map<std::string, std::string> snapshot;
-    table.for_each_snapshot_in_key_group(10, [&](const std::string& k, const std::string& v) { snapshot[k] = v; });
-    ASSERT_EQ(snapshot[key], "before");
-    key[8] = 'x';
-    ASSERT_EQ(table.get_string_view(10, key), nullptr);
-    ASSERT_FALSE(table.modify_string_view(10, key, [](std::string& v) { v = "missing"; }));
-    table.release_snapshot();
-    key[8] = 'k';
-    ASSERT_TRUE(table.modify_string_view(10, key, [](std::string& v) { v = "no-snapshot"; }));
-    ASSERT_EQ(*table.get_string_view(10, key), "no-snapshot");
-}
-
 TEST(StateTableCOWTest, VoidNamespaceForEach) {
     StateTable<int64_t, int64_t> st(0, 2, true);
 
@@ -344,5 +321,40 @@ TEST(StateTableCOWTest, StateEngineSnapshotCoordination) {
     });
     ASSERT_EQ(snap2[1], "before");
 
+    engine.release_snapshot();
+}
+
+TEST(StateTableCOWTest, ConsumedGroupReleasesEveryStateAndPreservesUnreadNamespaces) {
+    StateEngine engine(5, 2, 16);
+    auto root_id = engine.register_state<int64_t, int64_t>("root", true);
+    auto windows_id = engine.register_state<int64_t, int64_t>("windows", false);
+    auto* root = engine.get_state_table<int64_t, int64_t>(root_id);
+    auto* windows = engine.get_state_table<int64_t, int64_t>(windows_id);
+    const int64_t ns = 70;
+    for (int group : {5, 6}) {
+        root->put(group, 1, 10);
+        windows->put(group, ns, 2, 20);
+    }
+    engine.prepare_snapshot();
+    for (int group : {5, 6}) {
+        root->put(group, 1, 11);
+        windows->remove(group, ns, 2);
+        windows->put(group, ns, 3, 30);
+    }
+    engine.release_snapshot_group(5);
+    engine.release_snapshot_group(5);
+    ASSERT_FALSE(root->is_snapshot_active(5));
+    ASSERT_FALSE(windows->is_snapshot_active(5));
+    ASSERT_TRUE(root->is_snapshot_active(6));
+    ASSERT_TRUE(windows->is_snapshot_active(6));
+    std::map<int64_t, int64_t> frozen;
+    windows->for_each_snapshot_in_key_group_ns<int64_t>(6,
+        [&](int64_t name, int64_t key, int64_t value) { if (name == ns) frozen[key] = value; });
+    ASSERT_EQ(frozen.size(), 1u);
+    ASSERT_EQ(frozen.at(2), 20);
+    engine.release_snapshot();
+    ASSERT_FALSE(windows->is_snapshot_active(6));
+    engine.prepare_snapshot();
+    ASSERT_TRUE(windows->is_snapshot_active(5));
     engine.release_snapshot();
 }

@@ -32,7 +32,7 @@ class NexmarkHotCacheSqlITCase {
     private static native long[] testCacheStats(boolean reset);
     private static final LocalDateTime START = LocalDateTime.of(2020, 1, 1, 0, 0);
 
-    @ParameterizedTest(name = "Q{0}: Heap = ForL0 off = HotCache on")
+    @ParameterizedTest(name = "Q{0}: Heap, ForL0, and whole-window tables return the same rows")
     @ValueSource(ints = {4, 5, 8, 9, 11, 18, 19, 20})
     void queryOutputsAndCacheTraffic(int query) throws Exception {
         Assumptions.assumeTrue(Boolean.getBoolean("forl0.test.l0"),
@@ -47,7 +47,7 @@ class NexmarkHotCacheSqlITCase {
         assertTrue(stats[0] > 0, "No attached caches in Q" + query);
         assertTrue(stats[1] > 0, "No cache lookups in Q" + query);
         assertTrue(stats[2] > 0, "No cache hits in Q" + query);
-        assertTrue(stats[3] > 0, "No payload writes in Q" + query);
+        assertTrue(stats[3] > 0, "No resident table writes in Q" + query);
         System.out.printf("NEXMARK Q%d PASS attached=%d lookups=%d hits=%d writes=%d%n",
                 query, stats[0], stats[1], stats[2], stats[3]);
     }

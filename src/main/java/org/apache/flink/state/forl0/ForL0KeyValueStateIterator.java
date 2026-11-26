@@ -92,6 +92,11 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
 
     // ---- Iteration state ----
 
+    interface StateGroupReader {
+        byte[] read(long stateHandle, int keyGroup);
+    }
+
+    private final StateGroupReader reader;
     private final StateDesc[] states;
     private final int keyGroupPrefixBytes;
     private final int endKeyGroup; // exclusive
@@ -118,7 +123,6 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
 
     // ---- Construction ----
 
-    @SuppressWarnings("unchecked")
     ForL0KeyValueStateIterator(
             @Nonnull KeyGroupRange keyGroupRange,
             int totalKeyGroups,
@@ -128,6 +132,22 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
             @Nonnull Map<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> registeredMetaInfos,
             @Nonnull Map<StateUID, StateSnapshot> pqSnapshots) throws IOException {
 
+        this(keyGroupRange, totalKeyGroups, keySerializer, stateNamesToId, nativeStateHandles,
+                registeredMetaInfos, pqSnapshots, NativeEngine::writeStateKeyGroupEntries);
+    }
+
+    @SuppressWarnings("unchecked")
+    ForL0KeyValueStateIterator(
+            @Nonnull KeyGroupRange keyGroupRange,
+            int totalKeyGroups,
+            @Nonnull TypeSerializer<?> keySerializer,
+            @Nonnull Map<StateUID, Integer> stateNamesToId,
+            @Nonnull Map<String, Long> nativeStateHandles,
+            @Nonnull Map<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> registeredMetaInfos,
+            @Nonnull Map<StateUID, StateSnapshot> pqSnapshots,
+            StateGroupReader reader) throws IOException {
+
+        this.reader = reader;
         this.keyGroupPrefixBytes =
                 CompositeKeySerializationUtils.computeRequiredBytesInKeyGroupPrefix(totalKeyGroups);
         this.endKeyGroup = keyGroupRange.getEndKeyGroup() + 1;
@@ -306,7 +326,7 @@ class ForL0KeyValueStateIterator implements KeyValueStateIterator {
     private void loadState() {
         StateDesc desc = states[stateOrdinal];
         if (desc.isKV) {
-            byte[] data = NativeEngine.writeStateKeyGroupEntries(
+            byte[] data = reader.read(
                     desc.nativeHandle, currentKeyGroup);
             if (data != null && data.length >= 4) {
                 kvBuf = ByteBuffer.wrap(data);

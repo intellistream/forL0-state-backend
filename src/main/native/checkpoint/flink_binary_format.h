@@ -130,6 +130,18 @@ public:
 
     // --- Write a typed value according to TypeLayout ---
 
+    template<class Row>
+    void write_fixed_row(const Row& row) {
+        write_int(8 + 8 * row.arity);
+        write_byte(static_cast<uint8_t>(row.header));
+        write_byte(static_cast<uint8_t>(row.header >> 8));
+        for (int i = 2; i < 8; ++i) write_byte(0);
+        for (uint8_t i = 0; i < row.arity; ++i) {
+            const auto value = static_cast<uint64_t>(row.f[i]);
+            for (int b = 0; b < 8; ++b) write_byte(static_cast<uint8_t>(value >> (b * 8)));
+        }
+    }
+
     void write_typed_value(const void* data, const TypeLayout& layout) {
         switch (layout.type_id) {
             case TypeId::INT32:
@@ -166,15 +178,9 @@ public:
                 break;
             }
             case TypeId::LIST: {
-                // OPT-9: Direct write with placeholder length
-                auto* vec = static_cast<const ElementList*>(data);
-                size_t len_pos = buf_.size();
-                write_int(0);  // placeholder
-                write_int(static_cast<int32_t>(vec->size()));
-                for (const auto& elem : *vec) {
-                    write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
-                }
-                patch_int(len_pos, static_cast<int32_t>(buf_.size() - len_pos - 4));
+                const auto bytes = static_cast<const ElementList*>(data)->serialized();
+                write_int(static_cast<int32_t>(bytes.size()));
+                write_raw(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
                 break;
             }
             case TypeId::MAP: {
@@ -191,18 +197,7 @@ public:
                 break;
             }
             case TypeId::FIXED_ROW: {
-                // FixedRow: write as BinaryRowData format (length-prefixed)
-                auto* row = static_cast<const FixedRow*>(data);
-                uint8_t arity = layout.fixed_row_arity;
-                int32_t total_size = 8 + static_cast<int32_t>(arity) * 8;
-                write_int(total_size);
-                for (int i = 0; i < 8; ++i) write_byte(0);  // header
-                for (uint8_t i = 0; i < arity; ++i) {
-                    int64_t f = row->f[i];
-                    for (int b = 0; b < 8; ++b) {
-                        write_byte(static_cast<uint8_t>((f >> (b * 8)) & 0xFF));
-                    }
-                }
+                write_fixed_row(*static_cast<const FixedRow*>(data));
                 break;
             }
             default:

@@ -92,7 +92,7 @@ public class ForL0Options {
             ConfigOptions.key("state.backend.forl0.l0-cache.state-size")
                     .memoryType()
                     .defaultValue(MemorySize.ofMebiBytes(1))
-                    .withDescription("Requested L0 quota per eligible ValueState, MapState or ListState.");
+                    .withDescription("Initial L0 allocation target per state. Shared pools grant it as namespace tables grow. Frequently accessed tables can borrow additional space.");
 
     public static final ConfigOption<Long> L0_CACHE_WRITE_BYPASS_THRESHOLD =
             ConfigOptions.key("state.backend.forl0.l0-cache.write-bypass-threshold")

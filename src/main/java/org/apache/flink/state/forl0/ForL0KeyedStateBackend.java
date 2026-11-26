@@ -289,6 +289,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
         byte[] typeDescriptor = TypeAnalyzer.generateStateDescriptor(
                 keySerializer, namespaceSerializer, stateSerializer);
 
+        snapshotStrategy.beforeStateRegistration();
         long handle = NativeEngine.registerState(
                 engineHandle, stateName, stateType,
                 keyTypeId, valueTypeId, nsTypeId,
@@ -304,6 +305,28 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     public <N> Stream<K> getKeys(String state, N namespace) {
         Long handle = nativeStateHandles.get(state);
         if (handle == null) return Stream.empty();
+        if (namespace != null) {
+            TypeSerializer<?> serializer = registeredMetaInfos.get(state).getNamespaceSerializer();
+            byte[] keys = null;
+            if (namespace instanceof Long) {
+                keys = NativeEngine.getWindowStateKeys(handle, false, (Long) namespace, 0);
+            } else if (TypeAnalyzer.isSqlTimeWindowSerializer(serializer)) {
+                keys = NativeEngine.getWindowStateKeys(handle, false,
+                        TypeAnalyzer.windowStart(namespace), TypeAnalyzer.windowEnd(namespace));
+            }
+            if (keys != null) {
+                org.apache.flink.core.memory.DataInputDeserializer in =
+                        new org.apache.flink.core.memory.DataInputDeserializer(keys);
+                try {
+                    int count = in.readInt();
+                    List<K> result = new ArrayList<>(count);
+                    for (int i = 0; i < count; i++) result.add(keySerializer.deserialize(in));
+                    return result.stream();
+                } catch (IOException e) {
+                    throw new FlinkRuntimeException("Failed to decode keys from native engine", e);
+                }
+            }
+        }
         return decodeKeysFromNative(NativeEngine.getStateKeys(handle));
     }
 
@@ -313,9 +336,27 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public <N> Stream<Tuple2<K, N>> getKeysAndNamespaces(String state) {
-        // VoidNamespace is the common case; return keys paired with null namespace.
-        // For general namespace mode, full iteration is not yet supported.
+        Long handle = nativeStateHandles.get(state);
+        if (handle == null) return Stream.empty();
+        byte[] entries = NativeEngine.getWindowStateKeys(handle, true, 0, 0);
+        if (entries != null) {
+            TypeSerializer<N> serializer =
+                    (TypeSerializer<N>) registeredMetaInfos.get(state).getNamespaceSerializer();
+            org.apache.flink.core.memory.DataInputDeserializer in =
+                    new org.apache.flink.core.memory.DataInputDeserializer(entries);
+            try {
+                int count = in.readInt();
+                List<Tuple2<K, N>> result = new ArrayList<>(count);
+                for (int i = 0; i < count; i++) {
+                    result.add(Tuple2.of(keySerializer.deserialize(in), serializer.deserialize(in)));
+                }
+                return result.stream();
+            } catch (IOException e) {
+                throw new FlinkRuntimeException("Failed to decode key and namespace from native engine", e);
+            }
+        }
         return getKeys(state, null).map(k -> Tuple2.of(k, null));
     }
 
@@ -463,7 +504,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     @Override
     public SavepointResources<K> savepoint() throws Exception {
         ForL0SnapshotResources<K> snapshotResources =
-                snapshotStrategy.syncPrepareResources(-1L);
+                snapshotStrategy.prepareSavepoint();
 
         return new SavepointResources<>(snapshotResources, snapshotExecutionType);
     }
@@ -518,7 +559,7 @@ public class ForL0KeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             return;
         }
         super.dispose();
-        NativeEngine.destroyEngine(engineHandle);
+        snapshotStrategy.dispose();
         LOG.info("[ForL0] C++ engine destroyed (handle={})", engineHandle);
     }
 

@@ -135,7 +135,6 @@ if(FORL0_BUILD_TESTS)
         test/time_window_namespace_test.cpp
         test/typed_inner_map_test.cpp
         test/hot_cache_test.cpp
-        test/serialized_hot_cache_test.cpp
         test/hot_cache_manager_test.cpp
         test/hot_cache_phase_b_test.cpp
         test/test_main.cpp

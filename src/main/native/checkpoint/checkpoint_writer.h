@@ -70,23 +70,34 @@ inline void write_flink_value<std::string>(WriteBuffer& buf, const std::string& 
 // read the value with FMT_LEN_PREFIXED (readInt + readBytes).
 // Each element is already serialized bytes — written raw.
 template <>
-inline void write_flink_value<ElementList>(WriteBuffer& buf, const ElementList& value, const TypeLayout&) {
-    // OPT-9: Write directly with placeholder length, then patch
-    size_t len_pos = buf.size();
-    buf.write_int(0);  // placeholder
-    buf.write_int(static_cast<int32_t>(value.size()));
-    for (const auto& elem : value) {
-        buf.write_raw(reinterpret_cast<const uint8_t*>(elem.data()), elem.size());
+inline void write_flink_value<NamespaceBlob>(WriteBuffer& buf, const NamespaceBlob& value, const TypeLayout& layout) {
+    if (layout.type_id == TypeId::BYTES) {
+        buf.write_int(static_cast<int32_t>(value.size()));
+        buf.write_raw(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+    } else {
+        buf.write_string_flink(std::string(value));
     }
-    buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
+}
+
+template <>
+inline void write_flink_value<NamespaceRow>(WriteBuffer& buf, const NamespaceRow& value, const TypeLayout&) {
+    buf.write_int(static_cast<int32_t>(value.size()));
+    buf.write_raw(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+}
+
+template <>
+inline void write_flink_value<ElementList>(WriteBuffer& buf, const ElementList& value, const TypeLayout&) {
+    const auto bytes = value.serialized();
+    buf.write_int(static_cast<int32_t>(bytes.size()));
+    buf.write_raw(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
 }
 
 // InnerMap: write as [total_byte_length(4)][count(4)][uk1][uv1][uk2][uv2]...
 // The outer 4-byte length prefix allows Java ForL0KeyValueStateIterator to
 // read the value with FMT_LEN_PREFIXED (readInt + readBytes).
 // User keys and values are already serialized bytes — written raw.
-template <>
-inline void write_flink_value<InnerMap>(WriteBuffer& buf, const InnerMap& value, const TypeLayout&) {
+template<class Map>
+inline void write_serialized_map(WriteBuffer& buf, const Map& value) {
     // OPT-9: Write directly with placeholder length, then patch
     size_t len_pos = buf.size();
     buf.write_int(0);  // placeholder
@@ -96,6 +107,26 @@ inline void write_flink_value<InnerMap>(WriteBuffer& buf, const InnerMap& value,
         buf.write_raw(reinterpret_cast<const uint8_t*>(entry.second.data()), entry.second.size());
     }
     buf.patch_int(len_pos, static_cast<int32_t>(buf.size() - len_pos - 4));
+}
+
+template <>
+inline void write_flink_value<InnerMap>(WriteBuffer& buf, const InnerMap& value, const TypeLayout&) {
+    write_serialized_map(buf, value);
+}
+
+template <>
+inline void write_flink_value<InnerMapInline>(WriteBuffer& buf, const InnerMapInline& value, const TypeLayout&) {
+    write_serialized_map(buf, value);
+}
+
+template <>
+inline void write_flink_value<InnerMapRowFour>(WriteBuffer& buf, const InnerMapRowFour& value, const TypeLayout&) {
+    write_serialized_map(buf, value);
+}
+
+template <>
+inline void write_flink_value<InnerMapWideRowFour>(WriteBuffer& buf, const InnerMapWideRowFour& value, const TypeLayout&) {
+    write_serialized_map(buf, value);
 }
 
 // Keep the legacy 16-byte BE key/value encoding for both SQL and streaming windows.
@@ -165,22 +196,15 @@ inline void write_time_window_namespace(WriteBuffer& buf, const TimeWindow& tw) 
 
 // FixedRow: write as BinaryRowData format (length-prefixed).
 // Format: [sizeInBytes (4B BE)][header (8B)][field0 (8B LE)][field1 (8B LE)]...
-// Header: byte 0 = RowKind.INSERT (0x00), bytes 1-7 = null bits (all 0).
-// Fields stored in little-endian (matching Flink BinaryRowData native byte order).
+// The Flink binary header distinguishes nullable keys and row kinds.
 template <>
-inline void write_flink_value<FixedRow>(WriteBuffer& buf, const FixedRow& value, const TypeLayout& layout) {
-    uint8_t arity = layout.fixed_row_arity;
-    int32_t total_size = 8 + static_cast<int32_t>(arity) * 8;
-    buf.write_int(total_size);  // length prefix (big-endian)
-    // Header: RowKind.INSERT=0, no null bits
-    for (int i = 0; i < 8; ++i) buf.write_byte(0);
-    // Fields in little-endian
-    for (uint8_t i = 0; i < arity; ++i) {
-        int64_t f = value.f[i];
-        for (int b = 0; b < 8; ++b) {
-            buf.write_byte(static_cast<uint8_t>((f >> (b * 8)) & 0xFF));
-        }
-    }
+inline void write_flink_value<FixedRow>(WriteBuffer& buf, const FixedRow& value, const TypeLayout&) {
+    buf.write_fixed_row(value);
+}
+
+template <>
+inline void write_flink_value<FixedPair>(WriteBuffer& buf, const FixedPair& value, const TypeLayout&) {
+    buf.write_fixed_row(value);
 }
 
 // ============================================================================
@@ -229,45 +253,6 @@ public:
                 ++count;
             });
         return count;
-    }
-
-    // Preserve the pre-existing opaque [namespace + key] checkpoint encoding,
-    // even though the live table now uses a numeric namespace and numeric key.
-    size_t write_key_group_long(const StateTable<K, V>& table, int key_group, WriteBuffer& buf, bool row_key) {
-        if constexpr (std::is_same_v<K, int64_t>) {
-            size_t count = 0;
-            auto emit = [&](int64_t ns, const K& key, const V& value, uint64_t header) {
-                    buf.write_int(row_key ? 28 : 16);
-                    buf.write_long(ns);
-                    if (row_key) {
-                        buf.write_int(16);
-                        for (int i = 0; i < 8; ++i) buf.write_byte(uint8_t(header >> (8 * i)));
-                        uint64_t bits = static_cast<uint64_t>(key);
-                        for (int i = 0; i < 8; ++i) buf.write_byte(uint8_t(bits >> (8 * i)));
-                    } else buf.write_long(key);
-                    if constexpr (std::is_same_v<V, std::string>) {
-                        buf.write_int(static_cast<int32_t>(value.size()));
-                        buf.write_raw(reinterpret_cast<const uint8_t*>(value.data()), value.size());
-                    } else if constexpr (std::is_same_v<V, int64_t>) {
-                        bool narrow = value_layout_.type_id == TypeId::INT32;
-                        buf.write_int(narrow ? 4 : 8);
-                        if (narrow) buf.write_int(static_cast<int32_t>(value)); else buf.write_long(value);
-                    } else if constexpr (std::is_same_v<V, double>) {
-                        buf.write_int(8); buf.write_double(value);
-                    } else throw std::runtime_error("unsupported Long-namespace value encoding");
-                    ++count;
-                };
-            table.template for_each_snapshot_in_key_group_ns<int64_t>(key_group,
-                [&](int64_t ns, const K& key, const V& value) { emit(ns, key, value, 0); });
-            table.template for_each_snapshot_in_key_group_ns<std::string>(key_group,
-                [&](const std::string& ns, const K& key, const V& value) {
-                    if (!row_key || ns.size() != 16) throw std::runtime_error("invalid RowData namespace identity");
-                    int64_t number; uint64_t header;
-                    std::memcpy(&number, ns.data(), 8); std::memcpy(&header, ns.data() + 8, 8);
-                    emit(number, key, value, header);
-                });
-            return count;
-        } else throw std::runtime_error("Long namespace requires numeric key");
     }
 
     // Write for ListState: value is std::vector<T>

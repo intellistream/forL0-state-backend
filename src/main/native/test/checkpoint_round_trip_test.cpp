@@ -54,7 +54,7 @@ static TypeLayout make_fixed_row_layout(uint16_t arity) {
 static TypeLayout make_list_layout(TypeId element_type) {
     TypeLayout layout;
     layout.type_id = TypeId::LIST;
-    layout.cpp_size = sizeof(std::vector<char>);
+    layout.cpp_size = sizeof(ElementList);
     auto child = std::make_unique<TypeLayout>(make_layout(element_type));
     layout.children.push_back(std::move(child));
     return layout;
@@ -218,8 +218,8 @@ TEST(CheckpointRoundTripTest, MapStateStringString) {
     StateTable<int64_t, InnerMap> source(0, 1, true);
 
     // InnerMap stores Flink-serialized byte strings (as from JNI)
-    InnerMap map1{{flink_string("k1"), flink_string("v1")}, {flink_string("k2"), flink_string("v2")}};
-    InnerMap map2{{flink_string("k3"), flink_string("v3")}};
+    InnerMap map1{{NamespaceBlob(flink_string("k1")), NamespaceBlob(flink_string("v1"))}, {NamespaceBlob(flink_string("k2")), NamespaceBlob(flink_string("v2"))}};
+    InnerMap map2{{NamespaceBlob(flink_string("k3")), NamespaceBlob(flink_string("v3"))}};
     source.put(0, 10, std::move(map1));
     source.put(0, 20, std::move(map2));
 
@@ -282,11 +282,38 @@ TEST(CheckpointRoundTripTest, MapStateLongLong) {
 //  MapState: InnerMapLongString
 // ============================================================================
 
+TEST(CheckpointRoundTripTest, RootRowsExchangeExistingByteCheckpointsInBothDirections) {
+    const auto kl = make_layout(TypeId::INT64), vl = make_layout(TypeId::BYTES);
+    const std::string payloads[] = {"", std::string("ab\0c", 4), std::string(24, 's'), std::string(25, 'm'), std::string(400, 'l')};
+    StateTable<int64_t, NamespaceBlob> old(0, 1, true), legacy_reader(0, 1, true);
+    for (int i = 0; i < 5; ++i) old.put(0, i, NamespaceBlob(payloads[i]));
+    WriteBuffer fixture;
+    CheckpointStateWriter<int64_t, NamespaceBlob>(kl, vl, true).write_key_group(old, 0, fixture);
+    StateTable<int64_t, NamespaceRow> rows(0, 1, true);
+    ReadBuffer old_bytes(fixture.data(), fixture.size());
+    CheckpointStateReader<int64_t, NamespaceRow>(kl, vl, true).read_entries(old_bytes, rows, 0, 5);
+    ASSERT_EQ(old_bytes.remaining(), 0u);
+    rows.prepare_snapshot();
+    rows.remove(0, 1);
+    rows.put(0, 4, NamespaceRow("new", 3));
+    WriteBuffer frozen;
+    CheckpointStateWriter<int64_t, NamespaceRow> writer(kl, vl, true);
+    ASSERT_EQ(writer.write_key_group(rows, 0, frozen), 5u);
+    ReadBuffer new_bytes(frozen.data(), frozen.size());
+    CheckpointStateReader<int64_t, NamespaceBlob>(kl, vl, true).read_entries(new_bytes, legacy_reader, 0, 5);
+    rows.release_snapshot();
+    for (int i = 0; i < 5; ++i) {
+        const auto* bytes = legacy_reader.get(0, i);
+        ASSERT_NE(bytes, nullptr);
+        ASSERT_TRUE(std::string_view(*bytes) == std::string_view(payloads[i]));
+    }
+}
+
 TEST(CheckpointRoundTripTest, MapStateLongString) {
     StateTable<int64_t, InnerMapLongString> source(0, 1, true);
 
     // Typed map string values store Flink-serialized bytes (as from JNI)
-    InnerMapLongString map1{{1, flink_string("hello")}, {2, flink_string("world")}};
+    InnerMapLongString map1{{1, NamespaceBlob(flink_string("hello"))}, {2, NamespaceBlob(flink_string("world"))}};
     source.put(0, 10, std::move(map1));
 
     source.prepare_snapshot();
@@ -304,8 +331,8 @@ TEST(CheckpointRoundTripTest, MapStateLongString) {
 
     auto* m1 = restored.get(0, static_cast<int64_t>(10));
     ASSERT_NE(m1, nullptr);
-    ASSERT_EQ((*m1)[1], flink_string("hello"));
-    ASSERT_EQ((*m1)[2], flink_string("world"));
+    ASSERT_EQ((*m1)[1], NamespaceBlob(flink_string("hello")));
+    ASSERT_EQ((*m1)[2], NamespaceBlob(flink_string("world")));
 
     source.release_snapshot();
 }
@@ -318,7 +345,7 @@ TEST(CheckpointRoundTripTest, MapStateStringLong) {
     StateTable<int64_t, InnerMapStringLong> source(0, 1, true);
 
     // Typed map string keys store Flink-serialized bytes (as from JNI)
-    InnerMapStringLong map1{{flink_string("a"), 100}, {flink_string("b"), 200}};
+    InnerMapStringLong map1{{NamespaceBlob(flink_string("a")), 100}, {NamespaceBlob(flink_string("b")), 200}};
     source.put(0, 10, std::move(map1));
 
     source.prepare_snapshot();
@@ -336,8 +363,8 @@ TEST(CheckpointRoundTripTest, MapStateStringLong) {
 
     auto* m1 = restored.get(0, static_cast<int64_t>(10));
     ASSERT_NE(m1, nullptr);
-    ASSERT_EQ((*m1)[flink_string("a")], 100);
-    ASSERT_EQ((*m1)[flink_string("b")], 200);
+    ASSERT_EQ((*m1)[NamespaceBlob(flink_string("a"))], 100);
+    ASSERT_EQ((*m1)[NamespaceBlob(flink_string("b"))], 200);
 
     source.release_snapshot();
 }
@@ -350,8 +377,8 @@ TEST(CheckpointRoundTripTest, ListState) {
     StateTable<int64_t, ElementList> source(0, 1, true);
 
     // ElementList stores Flink-serialized byte strings (as from JNI)
-    ElementList list1{flink_string("elem1"), flink_string("elem2"), flink_string("elem3")};
-    ElementList list2{flink_string("single")};
+    ElementList list1{NamespaceBlob(flink_string("elem1")), NamespaceBlob(flink_string("elem2")), NamespaceBlob(flink_string("elem3"))};
+    ElementList list2{NamespaceBlob(flink_string("single"))};
     source.put(0, 10, std::move(list1));
     source.put(0, 20, std::move(list2));
 
@@ -382,6 +409,29 @@ TEST(CheckpointRoundTripTest, ListState) {
 // ============================================================================
 //  COW + Checkpoint: snapshot consistency
 // ============================================================================
+
+TEST(CheckpointRoundTripTest, PackedListRetainsAliasedAndZeroLengthElements) {
+    ElementList values;
+    values.append({});
+    const std::string payload(80, 'b');
+    values.append(payload);
+    values.append(values.payload().substr(1, 70));
+    ASSERT_EQ(values.size(), 3u);
+    ASSERT_EQ(values.payload(), std::string(150, 'b'));
+    values.append_list(values);
+    ASSERT_EQ(values.size(), 6u);
+    const std::string frozen(values.serialized());
+    ASSERT_THROW(values.append_bytes(1, 137, [](char*) { throw std::runtime_error("write failed"); }),
+                 std::runtime_error);
+    ASSERT_EQ(values.serialized(), frozen);
+    const auto restored = ElementList::from_serialized(frozen);
+    ASSERT_EQ(restored.serialized(), std::string_view(frozen));
+    ElementList zero;
+    zero.append({});
+    ASSERT_EQ(zero.size(), 1u);
+    ASSERT_TRUE(zero.payload().empty());
+    ASSERT_FALSE(ElementList::from_serialized(zero.serialized()).empty());
+}
 
 TEST(CheckpointRoundTripTest, COWConsistency) {
     StateTable<int64_t, int64_t> source(0, 1, true);

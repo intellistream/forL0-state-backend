@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #endif
 #include "swiss_table.h"
+#include "namespace_cache.h"
 #include "type_layout.h"  // FixedRow, FixedRowHash
 
 #include <map>
@@ -19,6 +20,304 @@ struct CountIntegralComparisons {
     static inline size_t calls = 0;
     bool operator()(int64_t left, int64_t right) const { ++calls; return left == right; }
 };
+
+struct CountWindowHashes {
+    static inline size_t calls = 0;
+    size_t operator()(int64_t) const { ++calls; return (15u << 7) | 17u; }
+};
+
+struct RelocationValue {
+    static inline int live = 0;
+    static inline int copies_left = -1;
+    int value;
+    explicit RelocationValue(int n) : value(n) { ++live; }
+    RelocationValue(const RelocationValue& other) : value(other.value) {
+        if (copies_left == 0) throw std::runtime_error("injected copy failure");
+        if (copies_left > 0) --copies_left;
+        ++live;
+    }
+    RelocationValue(RelocationValue&& other) noexcept : value(other.value) { ++live; }
+    ~RelocationValue() { --live; }
+};
+
+TEST(SwissTableTest, FailedGroupedRelocationDestroysOnlyConstructedRowsAndKeepsProbeIndex) {
+    for (size_t capacity : {1u, 4u, 8u, 16u, 256u}) {
+        CountingAllocator target(1 << 20), index(1 << 20);
+        ProbeIndexUsage usage;
+        SwissTable<int64_t, RelocationValue> table(capacity, &DefaultAllocator::instance(), 0, .875, true);
+        const int rows = std::max(1, static_cast<int>(capacity / 2));
+        for (int i = 0; i < rows; ++i) table.emplace(i, i + 10);
+        for (int i = 1; i < rows; i += 3) table.erase(i);
+        if (capacity >= kGroupWidth)
+            table.attach_probe_index(index.allocate(ctrl_bytes(capacity), 16), index, usage);
+        const int before = static_cast<int>(table.size());
+        RelocationValue::copies_left = before / 2;
+        ASSERT_THROW(table.relocate(&target), std::runtime_error);
+        ASSERT_EQ(RelocationValue::live, before);
+        ASSERT_EQ(target.used_bytes(), 0u);
+        ASSERT_EQ(table.has_probe_index(), capacity >= kGroupWidth);
+        RelocationValue::copies_left = -1;
+        table.relocate(&target);
+        ASSERT_EQ(index.used_bytes(), 0u);
+        ASSERT_EQ(RelocationValue::live, before);
+        for (int i = 0; i < rows; ++i) {
+            auto* found = table.find(i);
+            if (i % 3 == 1) ASSERT_EQ(found, nullptr);
+            else { ASSERT_NE(found, nullptr); ASSERT_EQ(found->value, i + 10); }
+        }
+        table.clear();
+        ASSERT_EQ(RelocationValue::live, 0);
+    }
+}
+
+TEST(SwissTableTest, SingletonProbesFullKeysAndExpandsWithoutLosingTheFirstRow) {
+    SwissTable<int64_t, int64_t> table(1, &DefaultAllocator::instance(), 0, .875, true);
+    ASSERT_EQ(table.capacity(), 1u);
+    ASSERT_EQ(table.packed_backing_bytes(), 32u);
+    ASSERT_TRUE(table.find(101) == nullptr);
+    table.insert_or_assign(101, 1);
+    ASSERT_TRUE(table.find(98) == nullptr);
+    ASSERT_EQ(*table.find(101), 1);
+    ASSERT_TRUE(table.install_membership(DefaultAllocator::instance(), 64));
+    bool rejected = false;
+    ASSERT_EQ(*table.find_with_membership(101, rejected), 1);
+    for (int64_t i = 102; i < 1200; ++i) ASSERT_TRUE(table.find_with_membership(i, rejected) == nullptr);
+    table.relocate(&DefaultAllocator::instance());
+    ASSERT_EQ(*table.find(101), 1);
+    ASSERT_TRUE(table.erase(101));
+    table.emplace(99, 4);
+    table.emplace(100, 5);
+    ASSERT_GE(table.capacity(), 4u);
+    ASSERT_EQ(*table.find(99), 4);
+    ASSERT_EQ(*table.find(100), 5);
+}
+
+TEST(SwissTableTest, ResidentControlViewFollowsBackingAndNamespaceOwnership) {
+    ResidentControls view{}, second{};
+    SwissTable<int64_t, int64_t> first(4, &DefaultAllocator::instance(), 0, .875, true);
+    first.publish_controls(view, 2, 10, 0);
+    ASSERT_EQ(view.address, reinterpret_cast<uintptr_t>(first.ctrl_data()));
+    view.slots = reinterpret_cast<uintptr_t>(first.slot_data());
+    view.slot_layout = ResidentControls::writable_bit | 16;
+    first.publish_controls(second, 3, 10, 20);
+    ASSERT_EQ(view.address, 0u);
+    ASSERT_EQ(view.slots, 0u);
+    ASSERT_EQ(view.slot_layout, 0u);
+    for (int i = 0; i < 50; ++i) first.emplace(i, -i);
+    ASSERT_EQ(second.address, 0u);
+    first.publish_controls(view, 3, 10, 20);
+    SwissTable<int64_t, int64_t> next(std::move(first));
+    ASSERT_EQ(view.address, 0u);
+    next.publish_controls(view, 2, 23, 0);
+    {
+        SwissTable<int64_t, int64_t> other;
+        other.publish_controls(view, 2, 24, 0);
+        next.withdraw_controls();
+        ASSERT_EQ(view.address, reinterpret_cast<uintptr_t>(other.ctrl_data()));
+    }
+    ASSERT_EQ(view.address, 0u);
+    for (int i = 0; i < 50; ++i) ASSERT_EQ(*next.find(i), -i);
+}
+
+TEST(SwissTableTest, PairedPositionsRespectFullHashCollisionsAndStructuralChanges) {
+    using Table = SwissTable<int64_t, int64_t, CountWindowHashes>;
+    ResidentControls view;
+    Table table(32), other(32);
+    table.publish_controls(view, 2, -5, 0);
+    // Both keys have exactly the same H1 and H2. At this point the group is empty.
+    view.absent_hash = CountWindowHashes{}(1);
+    view.edit_position = ~int64_t(15);
+    ASSERT_TRUE(table.emplace(1, 101).second);
+    ASSERT_EQ(view.paired_inserts, 1u);
+    auto slot = table.position_of(*table.find(1));
+    ASSERT_EQ(slot, 15u);
+    view.edit_position = slot + 1;
+    ASSERT_EQ(table.take_read_slot(2), nullptr);
+    ASSERT_TRUE(table.emplace(2, 202).second);
+    view.edit_position = slot + 1;
+    ASSERT_EQ(*table.take_read_slot(1), 101);
+    ASSERT_EQ(view.paired_updates, 1u);
+    table.clear();
+    view.absent_hash = CountWindowHashes{}(3);
+    view.edit_position = ~int64_t(15);
+    // A colliding insertion consumes the miss, even if the following key differs.
+    table.emplace(9, 909);
+    ASSERT_EQ(view.edit_position, 0);
+    table.insert_or_assign(3, 303);
+    ASSERT_EQ(*table.find(9), 909);
+    ASSERT_EQ(*table.find(3), 303);
+    view.edit_position = table.position_of(*table.find(9)) + 1;
+    ASSERT_TRUE(table.erase(9));
+    ASSERT_EQ(view.edit_position, 0);
+    view.edit_position = table.position_of(*table.find(3)) + 1;
+    other.publish_controls(view, 2, 6, 0);
+    ASSERT_EQ(view.edit_position, 0);
+    other.emplace(3, -303);
+    view.edit_position = other.position_of(*other.find(3)) + 1;
+    ASSERT_EQ(table.take_read_slot(3), nullptr);
+    ASSERT_EQ(*other.take_read_slot(3), -303);
+    for (int i = 10; i < 80; ++i) other.emplace(i, i);
+    ASSERT_EQ(view.address, 0u);
+    ASSERT_EQ(*table.find(3), 303);
+}
+
+TEST(SwissTableTest, LiveSlotScansUseTheSameOrderAndMarksWithHolesAndProbeCopies) {
+    CountingAllocator pool(1 << 20);
+    for (size_t capacity : {1u, 4u, 8u, 16u, 64u, 256u}) {
+        for (bool copy : {false, true}) {
+            ProbeIndexUsage usage;
+            SwissTable<int64_t, int64_t> table(capacity, &DefaultAllocator::instance(), 0, .875, true);
+            const size_t entries = std::max<size_t>(1, capacity * 3 / 4);
+            for (size_t i = 0; i < entries; ++i) table.emplace(i, i + 333);
+            if (copy) table.attach_probe_index(pool.allocate(ctrl_bytes(capacity), 16), pool, usage);
+            for (size_t i = 1; i < entries; i += 3) table.erase(i);
+            std::vector<int64_t> expected, seen;
+            size_t dirty = 0;
+            const uint64_t marks = UINT64_C(0x9bde33124ab907f8);
+            for (size_t i = 0; i < table.capacity(); ++i) {
+                if (table.ctrl_data()[i] < 0) continue;
+                expected.push_back(table.slot_data()[i].first);
+                dirty += (marks >> (i % 64)) & 1;
+            }
+            const auto& frozen = table;
+            frozen.for_each([&](int64_t key, int64_t value) { ASSERT_EQ(value, key + 333); seen.push_back(key); });
+            ASSERT_TRUE(expected == seen);
+            seen.clear();
+            size_t dirty_seen = 0;
+            auto current = [&](int64_t key, int64_t) { seen.push_back(key); };
+            auto changed = [&](int64_t key, int64_t value) { ++dirty_seen; current(key, value); };
+            ASSERT_EQ(frozen.for_each_marked(&marks, 0, current, changed), dirty);
+            ASSERT_EQ(dirty_seen, dirty);
+            ASSERT_TRUE(expected == seen);
+        }
+    }
+}
+
+TEST(SwissTableTest, PublishedCompactSlotsFollowTheirOwningNamespace) {
+    ResidentControls view{};
+    using Table = SwissTable<int64_t, int64_t>;
+    Table first(8, &DefaultAllocator::instance(), 0, .875, true);
+    Table other(4, &DefaultAllocator::instance(), 0, .875, true);
+    auto check = [&](const Table& table) {
+        uint64_t expected = ResidentControls::compact_slots_tag;
+        for (size_t i = 0; i < table.capacity(); ++i) {
+            if (table.ctrl_data()[i] >= 0) expected |= uint64_t{1} << (32 + i);
+        }
+        ASSERT_EQ(view.last_root_row, expected);
+    };
+    first.emplace(1, 11);
+    first.publish_controls(view, 2, 10, 0);
+    check(first);
+    for (int i = 2; i <= 6; ++i) { first.emplace(i, i); check(first); }
+    first.erase(3);
+    check(first);
+    other.publish_controls(view, 2, 11, 0);
+    other.emplace(9, 90);
+    check(other);
+    first.clear();
+    check(other);
+    first.publish_controls(view, 2, 10, 0);
+    check(first);
+    first.emplace(7, 77);
+    check(first);
+    first.clear();
+    check(first);
+    for (int i = 0; i < 16; ++i) first.emplace(i, i);
+    ASSERT_EQ(view.address, 0u);
+}
+
+TEST(SwissTableTest, ActiveProbeControlsSurviveIndexReclamationAndRetireAtResize) {
+    CountingAllocator index_pool(1 << 20);
+    ProbeIndexUsage usage;
+    SwissTable<int64_t, int64_t> original(64);
+    ResidentControls view{};
+    for (int i = 0; i < 32; ++i) original.emplace(i, -i);
+    const auto* dram_controls = original.ctrl_data();
+    const size_t bytes = ctrl_bytes(original.capacity());
+    const std::vector<int8_t> before(dram_controls, dram_controls + bytes);
+    original.attach_probe_index(index_pool.allocate(bytes, 16), index_pool, usage);
+    original.publish_controls(view, 1, 0, 0);
+    ASSERT_EQ(view.address, reinterpret_cast<uintptr_t>(original.ctrl_data()));
+    ASSERT_NE(original.ctrl_data(), dram_controls);
+    SwissTable<int64_t, int64_t> table(std::move(original));
+    ASSERT_EQ(view.address, 0u);
+    ASSERT_EQ(usage.bytes, bytes);
+    for (int i = 0; i < 32; ++i) {
+        ASSERT_TRUE(table.erase(i));
+        ASSERT_EQ(table.find(i), nullptr);
+        table.emplace(i + 100, i);
+        ASSERT_EQ(*table.find(i + 100), i);
+    }
+    ASSERT_EQ(std::memcmp(dram_controls, before.data(), bytes), 0);
+    const std::vector<int8_t> after(table.ctrl_data(), table.ctrl_data() + bytes);
+    table.publish_controls(view, 1, 0, 0);
+    table.drop_probe_index();
+    ASSERT_EQ(view.address, 0u);
+    ASSERT_EQ(table.ctrl_data(), dram_controls);
+    ASSERT_EQ(std::memcmp(dram_controls, after.data(), bytes), 0);
+    ASSERT_EQ(usage.bytes, 0u);
+    for (int i = 0; i < 32; ++i) {
+        ASSERT_EQ(table.find(i), nullptr);
+        ASSERT_EQ(*table.find(i + 100), i);
+    }
+
+    table.attach_probe_index(index_pool.allocate(bytes, 16), index_pool, usage);
+    table.clear();
+    ASSERT_TRUE(table.has_probe_index());
+    ASSERT_TRUE(table.empty());
+    ASSERT_EQ(table.find(100), nullptr);
+    table.publish_controls(view, 1, 0, 0);
+    for (int i = 0; i < 200; ++i) table.emplace(i, i * 3);
+    ASSERT_EQ(usage.bytes, 0u);
+    ASSERT_EQ(usage.releases, 2u);
+    ASSERT_EQ(view.address, 0u);
+    ASSERT_EQ(index_pool.used_bytes(), 0u);
+    for (int i = 0; i < 200; ++i) ASSERT_EQ(*table.find(i), i * 3);
+}
+
+TEST(SwissTableTest, CompactLiveSlotsSurviveRelocationCollisionsAndRecycling) {
+    using Table = SwissTable<int64_t, int64_t, CountWindowHashes>;
+    CountingAllocator other(1 << 20);
+    Table table(4, &DefaultAllocator::instance(), 0, .875, true);
+    table.emplace(11, 21);
+    table.emplace(12, 22);
+    table.relocate(&other);
+    table.emplace(13, 23);
+    ASSERT_TRUE(table.erase(11));
+    CountWindowHashes::calls = 0;
+    ASSERT_EQ(*table.find(13), 23);
+    ASSERT_EQ(table.find(99), nullptr);
+    ASSERT_EQ(*table.insert_or_assign(12, 122).first, 122);
+    ASSERT_FALSE(table.emplace(12, 0).second);
+    ASSERT_EQ(CountWindowHashes::calls, 0u);
+    ASSERT_TRUE(table.erase(13));
+    for (int64_t k = 100; k < 2000; ++k) {
+        table.emplace(k, k + 1);
+        ASSERT_EQ(*table.find(k), k + 1);
+        ASSERT_TRUE(table.erase(k));
+    }
+    ASSERT_EQ(table.capacity(), 4u);
+    for (int64_t k = 100; k < 143; ++k) table.emplace(k, k + 1);
+    ASSERT_TRUE(table.capacity() > kGroupWidth);
+    for (int64_t k = 100; k < 143; ++k) ASSERT_EQ(*table.find(k), k + 1);
+    ASSERT_EQ(*table.find(12), 122);
+    table.clear();
+    ASSERT_EQ(table.find(12), nullptr);
+}
+
+TEST(SwissTableTest, SingleGroupRecyclesWrappedSlotsAtConfiguredCapacity) {
+    SwissTable<int64_t, int64_t, CountWindowHashes> table(16, &DefaultAllocator::instance(), 16);
+    for (int64_t k = 0; k < 14; ++k) table.emplace(k, k);
+    for (int64_t k = 0; k < 4096; ++k) {
+        ASSERT_TRUE(table.erase(k));
+        table.emplace(k + 14, k + 14);
+        ASSERT_EQ(*table.find(k + 1), k + 1);
+        ASSERT_EQ(*table.find(k + 14), k + 14);
+        ASSERT_EQ(table.find(k), nullptr);
+    }
+    ASSERT_EQ(table.capacity(), 16u);
+    ASSERT_EQ(table.size(), 14u);
+}
 
 TEST(SwissTableTest, IntegralHighBitsDoNotCollapseIntoOneProbeChain) {
     constexpr int64_t count = 4096;
@@ -791,4 +1090,160 @@ TEST(SwissTableSplitTest, EmplaceWithSplit) {
         ASSERT_FALSE(ins);
         ASSERT_EQ(*ptr, i * 10);
     }
+}
+
+namespace {
+struct CollidingMembershipHash {
+    size_t operator()(int key) const noexcept { return static_cast<size_t>(key & 1023); }
+};
+}
+
+TEST(SwissTableTest, NamespaceMembershipIsConservativeAcrossGrowthCollisionEraseAndMove) {
+    CountingAllocator index(4096);
+    SwissTable<int, int, CollidingMembershipHash> table(4, &DefaultAllocator::instance(), 0, .875, true);
+    for (int i = 0; i < 50; ++i) table.insert_or_assign(i, i + 1);
+    ASSERT_TRUE(table.install_membership(index, 2048));
+    size_t rejected = 0;
+    for (int i = 100; i < 400; ++i) {
+        bool absent = false;
+        ASSERT_EQ(table.find_with_membership(i, absent), nullptr);
+        rejected += absent;
+        table.emplace(i, i + 1);
+        ASSERT_EQ(*table.find_with_membership(i, absent), i + 1);
+        ASSERT_FALSE(absent);
+    }
+    ASSERT_GT(rejected, 200u);
+    bool absent = true;
+    ASSERT_EQ(table.find_with_membership(1024 + 12, absent), nullptr);
+    ASSERT_FALSE(absent);
+    table.insert_or_assign(1024 + 12, 117);
+    ASSERT_EQ(*table.find_with_membership(1024 + 12, absent), 117);
+    ASSERT_TRUE(table.erase(12));
+    ASSERT_EQ(table.find_with_membership(12, absent), nullptr);
+    ASSERT_EQ(*table.find_with_membership(1024 + 12, absent), 117);
+    auto moved = std::move(table);
+    ASSERT_EQ(*moved.find_with_membership(115, absent), 116);
+    moved.clear();
+    ASSERT_EQ(moved.find_with_membership(115, absent), nullptr);
+    ASSERT_TRUE(absent);
+    moved.emplace(115, 9);
+    ASSERT_EQ(*moved.find_with_membership(115, absent), 9);
+}
+
+TEST(SwissTableTest, ProvenAbsentHashCanPublishOnlyUntilAnotherKeyWithThatHashIsInserted) {
+    CountingAllocator index(4096);
+    SwissTable<int, int, CollidingMembershipHash> table(16);
+    ASSERT_TRUE(table.install_membership(index, 1024));
+    bool rejected = false;
+    ASSERT_EQ(table.find_with_membership(12, rejected), nullptr);
+    ASSERT_TRUE(rejected);
+    ASSERT_TRUE(table.emplace(12 + 1024, 71).second);
+    ASSERT_EQ(table.membership_write_skips(), 1u);
+    ASSERT_EQ(table.find_with_membership(12, rejected), nullptr);
+    ASSERT_FALSE(rejected);
+    ASSERT_TRUE(table.insert_or_assign(12, 19).second);
+    ASSERT_FALSE(table.insert_or_assign(12 + 1024, 29).second);
+    ASSERT_EQ(table.size(), 2u);
+    ASSERT_EQ(*table.find(12), 19);
+    ASSERT_EQ(*table.find(12 + 1024), 29);
+
+    ASSERT_EQ(table.find_with_membership(15, rejected), nullptr);
+    ASSERT_TRUE(rejected);
+    table.emplace(30, 8);
+    table.emplace(15, 6);
+    ASSERT_EQ(table.membership_write_skips(), 1u);
+    ASSERT_EQ(*table.find(15), 6);
+    table.clear();
+    ASSERT_TRUE(table.emplace(12, 5).second);
+    ASSERT_EQ(table.size(), 1u);
+}
+
+TEST(SwissTableTest, ProvenMissingKeysPrepareAWriteOnlyAfterRepeatedPairs) {
+    CountingAllocator index(32768);
+    SwissTable<int, int, CollidingMembershipHash> table(256);
+    ASSERT_TRUE(table.install_membership(index, 16384));
+    bool absent = false;
+    for (int i = 0; i < 96; ++i) {
+        ASSERT_EQ(table.find_with_membership(i, absent), nullptr);
+        ASSERT_EQ(table.prepared_writes(), 0u);
+    }
+    for (int i = 100; i < 380; ++i) {
+        ASSERT_EQ(table.find_with_membership(i, absent), nullptr);
+        ASSERT_TRUE(table.emplace(i, i * 2).second);
+    }
+    ASSERT_GT(table.capacity(), 256u);
+    const auto prepared = table.prepared_writes();
+    ASSERT_GT(prepared, 70u);
+    // A different write, even with the same hash, consumes the prepared position.
+    ASSERT_EQ(table.find_with_membership(500, absent), nullptr);
+    ASSERT_TRUE(absent);
+    ASSERT_TRUE(table.emplace(1524, 1).second);
+    ASSERT_TRUE(table.emplace(500, 2).second);
+    ASSERT_EQ(*table.find(1524), 1);
+    ASSERT_EQ(*table.find(500), 2);
+    ASSERT_EQ(table.find_with_membership(501, absent), nullptr);
+    ASSERT_TRUE(table.emplace(502, 3).second);
+    ASSERT_TRUE(table.emplace(501, 4).second);
+    for (int i = 100; i < 380; ++i) ASSERT_EQ(*table.find(i), i * 2);
+    table.clear();
+    ASSERT_EQ(table.find(500), nullptr);
+    ASSERT_TRUE(table.emplace(500, 5).second);
+    ASSERT_EQ(*table.find(500), 5);
+}
+
+TEST(SwissTableTest, RepeatingAnAbsenceSurvivesOtherInsertsAndExpiresOnFullHashCollision) {
+    auto manager = std::make_shared<HotCacheManager>(256 * sizeof(HotSet),
+            [](L0LibBindings*, std::string*) { return false; });
+    NamespaceCacheArena pool(manager, 256 * sizeof(HotSet));
+    RootMembershipView view;
+    SwissTable<int, int, CollidingMembershipHash> table(256);
+    ASSERT_TRUE(table.install_membership(pool, 4096));
+    table.share_membership(view, pool.pool_base());
+    ASSERT_NE(view.word_mask & RootMembershipView::supports_repeated_absence, 0u);
+    ASSERT_EQ(view.word_mask & RootMembershipView::valid_absence, 0u);
+    view.last_absent_hash = 7;
+    view.word_mask |= RootMembershipView::valid_absence;
+    ++view.skipped_reads;
+    ASSERT_TRUE(table.emplace(8, 5).second);
+    ASSERT_NE(view.word_mask & RootMembershipView::valid_absence, 0u);
+    ++view.skipped_reads;
+    ASSERT_TRUE(table.emplace(1031, 42).second);
+    ASSERT_EQ(view.word_mask & RootMembershipView::valid_absence, 0u);
+    ASSERT_TRUE(table.emplace(7, 17).second);
+    ASSERT_EQ(*table.find(1031), 42);
+    ASSERT_EQ(*table.find(7), 17);
+    table.drop_membership();
+    ASSERT_EQ(view.bitmap_offset_plus_one, 0u);
+}
+
+TEST(SwissTableTest, SharedNegativeProofExpiresOnPublicationDropAndRelocation) {
+    auto manager = std::make_shared<HotCacheManager>(256 * sizeof(HotSet),
+            [](L0LibBindings*, std::string*) { return false; });
+    NamespaceCacheArena data(manager, 256 * sizeof(HotSet));
+    RootMembershipView view;
+    SwissTable<int, int, CollidingMembershipHash> table(256);
+    ASSERT_TRUE(table.install_membership(data, 4096));
+    const void* pool = data.pool_base();
+    table.share_membership(view, pool);
+    ASSERT_NE(view.bitmap_offset_plus_one, 0u);
+    // Simulate a task-thread check for an empty filter. Equal full hashes
+    // must still resolve separately after another key is published.
+    view.last_absent_hash = 7;
+    ++view.skipped_reads;
+    ASSERT_TRUE(table.emplace(1031, 99).second);
+    ASSERT_TRUE(table.emplace(7, 70).second);
+    ASSERT_FALSE(table.emplace(1031, 0).second);
+    ASSERT_EQ(*table.find(7), 70);
+    ASSERT_EQ(*table.find(1031), 99);
+    table.enable_shared_membership(false);
+    ASSERT_EQ(view.bitmap_offset_plus_one, 0u);
+    table.enable_shared_membership(true);
+    ASSERT_NE(view.bitmap_offset_plus_one, 0u);
+    table.relocate(&data);
+    ASSERT_EQ(view.bitmap_offset_plus_one, 0u);
+    ASSERT_EQ(*table.find(1031), 99);
+    ASSERT_TRUE(table.install_membership(data, 1024));
+    table.share_membership(view, pool);
+    table.drop_membership();
+    ASSERT_EQ(view.bitmap_offset_plus_one, 0u);
 }

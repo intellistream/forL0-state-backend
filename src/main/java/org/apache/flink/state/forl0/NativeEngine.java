@@ -109,12 +109,16 @@ public final class NativeEngine {
     static native void mapPutRowKeyInt(long state, long key, int group, byte[] row, int offset, int length, int value);
     static native byte[] mapGetRowKeyBytes(long state, long key, int group, byte[] row, int offset, int length);
     static native void mapPutRowKeyBytes(long state, long key, int group, byte[] row, int offset, int length, byte[] value);
+    static native long mapGetRowKeyIntAddress(long state, long key, int group, Object owner, long address, int length);
+    static native void mapPutRowKeyIntAddress(long state, long key, int group, Object owner, long address, int length, int value);
+    static native byte[] mapGetRowKeyBytesAddress(long state, long key, int group, Object owner, long address, int length);
+    static native void mapPutRowKeyBytesAddress(long state, long key, int group, Object owner, long address, int length, byte[] value);
     static native void mapPutTimeWindow(long state, long key, int group, long userStart, long userEnd, long valueStart, long valueEnd);
     static native void mapRemoveTimeWindow(long state, long key, int group, long start, long end);
 
-    static native boolean hasSerializedCache(long stateHandle);
-    static native long[] serializedCacheMemoryRange(long stateHandle);
-    static native void serializedCacheInvalidate(long stateHandle, byte[] prefix);
+    static native long[] stateCacheMemoryRange(long stateHandle);
+    static native java.nio.ByteBuffer rootMembershipViews(long stateHandle);
+    static native java.nio.ByteBuffer residentControlViews(long stateHandle);
 
     /** Create a new StateEngine. Returns native handle. */
     public static native long createEngine(int startKeyGroup, int numKeyGroups, int totalKeyGroups,
@@ -126,6 +130,7 @@ public final class NativeEngine {
                                            int maxTableCapacity,
                                            double mainTableLoadFactor,
                                            long nativeMemoryMaxBytes);
+
 
     /** Destroy a StateEngine and free all native memory. */
     public static native void destroyEngine(long engineHandle);
@@ -288,6 +293,16 @@ public final class NativeEngine {
     /** Get list elements as a serialized byte[] (Flink list format). */
     public static native byte[] listGet(long stateHandle, long key, int keyGroup);
 
+    static native boolean listUsesLongNamespaces(long stateHandle);
+    static native boolean listSupportsInlineWindowKeys(long stateHandle);
+
+    static native byte[] listGetLongNamespace(long state, int group, long namespace, long key, long keyHeader,
+                                              byte[] serializedKey, int keyLength);
+
+    static native void listChangeLongNamespace(long state, int group, long namespace, long key, long keyHeader,
+                                              byte[] serializedKey, int keyLength, int operation,
+                                              byte[] bytes, int offset, int length);
+
     public static native byte[] listGetGeneric(long stateHandle, byte[] key, int keyGroup);
 
     /** Add a single element (int64 key + serialized element bytes). */
@@ -413,6 +428,8 @@ public final class NativeEngine {
 
     static native void mapPutLongBytesRange(long stateHandle, long key, int keyGroup,
             long userKey, byte[] userValue, int offset, int length);
+    static native void mapPutLongRowRange(long stateHandle, long key, int keyGroup,
+            long userKey, byte[] row, int offset, int length, boolean singletonList);
     /** Remove by Long UK (Long-Bytes InnerMap). */
     public static native void mapRemoveLongBytes(long stateHandle, long key, int keyGroup, long userKey);
     /** Check existence by Long UK (Long-Bytes InnerMap). */
@@ -461,11 +478,18 @@ public final class NativeEngine {
     //  Checkpoint operations
     // ========================================================================
 
+    static native int checkpointStateId(long stateHandle);
+
+    static native void readMappedKeyGroupData(long engineHandle, int keyGroupId, byte[] data, int[] destinationIds);
+
     /** Prepare for snapshot — returns snapshot version. */
     public static native long prepareSnapshot(long engineHandle);
 
     /** Release snapshot — frees COW state in all state tables. */
     public static native void releaseSnapshot(long engineHandle);
+
+    /** Release the native cut after the sequential checkpoint reader owns this group's bytes. */
+    static native void releaseCheckpointGroup(long engineHandle, int group);
 
     /**
      * Write a key group's state data into the provided buffer.
@@ -511,6 +535,8 @@ public final class NativeEngine {
      */
     public static native byte[] getStateKeys(long stateHandle);
 
+    static native byte[] getWindowStateKeys(long stateHandle, boolean allNamespaces, long first, long second);
+
     // ========================================================================
     //  FixedLengthRow operations (RowData zero-serialization path)
     // ========================================================================
@@ -546,6 +572,8 @@ public final class NativeEngine {
     public static native void valuePutFixedRowGeneric(long stateHandle, long[] keyFields, int keyGroup, byte[] value);
 
     public static native void valuePutFixedRow2Generic(long stateHandle, long key0, long key1, int keyGroup, byte[] value);
+    static native void valuePutRootRowRange(long state, int group, long first, long second, byte[] bytes, int offset, int length);
+    static native void valuePutRootRowAddress(long state, int group, long first, long second, Object owner, long address, int length);
 
     // --- FixedLengthRow combined get: single JNI call, single hash lookup ---
 

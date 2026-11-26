@@ -5,7 +5,7 @@
 #include <jni.h>
 #include "jni_utils.h"
 #include "state_cache_access.h"
-#include "list_cache_access.h"
+#include "list_state_access.h"
 #include "native_map_iterator.h"
 #include "state_engine.h"
 #include "type_layout.h"
@@ -28,19 +28,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongLongWithTW(
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         int64_t k = static_cast<int64_t>(key);
-        int64_t folded = hotcache_fold_tw_key(k, nsStart, nsEnd);
-        if (handle->hot_cache_ll) {
-            int64_t cached;
-            if (handle->hot_cache_ll->get(folded, &cached)) {
-                set_long_result(env, handle, cached, out);
-                return JNI_TRUE;
-            }
-        }
         auto* table = handle->table<int64_t, int64_t>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        auto val = cached_get(handle, table, keyGroup, tw, k);
+        auto val = get_value(table, keyGroup, tw, k);
         if (!val) return JNI_FALSE;
-        if (handle->hot_cache_ll) handle->hot_cache_ll->put(folded, *val);
         jlong v = static_cast<jlong>(*val);
         set_long_result(env, handle, v, out);
         return JNI_TRUE;
@@ -57,11 +48,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongLongWithTW(
         auto* table = handle->table<int64_t, int64_t>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
-        cached_put(handle, table, keyGroup, tw, k, static_cast<int64_t>(value));
-        if (handle->hot_cache_ll) {
-            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd),
-                                      static_cast<int64_t>(value));
-        }
+        table->put(keyGroup, tw, k, static_cast<int64_t>(value));
     })
 }
 
@@ -77,15 +64,12 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueAddAndGetLongLongWithTW(
         int64_t k = static_cast<int64_t>(key);
         int64_t d = static_cast<int64_t>(delta);
         int64_t updated = d;
-        bool modified = cached_modify(handle, table, keyGroup, tw, k, [&](int64_t& existing) {
+        bool modified = table->modify_in_place(keyGroup, tw, k, [&](int64_t& existing) {
             existing += d;
             updated = existing;
         });
         if (!modified) {
-            cached_put(handle, table, keyGroup, tw, k, d);
-        }
-        if (handle->hot_cache_ll) {
-            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd), updated);
+            table->put(keyGroup, tw, k, d);
         }
         return static_cast<jlong>(updated);
     })
@@ -120,7 +104,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueContainsWithTW(
                 ->get(keyGroup, tw, k);
             return (inner && !inner->empty()) ? JNI_TRUE : JNI_FALSE;
         }
-        return handle->table<int64_t, std::string>()
+        return handle->table<int64_t, NamespaceBlob>()
             ->get(keyGroup, tw, k) ? JNI_TRUE : JNI_FALSE;
     })
 }
@@ -135,20 +119,17 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearWithTW(
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
         auto vt = handle->value_type;
-        if (handle->hot_cache_ll) {
-            handle->hot_cache_ll->invalidate(hotcache_fold_tw_key(k, nsStart, nsEnd));
-        }
 
         if (vt == StateHandle::ValueType::FLOAT64) {
-            cached_remove(handle, handle->table<int64_t, double>(), keyGroup, tw, k);
+            handle->table<int64_t, double>()->remove(keyGroup, tw, k);
         } else if (vt == StateHandle::ValueType::BYTES || vt == StateHandle::ValueType::STRING) {
-            cached_remove(handle, handle->table<int64_t, std::string>(), keyGroup, tw, k);
+            handle->table<int64_t, NamespaceBlob>()->remove(keyGroup, tw, k);
         } else if (vt == StateHandle::ValueType::LIST) {
-            cached_remove(handle, handle->table<int64_t, ElementList>(), keyGroup, tw, k);
+            handle->table<int64_t, ElementList>()->remove(keyGroup, tw, k);
         } else if (vt == StateHandle::ValueType::MAP) {
-            cached_remove(handle, handle->table<int64_t, InnerMap>(), keyGroup, tw, k);
+            handle->table<int64_t, InnerMap>()->remove(keyGroup, tw, k);
         } else {
-            cached_remove(handle, handle->table<int64_t, int64_t>(), keyGroup, tw, k);
+            handle->table<int64_t, int64_t>()->remove(keyGroup, tw, k);
         }
     })
 }
@@ -164,9 +145,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongStringWithTW(
         jlong nsStart, jlong nsEnd) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<int64_t, std::string>();
+        auto* table = handle->table<int64_t, NamespaceBlob>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        auto val = cached_get(handle, table, keyGroup, tw, static_cast<int64_t>(key));
+        auto val = get_value(table, keyGroup, tw, static_cast<int64_t>(key));
         return val ? string_to_jbytearray(env, *val) : nullptr;
     })
 }
@@ -179,9 +160,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongStringPtrWithTW(
         jlong nsStart, jlong nsEnd, jlongArray out) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<int64_t, std::string>();
+        auto* table = handle->table<int64_t, NamespaceBlob>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        auto val = cached_get(handle, table, keyGroup, tw, static_cast<int64_t>(key));
+        auto val = get_value(table, keyGroup, tw, static_cast<int64_t>(key));
         if (!val || val->empty()) return JNI_FALSE;
         set_blob_result(env, handle, *val, out);
         return JNI_TRUE;
@@ -195,10 +176,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongStringWithTW(
         jlong nsStart, jlong nsEnd, jbyteArray value) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<int64_t, std::string>();
+        auto* table = handle->table<int64_t, NamespaceBlob>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        std::string val = jbytearray_to_string(env, value);
-        cached_put(handle, table, keyGroup, tw, static_cast<int64_t>(key), std::move(val));
+        NamespaceBlob val = jbytearray_to_string(env, value);
+        table->put(keyGroup, tw, static_cast<int64_t>(key), std::move(val));
     })
 }
 
@@ -214,22 +195,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueGetLongDoubleWithTW(
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
         int64_t k = static_cast<int64_t>(key);
-        int64_t folded = hotcache_fold_tw_key(k, nsStart, nsEnd);
-        if (handle->hot_cache_ll) {
-            int64_t cached;
-            if (handle->hot_cache_ll->get(folded, &cached)) {
-                set_long_result(env, handle, cached, out);
-                return JNI_TRUE;
-            }
-        }
         auto* table = handle->table<int64_t, double>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        auto val = cached_get(handle, table, keyGroup, tw, k);
+        auto val = get_value(table, keyGroup, tw, k);
         if (!val) return JNI_FALSE;
         // Encode double as raw bits in long
         jlong bits;
         memcpy(&bits, &*val, sizeof(double));
-        if (handle->hot_cache_ll) handle->hot_cache_ll->put(folded, static_cast<int64_t>(bits));
         set_long_result(env, handle, bits, out);
         return JNI_TRUE;
     })
@@ -245,11 +217,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutLongDoubleWithTW(
         auto* table = handle->table<int64_t, double>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
-        cached_put(handle, table, keyGroup, tw, k, static_cast<double>(value));
-        if (handle->hot_cache_ll) {
-            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd),
-                                      hotcache_val_from_double(static_cast<double>(value)));
-        }
+        table->put(keyGroup, tw, k, static_cast<double>(value));
     })
 }
 
@@ -299,9 +267,6 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddLongWithTW(
         if (!modified) {
             table->put(keyGroup, tw, k, v);
         }
-        if (handle->hot_cache_ll) {
-            handle->hot_cache_ll->put(hotcache_fold_tw_key(k, nsStart, nsEnd), updated);
-        }
     })
 }
 
@@ -330,9 +295,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetBytesLongWithTW(
         jlong nsStart, jlong nsEnd, jlongArray out) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<std::string, int64_t>();
+        auto* table = handle->table<NamespaceBlob, int64_t>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        std::string k = jbytearray_to_string(env, key);
+        NamespaceBlob k = jbytearray_to_string(env, key);
         int64_t* val = table->get(keyGroup, tw, k);
         if (!val) return JNI_FALSE;
         jlong v = static_cast<jlong>(*val);
@@ -348,9 +313,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddBytesLongWithTW(
         jlong nsStart, jlong nsEnd, jlong value, jint builtinAggType) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<std::string, int64_t>();
+        auto* table = handle->table<NamespaceBlob, int64_t>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        std::string k = jbytearray_to_string(env, key);
+        NamespaceBlob k = jbytearray_to_string(env, key);
         int64_t v = static_cast<int64_t>(value);
         bool modified = table->modify_in_place(keyGroup, tw, k, [&](int64_t& existing) {
             switch (builtinAggType) {
@@ -379,8 +344,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceAddBytesLongWithTWBatch(
         jlongArray nsArray, jint windowCount, jlong value, jint builtinAggType) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<std::string, int64_t>();
-        std::string k = jbytearray_to_string(env, key);
+        auto* table = handle->table<NamespaceBlob, int64_t>();
+        NamespaceBlob k = jbytearray_to_string(env, key);
         int64_t v = static_cast<int64_t>(value);
 
         // Read all namespace pairs from the Java array at once (minimizes JNI access).
@@ -415,9 +380,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_reduceGetAndPutBytesLongWithTW(
         jlong nsStart, jlong nsEnd, jlong newValue, jlongArray out) {
     JNI_ENTRY_RETURN(jboolean, JNI_FALSE, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<std::string, int64_t>();
+        auto* table = handle->table<NamespaceBlob, int64_t>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        std::string k = jbytearray_to_string(env, key);
+        NamespaceBlob k = jbytearray_to_string(env, key);
         int64_t* val = table->get(keyGroup, tw, k);
         if (val) {
             jlong v = static_cast<jlong>(*val);
@@ -436,9 +401,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_valuePutBytesLongWithTW(
         jlong nsStart, jlong nsEnd, jlong value) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        auto* table = handle->table<std::string, int64_t>();
+        auto* table = handle->table<NamespaceBlob, int64_t>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        std::string k = jbytearray_to_string(env, key);
+        NamespaceBlob k = jbytearray_to_string(env, key);
         table->put(keyGroup, tw, std::move(k), static_cast<int64_t>(value));
     })
 }
@@ -451,13 +416,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_valueClearBytesWithTW(
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        std::string k = jbytearray_to_string(env, key);
+        NamespaceBlob k = jbytearray_to_string(env, key);
         auto vt = handle->value_type;
         if (vt == StateHandle::ValueType::INT64) {
-            handle->table<std::string, int64_t>()
+            handle->table<NamespaceBlob, int64_t>()
                 ->remove(keyGroup, tw, k);
         } else {
-            handle->table<std::string, std::string>()
+            handle->table<NamespaceBlob, NamespaceBlob>()
                 ->remove(keyGroup, tw, k);
         }
     })
@@ -476,7 +441,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listGetWithTW(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->table<int64_t, ElementList>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        return cached_list_get(env, handle, table, keyGroup, tw, static_cast<int64_t>(key));
+        return list_get(env, table, keyGroup, tw, static_cast<int64_t>(key));
     })
 }
 
@@ -490,9 +455,9 @@ Java_org_apache_flink_state_forl0_NativeEngine_listAddWithTW(
         auto* table = handle->table<int64_t, ElementList>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
-        std::string elem = jbytearray_to_string(env, element);
+        NamespaceBlob elem = jbytearray_to_string(env, element);
 
-        cached_list_add(handle, table, std::move(elem), keyGroup, tw, k);
+        list_add(table, std::move(elem), keyGroup, tw, k);
     })
 }
 
@@ -505,7 +470,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_listClearWithTW(
         auto* handle = from_handle<StateHandle>(stateHandle);
         auto* table = handle->table<int64_t, ElementList>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
-        cached_list_clear(handle, table, keyGroup, tw, static_cast<int64_t>(key));
+        list_clear(table, keyGroup, tw, static_cast<int64_t>(key));
     })
 }
 
@@ -520,17 +485,13 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapGetWithTW(
         jlong nsStart, jlong nsEnd, jbyteArray userKey) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        MapCallCache state_cache(handle, keyGroup, TimeWindow(nsStart, nsEnd), static_cast<int64_t>(key));
-        std::string uk = jbytearray_to_string(env, userKey);
-        std::string_view cached;
-        if (state_cache.get(uk, &cached)) return string_to_jbytearray(env, cached);
+        NamespaceBlob uk = jbytearray_to_string(env, userKey);
         auto* table = handle->table<int64_t, InnerMap>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         InnerMap* inner = table->get(keyGroup, tw, static_cast<int64_t>(key));
         if (!inner) return nullptr;
-        auto it = inner->find(uk);
-        if (it != inner->end()) state_cache.put(uk, it->second);
-        return (it != inner->end()) ? string_to_jbytearray(env, it->second) : nullptr;
+        const auto* value = inner->find_value(uk);
+        return value ? string_to_jbytearray(env, *value) : nullptr;
     })
 }
 
@@ -541,22 +502,18 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapPutWithTW(
         jlong nsStart, jlong nsEnd, jbyteArray userKey, jbyteArray userValue) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        MapCallCache state_cache(handle, keyGroup, TimeWindow(nsStart, nsEnd), static_cast<int64_t>(key));
         auto* table = handle->table<int64_t, InnerMap>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
-        std::string uk = jbytearray_to_string(env, userKey);
-        std::string uv = jbytearray_to_string(env, userValue);
-        state_cache.prepare(uk);
-        std::string* cache_stored = nullptr;
+        NamespaceBlob uk = jbytearray_to_string(env, userKey);
+        NamespaceBlob uv = jbytearray_to_string(env, userValue);
         if (!table->modify_in_place(keyGroup, tw, k, [&](InnerMap& m) {
-            auto& cache_target = m[std::move(uk)]; cache_target = std::move(uv); cache_stored = &cache_target;
+            m[std::move(uk)] = std::move(uv);
     })) {
             InnerMap new_map;
-            auto& cache_target = new_map[std::move(uk)]; cache_target = std::move(uv); cache_stored = &cache_target;
+            new_map[std::move(uk)] = std::move(uv);
             table->put(keyGroup, tw, k, std::move(new_map));
         }
-        if (cache_stored) state_cache.put_prepared(*cache_stored);
     })
 }
 
@@ -567,12 +524,10 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapRemoveWithTW(
         jlong nsStart, jlong nsEnd, jbyteArray userKey) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        MapCallCache state_cache(handle, keyGroup, TimeWindow(nsStart, nsEnd), static_cast<int64_t>(key));
         auto* table = handle->table<int64_t, InnerMap>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         int64_t k = static_cast<int64_t>(key);
-        std::string uk = jbytearray_to_string(env, userKey);
-        state_cache.remove(uk);
+        NamespaceBlob uk = jbytearray_to_string(env, userKey);
         table->modify_or_remove_in_place(keyGroup, tw, k, [&](InnerMap& m) {
             m.erase(uk);
         });
@@ -590,8 +545,8 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapContainsWithTW(
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         InnerMap* inner = table->get(keyGroup, tw, static_cast<int64_t>(key));
         if (!inner) return JNI_FALSE;
-        std::string uk = jbytearray_to_string(env, userKey);
-        return (inner->find(uk) != inner->end()) ? JNI_TRUE : JNI_FALSE;
+        NamespaceBlob uk = jbytearray_to_string(env, userKey);
+        return (inner->find_value(uk)) ? JNI_TRUE : JNI_FALSE;
     })
 }
 
@@ -616,9 +571,6 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntriesWithTW(
         jlong nsStart, jlong nsEnd) {
     JNI_ENTRY_RETURN(jbyteArray, nullptr, {
         auto* handle = from_handle<StateHandle>(stateHandle);
-        MapCallCache state_cache(handle, keyGroup, TimeWindow(nsStart, nsEnd), static_cast<int64_t>(key));
-        std::string_view cached;
-        if (state_cache.get_bulk(&cached)) return string_to_jbytearray(env, cached);
         auto* table = handle->table<int64_t, InnerMap>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         InnerMap* inner = table->get(keyGroup, tw, static_cast<int64_t>(key));
@@ -631,7 +583,6 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapEntriesWithTW(
             buf.write_raw(reinterpret_cast<const uint8_t*>(entry.first.data()), entry.first.size());
             buf.write_raw(reinterpret_cast<const uint8_t*>(entry.second.data()), entry.second.size());
         }
-        state_cache.put_bulk(buf.data(), buf.size());
         return buffer_to_jbytearray(env, buf.data(), buf.size());
     })
 }
@@ -643,8 +594,6 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapClearWithTW(
         jlong nsStart, jlong nsEnd) {
     JNI_ENTRY_VOID({
         auto* handle = from_handle<StateHandle>(stateHandle);
-        MapCallCache state_cache(handle, keyGroup, TimeWindow(nsStart, nsEnd), static_cast<int64_t>(key));
-        state_cache.invalidate();
         auto* table = handle->table<int64_t, InnerMap>();
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         table->remove(keyGroup, tw, static_cast<int64_t>(key));
@@ -666,7 +615,7 @@ Java_org_apache_flink_state_forl0_NativeEngine_mapIteratorCreateWithTW(
         TimeWindow tw(static_cast<int64_t>(nsStart), static_cast<int64_t>(nsEnd));
         InnerMap* inner = table->get(keyGroup, tw, static_cast<int64_t>(key));
         if (!inner || inner->empty()) return 0;
-        auto* iter = new NativeMapIterator{inner->cbegin(), inner->cend()};
+        auto* iter = new NativeMapIterator(*inner);
         return to_handle(iter);
     })
 }

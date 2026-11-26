@@ -44,6 +44,7 @@ public class ForL0SnapshotStrategy<K>
         implements SnapshotStrategy<KeyedStateHandle, ForL0SnapshotResources<K>> {
 
     private final long engineHandle;
+    private final ForL0NativeSnapshots nativeSnapshots;
     private final Map<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> registeredMetaInfos;
     private final Map<String, HeapPriorityQueueSnapshotRestoreWrapper<?>> registeredPQStates;
     private final Map<String, Long> nativeStateHandles;
@@ -62,6 +63,7 @@ public class ForL0SnapshotStrategy<K>
             TypeSerializer<K> keySerializer,
             int totalKeyGroups) {
         this.engineHandle = engineHandle;
+        this.nativeSnapshots = new ForL0NativeSnapshots(engineHandle, keyGroupRange);
         this.registeredMetaInfos = registeredMetaInfos;
         this.registeredPQStates = registeredPQStates;
         this.nativeStateHandles = nativeStateHandles;
@@ -85,9 +87,33 @@ public class ForL0SnapshotStrategy<K>
 
     @Override
     public ForL0SnapshotResources<K> syncPrepareResources(long checkpointId) throws Exception {
-        // Prepare C++ engine for snapshot (freeze consistent state)
-        NativeEngine.prepareSnapshot(engineHandle);
-        return createSnapshotResources();
+        return prepare(false);
+    }
+
+    ForL0SnapshotResources<K> prepareSavepoint() {
+        return prepare(true);
+    }
+
+    private ForL0SnapshotResources<K> prepare(boolean canonical) {
+        synchronized (nativeSnapshots) {
+            ForL0NativeSnapshots.Snapshot snapshot = nativeSnapshots.prepare(canonical, nativeStateHandles.values());
+            try {
+                ForL0SnapshotResources<K> resources = createSnapshotResources();
+                resources.attach(snapshot);
+                return resources;
+            } catch (Throwable failure) {
+                snapshot.release();
+                throw failure;
+            }
+        }
+    }
+
+    void beforeStateRegistration() {
+        nativeSnapshots.detach();
+    }
+
+    void dispose() {
+        nativeSnapshots.dispose();
     }
 
     @Override
@@ -154,7 +180,7 @@ public class ForL0SnapshotStrategy<K>
                     // Write KV state data from C++ engine for this key group.
                     // Always write a compression block (even if empty) so restore can rely on
                     // the fixed block count: numPQStates + 1 blocks per key group.
-                    byte[] keyGroupData = NativeEngine.writeKeyGroupData(engineHandle, keyGroupId);
+                    byte[] keyGroupData = syncPartResource.checkpointGroup(keyGroupId);
                     try (OutputStream kgCompressionOut =
                             keyGroupCompressionDecorator.decorateWithCompression(localStream)) {
                         if (keyGroupData != null && keyGroupData.length > 0) {
@@ -164,7 +190,7 @@ public class ForL0SnapshotStrategy<K>
                 }
 
                 // Release COW snapshot state — data has been fully written
-                NativeEngine.releaseSnapshot(engineHandle);
+                syncPartResource.releaseNative();
 
                 if (snapshotCloseableRegistry.unregisterCloseable(streamWithResultProvider)) {
                     KeyGroupRangeOffsets kgOffs =
@@ -175,14 +201,8 @@ public class ForL0SnapshotStrategy<K>
                 } else {
                     throw new IOException("Stream already unregistered.");
                 }
-            } catch (Exception e) {
-                // Ensure COW snapshot is released even on failure
-                try {
-                    NativeEngine.releaseSnapshot(engineHandle);
-                } catch (Exception suppressed) {
-                    e.addSuppressed(suppressed);
-                }
-                throw e;
+            } finally {
+                syncPartResource.releaseNative();
             }
         };
     }

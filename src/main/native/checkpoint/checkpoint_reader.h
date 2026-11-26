@@ -62,34 +62,30 @@ inline std::string read_flink_value<std::string>(ReadBuffer& buf, const TypeLayo
     return buf.read_string_flink();
 }
 
-// ElementList: read from [total_byte_length(4)][count(4)][elem1][elem2]...
-// Each element is captured as raw serialized bytes using element_layout to determine boundaries.
 template <>
-inline ElementList read_flink_value<ElementList>(ReadBuffer& buf, const TypeLayout& layout) {
-    int32_t total_bytes = buf.read_int();  // outer length prefix
-    if (total_bytes < 4) return {};
-    ElementList result;
-    int32_t count = buf.read_int();
-    result.reserve(count);
-    // The layout should be LIST with one child (element type)
-    const TypeLayout* elem_layout = nullptr;
-    if (layout.type_id == TypeId::LIST && !layout.children.empty()) {
-        elem_layout = layout.children[0].get();
-    }
-    for (int32_t i = 0; i < count; ++i) {
-        if (elem_layout) {
-            result.push_back(buf.read_element_bytes(*elem_layout));
-        } else {
-            // Fallback: read remaining content bytes as single element
-            // total_bytes - 4 (count int) = remaining content bytes
-            size_t content_remaining = static_cast<size_t>(total_bytes) - 4;
-            // Subtract bytes already consumed for previous elements
-            size_t rem = std::min(content_remaining, buf.remaining());
-            result.emplace_back(reinterpret_cast<const char*>(buf.current()), rem);
-            buf.skip(rem);
-            break;
-        }
-    }
+inline NamespaceBlob read_flink_value<NamespaceBlob>(ReadBuffer& buf, const TypeLayout& layout) {
+    return NamespaceBlob(read_flink_value<std::string>(buf, layout));
+}
+
+template <>
+inline NamespaceRow read_flink_value<NamespaceRow>(ReadBuffer& buf, const TypeLayout&) {
+    const int32_t length = buf.read_int();
+    if (length < 0) throw std::runtime_error("negative binary row length");
+    const auto* bytes = buf.current();
+    buf.skip(static_cast<size_t>(length));
+    return NamespaceRow(reinterpret_cast<const char*>(bytes), static_cast<size_t>(length));
+}
+
+// ElementList: read from [total_byte_length(4)][count(4)][elem1][elem2]...
+// The outer length delimits the entire serialized list, including opaque elements.
+template <>
+inline ElementList read_flink_value<ElementList>(ReadBuffer& buf, const TypeLayout&) {
+    const int32_t length = buf.read_int();
+    if (!length) return {};
+    if (length < 4 || size_t(length) > buf.remaining())
+        throw std::runtime_error("Invalid checkpoint ListState length");
+    auto result = ElementList::from_serialized({reinterpret_cast<const char*>(buf.current()), size_t(length)});
+    buf.skip(size_t(length));
     return result;
 }
 
@@ -126,7 +122,7 @@ inline InnerMap read_flink_value<InnerMap>(ReadBuffer& buf, const TypeLayout& la
         uv_layout = layout.children[1].get();
     }
     for (int32_t i = 0; i < count; ++i) {
-        std::string uk, uv;
+        NamespaceBlob uk, uv;
         if (uk_layout) {
             uk = buf.read_element_bytes(*uk_layout);
         }
@@ -136,6 +132,50 @@ inline InnerMap read_flink_value<InnerMap>(ReadBuffer& buf, const TypeLayout& la
         result[std::move(uk)] = std::move(uv);
     }
     return result;
+}
+
+// The checkpoint bytes are also readable by an ordinary serialized map.
+template<class Map>
+inline Map read_inline_map(ReadBuffer& buf, const TypeLayout& layout) {
+    const int32_t length = buf.read_int();
+    if (length < 4 || static_cast<size_t>(length) > buf.remaining() || layout.children.size() != 2) {
+        throw std::runtime_error("Invalid serialized map checkpoint");
+    }
+    const int32_t width = layout.children[1]->serialized_fixed_size;
+    if (width < 1 || width > static_cast<int32_t>(InlineMapValue::capacity)) {
+        throw std::runtime_error("Invalid fixed map value width");
+    }
+    ReadBuffer payload(buf.current(), static_cast<size_t>(length));
+    const int32_t count = payload.read_int();
+    if (count < 0 || count > (length - 4) / width) throw std::runtime_error("Invalid map entry count");
+    Map result;
+    for (int32_t i = 0; i < count; ++i) {
+        const auto* key = payload.current();
+        payload.skip_typed_value(*layout.children[0]);
+        auto& value = result[NamespaceBlob(reinterpret_cast<const char*>(key), payload.current() - key)];
+        const auto* data = payload.current();
+        payload.skip(width);
+        value.resize(width);
+        std::memcpy(value.data(), data, width);
+    }
+    if (payload.remaining()) throw std::runtime_error("Unexpected bytes after map entries");
+    buf.skip(length);
+    return result;
+}
+
+template <>
+inline InnerMapInline read_flink_value<InnerMapInline>(ReadBuffer& buf, const TypeLayout& layout) {
+    return read_inline_map<InnerMapInline>(buf, layout);
+}
+
+template <>
+inline InnerMapRowFour read_flink_value<InnerMapRowFour>(ReadBuffer& buf, const TypeLayout& layout) {
+    return read_inline_map<InnerMapRowFour>(buf, layout);
+}
+
+template <>
+inline InnerMapWideRowFour read_flink_value<InnerMapWideRowFour>(ReadBuffer& buf, const TypeLayout& layout) {
+    return read_inline_map<InnerMapWideRowFour>(buf, layout);
 }
 
 // Typed InnerMap reader variants.
@@ -166,7 +206,7 @@ inline InnerMapLongString read_flink_value<InnerMapLongString>(ReadBuffer& buf, 
     }
     for (int32_t i = 0; i < count; ++i) {
         int64_t uk = buf.read_long();
-        std::string uv;
+        NamespaceBlob uv;
         if (uv_layout) {
             uv = buf.read_element_bytes(*uv_layout);
         }
@@ -186,7 +226,7 @@ inline InnerMapStringLong read_flink_value<InnerMapStringLong>(ReadBuffer& buf, 
         uk_layout = layout.children[0].get();
     }
     for (int32_t i = 0; i < count; ++i) {
-        std::string uk;
+        NamespaceBlob uk;
         if (uk_layout) {
             uk = buf.read_element_bytes(*uk_layout);
         }
@@ -210,20 +250,29 @@ inline TimeWindow read_time_window_namespace(ReadBuffer& buf) {
 
 // FixedRow: read from BinaryRowData format (length-prefixed).
 // Format: [sizeInBytes (4B BE)][header (8B)][field0 (8B LE)][field1 (8B LE)]...
-template <>
-inline FixedRow read_flink_value<FixedRow>(ReadBuffer& buf, const TypeLayout& layout) {
-    buf.read_int();  // skip length prefix
-    buf.skip(8);     // skip header (RowKind + null bits)
-    uint8_t arity = layout.fixed_row_arity;
-    FixedRow row(arity);
-    for (uint8_t i = 0; i < arity; ++i) {
-        uint64_t v = 0;
-        for (int b = 0; b < 8; ++b) {
-            v |= static_cast<uint64_t>(buf.read_byte()) << (b * 8);
-        }
-        row.f[i] = static_cast<int64_t>(v);
+template<class Row>
+inline Row read_fixed_row(ReadBuffer& buf, Row row) {
+    if (buf.read_int() != 8 + row.arity * 8) throw std::runtime_error("Invalid fixed row key length");
+    row.header = buf.read_byte();
+    row.header |= static_cast<uint16_t>(buf.read_byte()) << 8;
+    buf.skip(6);
+    for (uint8_t i = 0; i < row.arity; ++i) {
+        uint64_t word = 0;
+        for (int b = 0; b < 8; ++b) word |= static_cast<uint64_t>(buf.read_byte()) << (b * 8);
+        row.f[i] = static_cast<int64_t>(word);
     }
     return row;
+}
+
+template <>
+inline FixedRow read_flink_value<FixedRow>(ReadBuffer& buf, const TypeLayout& layout) {
+    if (layout.fixed_row_arity > FIXED_ROW_MAX_ARITY) throw std::runtime_error("Unsupported fixed row key arity");
+    return read_fixed_row(buf, FixedRow(static_cast<uint8_t>(layout.fixed_row_arity)));
+}
+
+template <>
+inline FixedPair read_flink_value<FixedPair>(ReadBuffer& buf, const TypeLayout&) {
+    return read_fixed_row(buf, FixedPair{});
 }
 
 // ============================================================================
@@ -267,44 +316,6 @@ public:
             V value = read_flink_value<V>(buf, value_layout_);
             table.template put<TimeWindow>(key_group, tw, key, std::move(value));
         }
-    }
-
-    void read_entries_long(ReadBuffer& buf, StateTable<K, V>& table, int key_group, int32_t count, bool row_key) {
-        if constexpr (std::is_same_v<K, int64_t>) {
-            for (int32_t i = 0; i < count; ++i) {
-                int32_t key_size = buf.read_int();
-                if (key_size != (row_key ? 28 : 16)) throw std::runtime_error("invalid Long-namespace key length");
-                int64_t ns = buf.read_long();
-                K key;
-                uint64_t header = 0;
-                if (row_key) {
-                    if (buf.read_int() != 16) throw std::runtime_error("invalid numeric RowData key width");
-                    for (int j = 0; j < 8; ++j) header |= uint64_t(buf.read_byte()) << (8 * j);
-                    uint64_t bits = 0;
-                    for (int j = 0; j < 8; ++j) bits |= uint64_t(buf.read_byte()) << (8 * j);
-                    key = static_cast<int64_t>(bits);
-                } else key = buf.read_long();
-                V value;
-                if constexpr (std::is_same_v<V, std::string>) value = buf.read_bytes_flink();
-                else {
-                    int32_t length = buf.read_int();
-                    if constexpr (std::is_same_v<V, int64_t>) {
-                        bool narrow = value_layout_.type_id == TypeId::INT32;
-                        if (length != (narrow ? 4 : 8)) throw std::runtime_error("invalid numeric value length");
-                        value = narrow ? int64_t(buf.read_int()) : buf.read_long();
-                    } else if constexpr (std::is_same_v<V, double>) {
-                        if (length != 8) throw std::runtime_error("invalid double value length");
-                        value = buf.read_double();
-                    } else throw std::runtime_error("unsupported Long-namespace value encoding");
-                }
-                if (header == 0) table.template put<int64_t>(key_group, ns, key, std::move(value));
-                else {
-                    std::string identity(16, '\0');
-                    std::memcpy(identity.data(), &ns, 8); std::memcpy(identity.data() + 8, &header, 8);
-                    table.template put<std::string>(key_group, identity, key, std::move(value));
-                }
-            }
-        } else throw std::runtime_error("Long namespace requires numeric key");
     }
 
     // Read ListState entries: value is std::vector<T>

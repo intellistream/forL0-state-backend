@@ -16,6 +16,37 @@ import java.nio.ByteBuffer;
  */
 public class MemorySegmentBridge {
 
+    /** Release-publish a count in a bounded direct-native descriptor. */
+    public static void publishBufferCount(ByteBuffer buffer, int offset, long count) {
+        MemoryUtils.UNSAFE.storeFence();
+        buffer.putLong(offset, count);
+    }
+
+    /** Base of an aligned, native-order descriptor owned by the calling state. */
+    public static long nativeCounterBase(ByteBuffer buffer) {
+        if (buffer == null) return 0;
+        if (!buffer.isDirect() || buffer.isReadOnly() || buffer.order() != MemoryUtils.NATIVE_BYTE_ORDER) {
+            throw new IllegalArgumentException("Expected a writable native-order direct descriptor");
+        }
+        long address = MemoryUtils.getByteBufferAddress(buffer);
+        if ((address & 7) != 0 || address == 0) throw new IllegalArgumentException("Unaligned native descriptor");
+        return address;
+    }
+
+    /** A single Flink task writes the counter. Native metrics readers acquire-load this aligned word. */
+    public static void incrementNativeCounter(long address) {
+        MemoryUtils.UNSAFE.putOrderedLong(null, address, MemoryUtils.UNSAFE.getLong(address) + 1);
+    }
+
+    private static final long BYTE_ARRAY_BASE = MemoryUtils.UNSAFE.arrayBaseOffset(byte[].class);
+
+    /** Copy a synchronous JNI result before exposing mutable BinaryRowData to Flink. */
+    public static byte[] copyNativeBytes(long address, int length) {
+        byte[] result = new byte[length];
+        if (length > 0) MemoryUtils.UNSAFE.copyMemory(null, address, result, BYTE_ARRAY_BASE, length);
+        return result;
+    }
+
     /** Read a word from a live native state handle's synchronous result area. */
     public static long readNativeLong(long address) {
         return MemoryUtils.UNSAFE.getLong(address);

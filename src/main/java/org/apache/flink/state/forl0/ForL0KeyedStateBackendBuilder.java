@@ -426,6 +426,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                     }
                 }
 
+                int[] destinationIds = checkpointStateMapping(metaInfoSnapshots, nativeStateHandles);
+
                 // Restore key group data
                 StreamCompressionDecorator compressionDecorator =
                         serProxy.isUsingKeyGroupCompression()
@@ -474,7 +476,8 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                         }
                         byte[] kvData = baos.toByteArray();
                         if (kvData.length > 0) {
-                            NativeEngine.readKeyGroupData(engineHandle, keyGroupId, kvData);
+                            if (destinationIds == null) NativeEngine.readKeyGroupData(engineHandle, keyGroupId, kvData);
+                            else NativeEngine.readMappedKeyGroupData(engineHandle, keyGroupId, kvData, destinationIds);
                         }
                     }
                 }
@@ -486,6 +489,42 @@ public class ForL0KeyedStateBackendBuilder<K> extends AbstractKeyedStateBackendB
                 }
             }
         }
+    }
+
+    // Per input state handle: different subtasks may register the same
+    // state names in different orders before a rescale.
+    private static int[] checkpointStateMapping(List<StateMetaInfoSnapshot> metadata,
+                                                Map<String, Long> handles) throws IOException {
+        Map<Integer, Integer> ids = new HashMap<>();
+        int count = 0;
+        int maximum = 0;
+        boolean remap = false;
+        for (StateMetaInfoSnapshot state : metadata) {
+            if (state.getBackendStateType() != StateMetaInfoSnapshot.BackendStateType.KEY_VALUE) continue;
+            ++count;
+            String encoded = state.getOption(ForL0SnapshotResources.NATIVE_STATE_ID);
+            if (encoded == null) continue;
+            final int source;
+            try {
+                source = Integer.parseInt(encoded);
+            } catch (NumberFormatException invalid) {
+                throw new IOException("Invalid checkpoint state ID for " + state.getName(), invalid);
+            }
+            int target = NativeEngine.checkpointStateId(handles.get(state.getName()));
+            if (source < 1 || source > Short.MAX_VALUE || ids.put(source, target) != null) {
+                throw new IOException("Invalid or duplicate checkpoint state ID " + source);
+            }
+            maximum = Math.max(maximum, source);
+            remap |= source != target;
+        }
+        // Older checkpoint headers carry no assignment. Retain their
+        // existing positional interpretation.
+        if (ids.isEmpty()) return null;
+        if (ids.size() != count) throw new IOException("Incomplete checkpoint state ID mapping");
+        if (!remap) return null;
+        int[] targets = new int[maximum + 1];
+        ids.forEach((source, target) -> targets[source] = target);
+        return targets;
     }
 
     // ========================================================================

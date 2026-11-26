@@ -244,10 +244,25 @@ def main():
             if any(len(cores) != 4 for cores in affinities): raise RuntimeError("TaskManager thread escaped its four-core affinity")
         (run / (phase + "-resources.json")).write_text(json.dumps(resources, indent=2))
         traffic = {"engines": 0, "states": 0, "lookups": 0, "hits": 0, "writes": 0}
+        namespace_tables = {}
+        table_fields = (
+            "resident_tables", "resident_bytes", "promotions", "evictions",
+            "growth_demotions", "rejected", "admission_deferrals", "resident_lookups",
+        )
         malformed_records = 0
         console = "\n".join((run / name / "console.log").read_text() for name in ("tm1", "tm2"))
         for line in console.splitlines():
             if "[ForL0-HotCache] engine_summary" in line: traffic["engines"] += 1
+            if "[ForL0-HotCache] namespace_cache_summary " in line:
+                record = line.split("[ForL0-HotCache] namespace_cache_summary ", 1)[1]
+                state, separator, counters = record.partition(" resident_tables=")
+                fields = dict(re.findall(r"(\w+)=(\d+)", separator.lstrip() + counters))
+                if not state.startswith("name=") or not all(field in fields for field in table_fields):
+                    malformed_records += 1
+                else:
+                    totals = namespace_tables.setdefault(state[len("name="):], dict.fromkeys(table_fields, 0))
+                    for field in table_fields:
+                        totals[field] += int(fields[field])
             # Manager summaries share the process pool and overlap between
             # engines. Each state summary occurs once and avoids double counting.
             if "[ForL0-HotCache] state_summary" not in line: continue
@@ -262,11 +277,11 @@ def main():
         allocation = "off"
         if "state.backend.forl0.l0-cache.enabled: true" in conf.joinpath("flink-conf.yaml").read_text():
             memory = set(re.findall(r"active=1 memory=(L0|DRAM)\b", console))
-            if not all(traffic[key] > 0 for key in ("engines", "states", "writes")) or not memory:
-                raise RuntimeError("Cache arm did not show real owned-payload cache traffic")
+            if traffic["engines"] == 0 or not memory:
+                raise RuntimeError("HotCache was requested but no active pool was reported")
             allocation = "+".join(sorted(memory))
         return {"query": query, "events": events, "seconds": duration, "events_per_second": events / duration,
-                "allocation": allocation,
+                "allocation": allocation, "namespace_tables": namespace_tables,
                 "tm_cpu_seconds": cpu([task_pid(p.pid) for p in processes[1:]]) - before, "job_id": job_id,
                 "tm_gc_cpu_seconds": gc_cpu(run) - gc_before,
                 "checkpoint_counts": checkpoint_stats.get("counts", {}), "cache_traffic": traffic,

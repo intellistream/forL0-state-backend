@@ -264,6 +264,16 @@ public final class TypeAnalyzer {
                 && ROW_DATA_SERIALIZER_CLASS.isInstance(serializer);
     }
 
+    static boolean isStandardRowDataSerializer(TypeSerializer<?> serializer) {
+        return serializer != null && serializer.getClass() == ROW_DATA_SERIALIZER_CLASS;
+    }
+
+    static TypeSerializer<?> standardListRowElement(TypeSerializer<?> serializer) {
+        if (serializer == null || serializer.getClass() != ListSerializer.class) return null;
+        TypeSerializer<?> element = ((ListSerializer<?>) serializer).getElementSerializer();
+        return isStandardRowDataSerializer(element) ? element : null;
+    }
+
     /**
      * Create a RowDataKeyAccessor for a RowDataSerializer.
      * Returns null if the serializer is not RowDataSerializer.
@@ -390,7 +400,8 @@ public final class TypeAnalyzer {
             // Optional physical-row hints; old native parsers ignore the tail.
             out.writeByte(0xC7);
             out.writeByte((isRowDataSerializer(keySerializer) ? 1 : 0)
-                    | (isRowDataSerializer(valueSerializer) ? 2 : 0));
+                    | (isRowDataSerializer(valueSerializer) ? 2 : 0)
+                    | (namespaceSerializer instanceof LongSerializer ? 4 : 0));
             // Logical types select native tables; these optional hints describe
             // bytes produced by Java serializers inside native containers.
             out.writeByte(0xC8);
@@ -406,7 +417,13 @@ public final class TypeAnalyzer {
             throws IOException {
         boolean list = serializer instanceof ListSerializer;
         boolean map = serializer instanceof MapSerializer;
-        out.writeByte((isRowDataSerializer(serializer) ? 1 : 0) | (list || map ? 2 : 0));
+        LogicalType[] fields = getRowDataFieldTypes(serializer);
+        // The length prefix, null bits and five fixed field slots already exceed 44 bytes.
+        out.writeByte((isRowDataSerializer(serializer) ? 1 : 0) | (list || map ? 2 : 0)
+                | (fields != null && fields.length >= 5 ? 4 : 0)
+                | (fields != null && fields.length == 0 ? 8 : 0)
+                | (fields != null && fields.length == 1
+                        && fields[0].getTypeRoot() == org.apache.flink.table.types.logical.LogicalTypeRoot.BIGINT ? 16 : 0));
         out.writeInt(serializer == null ? -1 : serializer.getLength());
         if (list) {
             writeSerializedLayout(out, ((ListSerializer<?>) serializer).getElementSerializer());

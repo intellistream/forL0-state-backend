@@ -198,12 +198,16 @@ static inline int64_t hotcache_fold_fixed_row_key(const int64_t* cols, size_t n)
 // ---------------------------------------------------------------------------
 class HotCacheLL {
 public:
-    // num_sets MUST be a power of two; HotCacheManager::acquire_ll guarantees this.
+    // Scalar caches use a power-of-two index mask. A namespace lease uses
+    // the storage as a linear span and only calls the accounting methods.
     HotCacheLL(HotSet* sets, uint32_t num_sets,
-               uint64_t write_only_bypass_threshold = (1u << 20)) noexcept
-        : sets_(sets), set_mask_(num_sets - 1), num_sets_(num_sets),
+               uint64_t write_only_bypass_threshold = (1u << 20),
+               bool serialized_payload = false) noexcept
+        : serialized_payload_(serialized_payload), sets_(sets), set_mask_(num_sets - 1), num_sets_(num_sets),
           write_only_bypass_threshold_(write_only_bypass_threshold) {
-        for (uint32_t i = 0; i < num_sets; ++i) sets_[i].init_empty();
+        if (!serialized_payload) {
+            for (uint32_t i = 0; i < num_sets; ++i) sets_[i].init_empty();
+        }
     }
 
     HotCacheLL(const HotCacheLL&) = delete;
@@ -221,9 +225,6 @@ public:
     uint64_t bypass_events() const noexcept { return bypass_events_.load(std::memory_order_relaxed); }
     bool write_bypassed()    const noexcept { return write_bypassed_.load(std::memory_order_relaxed); }
 
-    // A serialized cache reuses this manager-owned L0 slice and its telemetry.
-    // Its bytes must never be interpreted as scalar HotSet tags by rebalancing.
-    void set_serialized_payload() noexcept { serialized_payload_ = true; }
     void record_serialized_lookup(bool hit) noexcept {
         add_counter(hit ? hits_ : misses_);
     }
@@ -233,7 +234,7 @@ public:
     void record_serialized_hits(uint64_t count) noexcept {
         add_counter(hits_, count);
     }
-    void record_serialized_write() noexcept { add_counter(writes_); }
+    void record_serialized_write(uint64_t count = 1) noexcept { add_counter(writes_, count); }
     void record_serialized_invalidation() noexcept { add_counter(invalidations_); }
     void record_serialized_bypass() noexcept { add_counter(bypass_events_); }
 
@@ -539,6 +540,7 @@ public:
 
     bool   is_active()        const noexcept { return active_; }
     bool   is_l0_backed()     const noexcept { return l0_backed_; }
+    const void* data()        const noexcept { return l0_base_; }
     size_t capacity_bytes()   const noexcept { return capacity_bytes_; }
     size_t requested_capacity_bytes() const noexcept { return requested_capacity_bytes_; }
     size_t used_bytes()       const noexcept;
@@ -547,6 +549,8 @@ public:
     const std::string& failure_reason() const noexcept { return failure_reason_; }
 
     std::unique_ptr<HotCacheLL> acquire_ll(uint32_t sets_requested);
+    std::unique_ptr<HotCacheLL> acquire_namespace_span(uint32_t sets_requested);
+    std::unique_ptr<HotCacheLL> borrow_namespace_span(uint32_t sets_requested, uint32_t protected_sets);
     void release_ll(HotCacheLL* cache);
 
     // Aggregate counters across all live caches owned by this manager.
@@ -583,6 +587,8 @@ public:
     }
 
 private:
+    std::unique_ptr<HotCacheLL> acquire(uint32_t sets_requested, bool serialized,
+                                       uint32_t protected_sets, bool exact);
     L0LibBindings bindings_{};
     void*         tuner_           = nullptr;
     void*         raw_base_        = nullptr;

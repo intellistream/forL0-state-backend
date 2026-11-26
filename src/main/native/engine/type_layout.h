@@ -5,6 +5,10 @@
 
 #pragma once
 
+#include "allocator.h"
+#include "element_list.h"
+#include "state_map.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -93,6 +97,8 @@ struct TypeLayout {
     // Physical encoding of values serialized by Java inside ListState/MapState.
     // Kept separate from type_id, which selects native table specializations.
     bool serialized_row = false;
+    bool wide_serialized_row = false;
+    uint8_t fixed_window_row_bytes = 0;
     bool serialized_container = false;
     int32_t serialized_fixed_size = -1;
 };
@@ -108,6 +114,7 @@ static constexpr int FIXED_ROW_MAX_ARITY = 8;
 struct FixedRow {
     int64_t f[FIXED_ROW_MAX_ARITY];
     uint8_t arity;
+    uint16_t header = 0;  // Flink row kind and up to eight null flags.
 
     FixedRow() : f{}, arity(0) {}
 
@@ -118,7 +125,7 @@ struct FixedRow {
     }
 
     bool operator==(const FixedRow& other) const {
-        if (arity != other.arity) return false;
+        if (arity != other.arity || header != other.header) return false;
         return std::memcmp(f, other.f, arity * sizeof(int64_t)) == 0;
     }
 
@@ -127,15 +134,26 @@ struct FixedRow {
     }
 };
 
+struct FixedPair {
+    int64_t f[2] = {};
+    uint16_t header = 0;
+    static constexpr uint8_t arity = 2;
+
+    bool operator==(const FixedPair& other) const noexcept {
+        return f[0] == other.f[0] && f[1] == other.f[1] && header == other.header;
+    }
+};
+
 struct FixedRowHash {
-    size_t operator()(const FixedRow& row) const {
+    template<class Row>
+    size_t operator()(const Row& row) const noexcept {
         // FNV-1a inspired hash over the fields
         size_t h = 0xcbf29ce484222325ULL;
         for (uint8_t i = 0; i < row.arity; ++i) {
             h ^= static_cast<size_t>(row.f[i]);
             h *= 0x100000001b3ULL;
         }
-        return h;
+        return row.header ? (h ^ row.header) * UINT64_C(0x100000001b3) : h;
     }
 };
 
@@ -144,9 +162,9 @@ using TimeWindow = std::pair<int64_t, int64_t>;
 
 struct TimeWindowHash {
     size_t operator()(const TimeWindow& tw) const {
-        size_t h = std::hash<int64_t>()(tw.first);
-        h ^= std::hash<int64_t>()(tw.second) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-        return h;
+        const uint64_t h = static_cast<uint64_t>(tw.first);
+        return static_cast<size_t>(h ^ (static_cast<uint64_t>(tw.second) + UINT64_C(0x9e3779b97f4a7c15)
+                + (h << 6) + (h >> 2)));
     }
 };
 
@@ -154,6 +172,9 @@ struct TimeWindowHash {
 
 // std::hash specialization for FixedRow so SwissTable<FixedRow, V> works
 // with default template parameters (std::hash<K>).
+template <>
+struct std::hash<forl0::FixedPair> : forl0::FixedRowHash {};
+
 template <>
 struct std::hash<forl0::FixedRow> {
     size_t operator()(const forl0::FixedRow& row) const {
@@ -243,7 +264,7 @@ private:
             case TypeId::LIST: {
                 // Element type follows
                 layout->children.push_back(parse_one(data, len, offset));
-                layout->cpp_size = sizeof(std::vector<char>);  // std::vector size is fixed
+                layout->cpp_size = sizeof(ElementList);
                 break;
             }
 
@@ -318,22 +339,67 @@ template <> struct CppType<TypeId::TIME_WINDOW> { using type = TimeWindow; };
 //  Type aliases for ListState and MapState native storage
 // ============================================================================
 
-// ListState stores elements as a vector of serialized element byte strings.
-using ElementList = std::vector<std::string>;
-
 // MapState stores a nested map of serialized user-key → serialized user-value.
-using InnerMap = std::unordered_map<std::string, std::string>;
+using InnerMap = StateMap<NamespaceBlob, NamespaceBlob>;
+
+// Map serializers with a known short value width can keep their exact Flink
+// bytes beside the user key, without storing a string allocator per entry.
+class InlineMapValue {
+public:
+    static constexpr size_t capacity = 15;
+    size_t size() const noexcept { return length_; }
+    const char* data() const noexcept { return bytes_; }
+    char* data() noexcept { return bytes_; }
+    operator std::string_view() const noexcept { return {data(), size()}; }
+
+    void resize(size_t n) {
+        if (n > capacity) throw std::length_error("Invalid inline map value size");
+        length_ = static_cast<uint8_t>(n);
+    }
+
+    InlineMapValue& operator=(const NamespaceBlob& bytes) {
+        resize(bytes.size());
+        std::memcpy(data(), bytes.data(), size());
+        return *this;
+    }
+
+private:
+    char bytes_[capacity]{};
+    uint8_t length_ = 0;
+};
+
+using InnerMapInline = StateMap<NamespaceBlob, InlineMapValue>;
+
+// Serializer-compatible four-byte values share one small map entry with the
+// full key. Larger row keys keep exactly one external owner in their namespace.
+class FourByteMapValue {
+public:
+    void resize(size_t n) {
+        if (n != sizeof(bytes_)) throw std::length_error("Invalid four-byte map value");
+    }
+    FourByteMapValue& operator=(const NamespaceBlob& bytes) {
+        resize(bytes.size());
+        std::memcpy(bytes_, bytes.data(), sizeof(bytes_));
+        return *this;
+    }
+    const char* data() const noexcept { return bytes_; }
+    char* data() noexcept { return bytes_; }
+    size_t size() const noexcept { return sizeof(bytes_); }
+    operator std::string_view() const noexcept { return {bytes_, sizeof(bytes_)}; }
+private:
+    char bytes_[4]{};
+};
+
+using InnerMapRowFour = StateMap<CompactMapKey, FourByteMapValue>;
+using InnerMapWideRowFour = StateMap<WideMapKey, FourByteMapValue>;
+static_assert(sizeof(std::pair<CompactMapKey, FourByteMapValue>) == 56);
+
+
 
 // Typed InnerMap variants — avoid string encoding for primitive UK/UV.
-using InnerMapLongLong   = std::unordered_map<int64_t, int64_t>;
-using InnerMapLongString = std::unordered_map<int64_t, std::string>;
-using InnerMapStringLong = std::unordered_map<std::string, int64_t>;
-using InnerMapTimeWindow = std::unordered_map<TimeWindow, TimeWindow, TimeWindowHash>;
-
-// Constant-sized allocation scratch; it is never visible as keyed state.
-struct TimeWindowMapScratch {
-    InnerMapTimeWindow empty_map;
-    InnerMapTimeWindow::node_type node;
-};
+using InnerMapLongLong   = StateMap<int64_t, int64_t>;
+using InnerMapLongString = StateMap<int64_t, NamespaceRow>;
+using InnerMapStringLong = StateMap<NamespaceBlob, int64_t>;
+using InnerMapTimeWindow = StateMap<TimeWindow, TimeWindow, TimeWindowHash>;
 
 }  // namespace forl0

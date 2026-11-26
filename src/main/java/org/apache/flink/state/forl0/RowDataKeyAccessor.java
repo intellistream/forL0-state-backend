@@ -1,7 +1,9 @@
 package org.apache.flink.state.forl0;
 
+import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.binary.BinaryRowData;
+import org.apache.flink.table.data.binary.BinarySegmentUtils;
 import org.apache.flink.table.types.logical.LogicalType;
 
 /**
@@ -42,12 +44,14 @@ public final class RowDataKeyAccessor {
     private final LogicalType[] fieldTypes;
     /** Reusable buffer for multi-field extraction (single-threaded). */
     private final long[] fieldBuffer;
+    private final long[] keyWithHeader;
 
     private RowDataKeyAccessor(Strategy strategy, int arity, LogicalType[] fieldTypes) {
         this.strategy = strategy;
         this.arity = arity;
         this.fieldTypes = fieldTypes;
         this.fieldBuffer = (strategy == Strategy.FIXED_LENGTH_ROW) ? new long[arity] : null;
+        this.keyWithHeader = fieldBuffer == null ? null : new long[arity + 1];
     }
 
     /**
@@ -124,6 +128,33 @@ public final class RowDataKeyAccessor {
             fieldBuffer[i] = extractFieldAsLong(row, i, fieldTypes[i]);
         }
         return fieldBuffer;
+    }
+
+    long fixedKeyHeader(Object key) {
+        RowData row = (RowData) key;
+        if (row instanceof BinaryRowData) {
+            BinaryRowData binary = (BinaryRowData) row;
+            // Flink stores the row kind and the first eight null bits in the first two bytes.
+            return binary.getSegments()[0].getShortLittleEndian(binary.getOffset()) & 0xffffL;
+        }
+        long header = row.getRowKind().toByteValue();
+        for (int i = 0; i < arity; i++) {
+            if (row.isNullAt(i)) header |= 1L << (i + 8);
+        }
+        return header;
+    }
+
+    long[] fixedKeyFields(Object key) {
+        return fixedKeyFields(key, fixedKeyHeader(key));
+    }
+
+    long[] fixedKeyFields(Object key, long header) {
+        RowData row = (RowData) key;
+        for (int i = 0; i < arity; i++) {
+            keyWithHeader[i] = (header & (1L << (i + 8))) == 0 ? extractFieldAsLong(row, i, fieldTypes[i]) : 0;
+        }
+        keyWithHeader[arity] = header;
+        return keyWithHeader;
     }
 
     /** Extract one fixed-length field without materializing the reusable field array. */
@@ -298,23 +329,13 @@ public final class RowDataKeyAccessor {
             return null;
         }
         BinaryRowData row = (BinaryRowData) value;
-        org.apache.flink.core.memory.MemorySegment seg = row.getSegments()[0];
-        byte[] backing = seg.getArray();
-        int offset = row.getOffset();
+        MemorySegment[] segments = row.getSegments();
+        MemorySegment first = segments[0];
         int size = row.getSizeInBytes();
-        if (backing != null) {
-            // On-heap: direct array access
-            if (offset == 0 && size == backing.length) {
-                return backing;  // zero-copy: reuse backing array directly
-            }
-            byte[] result = new byte[size];
-            System.arraycopy(backing, offset, result, 0, size);
-            return result;
+        if (row.getOffset() == 0 && size == first.size() && !first.isOffHeap()) {
+            return first.getArray();
         }
-        // Off-heap (from zero-copy read): copy out via MemorySegment.get()
-        byte[] result = new byte[size];
-        seg.get(offset, result, 0, size);
-        return result;
+        return BinarySegmentUtils.copyToBytes(segments, row.getOffset(), size);
     }
 
     /**
@@ -328,22 +349,13 @@ public final class RowDataKeyAccessor {
             return null;
         }
         BinaryRowData row = (BinaryRowData) value;
-        org.apache.flink.core.memory.MemorySegment seg = row.getSegments()[0];
-        byte[] backing = seg.getArray();
-        int offset = row.getOffset();
         int size = row.getSizeInBytes();
         byte[] result = new byte[4 + size];
         result[0] = (byte) (size >>> 24);
         result[1] = (byte) (size >>> 16);
         result[2] = (byte) (size >>> 8);
         result[3] = (byte) size;
-        if (backing != null) {
-            System.arraycopy(backing, offset, result, 4, size);
-        } else {
-            // Off-heap (from zero-copy read)
-            seg.get(offset, result, 4, size);
-        }
-        return result;
+        return BinarySegmentUtils.copyToBytes(row.getSegments(), row.getOffset(), result, 4, size);
     }
 
     /**

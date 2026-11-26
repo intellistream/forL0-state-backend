@@ -5,6 +5,10 @@ import org.apache.flink.api.common.state.StateDescriptor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
+import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.core.memory.MemorySegmentFactory;
+import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalListState;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
@@ -45,8 +49,15 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
     private final boolean isRowDataElement;
     private final RowDataKeyAccessor rowDataElementAccessor;
 
-    private enum ListStrategy { LONG_ELEM_LONG_VOID, LONG_VOID, LONG_TW, GENERIC }
+    private enum ListStrategy { LONG_ELEM_LONG_VOID, LONG_VOID, LONG_TW, LONG_NS, GENERIC }
     private final ListStrategy listStrategy;
+    private final NamespaceReadIndex windowIndex;
+    private static final int APPEND_ELEMENT = 0, REPLACE_LIST = 1, APPEND_LIST = 2, CLEAR_LIST = 3, APPEND_ROW = 4;
+    // Prepared before the element serializer can reuse key data. Only the owning task thread accesses these.
+    private long windowKey, windowHeader;
+    private int windowKeyLength;
+    private final boolean inlineWindowKeys, emptyRowWindowKey;
+    private MemorySegment serializedWindowKey;
 
     /** Reusable serialization buffers (single-threaded access). */
     private final DataOutputSerializer keyOut = new DataOutputSerializer(64);
@@ -84,9 +95,18 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
             this.listStrategy = ListStrategy.LONG_VOID;
         } else if (isTimeWindowNs && keyTypeId == TypeAnalyzer.TYPE_INT64) {
             this.listStrategy = ListStrategy.LONG_TW;
+        } else if (namespaceSerializer instanceof org.apache.flink.api.common.typeutils.base.LongSerializer
+                && NativeEngine.listUsesLongNamespaces(stateHandle)) {
+            this.listStrategy = ListStrategy.LONG_NS;
         } else {
             this.listStrategy = ListStrategy.GENERIC;
         }
+        this.inlineWindowKeys = listStrategy == ListStrategy.LONG_NS && keyTypeId != TypeAnalyzer.TYPE_INT64
+                && supportsInlineWindowKeys(stateHandle);
+        this.emptyRowWindowKey = inlineWindowKeys && TypeAnalyzer.isStandardRowDataSerializer(keySerializer)
+                && rowDataKeyAccessor != null && rowDataKeyAccessor.getArity() == 0;
+        this.windowIndex = listStrategy == ListStrategy.LONG_NS && keyTypeId == TypeAnalyzer.TYPE_INT64
+                ? NamespaceReadIndex.forState(stateHandle, keyContext.keyGroupRange.getStartKeyGroup(), false) : null;
     }
 
     @SuppressWarnings("unchecked")
@@ -111,6 +131,11 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                     TimeWindow tw = (TimeWindow) currentNamespace;
                     byte[] data = NativeEngine.listGetWithTW(stateHandle, resolveKeyAsLong(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
+                    if (data == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
+                    return deserializeList(data);
+                }
+                case LONG_NS: {
+                    byte[] data = readWindowList();
                     if (data == null) return defaultValue != null ? valueSerializer.copy(defaultValue) : Collections.emptyList();
                     return deserializeList(data);
                 }
@@ -148,6 +173,12 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                             keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd(), serializeElement(value));
                     return;
                 }
+                case LONG_NS: {
+                    byte[] key = prepareWindowKey();
+                    byte[] bytes = serializeElement(value);
+                    changeWindowList(key, APPEND_ELEMENT, bytes, 0, bytes.length);
+                    return;
+                }
                 default:
                     NativeEngine.listAddGeneric(stateHandle, serializeKey(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElement(value));
@@ -180,6 +211,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                 case LONG_TW:
                     writeWindowList(values, false);
                     return;
+                case LONG_NS:
+                    changeWindowValues(values, REPLACE_LIST);
+                    return;
                 default:
                     NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElementList(values));
@@ -210,6 +244,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                     return;
                 case LONG_TW:
                     writeWindowList(values, true);
+                    return;
+                case LONG_NS:
+                    changeWindowValues(values, APPEND_LIST);
                     return;
                 default:
                     NativeEngine.listAddAllGeneric(stateHandle, serializeKey(keyContext.currentKey),
@@ -281,6 +318,10 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                     if (data == null) return null;
                     return deserializeList(data);
                 }
+                case LONG_NS: {
+                    byte[] data = readWindowList();
+                    return data == null ? null : deserializeList(data);
+                }
                 default: {
                     byte[] data = NativeEngine.listGetGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
                     if (data == null) return null;
@@ -310,6 +351,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                 case LONG_TW:
                     writeWindowList(valueToStore, false);
                     return;
+                case LONG_NS:
+                    changeWindowValues(valueToStore, REPLACE_LIST);
+                    return;
                 default:
                     NativeEngine.listUpdateGeneric(stateHandle, serializeKey(keyContext.currentKey),
                             keyContext.currentKeyGroupIndex, serializeElementList(valueToStore));
@@ -333,6 +377,9 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
                             keyContext.currentKeyGroupIndex, tw.getStart(), tw.getEnd());
                     return;
                 }
+                case LONG_NS:
+                    changeWindowList(prepareWindowKey(), CLEAR_LIST, null, 0, 0);
+                    return;
                 default:
                     NativeEngine.listClearGeneric(stateHandle, serializeKey(keyContext.currentKey), keyContext.currentKeyGroupIndex);
             }
@@ -474,7 +521,94 @@ public class ForL0ListState<K, N, V> implements InternalListState<K, N, V> {
         return row;
     }
 
+    private static boolean supportsInlineWindowKeys(long state) {
+        try {
+            return NativeEngine.listSupportsInlineWindowKeys(state);
+        } catch (UnsatisfiedLinkError oldLibrary) {
+            return false;
+        }
+    }
+
+    // This is the standard Flink four-byte size followed by all eight row-header
+    // bytes. Padding, row kind and the offset of a binary slice are part of the key.
+    private boolean prepareEmptyWindowRow(K key) {
+        long header;
+        if (key instanceof BinaryRowData) {
+            BinaryRowData row = (BinaryRowData) key;
+            if (row.getSizeInBytes() != 8 || row.getSegments().length != 1
+                    || row.getOffset() > row.getSegments()[0].size() - 8) return false;
+            header = row.getSegments()[0].getLongLittleEndian(row.getOffset());
+        } else if (key instanceof GenericRowData && ((GenericRowData) key).getArity() == 0) {
+            header = ((GenericRowData) key).getRowKind().toByteValue();
+        } else {
+            return false;
+        }
+        windowKey = (header << 32) | 0x08000000L;
+        windowHeader = header >>> 32;
+        windowKeyLength = ~12;
+        return true;
+    }
+
+    private byte[] prepareWindowKey() throws IOException {
+        K key = keyContext.currentKey;
+        if (keyTypeId != TypeAnalyzer.TYPE_INT64) {
+            if (emptyRowWindowKey && prepareEmptyWindowRow(key)) return null;
+            keyOut.clear();
+            keySerializer.serialize(key, keyOut);
+            byte[] buffer = keyOut.getSharedBuffer();
+            windowKeyLength = keyOut.length();
+            if (!inlineWindowKeys || windowKeyLength > 16) return buffer;
+            if (serializedWindowKey == null || serializedWindowKey.getArray() != buffer)
+                serializedWindowKey = MemorySegmentFactory.wrap(buffer);
+            // The serializer buffer starts at 64 bytes. Native reads only the declared length.
+            windowKey = serializedWindowKey.getLongLittleEndian(0);
+            windowHeader = windowKeyLength > 8 ? serializedWindowKey.getLongLittleEndian(8) : 0;
+            windowKeyLength = ~windowKeyLength;
+            return null;
+        }
+        if (isRowDataKey) {
+            org.apache.flink.table.data.RowData row = (org.apache.flink.table.data.RowData) key;
+            boolean missing = row.isNullAt(0);
+            windowHeader = row.getRowKind().toByteValue() | (missing ? 256L : 0L);
+            windowKey = missing ? 0L : rowDataKeyAccessor.extractFixedField(key, 0);
+        } else {
+            windowKey = (Long) key;
+            windowHeader = 0;
+        }
+        return null;
+    }
+
+    private byte[] readWindowList() throws IOException {
+        byte[] key = prepareWindowKey();
+        int group = keyContext.currentKeyGroupIndex;
+        long ns = (Long) currentNamespace;
+        if (windowIndex != null) {
+            int match = windowIndex.readWindow(group, NamespaceReadIndex.LONG, ns, 0, windowKey, windowHeader, true);
+            if (match == NamespaceReadIndex.ABSENT) return null;
+            if (match == NamespaceReadIndex.ROW) return windowIndex.copyCurrentRow();
+        }
+        return NativeEngine.listGetLongNamespace(stateHandle, group, ns, windowKey, windowHeader, key, windowKeyLength);
+    }
+
+    private void changeWindowList(byte[] key, int operation, byte[] bytes, int offset, int length) {
+        NativeEngine.listChangeLongNamespace(stateHandle, keyContext.currentKeyGroupIndex,
+                (Long) currentNamespace, windowKey, windowHeader, key, windowKeyLength,
+                operation, bytes, offset, length);
+    }
+
+    private void changeWindowValues(List<V> values, int operation) throws IOException {
+        byte[] key = prepareWindowKey();
+        byte[] bytes = serializeElementList(values);
+        changeWindowList(key, operation, bytes, 0, bytes.length);
+    }
+
     private void addRow(V value) throws IOException {
+        if (listStrategy == ListStrategy.LONG_NS) {
+            byte[] key = prepareWindowKey();
+            org.apache.flink.table.data.binary.BinaryRowData row = heapBinaryRow(value);
+            changeWindowList(key, APPEND_ROW, row.getSegments()[0].getArray(), row.getOffset(), row.getSizeInBytes());
+            return;
+        }
         // Serialize the parent first; the element conversion can reuse its
         // serializer's scratch array. The row itself goes straight into JNI.
         byte[] key = listStrategy == ListStrategy.GENERIC ? serializeKey(keyContext.currentKey) : null;

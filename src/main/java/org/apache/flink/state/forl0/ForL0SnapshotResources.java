@@ -17,6 +17,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Snapshot resources for ForL0 state backend with C++ engine.
@@ -27,6 +28,10 @@ import java.util.Map;
  * @param <K> The type of key
  */
 public class ForL0SnapshotResources<K> implements FullSnapshotResources<K> {
+
+    private ForL0NativeSnapshots.Snapshot nativeSnapshot;
+
+    static final String NATIVE_STATE_ID = "forl0.native-state-id";
 
     private final List<StateMetaInfoSnapshot> metaInfoSnapshots;
     private final Map<StateUID, StateSnapshot> pqSnapshots;
@@ -55,8 +60,8 @@ public class ForL0SnapshotResources<K> implements FullSnapshotResources<K> {
         this.keyGroupRange = keyGroupRange;
         this.keySerializer = keySerializer;
         this.totalKeyGroups = totalKeyGroups;
-        this.nativeStateHandles = nativeStateHandles;
-        this.registeredMetaInfos = registeredMetaInfos;
+        this.nativeStateHandles = new HashMap<>(nativeStateHandles);
+        this.registeredMetaInfos = new HashMap<>(registeredMetaInfos);
     }
 
     /**
@@ -90,13 +95,28 @@ public class ForL0SnapshotResources<K> implements FullSnapshotResources<K> {
         final Map<StateUID, Integer> stateNamesToId = new HashMap<>(numStates);
         final Map<StateUID, StateSnapshot> pqSnapshots = new HashMap<>();
 
-        // Process KV states — meta info only (actual data is in C++ engine)
-        for (Map.Entry<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> entry :
-                registeredMetaInfos.entrySet()) {
-            StateUID stateUid = StateUID.of(entry.getKey(),
-                    StateMetaInfoSnapshot.BackendStateType.KEY_VALUE);
+        // The native checkpoint payload uses a one-based registration ID.
+        // Store it with the state name and keep metadata in that order for
+        // readers that register a fresh backend in header order.
+        Map<Integer, StateMetaInfoSnapshot> keyedStates = new TreeMap<>();
+        for (Map.Entry<String, RegisteredKeyValueStateBackendMetaInfo<?, ?>> entry : registeredMetaInfos.entrySet()) {
+            int id = NativeEngine.checkpointStateId(nativeStateHandles.get(entry.getKey()));
+            StateMetaInfoSnapshot original = entry.getValue().snapshot();
+            Map<String, String> options = new HashMap<>(original.getOptionsImmutable());
+            options.put(NATIVE_STATE_ID, Integer.toString(id));
+            Map<String, TypeSerializer<?>> serializers = new HashMap<>();
+            for (String key : original.getSerializerSnapshotsImmutable().keySet()) {
+                TypeSerializer<?> serializer = original.getTypeSerializer(key);
+                if (serializer != null) serializers.put(key, serializer);
+            }
+            StateMetaInfoSnapshot snapshot = new StateMetaInfoSnapshot(original.getName(),
+                    original.getBackendStateType(), options, original.getSerializerSnapshotsImmutable(), serializers);
+            if (keyedStates.put(id, snapshot) != null) throw new IllegalStateException("Duplicate native state ID " + id);
+        }
+        for (StateMetaInfoSnapshot snapshot : keyedStates.values()) {
+            StateUID stateUid = StateUID.of(snapshot.getName(), StateMetaInfoSnapshot.BackendStateType.KEY_VALUE);
             stateNamesToId.put(stateUid, stateNamesToId.size());
-            metaInfoSnapshots.add(entry.getValue().snapshot());
+            metaInfoSnapshots.add(snapshot);
         }
 
         // Process priority queue states — full Flink snapshot
@@ -139,7 +159,8 @@ public class ForL0SnapshotResources<K> implements FullSnapshotResources<K> {
                 stateNamesToId,
                 nativeStateHandles,
                 registeredMetaInfos,
-                pqSnapshots);
+                pqSnapshots,
+                nativeSnapshot == null ? NativeEngine::writeStateKeyGroupEntries : nativeSnapshot::stateGroup);
     }
 
     @Override
@@ -160,8 +181,21 @@ public class ForL0SnapshotResources<K> implements FullSnapshotResources<K> {
         return streamCompressionDecorator;
     }
 
+    void attach(ForL0NativeSnapshots.Snapshot snapshot) {
+        this.nativeSnapshot = snapshot;
+    }
+
+    byte[] checkpointGroup(int group) {
+        return nativeSnapshot.checkpointGroup(group);
+    }
+
+    void releaseNative() {
+        if (nativeSnapshot != null) nativeSnapshot.release();
+    }
+
     @Override
     public void release() {
+        releaseNative();
         for (StateSnapshot snapshot : pqSnapshots.values()) {
             snapshot.release();
         }

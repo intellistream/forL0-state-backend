@@ -149,6 +149,10 @@ struct Group {
     }
 
     // Match empty slots (ctrl == kEmpty).
+    BitMask match_full() const {
+        return BitMask(static_cast<uint32_t>(~_mm_movemask_epi8(ctrl)) & 0xffffu);
+    }
+
     BitMask match_empty() const {
         return match(kEmpty);
     }
@@ -286,6 +290,10 @@ struct Group {
         return BitMask(nibble_mask_sparse(cmp));
     }
 
+    BitMask match_full() const {
+        return BitMask(nibble_mask_sparse(vcltq_u8(ctrl, vdupq_n_u8(0x80))));
+    }
+
     BitMask match_empty() const {
         return match(kEmpty);
     }
@@ -347,6 +355,15 @@ struct Group {
         // Broadcast h2 to all 8 bytes of a uint64
         uint64_t pattern = 0x0101010101010101ULL * static_cast<uint8_t>(h2);
         return BitMask(swar_match_word(lo, pattern) | (swar_match_word(hi, pattern) << 8));
+    }
+
+    BitMask match_full() const {
+        uint8_t bytes[kGroupWidth];
+        std::memcpy(bytes, &lo, sizeof(lo));
+        std::memcpy(bytes + sizeof(lo), &hi, sizeof(hi));
+        uint32_t bits = 0;
+        for (unsigned i = 0; i < kGroupWidth; ++i) bits |= uint32_t(bytes[i] < 0x80) << i;
+        return BitMask(bits);
     }
 
     BitMask match_empty() const {
@@ -474,7 +491,7 @@ inline void set_ctrl(int8_t* ctrl, size_t capacity, size_t i, int8_t h) {
     // The ctrl array has capacity + kGroupWidth bytes total.
     // Bytes [capacity .. capacity + kGroupWidth - 1] mirror bytes [0 .. kGroupWidth - 2] + sentinel.
     constexpr size_t kClone = kGroupWidth - 1;
-    if (i < kClone) {
+    if (i < kClone && capacity >= kGroupWidth) {
         // Clone the prefix at the end so a 16-byte load near the logical end of the
         // table can still read contiguously without a wrap-around branch.
         ctrl[capacity + i] = h;
@@ -488,6 +505,18 @@ inline void init_ctrl(int8_t* ctrl, size_t capacity) {
     //
     // This is what makes the SIMD group loads near the end of the table simple:
     // no special-case branch is needed for wrap-around reads.
+    if (capacity == 1) {
+        // All probes of a full singleton compare its sole key directly. Keep one
+        // entire readable control word group for published readers in either tier.
+        std::memset(ctrl, kSentinel, kGroupWidth);
+        ctrl[0] = kEmpty;
+        return;
+    }
+    if (capacity < kGroupWidth) {
+        std::memset(ctrl, kEmpty, capacity);
+        std::memset(ctrl + capacity, kSentinel, kGroupWidth);
+        return;
+    }
     std::memset(ctrl, kEmpty, capacity + kGroupWidth);
     ctrl[capacity] = kSentinel;
 }

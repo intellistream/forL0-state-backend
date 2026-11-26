@@ -1,7 +1,6 @@
 // Memory allocator interface for SwissTable and StateEngine.
-// The default implementation uses aligned malloc. L0 memory is NOT used here;
-// it is instead managed by HotCacheManager (see engine/hot_cache.h) as an
-// explicit hot-key cache above StateTable.
+// Default tables use aligned malloc. Resident namespace tables supply a
+// bounded allocator for both their SwissTable backing and variable payloads.
 
 #pragma once
 
@@ -10,19 +9,22 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <memory_resource>
 #include <new>
+#include <string>
 
 namespace forl0 {
 
 // Result of a split allocation — ctrl and slots may reside in different memory regions.
 struct SplitResult {
     void* ctrl_ptr;    // ctrl array memory (may be L0 or heap)
-    void* slots_ptr;   // slots array memory (always heap for large tables)
+    void* slots_ptr;   // slots array memory
     bool is_split;     // true = ctrl and slots are separate allocations
+    bool temporary = false;  // a resident resize may reclaim this backing after retiring its predecessor
 };
 
 // Abstract allocator interface — allows substitution of L0 Cache allocator.
-class Allocator {
+class Allocator : public std::pmr::memory_resource {
 public:
     virtual ~Allocator() = default;
 
@@ -32,10 +34,7 @@ public:
     // Deallocate a previously allocated block.
     virtual void deallocate(void* ptr, size_t size) = 0;
 
-    // Split allocation: allocate ctrl and slots separately. Default is a single
-    // contiguous allocation (ctrl followed by slots). The previous L0Allocator
-    // override has been removed — L0 is now a hot-key cache above StateTable,
-    // not a memory backend for SwissTable internals.
+    // Allocators can place controls and slots in one block or separate blocks.
     virtual SplitResult allocate_split(size_t ctrl_size, size_t ctrl_align,
                                        size_t slots_size, size_t slots_align) {
         // Default: pack into one allocation (original behavior).
@@ -46,6 +45,10 @@ public:
         return SplitResult{p, static_cast<char*>(p) + ctrl_padded, false};
     }
 
+    virtual SplitResult recover_split(const SplitResult&, size_t, size_t, size_t, size_t) {
+        return {nullptr, nullptr, false};
+    }
+
     // Deallocate a split allocation.
     virtual void deallocate_split(const SplitResult& sr,
                                   size_t ctrl_size, size_t slots_size) {
@@ -54,11 +57,24 @@ public:
             deallocate(sr.ctrl_ptr, ctrl_size);
             deallocate(sr.slots_ptr, slots_size);
         } else {
-            // Single allocation: ctrl_ptr is the base.
-            deallocate(sr.ctrl_ptr, ctrl_size + slots_size);
+            const size_t offset = static_cast<char*>(sr.slots_ptr) - static_cast<char*>(sr.ctrl_ptr);
+            deallocate(sr.ctrl_ptr, offset + slots_size);
         }
     }
+
+private:
+    void* do_allocate(size_t size, size_t alignment) override {
+        return allocate(size, std::max(alignment, alignof(void*)));
+    }
+    void do_deallocate(void* ptr, size_t size, size_t) override {
+        deallocate(ptr, size);
+    }
+    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+        return this == &other;
+    }
 };
+
+using NamespaceBlob = std::pmr::string;
 
 // Default allocator using posix_memalign / aligned_alloc.
 class DefaultAllocator final : public Allocator {
